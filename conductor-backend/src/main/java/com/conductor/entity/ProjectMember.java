@@ -11,6 +11,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import org.hibernate.annotations.ColumnTransformer;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -36,6 +37,7 @@ public class ProjectMember {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false, columnDefinition = "member_role")
+    @ColumnTransformer(write = "?::member_role")
     private MemberRole role;
 
     @Column(name = "joined_at", nullable = false, updatable = false)

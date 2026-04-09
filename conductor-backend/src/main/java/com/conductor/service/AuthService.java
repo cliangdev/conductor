@@ -6,9 +6,11 @@ import com.conductor.generated.model.UserSummary;
 import com.conductor.repository.UserRepository;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseToken;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
 @Service
+@Profile("!local")
 public class AuthService {
 
     private final FirebaseTokenVerifier firebaseTokenVerifier;

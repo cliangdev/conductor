@@ -11,6 +11,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.ColumnTransformer;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -29,6 +30,7 @@ public class Issue {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "type", nullable = false, columnDefinition = "issue_type")
+    @ColumnTransformer(write = "?::issue_type")
     private IssueType type;
 
     @Column(name = "title", length = 255, nullable = false)
@@ -39,6 +41,7 @@ public class Issue {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, columnDefinition = "issue_status")
+    @ColumnTransformer(write = "?::issue_status")
     private IssueStatus status;
 
     @ManyToOne(fetch = FetchType.LAZY)
