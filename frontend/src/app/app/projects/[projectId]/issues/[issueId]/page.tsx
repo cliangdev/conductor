@@ -5,7 +5,8 @@ import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
-import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
+import { CommentableDocument } from '@/components/comments/CommentableDocument'
+import type { Comment } from '@/components/comments/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,12 +70,13 @@ function isExpiringSoon(doc: Document): boolean {
 export default function IssueDetailPage() {
   const params = useParams<{ projectId: string; issueId: string }>()
   const { projectId, issueId } = params
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
 
   const [issue, setIssue] = useState<Issue | null>(null)
   const [documents, setDocuments] = useState<Document[]>([])
   const [reviewers, setReviewers] = useState<Reviewer[]>([])
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
+  const [comments, setComments] = useState<Comment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -92,6 +94,19 @@ export default function IssueDetailPage() {
     })
   }, [accessToken, projectId, issueId])
 
+  const fetchComments = useCallback(async () => {
+    if (!accessToken) return
+    try {
+      const data = await apiGet<Comment[]>(
+        `/api/v1/projects/${projectId}/issues/${issueId}/comments`,
+        accessToken
+      )
+      setComments(data)
+    } catch {
+      // Non-fatal: comments failing to load shouldn't break the page
+    }
+  }, [accessToken, projectId, issueId])
+
   useEffect(() => {
     if (!accessToken) return
 
@@ -106,7 +121,7 @@ export default function IssueDetailPage() {
         ])
         setIssue(issueData)
         setReviewers(reviewerData)
-        await fetchDocuments()
+        await Promise.all([fetchDocuments(), fetchComments()])
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load issue')
       } finally {
@@ -115,7 +130,7 @@ export default function IssueDetailPage() {
     }
 
     fetchAll()
-  }, [accessToken, projectId, issueId, fetchDocuments])
+  }, [accessToken, projectId, issueId, fetchDocuments, fetchComments])
 
   // Re-fetch documents if any signed URL is expiring within 60 seconds
   useEffect(() => {
@@ -229,7 +244,16 @@ export default function IssueDetailPage() {
               No documents attached yet
             </div>
           ) : selectedDoc && isMarkdown(selectedDoc) && selectedDoc.content ? (
-            <MarkdownRenderer content={selectedDoc.content} />
+            <CommentableDocument
+              content={selectedDoc.content}
+              documentId={selectedDoc.id}
+              issueId={issueId}
+              projectId={projectId}
+              comments={comments.filter((c) => c.documentId === selectedDoc.id)}
+              onCommentAdded={fetchComments}
+              token={accessToken!}
+              currentUserId={user?.id ?? ''}
+            />
           ) : selectedDoc && isMarkdown(selectedDoc) && !selectedDoc.content ? (
             <div className="text-gray-400 text-sm">Document content is empty.</div>
           ) : (
