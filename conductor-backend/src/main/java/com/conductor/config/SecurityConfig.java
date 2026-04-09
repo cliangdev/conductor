@@ -49,6 +49,8 @@ public class SecurityConfig {
                 .requestMatchers(
                     "/api/v1/health",
                     "/api/v1/auth/firebase",
+                    "/api/v1/auth/local",
+                    "/api/v1/local-files/**",
                     "/swagger-ui.html",
                     "/swagger-ui/**",
                     "/api-docs/**",

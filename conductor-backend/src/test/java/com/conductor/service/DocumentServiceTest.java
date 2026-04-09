@@ -1,6 +1,5 @@
 package com.conductor.service;
 
-import com.conductor.config.GcpStorageConfig;
 import com.conductor.entity.Document;
 import com.conductor.entity.Issue;
 import com.conductor.entity.IssueStatus;
@@ -19,7 +18,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -50,12 +48,8 @@ class DocumentServiceTest {
     private IssueRepository issueRepository;
 
     @Mock
-    private GcpStorageService gcpStorageService;
+    private StorageService gcpStorageService;
 
-    @Mock
-    private GcpStorageConfig gcpStorageConfig;
-
-    @InjectMocks
     private DocumentService documentService;
 
     private Issue testIssue;
@@ -63,6 +57,8 @@ class DocumentServiceTest {
 
     @BeforeEach
     void setUp() {
+        documentService = new DocumentService(documentRepository, issueRepository, gcpStorageService, 15);
+
         User user = new User();
         user.setId("user-1");
 
@@ -312,7 +308,6 @@ class DocumentServiceTest {
     void getDocumentReturnsStorageUrlAndExpiresAtWhenStoragePathSet() {
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
-        when(gcpStorageConfig.getSignedUrlExpiryMinutes()).thenReturn(15);
         when(gcpStorageService.generateSignedUrl(eq("proj-1/issues/issue-1/doc-1/spec.md"), eq(15)))
                 .thenReturn("https://storage.googleapis.com/signed-url");
 
@@ -329,7 +324,6 @@ class DocumentServiceTest {
 
     @Test
     void getDocumentContentPopulatedForTextMarkdownNullForImagePng() {
-        when(gcpStorageConfig.getSignedUrlExpiryMinutes()).thenReturn(15);
         when(gcpStorageService.generateSignedUrl(anyString(), anyInt())).thenReturn("https://signed-url");
 
         // text/markdown — content should be populated
@@ -370,7 +364,6 @@ class DocumentServiceTest {
 
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByIdAndIssueId("doc-3", "issue-1")).thenReturn(Optional.of(legacyDocument));
-        when(gcpStorageConfig.getSignedUrlExpiryMinutes()).thenReturn(15);
 
         DocumentResponse response = documentService.getDocument("proj-1", "issue-1", "doc-3");
 

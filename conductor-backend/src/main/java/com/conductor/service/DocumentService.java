@@ -1,6 +1,5 @@
 package com.conductor.service;
 
-import com.conductor.config.GcpStorageConfig;
 import com.conductor.entity.Document;
 import com.conductor.entity.Issue;
 import com.conductor.exception.FileTooLargeException;
@@ -11,6 +10,7 @@ import com.conductor.generated.model.UpdateDocumentRequest;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.IssueRepository;
 import jakarta.persistence.EntityNotFoundException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,17 +30,17 @@ public class DocumentService {
 
     private final DocumentRepository documentRepository;
     private final IssueRepository issueRepository;
-    private final GcpStorageService gcpStorageService;
-    private final GcpStorageConfig gcpStorageConfig;
+    private final StorageService gcpStorageService;
+    private final int signedUrlExpiryMinutes;
 
     public DocumentService(DocumentRepository documentRepository,
                            IssueRepository issueRepository,
-                           GcpStorageService gcpStorageService,
-                           GcpStorageConfig gcpStorageConfig) {
+                           StorageService gcpStorageService,
+                           @Value("${gcp.signed-url.expiry-minutes:15}") int signedUrlExpiryMinutes) {
         this.documentRepository = documentRepository;
         this.issueRepository = issueRepository;
         this.gcpStorageService = gcpStorageService;
-        this.gcpStorageConfig = gcpStorageConfig;
+        this.signedUrlExpiryMinutes = signedUrlExpiryMinutes;
     }
 
     @Transactional
@@ -160,7 +160,7 @@ public class DocumentService {
     }
 
     private DocumentResponse toEnrichedDocumentResponse(Document document) {
-        int expiryMinutes = gcpStorageConfig.getSignedUrlExpiryMinutes();
+        int expiryMinutes = signedUrlExpiryMinutes;
 
         String storageUrl = null;
         OffsetDateTime storageUrlExpiresAt = null;
