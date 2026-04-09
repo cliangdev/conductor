@@ -119,7 +119,11 @@ public class DocumentService {
         findIssueInProject(projectId, issueId);
         Document document = documentRepository.findByIdAndIssueId(docId, issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
+        String storagePath = document.getStoragePath();
         documentRepository.delete(document);
+        if (storagePath != null) {
+            gcpStorageService.delete(storagePath);
+        }
     }
 
     private void uploadToGcs(String gcsPath, byte[] contentBytes, String contentType) {

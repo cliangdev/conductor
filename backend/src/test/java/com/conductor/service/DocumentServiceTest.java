@@ -257,6 +257,27 @@ class DocumentServiceTest {
     }
 
     @Test
+    void deleteDocumentCallsGcsDeleteWithStoragePath() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+
+        documentService.deleteDocument("proj-1", "issue-1", "doc-1");
+
+        verify(gcpStorageService).delete("proj-1/issues/issue-1/doc-1/spec.md");
+    }
+
+    @Test
+    void deleteDocumentSkipsGcsDeleteWhenStoragePathIsNull() {
+        testDocument.setStoragePath(null);
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+
+        documentService.deleteDocument("proj-1", "issue-1", "doc-1");
+
+        verify(gcpStorageService, never()).delete(anyString());
+    }
+
+    @Test
     void deleteDocumentThrows404WhenNotFound() {
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByIdAndIssueId("nonexistent", "issue-1")).thenReturn(Optional.empty());
