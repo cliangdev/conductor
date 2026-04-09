@@ -4,6 +4,7 @@ import com.conductor.config.SecurityConfig;
 import com.conductor.controller.AuthController;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
+import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.AuthService;
 import com.conductor.service.JwtService;
@@ -37,6 +38,9 @@ class JwtAuthenticationFilterTest {
 
     @MockBean
     private UserRepository userRepository;
+
+    @MockBean
+    private ProjectApiKeyRepository projectApiKeyRepository;
 
     private User testUser;
 

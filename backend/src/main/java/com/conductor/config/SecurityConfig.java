@@ -1,6 +1,8 @@
 package com.conductor.config;
 
+import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.security.ApiKeyAuthenticationFilter;
 import com.conductor.security.JwtAuthenticationFilter;
 import com.conductor.service.JwtService;
 import jakarta.servlet.http.HttpServletResponse;
@@ -15,19 +17,27 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 @Configuration
 @EnableWebSecurity
+@org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
 public class SecurityConfig {
 
     private final JwtService jwtService;
     private final UserRepository userRepository;
+    private final ProjectApiKeyRepository projectApiKeyRepository;
 
-    public SecurityConfig(JwtService jwtService, UserRepository userRepository) {
+    public SecurityConfig(JwtService jwtService, UserRepository userRepository, ProjectApiKeyRepository projectApiKeyRepository) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
+        this.projectApiKeyRepository = projectApiKeyRepository;
     }
 
     @Bean
     public JwtAuthenticationFilter jwtAuthenticationFilter() {
         return new JwtAuthenticationFilter(jwtService, userRepository);
+    }
+
+    @Bean
+    public ApiKeyAuthenticationFilter apiKeyAuthenticationFilter() {
+        return new ApiKeyAuthenticationFilter(projectApiKeyRepository);
     }
 
     @Bean
@@ -46,6 +56,7 @@ public class SecurityConfig {
                 ).permitAll()
                 .anyRequest().authenticated()
             )
+            .addFilterBefore(apiKeyAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class)
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((request, response, authException) ->

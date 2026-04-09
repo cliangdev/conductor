@@ -1,6 +1,7 @@
 package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
+import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import org.junit.jupiter.api.Test;
@@ -26,6 +27,9 @@ class HealthControllerTest {
 
     @MockBean
     private UserRepository userRepository;
+
+    @MockBean
+    private ProjectApiKeyRepository projectApiKeyRepository;
 
     @Test
     void healthEndpointReturns200WithStatusOk() throws Exception {
