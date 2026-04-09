@@ -18,3 +18,21 @@ export interface AuthResponse {
   accessToken: string
   user: User
 }
+
+export type MemberRole = 'ADMIN' | 'CREATOR' | 'REVIEWER'
+
+export interface Member {
+  userId: string
+  name: string
+  email: string
+  avatarUrl: string | null
+  role: MemberRole
+  joinedAt: string
+}
+
+export interface Invite {
+  id: string
+  email: string
+  role: MemberRole
+  expiresAt: string
+}

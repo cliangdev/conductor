@@ -11,6 +11,7 @@ interface ProjectContextValue {
   projects: Project[]
   activeProject: Project | null
   setActiveProject: (project: Project) => void
+  addProject: (project: Project) => void
   loading: boolean
 }
 
@@ -59,8 +60,12 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(ACTIVE_PROJECT_KEY, project.id)
   }
 
+  function addProject(project: Project) {
+    setProjects((prev) => [...prev, project])
+  }
+
   return (
-    <ProjectContext.Provider value={{ projects, activeProject, setActiveProject, loading }}>
+    <ProjectContext.Provider value={{ projects, activeProject, setActiveProject, addProject, loading }}>
       {children}
     </ProjectContext.Provider>
   )
