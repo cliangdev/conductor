@@ -8,7 +8,7 @@ interface AuthContextValue {
   user: User | null
   accessToken: string | null
   loading: boolean
-  signIn: () => Promise<void>
+  signIn: (credentials?: { email: string; password: string }) => Promise<void>
   signOut: () => Promise<void>
 }
 
@@ -46,7 +46,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(false)
   }, [])
 
-  async function signIn(): Promise<void> {
+  async function signIn(credentials?: { email: string; password: string }): Promise<void> {
+    const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
+
+    if (isLocalMode && credentials) {
+      const response = await apiPost<AuthResponse>('/api/v1/auth/local', credentials)
+      setUser(response.user)
+      setAccessToken(response.accessToken)
+      localStorage.setItem('access_token', response.accessToken)
+      setAccessTokenCookie(response.accessToken)
+      return
+    }
+
     const { getFirebaseAuth } = await import('@/lib/firebase')
     const { GoogleAuthProvider, signInWithPopup, getIdToken } = await import('firebase/auth')
 
@@ -72,9 +83,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Continue sign out even if backend call fails
       }
     }
-    const { getFirebaseAuth } = await import('@/lib/firebase')
-    const { signOut: firebaseSignOut } = await import('firebase/auth')
-    await firebaseSignOut(getFirebaseAuth())
+
+    const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
+    if (!isLocalMode) {
+      const { getFirebaseAuth } = await import('@/lib/firebase')
+      const { signOut: firebaseSignOut } = await import('firebase/auth')
+      await firebaseSignOut(getFirebaseAuth())
+    }
+
     setUser(null)
     setAccessToken(null)
     localStorage.removeItem('access_token')
