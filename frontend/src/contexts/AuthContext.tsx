@@ -1,0 +1,89 @@
+'use client'
+
+import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import type { User, AuthResponse } from '@/types'
+import { apiPost } from '@/lib/api'
+
+interface AuthContextValue {
+  user: User | null
+  accessToken: string | null
+  loading: boolean
+  signIn: () => Promise<void>
+  signOut: () => Promise<void>
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null)
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider')
+  return ctx
+}
+
+function setAccessTokenCookie(token: string) {
+  if (typeof document !== 'undefined') {
+    document.cookie = `access_token=${token}; path=/; SameSite=Lax`
+  }
+}
+
+function clearAccessTokenCookie() {
+  if (typeof document !== 'undefined') {
+    document.cookie = 'access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT'
+  }
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null)
+  const [accessToken, setAccessToken] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const storedToken = localStorage.getItem('access_token')
+    if (storedToken) {
+      setAccessToken(storedToken)
+      setAccessTokenCookie(storedToken)
+    }
+    setLoading(false)
+  }, [])
+
+  async function signIn(): Promise<void> {
+    const { getFirebaseAuth } = await import('@/lib/firebase')
+    const { GoogleAuthProvider, signInWithPopup, getIdToken } = await import('firebase/auth')
+
+    const auth = getFirebaseAuth()
+    const provider = new GoogleAuthProvider()
+    const credential = await signInWithPopup(auth, provider)
+    const idToken = await getIdToken(credential.user)
+
+    const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
+
+    setUser(response.user)
+    setAccessToken(response.accessToken)
+    localStorage.setItem('access_token', response.accessToken)
+    setAccessTokenCookie(response.accessToken)
+  }
+
+  async function signOut(): Promise<void> {
+    const token = accessToken
+    if (token) {
+      try {
+        await apiPost('/api/v1/auth/logout', {}, token)
+      } catch {
+        // Continue sign out even if backend call fails
+      }
+    }
+    const { getFirebaseAuth } = await import('@/lib/firebase')
+    const { signOut: firebaseSignOut } = await import('firebase/auth')
+    await firebaseSignOut(getFirebaseAuth())
+    setUser(null)
+    setAccessToken(null)
+    localStorage.removeItem('access_token')
+    clearAccessTokenCookie()
+  }
+
+  return (
+    <AuthContext.Provider value={{ user, accessToken, loading, signIn, signOut }}>
+      {children}
+    </AuthContext.Provider>
+  )
+}
