@@ -38,14 +38,14 @@ services:
 
   frontend:
     build:
-      context: ./frontend-frontend
+      context: ./conductor-frontend
       target: dev
     environment:
       NEXT_PUBLIC_AUTH_MODE: local
       NEXT_PUBLIC_API_URL: http://backend:8080
       WATCHPACK_POLLING: "true"
     volumes:
-      - ./frontend-frontend/src:/app/src
+      - ./conductor-frontend/src:/app/src
     ports:
       - "3000:3000"
     depends_on:

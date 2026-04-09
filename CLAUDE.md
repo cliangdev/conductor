@@ -7,7 +7,7 @@ Team PRD collaboration platform. Claude Code generates PRDs; this app handles re
 ```
 conductor/
 ├── conductor-backend/     # Spring Boot 3.3.4, Java 21, Maven
-├── frontend-frontend/     # Next.js 14, TypeScript, Tailwind, shadcn/ui
+├── conductor-frontend/    # Next.js 14, TypeScript, Tailwind, shadcn/ui
 └── conductor-tools/
     ├── cli/               # @conductor/cli — npm package, Commander.js
     └── mcp/               # @conductor/mcp — MCP server, stdio transport
@@ -39,7 +39,7 @@ src/main/resources/
 
 **Run**: `mvn spring-boot:run` · **Test**: `mvn test`
 
-## frontend-frontend
+## conductor-frontend
 
 Next.js 14 App Router. Auth via `AuthContext` (Firebase JS SDK + app JWT). Project scope via `ProjectContext`.
 

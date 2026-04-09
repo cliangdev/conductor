@@ -14,7 +14,7 @@ down:
 
 e2e:
 	docker compose up -d --wait || true
-	cd frontend-frontend && npx playwright test
+	cd conductor-frontend && npx playwright test
 
 seed:
 	@echo "Seeding local development data..."
