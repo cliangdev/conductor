@@ -5,6 +5,8 @@ import { registerLogout } from './commands/logout.js'
 import { registerInit } from './commands/init.js'
 import { registerStatus } from './commands/status.js'
 import { registerDoctor } from './commands/doctor.js'
+import { registerIssue } from './commands/issue.js'
+import { registerDoc } from './commands/doc.js'
 
 const program = new Command()
 
@@ -18,5 +20,7 @@ registerLogout(program)
 registerInit(program)
 registerStatus(program)
 registerDoctor(program)
+registerIssue(program)
+registerDoc(program)
 
 program.parse()
