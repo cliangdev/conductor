@@ -154,4 +154,31 @@ public class DocumentService {
                 .storagePath(document.getStoragePath())
                 .updatedAt(document.getUpdatedAt());
     }
+
+    private DocumentResponse toEnrichedDocumentResponse(Document document) {
+        int expiryMinutes = gcpStorageConfig.getSignedUrlExpiryMinutes();
+
+        String storageUrl = null;
+        OffsetDateTime storageUrlExpiresAt = null;
+        if (document.getStoragePath() != null) {
+            storageUrl = gcpStorageService.generateSignedUrl(document.getStoragePath(), expiryMinutes);
+            storageUrlExpiresAt = OffsetDateTime.now().plus(expiryMinutes, ChronoUnit.MINUTES);
+        }
+
+        String inlineContent = TEXT_CONTENT_TYPES.contains(document.getContentType())
+                ? document.getContent()
+                : null;
+
+        return new DocumentResponse(
+                document.getId(),
+                document.getIssue().getId(),
+                document.getFilename(),
+                document.getContentType(),
+                document.getCreatedAt())
+                .content(inlineContent)
+                .storagePath(document.getStoragePath())
+                .storageUrl(storageUrl)
+                .storageUrlExpiresAt(storageUrlExpiresAt)
+                .updatedAt(document.getUpdatedAt());
+    }
 }

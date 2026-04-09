@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.config.GcpStorageConfig;
 import com.conductor.entity.Document;
 import com.conductor.entity.Issue;
 import com.conductor.entity.IssueStatus;
@@ -23,12 +24,15 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
@@ -47,6 +51,9 @@ class DocumentServiceTest {
 
     @Mock
     private GcpStorageService gcpStorageService;
+
+    @Mock
+    private GcpStorageConfig gcpStorageConfig;
 
     @InjectMocks
     private DocumentService documentService;
@@ -278,5 +285,75 @@ class DocumentServiceTest {
 
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getId()).isEqualTo("doc-1");
+    }
+
+    @Test
+    void getDocumentReturnsStorageUrlAndExpiresAtWhenStoragePathSet() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(gcpStorageConfig.getSignedUrlExpiryMinutes()).thenReturn(15);
+        when(gcpStorageService.generateSignedUrl(eq("proj-1/issues/issue-1/doc-1/spec.md"), eq(15)))
+                .thenReturn("https://storage.googleapis.com/signed-url");
+
+        OffsetDateTime before = OffsetDateTime.now();
+        DocumentResponse response = documentService.getDocument("proj-1", "issue-1", "doc-1");
+        OffsetDateTime after = OffsetDateTime.now();
+
+        assertThat(response.getStorageUrl()).isEqualTo("https://storage.googleapis.com/signed-url");
+        assertThat(response.getStorageUrlExpiresAt()).isNotNull();
+        assertThat(response.getStorageUrlExpiresAt())
+                .isAfterOrEqualTo(before.plus(15, ChronoUnit.MINUTES))
+                .isBeforeOrEqualTo(after.plus(15, ChronoUnit.MINUTES));
+    }
+
+    @Test
+    void getDocumentContentPopulatedForTextMarkdownNullForImagePng() {
+        when(gcpStorageConfig.getSignedUrlExpiryMinutes()).thenReturn(15);
+        when(gcpStorageService.generateSignedUrl(anyString(), anyInt())).thenReturn("https://signed-url");
+
+        // text/markdown — content should be populated
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+
+        DocumentResponse textResponse = documentService.getDocument("proj-1", "issue-1", "doc-1");
+        assertThat(textResponse.getContent()).isEqualTo("# Original Content");
+
+        // image/png — content should be null
+        Document imageDocument = new Document();
+        imageDocument.setId("doc-2");
+        imageDocument.setIssue(testIssue);
+        imageDocument.setFilename("photo.png");
+        imageDocument.setContentType("image/png");
+        imageDocument.setContent("binary-data");
+        imageDocument.setStoragePath("proj-1/issues/issue-1/doc-2/photo.png");
+        imageDocument.setCreatedAt(OffsetDateTime.now());
+        imageDocument.setUpdatedAt(OffsetDateTime.now());
+
+        when(documentRepository.findByIdAndIssueId("doc-2", "issue-1")).thenReturn(Optional.of(imageDocument));
+
+        DocumentResponse imageResponse = documentService.getDocument("proj-1", "issue-1", "doc-2");
+        assertThat(imageResponse.getContent()).isNull();
+    }
+
+    @Test
+    void getDocumentStorageUrlNullWhenStoragePathIsNull() {
+        Document legacyDocument = new Document();
+        legacyDocument.setId("doc-3");
+        legacyDocument.setIssue(testIssue);
+        legacyDocument.setFilename("legacy.md");
+        legacyDocument.setContentType("text/markdown");
+        legacyDocument.setContent("# Legacy");
+        legacyDocument.setStoragePath(null);
+        legacyDocument.setCreatedAt(OffsetDateTime.now());
+        legacyDocument.setUpdatedAt(OffsetDateTime.now());
+
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndIssueId("doc-3", "issue-1")).thenReturn(Optional.of(legacyDocument));
+        when(gcpStorageConfig.getSignedUrlExpiryMinutes()).thenReturn(15);
+
+        DocumentResponse response = documentService.getDocument("proj-1", "issue-1", "doc-3");
+
+        assertThat(response.getStorageUrl()).isNull();
+        assertThat(response.getStorageUrlExpiresAt()).isNull();
     }
 }

@@ -22,6 +22,8 @@ tags:
     description: Issue management endpoints
   - name: documents
     description: Document management endpoints
+  - name: api-keys
+    description: API key management endpoints
 
 paths:
   /health:
@@ -865,6 +867,173 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /auth/cli-callback:
+    get:
+      tags:
+        - auth
+      summary: CLI login callback — generates API key and sends to CLI
+      operationId: cliCallback
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: port
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: projectId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: API key sent to CLI successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CliCallbackResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a project admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: CLI callback server not reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/api-keys:
+    post:
+      tags:
+        - api-keys
+      summary: Create a new API key for the project (Admin only)
+      operationId: createApiKey
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateApiKeyRequest"
+      responses:
+        "201":
+          description: API key created — raw key shown once
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateApiKeyResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a project admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      tags:
+        - api-keys
+      summary: List API keys for the project (key values never returned)
+      operationId: listApiKeys
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of API keys (no key values)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiKeyResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/api-keys/{keyId}:
+    delete:
+      tags:
+        - api-keys
+      summary: Revoke an API key (Admin only)
+      operationId: revokeApiKey
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: keyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: API key revoked
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a project admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: API key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /invites/{token}/accept:
     post:
       tags:
@@ -1244,8 +1413,17 @@ components:
           type: string
         content:
           type: string
+          nullable: true
+          description: Inline content for text/markdown and text/plain; null for binary types
         storagePath:
           type: string
+        storageUrl:
+          type: string
+          description: GCP V4 signed URL (valid for configured expiry, default 15 minutes)
+        storageUrlExpiresAt:
+          type: string
+          format: date-time
+          description: ISO timestamp when the signed URL expires
         createdAt:
           type: string
           format: date-time
@@ -1274,4 +1452,59 @@ components:
         content:
           type: string
         contentType:
+          type: string
+
+    CreateApiKeyRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          description: Name for the API key
+
+    CreateApiKeyResponse:
+      type: object
+      required:
+        - id
+        - name
+        - key
+        - createdAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        key:
+          type: string
+          description: Raw API key — shown once only
+        createdAt:
+          type: string
+          format: date-time
+
+    ApiKeyResponse:
+      type: object
+      required:
+        - id
+        - name
+        - createdAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+
+    CliCallbackResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
           type: string
