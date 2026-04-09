@@ -42,6 +42,62 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(BusinessException.class)
+    public ProblemDetail handleBusinessException(BusinessException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    public ProblemDetail handleConflictException(ConflictException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(InviteExpiredException.class)
+    public ProblemDetail handleInviteExpiredException(InviteExpiredException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.GONE);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    public ProblemDetail handleForbiddenException(ForbiddenException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(CliNotReachableException.class)
+    public ProblemDetail handleCliNotReachableException(CliNotReachableException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_GATEWAY);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(StorageUploadException.class)
+    public ProblemDetail handleStorageUploadException(StorageUploadException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(FileTooLargeException.class)
+    public ProblemDetail handleFileTooLargeException(FileTooLargeException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.PAYLOAD_TOO_LARGE);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ProblemDetail handleValidationException(MethodArgumentNotValidException e) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
