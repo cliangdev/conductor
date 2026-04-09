@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ProjectIssueFlowE2ETest {
 
     @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:18-alpine");
 
     @DynamicPropertySource
     static void dbProps(DynamicPropertyRegistry registry) {

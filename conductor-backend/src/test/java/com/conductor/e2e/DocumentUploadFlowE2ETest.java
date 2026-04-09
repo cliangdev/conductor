@@ -24,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DocumentUploadFlowE2ETest {
 
     @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:15-alpine");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:18-alpine");
 
     static final java.nio.file.Path STORAGE_DIR;
 

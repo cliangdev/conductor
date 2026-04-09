@@ -1,5 +1,5 @@
 # Stage 1: Dependencies (cached layer)
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
@@ -16,7 +16,7 @@ COPY . .
 RUN npm run build
 
 # Stage 4: Production runtime
-FROM node:20-alpine AS prod
+FROM node:22-alpine AS prod
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app/.next/standalone ./
