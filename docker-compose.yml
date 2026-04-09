@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-conductor}
+      POSTGRES_USER: ${POSTGRES_USER:-conductor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-conductor}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-conductor}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./conductor-backend
+      target: runtime
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DATABASE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-conductor}
+      DATABASE_USERNAME: ${POSTGRES_USER:-conductor}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-conductor}
+      JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-in-production}
+      LOCAL_STORAGE_PATH: /app/local-uploads
+      LOCAL_DEV_PASSWORD: ${LOCAL_DEV_PASSWORD:-conductor}
+      SERVER_BASE_URL: ${SERVER_BASE_URL:-http://localhost:8080}
+    volumes:
+      - ./local-uploads:/app/local-uploads
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend-frontend
+      target: dev
+    environment:
+      NEXT_PUBLIC_AUTH_MODE: local
+      NEXT_PUBLIC_API_URL: http://backend:8080
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ./frontend-frontend/src:/app/src
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  postgres-data:

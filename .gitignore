@@ -28,5 +28,8 @@ frontend-frontend/.env.local
 # Flux workflow data
 .flux/
 
+# Local dev uploads (docker volume mount)
+local-uploads/
+
 # Misc
 *.log
