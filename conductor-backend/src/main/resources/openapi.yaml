@@ -1888,6 +1888,9 @@ components:
       properties:
         id:
           type: string
+        token:
+          type: string
+          description: Invite token used to accept the invite
         email:
           type: string
         role:

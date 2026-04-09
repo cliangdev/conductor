@@ -152,6 +152,7 @@ public class InviteService {
                 invite.getEmail(),
                 invite.getRole().name(),
                 invite.getExpiresAt())
+                .token(invite.getToken())
                 .status(invite.getStatus());
     }
 }
