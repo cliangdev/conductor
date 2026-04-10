@@ -36,6 +36,8 @@ jobs:
           image: ${{ env.IMAGE }}
           secrets: |
             DATABASE_URL=DATABASE_URL:latest
+            DATABASE_USERNAME=DATABASE_USERNAME:latest
+            DATABASE_PASSWORD=DATABASE_PASSWORD:latest
             APP_JWT_SECRET=APP_JWT_SECRET:latest
             FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest
             RESEND_API_KEY=RESEND_API_KEY:latest
