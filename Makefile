@@ -1,4 +1,4 @@
-.PHONY: dev build logs down seed e2e
+.PHONY: dev build logs down seed e2e e2e-ui
 
 dev:
 	docker compose up --build
@@ -15,6 +15,10 @@ down:
 e2e:
 	docker compose up -d --wait || true
 	cd conductor-frontend && npx playwright test
+
+e2e-ui:
+	docker compose up -d --wait || true
+	cd conductor-frontend && npx playwright test --ui
 
 seed:
 	@echo "Seeding local development data..."

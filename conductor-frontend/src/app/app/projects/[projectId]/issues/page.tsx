@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
+import { useProject } from '@/contexts/ProjectContext'
 import { apiGet } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 
@@ -61,6 +62,13 @@ export default function IssuesListPage() {
   const params = useParams<{ projectId: string }>()
   const { projectId } = params
   const { accessToken } = useAuth()
+  const { projects, setActiveProject } = useProject()
+
+  // Sync the navbar project selector with the current URL
+  useEffect(() => {
+    const project = projects.find((p) => p.id === projectId)
+    if (project) setActiveProject(project)
+  }, [projectId, projects])
 
   const [issues, setIssues] = useState<IssueWithReviewers[]>([])
   const [loading, setLoading] = useState(true)

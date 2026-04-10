@@ -42,7 +42,7 @@ services:
       target: dev
     environment:
       NEXT_PUBLIC_AUTH_MODE: local
-      NEXT_PUBLIC_API_URL: http://backend:8080
+      NEXT_PUBLIC_API_URL: http://localhost:8080
       WATCHPACK_POLLING: "true"
     volumes:
       - ./conductor-frontend/src:/app/src

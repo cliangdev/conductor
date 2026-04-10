@@ -75,7 +75,7 @@ export default function NewProjectPage() {
 
       addProject(project)
       setActiveProject(project)
-      router.push(`/app/projects/${project.id}`)
+      router.push(`/app/projects/${project.id}/issues`)
     } catch {
       setServerError('Failed to create project. Please try again.')
     } finally {

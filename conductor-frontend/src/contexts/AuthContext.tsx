@@ -39,9 +39,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const storedToken = localStorage.getItem('access_token')
+    const storedUser = localStorage.getItem('user')
     if (storedToken) {
       setAccessToken(storedToken)
       setAccessTokenCookie(storedToken)
+      if (storedUser) {
+        try {
+          setUser(JSON.parse(storedUser))
+        } catch {
+          // Ignore malformed stored user
+        }
+      }
     }
     setLoading(false)
   }, [])
@@ -54,6 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(response.user)
       setAccessToken(response.accessToken)
       localStorage.setItem('access_token', response.accessToken)
+      localStorage.setItem('user', JSON.stringify(response.user))
       setAccessTokenCookie(response.accessToken)
       return
     }
@@ -71,6 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(response.user)
     setAccessToken(response.accessToken)
     localStorage.setItem('access_token', response.accessToken)
+    localStorage.setItem('user', JSON.stringify(response.user))
     setAccessTokenCookie(response.accessToken)
   }
 
@@ -94,6 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
     setAccessToken(null)
     localStorage.removeItem('access_token')
+    localStorage.removeItem('user')
     clearAccessTokenCookie()
   }
 
