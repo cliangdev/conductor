@@ -22,11 +22,13 @@ interface StatusDropdownProps {
   onStatusChanged: (newStatus: string) => void
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  DRAFT: 'border-gray-300 bg-gray-100 text-gray-700',
-  IN_REVIEW: 'border-blue-300 bg-blue-100 text-blue-700',
-  APPROVED: 'border-green-300 bg-green-100 text-green-700',
-  CLOSED: 'border-red-300 bg-red-100 text-red-700',
+type StatusVariant = 'status-draft' | 'status-review' | 'status-approved' | 'status-closed'
+
+const STATUS_VARIANTS: Record<string, StatusVariant> = {
+  DRAFT: 'status-draft',
+  IN_REVIEW: 'status-review',
+  APPROVED: 'status-approved',
+  CLOSED: 'status-closed',
 }
 
 const VALID_TRANSITIONS: Record<string, Status[]> = {
@@ -46,12 +48,12 @@ export function StatusDropdown({
 }: StatusDropdownProps) {
   const [loading, setLoading] = useState(false)
 
-  const statusStyle = STATUS_STYLES[currentStatus] ?? STATUS_STYLES.DRAFT
+  const currentVariant = STATUS_VARIANTS[currentStatus] ?? 'status-draft'
   const displayLabel = currentStatus.replace('_', ' ')
 
   if (userRole === 'REVIEWER') {
     return (
-      <Badge className={`border ${statusStyle}`}>{displayLabel}</Badge>
+      <Badge variant={currentVariant}>{displayLabel}</Badge>
     )
   }
 
@@ -75,7 +77,7 @@ export function StatusDropdown({
 
   if (transitions.length === 0) {
     return (
-      <Badge className={`border ${statusStyle}`}>{displayLabel}</Badge>
+      <Badge variant={currentVariant}>{displayLabel}</Badge>
     )
   }
 
@@ -83,7 +85,7 @@ export function StatusDropdown({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button disabled={loading} className="focus:outline-none">
-          <Badge className={`border ${statusStyle} cursor-pointer hover:opacity-80 transition-opacity`}>
+          <Badge variant={currentVariant} className="cursor-pointer hover:opacity-80 transition-opacity">
             {displayLabel}
             <span className="ml-1 text-xs opacity-60">▼</span>
           </Badge>
@@ -96,7 +98,7 @@ export function StatusDropdown({
             onClick={() => handleSelect(status)}
             className="cursor-pointer"
           >
-            <Badge className={`border ${STATUS_STYLES[status] ?? STATUS_STYLES.DRAFT} mr-2`}>
+            <Badge variant={STATUS_VARIANTS[status] ?? 'status-draft'} className="mr-2">
               {status.replace('_', ' ')}
             </Badge>
           </DropdownMenuItem>

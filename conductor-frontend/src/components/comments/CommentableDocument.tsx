@@ -30,10 +30,7 @@ interface LineThreadState {
   showForm: boolean
 }
 
-function buildHighlightedContent(
-  content: string,
-  selectionComments: Comment[]
-): string {
+function buildHighlightedContent(content: string, selectionComments: Comment[]): string {
   if (selectionComments.length === 0) return content
 
   const sorted = [...selectionComments]
@@ -116,9 +113,7 @@ export function CommentableDocument({
 
   const handleMouseUp = useCallback(() => {
     const selection = window.getSelection()
-    if (!selection || selection.isCollapsed || !contentRef.current) {
-      return
-    }
+    if (!selection || selection.isCollapsed || !contentRef.current) return
     if (!contentRef.current.contains(selection.anchorNode)) return
 
     const offsets = getSelectionOffsets(contentRef.current, selection)
@@ -182,109 +177,125 @@ export function CommentableDocument({
   const useHighlighted = selectionComments.some((c) => !c.resolvedAt)
 
   return (
-    <div className="relative flex gap-0">
-      {/* Gutter */}
-      <div className="w-8 shrink-0 select-none" aria-label="comment gutter">
-        {lines.map((_, idx) => {
-          const lineNum = idx + 1
-          const lineHasComments = commentsForLine(lineNum).length > 0
-          const isOpen =
-            openLineThread?.lineNumber === lineNum
+    <div className="relative">
+      <div className="flex gap-0">
+        {/* Gutter — desktop only (line comments require hover precision) */}
+        <div className="hidden md:block w-8 shrink-0 select-none" aria-label="comment gutter">
+          {lines.map((_, idx) => {
+            const lineNum = idx + 1
+            const lineHasComments = commentsForLine(lineNum).length > 0
+            const isOpen = openLineThread?.lineNumber === lineNum
 
-          return (
+            return (
+              <div
+                key={lineNum}
+                className="relative flex items-center justify-center"
+                style={{ height: '1.625rem' }}
+              >
+                {lineHasComments ? (
+                  <button
+                    onClick={() =>
+                      setOpenLineThread(isOpen ? null : { lineNumber: lineNum, showForm: false })
+                    }
+                    className="text-sm text-primary hover:text-primary/80 leading-none"
+                    title={`${commentsForLine(lineNum).length} comment(s) on line ${lineNum}`}
+                  >
+                    💬
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setOpenLineThread({ lineNumber: lineNum, showForm: true })}
+                    className="opacity-0 hover:opacity-100 text-xs text-foreground-subtle hover:text-foreground leading-none"
+                    title={`Add comment on line ${lineNum}`}
+                  >
+                    +
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Document content */}
+        <div className="flex-1 relative min-w-0">
+          <div ref={contentRef} className="relative" onMouseUp={handleMouseUp}>
+            {useHighlighted ? (
+              <div
+                className="prose prose-sm dark:prose-invert max-w-none"
+                dangerouslySetInnerHTML={{ __html: highlightedContent }}
+              />
+            ) : (
+              <MarkdownRenderer content={content} />
+            )}
+          </div>
+
+          {/* Floating "Add comment" button — desktop only */}
+          {selectionState && !showSelectionForm && (
             <div
-              key={lineNum}
-              className="relative flex items-center justify-center"
-              style={{ height: '1.625rem' }}
+              data-comment-btn
+              className="hidden md:block absolute z-20 transform -translate-x-1/2 -translate-y-full"
+              style={{ left: selectionState.x, top: selectionState.y }}
             >
-              {lineHasComments ? (
-                <button
-                  onClick={() =>
-                    setOpenLineThread(
-                      isOpen ? null : { lineNumber: lineNum, showForm: false }
-                    )
-                  }
-                  className="text-sm text-blue-500 hover:text-blue-700 leading-none"
-                  title={`${commentsForLine(lineNum).length} comment(s) on line ${lineNum}`}
-                >
-                  💬
-                </button>
-              ) : (
-                <button
-                  onClick={() =>
-                    setOpenLineThread({ lineNumber: lineNum, showForm: true })
-                  }
-                  className="opacity-0 hover:opacity-100 text-xs text-gray-400 hover:text-gray-600 leading-none group-hover:opacity-100"
-                  title={`Add comment on line ${lineNum}`}
-                >
-                  +
-                </button>
-              )}
+              <button
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  setShowSelectionForm(true)
+                }}
+                className="bg-primary text-primary-foreground text-xs px-2 py-1 rounded shadow-md hover:bg-primary/90 whitespace-nowrap"
+              >
+                + Comment
+              </button>
             </div>
-          )
-        })}
-      </div>
+          )}
 
-      {/* Document content */}
-      <div className="flex-1 relative">
-        <div
-          ref={contentRef}
-          className="relative"
-          onMouseUp={handleMouseUp}
-        >
-          {useHighlighted ? (
+          {/* Selection comment form — desktop only */}
+          {selectionState && showSelectionForm && (
             <div
-              className="prose prose-sm max-w-none"
-              dangerouslySetInnerHTML={{ __html: highlightedContent }}
-            />
-          ) : (
-            <MarkdownRenderer content={content} />
+              data-comment-form
+              className="hidden md:block absolute z-20 transform -translate-x-1/2"
+              style={{ left: selectionState.x, top: selectionState.y }}
+            >
+              <div className="bg-card border border-border rounded shadow-lg p-3 w-72">
+                <p className="text-xs text-muted-foreground mb-2">Comment on selection</p>
+                <NewCommentForm
+                  onSubmit={handleAddSelectionComment}
+                  onCancel={() => {
+                    setSelectionState(null)
+                    setShowSelectionForm(false)
+                  }}
+                />
+              </div>
+            </div>
           )}
         </div>
 
-        {/* Floating "Add comment" button for selection */}
-        {selectionState && !showSelectionForm && (
-          <div
-            data-comment-btn
-            className="absolute z-20 transform -translate-x-1/2 -translate-y-full"
-            style={{ left: selectionState.x, top: selectionState.y }}
-          >
-            <button
-              onMouseDown={(e) => {
-                e.preventDefault()
-                setShowSelectionForm(true)
-              }}
-              className="bg-blue-600 text-white text-xs px-2 py-1 rounded shadow-md hover:bg-blue-700 whitespace-nowrap"
-            >
-              + Comment
-            </button>
-          </div>
-        )}
-
-        {/* Selection comment form */}
-        {selectionState && showSelectionForm && (
-          <div
-            data-comment-form
-            className="absolute z-20 transform -translate-x-1/2"
-            style={{ left: selectionState.x, top: selectionState.y }}
-          >
-            <div className="bg-white border border-gray-200 rounded shadow-lg p-3 w-72">
-              <p className="text-xs text-gray-500 mb-2">Comment on selection</p>
-              <NewCommentForm
-                onSubmit={handleAddSelectionComment}
-                onCancel={() => {
-                  setSelectionState(null)
-                  setShowSelectionForm(false)
-                }}
+        {/* Selection comments sidebar — desktop only */}
+        {selectionComments.length > 0 && (
+          <div className="hidden md:block w-64 ml-4 shrink-0 space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+              Selection Comments
+            </p>
+            {selectionComments.map((c) => (
+              <CommentThread
+                key={c.id}
+                comment={c}
+                projectId={projectId}
+                issueId={issueId}
+                currentUserId={currentUserId}
+                token={token}
+                onUpdated={onCommentAdded}
               />
-            </div>
+            ))}
           </div>
         )}
       </div>
 
-      {/* Inline thread panel */}
+      {/* Inline thread panel — desktop only */}
       {openLineThread && (
-        <div className="absolute left-10 z-30" style={{ top: `${(openLineThread.lineNumber - 1) * 1.625}rem` }}>
+        <div
+          className="hidden md:block absolute left-10 z-30"
+          style={{ top: `${(openLineThread.lineNumber - 1) * 1.625}rem` }}
+        >
           <div className="flex flex-col gap-2">
             {commentsForLine(openLineThread.lineNumber).map((c) => (
               <CommentThread
@@ -299,8 +310,8 @@ export function CommentableDocument({
               />
             ))}
             {(openLineThread.showForm || commentsForLine(openLineThread.lineNumber).length === 0) && (
-              <div className="bg-white border border-gray-200 rounded shadow-sm p-3 w-72">
-                <p className="text-xs text-gray-500 mb-2">
+              <div className="bg-card border border-border rounded shadow-sm p-3 w-72">
+                <p className="text-xs text-muted-foreground mb-2">
                   New comment on line {openLineThread.lineNumber}
                 </p>
                 <NewCommentForm
@@ -313,23 +324,27 @@ export function CommentableDocument({
         </div>
       )}
 
-      {/* Selection-based comments sidebar list (fallback visibility) */}
+      {/* Selection comments accordion — mobile only */}
       {selectionComments.length > 0 && (
-        <div className="w-64 ml-4 shrink-0 space-y-2">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-            Selection Comments
-          </p>
-          {selectionComments.map((c) => (
-            <CommentThread
-              key={c.id}
-              comment={c}
-              projectId={projectId}
-              issueId={issueId}
-              currentUserId={currentUserId}
-              token={token}
-              onUpdated={onCommentAdded}
-            />
-          ))}
+        <div className="md:hidden mt-4 border-t border-border pt-4">
+          <details>
+            <summary className="text-sm font-medium text-muted-foreground cursor-pointer py-1 select-none">
+              {selectionComments.length} selection comment{selectionComments.length !== 1 ? 's' : ''}
+            </summary>
+            <div className="mt-3 space-y-3">
+              {selectionComments.map((c) => (
+                <CommentThread
+                  key={c.id}
+                  comment={c}
+                  projectId={projectId}
+                  issueId={issueId}
+                  currentUserId={currentUserId}
+                  token={token}
+                  onUpdated={onCommentAdded}
+                />
+              ))}
+            </div>
+          </details>
         </div>
       )}
     </div>

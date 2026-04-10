@@ -29,11 +29,13 @@ interface IssueWithReviewers extends Issue {
   reviewers?: IssueReviewer[]
 }
 
-const STATUS_STYLES: Record<string, string> = {
-  DRAFT: 'border-gray-300 bg-gray-100 text-gray-700',
-  IN_REVIEW: 'border-blue-300 bg-blue-100 text-blue-700',
-  APPROVED: 'border-green-300 bg-green-100 text-green-700',
-  CLOSED: 'border-red-300 bg-red-100 text-red-700',
+type StatusVariant = 'status-draft' | 'status-review' | 'status-approved' | 'status-closed'
+
+const STATUS_VARIANTS: Record<string, StatusVariant> = {
+  DRAFT: 'status-draft',
+  IN_REVIEW: 'status-review',
+  APPROVED: 'status-approved',
+  CLOSED: 'status-closed',
 }
 
 const TYPE_OPTIONS = ['All', 'PRD', 'RFC', 'BUG', 'TASK'] as const
@@ -64,7 +66,6 @@ export default function IssuesListPage() {
   const { accessToken } = useAuth()
   const { projects, setActiveProject } = useProject()
 
-  // Sync the navbar project selector with the current URL
   useEffect(() => {
     const project = projects.find((p) => p.id === projectId)
     if (project) setActiveProject(project)
@@ -104,7 +105,7 @@ export default function IssuesListPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-500">
+      <div className="flex items-center justify-center h-64 text-muted-foreground">
         Loading issues...
       </div>
     )
@@ -112,22 +113,46 @@ export default function IssuesListPage() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64 text-red-500">Error: {error}</div>
+      <div className="flex items-center justify-center h-64 text-destructive">Error: {error}</div>
+    )
+  }
+
+  const ReviewerAvatars = ({ reviewers }: { reviewers?: IssueReviewer[] }) => {
+    if (!reviewers || reviewers.length === 0) {
+      return <span className="text-foreground-subtle text-xs">—</span>
+    }
+    return (
+      <div className="flex items-center gap-1 flex-wrap">
+        {reviewers.map((r) => (
+          <div key={r.userId} className="flex items-center gap-0.5" title={r.name}>
+            {r.avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={r.avatarUrl} alt={r.name} className="w-5 h-5 rounded-full border border-border" />
+            ) : (
+              <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">
+                {r.name.charAt(0).toUpperCase()}
+              </div>
+            )}
+            <span className="text-xs">{verdictIcon(r.reviewVerdict)}</span>
+          </div>
+        ))}
+      </div>
     )
   }
 
   return (
-    <div className="p-6">
-      <h1 className="text-xl font-semibold text-gray-900 mb-4">Issues</h1>
+    <div className="p-4 sm:p-6">
+      <h1 className="text-xl font-semibold text-foreground mb-4">Issues</h1>
 
-      <div className="flex gap-3 mb-4">
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 mb-4">
         <div className="flex items-center gap-2">
-          <label htmlFor="type-filter" className="text-sm text-gray-600">Type:</label>
+          <label htmlFor="type-filter" className="text-sm text-muted-foreground">Type:</label>
           <select
             id="type-filter"
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
-            className="border border-gray-200 rounded-md px-2 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-border bg-background text-foreground rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
             {TYPE_OPTIONS.map((t) => (
               <option key={t} value={t}>{t}</option>
@@ -136,12 +161,12 @@ export default function IssuesListPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <label htmlFor="status-filter" className="text-sm text-gray-600">Status:</label>
+          <label htmlFor="status-filter" className="text-sm text-muted-foreground">Status:</label>
           <select
             id="status-filter"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="border border-gray-200 rounded-md px-2 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-border bg-background text-foreground rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
             {STATUS_OPTIONS.map((s) => (
               <option key={s} value={s}>{s.replace('_', ' ')}</option>
@@ -151,77 +176,77 @@ export default function IssuesListPage() {
       </div>
 
       {filteredIssues.length === 0 ? (
-        <div className="flex items-center justify-center h-48 text-gray-400 border border-dashed border-gray-200 rounded-lg">
+        <div className="flex items-center justify-center h-48 text-muted-foreground border border-dashed border-border rounded-lg">
           No issues yet
         </div>
       ) : (
-        <div className="border border-gray-200 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Reviewers</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Last Updated</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filteredIssues.map((issue) => (
-                <tr key={issue.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/app/projects/${projectId}/issues/${issue.id}`}
-                      className="text-blue-600 hover:underline font-medium"
-                    >
-                      {issue.title}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge className="border bg-gray-50 text-gray-600 border-gray-200">
-                      {issue.type}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge className={`border ${STATUS_STYLES[issue.status] ?? STATUS_STYLES.DRAFT}`}>
-                      {issue.status.replace('_', ' ')}
-                    </Badge>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-1">
-                      {issue.reviewers && issue.reviewers.length > 0 ? (
-                        issue.reviewers.map((r) => (
-                          <div
-                            key={r.userId}
-                            className="flex items-center gap-0.5"
-                            title={r.name}
-                          >
-                            {r.avatarUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={r.avatarUrl}
-                                alt={r.name}
-                                className="w-5 h-5 rounded-full border border-gray-200"
-                              />
-                            ) : (
-                              <div className="w-5 h-5 rounded-full bg-gray-300 flex items-center justify-center text-xs font-medium text-gray-600">
-                                {r.name.charAt(0).toUpperCase()}
-                              </div>
-                            )}
-                            <span className="text-xs">{verdictIcon(r.reviewVerdict)}</span>
-                          </div>
-                        ))
-                      ) : (
-                        <span className="text-gray-400 text-xs">—</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-gray-500">{formatDate(issue.updatedAt)}</td>
+        <>
+          {/* Mobile card list */}
+          <div className="md:hidden space-y-2">
+            {filteredIssues.map((issue) => (
+              <Link
+                key={issue.id}
+                href={`/app/projects/${projectId}/issues/${issue.id}`}
+                className="block bg-card border border-border rounded-lg p-4 hover:border-border-strong transition-colors"
+              >
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <span className="font-medium text-foreground text-sm leading-snug">{issue.title}</span>
+                  <Badge variant={STATUS_VARIANTS[issue.status] ?? 'status-draft'} className="shrink-0">
+                    {issue.status.replace('_', ' ')}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="text-xs">{issue.type}</Badge>
+                  <div className="flex items-center gap-1 ml-auto">
+                    <ReviewerAvatars reviewers={issue.reviewers} />
+                  </div>
+                  <span className="text-foreground-subtle text-xs w-full">{formatDate(issue.updatedAt)}</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block border border-border rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted border-b border-border">
+                <tr>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Title</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Type</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Reviewers</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Last Updated</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {filteredIssues.map((issue) => (
+                  <tr key={issue.id} className="hover:bg-muted/50 transition-colors">
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/app/projects/${projectId}/issues/${issue.id}`}
+                        className="text-primary hover:underline font-medium"
+                      >
+                        {issue.title}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant="outline">{issue.type}</Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant={STATUS_VARIANTS[issue.status] ?? 'status-draft'}>
+                        {issue.status.replace('_', ' ')}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <ReviewerAvatars reviewers={issue.reviewers} />
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{formatDate(issue.updatedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   )

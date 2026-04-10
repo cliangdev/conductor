@@ -60,14 +60,14 @@ export function ReviewSubmissionForm({
   }
 
   return (
-    <div className="border rounded-lg p-4 bg-white">
-      <h3 className="text-sm font-semibold text-gray-900 mb-3">Submit Review</h3>
+    <div className="border border-border rounded-lg p-4 bg-card">
+      <h3 className="text-sm font-semibold text-foreground mb-3">Submit Review</h3>
 
       {!isAssignedReviewer && (
-        <p className="text-xs text-gray-500 italic mb-3">You are not an assigned reviewer</p>
+        <p className="text-xs text-muted-foreground italic mb-3">You are not an assigned reviewer</p>
       )}
 
-      <div className="flex gap-2 mb-3">
+      <div className="flex flex-wrap gap-2 mb-3">
         {VERDICT_OPTIONS.map((option) => (
           <button
             key={option.value}
@@ -75,8 +75,8 @@ export function ReviewSubmissionForm({
             disabled={!isAssignedReviewer}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors ${
               selectedVerdict === option.value
-                ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
-                : 'border-gray-200 bg-gray-50 text-gray-600 hover:bg-gray-100'
+                ? 'border-primary bg-primary/10 text-primary font-medium'
+                : 'border-border bg-muted text-muted-foreground hover:bg-muted/80'
             } disabled:opacity-50 disabled:cursor-not-allowed`}
           >
             <span>{option.icon}</span>
@@ -91,10 +91,10 @@ export function ReviewSubmissionForm({
         disabled={!isAssignedReviewer}
         placeholder="Add a comment (optional)"
         rows={3}
-        className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50 disabled:bg-gray-50"
+        className="w-full border border-input bg-background text-foreground rounded-md px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none disabled:opacity-50 disabled:bg-muted"
       />
 
-      {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
+      {error && <p className="text-xs text-destructive mt-2">{error}</p>}
 
       <div className="mt-3 flex justify-end">
         <Button

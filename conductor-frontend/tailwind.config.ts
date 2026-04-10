@@ -10,38 +10,58 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: 'var(--background)',
-        foreground: 'var(--foreground)',
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
+        'foreground-muted': 'hsl(var(--foreground-muted))',
+        'foreground-subtle': 'hsl(var(--foreground-subtle))',
+        surface: {
+          DEFAULT: 'hsl(var(--surface))',
+          raised: 'hsl(var(--surface-raised))',
+        },
         card: {
-          DEFAULT: 'var(--card)',
-          foreground: 'var(--card-foreground)',
+          DEFAULT: 'hsl(var(--card))',
+          foreground: 'hsl(var(--card-foreground))',
         },
         popover: {
-          DEFAULT: 'var(--popover)',
-          foreground: 'var(--popover-foreground)',
+          DEFAULT: 'hsl(var(--popover))',
+          foreground: 'hsl(var(--popover-foreground))',
         },
         primary: {
-          DEFAULT: 'var(--primary)',
-          foreground: 'var(--primary-foreground)',
+          DEFAULT: 'hsl(var(--primary))',
+          foreground: 'hsl(var(--primary-foreground))',
         },
         secondary: {
-          DEFAULT: 'var(--secondary)',
-          foreground: 'var(--secondary-foreground)',
+          DEFAULT: 'hsl(var(--secondary))',
+          foreground: 'hsl(var(--secondary-foreground))',
         },
         muted: {
-          DEFAULT: 'var(--muted)',
-          foreground: 'var(--muted-foreground)',
+          DEFAULT: 'hsl(var(--muted))',
+          foreground: 'hsl(var(--muted-foreground))',
         },
         accent: {
-          DEFAULT: 'var(--accent)',
-          foreground: 'var(--accent-foreground)',
+          DEFAULT: 'hsl(var(--accent))',
+          foreground: 'hsl(var(--accent-foreground))',
         },
         destructive: {
-          DEFAULT: 'var(--destructive)',
+          DEFAULT: 'hsl(var(--destructive))',
         },
-        border: 'var(--border)',
-        input: 'var(--input)',
-        ring: 'var(--ring)',
+        border: 'hsl(var(--border))',
+        'border-strong': 'hsl(var(--border-strong))',
+        input: 'hsl(var(--input))',
+        ring: 'hsl(var(--ring))',
+        sidebar: {
+          bg: 'hsl(var(--sidebar-bg))',
+          border: 'hsl(var(--sidebar-border))',
+          hover: 'hsl(var(--sidebar-item-hover))',
+          active: 'hsl(var(--sidebar-item-active))',
+          'active-text': 'hsl(var(--sidebar-item-active-text))',
+        },
+        status: {
+          draft: 'hsl(var(--status-draft))',
+          review: 'hsl(var(--status-review))',
+          approved: 'hsl(var(--status-approved))',
+          closed: 'hsl(var(--status-closed))',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',
@@ -50,7 +70,7 @@ const config: Config = {
       },
     },
   },
-  plugins: [],
+  plugins: [require('@tailwindcss/typography')],
 }
 
 export default config

@@ -16,16 +16,16 @@ export function Modal({ open, onOpenChange, title, description, children }: Moda
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 bg-black/40 z-40" />
+        <Dialog.Backdrop className="fixed inset-0 bg-black/40 dark:bg-black/60 z-40" />
         <Dialog.Popup
           className={cn(
             'fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2',
-            'w-full max-w-md rounded-lg bg-white p-6 shadow-lg',
+            'w-full max-w-md mx-4 rounded-lg bg-popover border border-border p-6 shadow-lg',
           )}
         >
-          <Dialog.Title className="text-lg font-semibold text-gray-900">{title}</Dialog.Title>
+          <Dialog.Title className="text-lg font-semibold text-foreground">{title}</Dialog.Title>
           {description && (
-            <Dialog.Description className="mt-1 text-sm text-gray-500">
+            <Dialog.Description className="mt-1 text-sm text-muted-foreground">
               {description}
             </Dialog.Description>
           )}
