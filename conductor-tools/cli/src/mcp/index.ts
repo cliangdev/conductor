@@ -4,7 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { getConfig } from './config.js'
 import { createIssue, updateIssue, setIssueStatus, listIssues, getIssue } from './tools/issues.js'
-import { createDocument, updateDocument, deleteDocument, scaffoldDocument } from './tools/documents.js'
+import { deleteDocument, scaffoldDocument } from './tools/documents.js'
 
 const TOOLS = [
   {
@@ -65,32 +65,6 @@ const TOOLS = [
         issueId: { type: 'string', description: 'Issue ID' },
       },
       required: ['issueId'],
-    },
-  },
-  {
-    name: 'create_document',
-    description: 'Create a document attached to an issue',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue ID' },
-        filename: { type: 'string', description: 'Document filename' },
-        content: { type: 'string', description: 'Document content' },
-      },
-      required: ['issueId', 'filename', 'content'],
-    },
-  },
-  {
-    name: 'update_document',
-    description: 'Update a document attached to an issue',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue ID' },
-        documentId: { type: 'string', description: 'Document ID' },
-        content: { type: 'string', description: 'New document content' },
-      },
-      required: ['issueId', 'documentId', 'content'],
     },
   },
   {
@@ -222,28 +196,6 @@ async function main() {
         case 'get_issue': {
           const result = await getIssue(
             { issueId: params['issueId'] as string },
-            config
-          )
-          return successResponse(result)
-        }
-        case 'create_document': {
-          const result = await createDocument(
-            {
-              issueId: params['issueId'] as string,
-              filename: params['filename'] as string,
-              content: params['content'] as string,
-            },
-            config
-          )
-          return successResponse(result)
-        }
-        case 'update_document': {
-          const result = await updateDocument(
-            {
-              issueId: params['issueId'] as string,
-              documentId: params['documentId'] as string,
-              content: params['content'] as string,
-            },
             config
           )
           return successResponse(result)
