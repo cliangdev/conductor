@@ -1,6 +1,7 @@
 package com.conductor.config;
 
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.security.ApiKeyAuthenticationFilter;
 import com.conductor.security.JwtAuthenticationFilter;
@@ -29,14 +30,16 @@ public class SecurityConfig {
     private final JwtService jwtService;
     private final UserRepository userRepository;
     private final ProjectApiKeyRepository projectApiKeyRepository;
+    private final UserApiKeyRepository userApiKeyRepository;
 
     @Value("${frontend.url:http://localhost:3000}")
     private String frontendUrl;
 
-    public SecurityConfig(JwtService jwtService, UserRepository userRepository, ProjectApiKeyRepository projectApiKeyRepository) {
+    public SecurityConfig(JwtService jwtService, UserRepository userRepository, ProjectApiKeyRepository projectApiKeyRepository, UserApiKeyRepository userApiKeyRepository) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
         this.projectApiKeyRepository = projectApiKeyRepository;
+        this.userApiKeyRepository = userApiKeyRepository;
     }
 
     @Bean
@@ -58,7 +61,7 @@ public class SecurityConfig {
 
     @Bean
     public ApiKeyAuthenticationFilter apiKeyAuthenticationFilter() {
-        return new ApiKeyAuthenticationFilter(projectApiKeyRepository);
+        return new ApiKeyAuthenticationFilter(projectApiKeyRepository, userApiKeyRepository);
     }
 
     @Bean
