@@ -7,6 +7,7 @@ import com.conductor.exception.StorageUploadException;
 import com.conductor.generated.model.CreateDocumentRequest;
 import com.conductor.generated.model.DocumentResponse;
 import com.conductor.generated.model.UpdateDocumentRequest;
+import com.conductor.generated.model.UpsertDocumentByFilenameRequest;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.IssueRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -112,6 +113,67 @@ public class DocumentService {
 
         documentRepository.save(document);
         return toDocumentResponse(document);
+    }
+
+    @Transactional
+    public boolean upsertDocumentByFilename(String projectId, String issueId, String filename, UpsertDocumentByFilenameRequest request) {
+        Issue issue = findIssueInProject(projectId, issueId);
+        String content = request.getContent();
+        String contentType = request.getContentType() != null ? request.getContentType() : "text/markdown";
+
+        if (content != null) {
+            byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
+            if (contentBytes.length > MAX_CONTENT_BYTES) {
+                throw new FileTooLargeException("File exceeds maximum allowed size of 50 MB");
+            }
+        }
+
+        return documentRepository.findByIssueIdAndFilename(issueId, filename)
+                .map(existing -> {
+                    if (existing.getStoragePath() != null) {
+                        uploadToGcs(existing.getStoragePath(), content.getBytes(StandardCharsets.UTF_8), contentType);
+                    }
+                    existing.setContent(content);
+                    existing.setContentType(contentType);
+                    documentRepository.save(existing);
+                    return false;
+                })
+                .orElseGet(() -> {
+                    String documentId = UUID.randomUUID().toString();
+                    String gcsPath = buildGcsPath(projectId, issueId, documentId, filename);
+                    if (content != null) {
+                        uploadToGcs(gcsPath, content.getBytes(StandardCharsets.UTF_8), contentType);
+                    }
+                    Document document = new Document();
+                    document.setId(documentId);
+                    document.setIssue(issue);
+                    document.setFilename(filename);
+                    document.setContent(content);
+                    document.setContentType(contentType);
+                    document.setStoragePath(gcsPath);
+                    documentRepository.save(document);
+                    return true;
+                });
+    }
+
+    @Transactional
+    public DocumentResponse getDocumentByFilename(String projectId, String issueId, String filename) {
+        findIssueInProject(projectId, issueId);
+        Document document = documentRepository.findByIssueIdAndFilename(issueId, filename)
+                .orElseThrow(() -> new EntityNotFoundException("Document not found"));
+        return toDocumentResponse(document);
+    }
+
+    @Transactional
+    public void deleteDocumentByFilename(String projectId, String issueId, String filename) {
+        findIssueInProject(projectId, issueId);
+        Document document = documentRepository.findByIssueIdAndFilename(issueId, filename)
+                .orElseThrow(() -> new EntityNotFoundException("Document not found"));
+        String storagePath = document.getStoragePath();
+        documentRepository.delete(document);
+        if (storagePath != null) {
+            gcpStorageService.delete(storagePath);
+        }
     }
 
     @Transactional
