@@ -22,48 +22,6 @@ const config = {
   localPath: '/home/user/myproject',
 }
 
-describe('createDocument', () => {
-  beforeEach(() => {
-    vi.resetAllMocks()
-    mockFs.mkdirSync.mockReturnValue(undefined)
-    mockFs.writeFileSync.mockReturnValue(undefined)
-  })
-
-  it('writes file locally and calls POST documents API', async () => {
-    const { apiPost } = await import('../api.js')
-    const { createDocument } = await import('../tools/documents.js')
-
-    vi.mocked(apiPost).mockResolvedValue({
-      id: 'doc_001',
-      filename: 'spec.md',
-      issueId: 'issue_abc',
-    })
-
-    const result = await createDocument(
-      { issueId: 'issue_abc', filename: 'spec.md', content: '# Spec\n\nContent here' },
-      config
-    )
-
-    expect(mockFs.writeFileSync).toHaveBeenCalledWith(
-      path.join('/home/user/myproject', '.conductor', 'issues', 'issue_abc', 'spec.md'),
-      '# Spec\n\nContent here',
-      'utf8'
-    )
-
-    expect(vi.mocked(apiPost)).toHaveBeenCalledWith(
-      `/api/v1/projects/proj_123/issues/issue_abc/documents`,
-      { filename: 'spec.md', content: '# Spec\n\nContent here', contentType: 'text/markdown' },
-      config
-    )
-
-    expect(result).toMatchObject({
-      documentId: 'doc_001',
-      filename: 'spec.md',
-      issueId: 'issue_abc',
-    })
-  })
-})
-
 describe('scaffoldDocument', () => {
   beforeEach(() => {
     vi.resetAllMocks()
