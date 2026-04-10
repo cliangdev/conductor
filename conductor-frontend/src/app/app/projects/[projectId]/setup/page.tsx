@@ -104,7 +104,7 @@ function ApiKeySection({ accessToken }: { accessToken: string | null }) {
       {newKey && (
         <div className="rounded-md border border-yellow-500/50 bg-yellow-50 dark:bg-yellow-950/20 p-3 space-y-2">
           <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-            Copy this key — it won't be shown again
+            Copy this key &mdash; it won&apos;t be shown again
           </p>
           <CodeBlock code={newKey} />
         </div>
@@ -191,7 +191,7 @@ export default function SetupPage() {
 
       <SetupStep number={5} title="MCP Configuration">
         <p className="text-sm text-muted-foreground mb-3">
-          Add this to your project's <code className="text-xs bg-muted px-1 rounded">.mcp.json</code> or Claude Desktop config:
+          Add this to your project&apos;s <code className="text-xs bg-muted px-1 rounded">.mcp.json</code> or Claude Desktop config:
         </p>
         <CodeBlock
           code={JSON.stringify({
