@@ -12,7 +12,7 @@ export async function createDocument(
   params: { issueId: string; filename: string; content: string },
   config: Config
 ): Promise<Record<string, unknown>> {
-  writeDocumentFile(config.projectId, params.issueId, params.filename, params.content)
+  writeDocumentFile(config, params.issueId, params.filename, params.content)
 
   const result = await apiPost<DocumentResponse>(
     `/api/v1/projects/${config.projectId}/issues/${params.issueId}/documents`,
@@ -38,7 +38,7 @@ export async function updateDocument(
   )
 
   if (result.filename) {
-    writeDocumentFile(config.projectId, params.issueId, result.filename, params.content)
+    writeDocumentFile(config, params.issueId, result.filename, params.content)
   }
 
   return {
@@ -52,7 +52,7 @@ export async function deleteDocument(
   params: { issueId: string; documentId: string; filename: string },
   config: Config
 ): Promise<Record<string, unknown>> {
-  deleteDocumentFile(config.projectId, params.issueId, params.filename)
+  deleteDocumentFile(config, params.issueId, params.filename)
 
   await apiDelete(
     `/api/v1/projects/${config.projectId}/issues/${params.issueId}/documents/${params.documentId}`,

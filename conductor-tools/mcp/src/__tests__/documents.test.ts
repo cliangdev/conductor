@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
 
 vi.mock('fs')
 vi.mock('../api.js', () => ({
@@ -20,6 +19,7 @@ const config = {
   projectName: 'Test Project',
   email: 'user@test.com',
   apiUrl: 'http://localhost:8080',
+  localPath: '/home/user/myproject',
 }
 
 describe('createDocument', () => {
@@ -45,7 +45,7 @@ describe('createDocument', () => {
     )
 
     expect(mockFs.writeFileSync).toHaveBeenCalledWith(
-      path.join(os.homedir(), '.conductor', 'proj_123', 'issues', 'issue_abc', 'spec.md'),
+      path.join('/home/user/myproject', '.conductor', 'issues', 'issue_abc', 'spec.md'),
       '# Spec\n\nContent here',
       'utf8'
     )
@@ -82,7 +82,7 @@ describe('deleteDocument', () => {
     )
 
     expect(mockFs.unlinkSync).toHaveBeenCalledWith(
-      path.join(os.homedir(), '.conductor', 'proj_123', 'issues', 'issue_abc', 'spec.md')
+      path.join('/home/user/myproject', '.conductor', 'issues', 'issue_abc', 'spec.md')
     )
 
     expect(vi.mocked(apiDelete)).toHaveBeenCalledWith(
