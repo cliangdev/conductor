@@ -1,4 +1,4 @@
-name: Backend CI
+name: deploy_backend
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'conductor-backend/**'
+  workflow_dispatch:
 
 jobs:
   test:
@@ -26,7 +27,7 @@ jobs:
 
   build:
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

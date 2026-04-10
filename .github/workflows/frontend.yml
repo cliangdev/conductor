@@ -1,4 +1,4 @@
-name: Frontend CI
+name: deploy_ui
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'conductor-frontend/**'
+  workflow_dispatch:
 
 jobs:
   test:
@@ -29,7 +30,7 @@ jobs:
 
   build:
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     defaults:
       run:
