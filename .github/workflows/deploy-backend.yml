@@ -34,3 +34,11 @@ jobs:
           service: conductor-backend
           region: ${{ vars.GCP_REGION }}
           image: ${{ env.IMAGE }}
+          secrets: |
+            DATABASE_URL=DATABASE_URL:latest
+            APP_JWT_SECRET=APP_JWT_SECRET:latest
+            FIREBASE_SERVICE_ACCOUNT_KEY=FIREBASE_SERVICE_ACCOUNT_KEY:latest
+            RESEND_API_KEY=RESEND_API_KEY:latest
+            GCP_SERVICE_ACCOUNT_KEY=GCP_SERVICE_ACCOUNT_KEY:latest
+            GCP_STORAGE_BUCKET_NAME=GCP_STORAGE_BUCKET_NAME:latest
+            FRONTEND_URL=FRONTEND_URL:latest
