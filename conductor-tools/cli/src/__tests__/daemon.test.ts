@@ -371,6 +371,89 @@ describe('syncFile', () => {
   })
 })
 
+// ─── T91: syncIssueMd and parseFrontmatter ───────────────────────────────────
+
+describe('syncIssueMd', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('sends PATCH with title and status from frontmatter', async () => {
+    const content = `---\nid: iss_abc\ntype: PRD\ntitle: My PRD\nstatus: DRAFT\n---\n\nDescription body`
+    mockFs.readFileSync.mockReturnValue(content)
+
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncIssueMd } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await syncIssueMd(filePath, mockConfig)
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.stringContaining('My PRD'),
+      })
+    )
+
+    const callBody = JSON.parse(mockFetch.mock.calls[0][1].body as string)
+    expect(callBody).toMatchObject({
+      title: 'My PRD',
+      status: 'DRAFT',
+      description: 'Description body',
+    })
+
+    vi.unstubAllGlobals()
+  })
+
+  it('queues change when PATCH fails', async () => {
+    const content = `---\nid: iss_abc\ntitle: My PRD\nstatus: DRAFT\n---\n\nBody`
+    mockFs.readFileSync
+      .mockReturnValueOnce(content)
+      .mockReturnValueOnce('[]')
+    mockFs.mkdirSync.mockReturnValue(undefined)
+    mockFs.writeFileSync.mockReturnValue(undefined)
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'Error',
+      statusText: 'Error',
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { syncIssueMd } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await syncIssueMd(filePath, mockConfig)
+
+    expect(mockFs.writeFileSync).toHaveBeenCalledWith(
+      path.join(os.homedir(), '.conductor', 'sync-queue.json'),
+      expect.stringContaining('iss_abc'),
+      'utf8'
+    )
+
+    consoleSpy.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('does nothing when file has no frontmatter', async () => {
+    mockFs.readFileSync.mockReturnValue('Just plain content with no frontmatter')
+
+    const mockFetch = vi.fn()
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncIssueMd } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await syncIssueMd(filePath, mockConfig)
+
+    expect(mockFetch).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+})
+
 // ─── T90: deleteFile ─────────────────────────────────────────────────────────
 
 describe('deleteFile', () => {
