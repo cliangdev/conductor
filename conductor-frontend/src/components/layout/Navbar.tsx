@@ -17,7 +17,7 @@ import { useProject } from '@/contexts/ProjectContext'
 export function Navbar() {
   const router = useRouter()
   const { user, signOut } = useAuth()
-  const { projects, activeProject, setActiveProject } = useProject()
+  const { projects, activeProject, setActiveProject, loading } = useProject()
 
   const userInitials = user?.name
     ? user.name
@@ -38,32 +38,48 @@ export function Navbar() {
       <span className="font-bold text-lg tracking-tight text-gray-900">Conductor</span>
 
       <div className="flex items-center gap-4">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="flex items-center gap-2">
-              <span className="text-sm">
-                {activeProject ? activeProject.name : 'Select project'}
-              </span>
-              <ChevronDownIcon className="h-4 w-4 text-gray-500" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="center" className="w-56">
-            {projects.map((project) => (
-              <DropdownMenuItem
-                key={project.id}
-                onSelect={() => setActiveProject(project)}
-                className={activeProject?.id === project.id ? 'font-semibold' : ''}
-              >
-                {project.name}
+        {!loading && projects.length === 0 ? (
+          <Button
+            variant="outline"
+            className="flex items-center gap-2 text-sm"
+            onClick={() => router.push('/app/projects/new')}
+          >
+            <PlusIcon className="h-4 w-4" />
+            New project
+          </Button>
+        ) : projects.length > 0 ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="flex items-center gap-2" data-testid="project-selector">
+                <span className="text-sm">
+                  {activeProject ? activeProject.name : 'Select project'}
+                </span>
+                <ChevronDownIcon className="h-4 w-4 text-gray-500" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="center" className="w-56">
+              <div className="max-h-64 overflow-y-auto">
+                {projects.map((project) => (
+                  <DropdownMenuItem
+                    key={project.id}
+                    onSelect={() => {
+                      setActiveProject(project)
+                      router.push(`/app/projects/${project.id}/issues`)
+                    }}
+                    className={activeProject?.id === project.id ? 'font-semibold' : ''}
+                  >
+                    {project.name}
+                  </DropdownMenuItem>
+                ))}
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => router.push('/app/projects/new')}>
+                <PlusIcon className="h-4 w-4 mr-2" />
+                New project
               </DropdownMenuItem>
-            ))}
-            {projects.length > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuItem onSelect={() => router.push('/app/projects/new')}>
-              <PlusIcon className="h-4 w-4 mr-2" />
-              New project
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

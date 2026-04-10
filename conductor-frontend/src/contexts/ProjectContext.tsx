@@ -42,8 +42,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
         const storedId = localStorage.getItem(ACTIVE_PROJECT_KEY)
         if (storedId) {
-          const found = data.find((p) => p.id === storedId) ?? null
-          setActiveProjectState(found)
+          const found = data.find((p) => p.id === storedId)
+          // Only set if found — don't clear active project for a stale fetch
+          // that may have raced with a just-created project
+          if (found) setActiveProjectState(found)
         }
       } catch {
         // Leave projects empty on error
