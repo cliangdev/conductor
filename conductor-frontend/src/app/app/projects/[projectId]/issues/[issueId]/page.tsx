@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet } from '@/lib/api'
+import { apiGet, apiPost, apiDelete } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { ReviewSubmissionForm } from '@/components/reviews/ReviewSubmissionForm'
@@ -51,6 +51,8 @@ interface Review {
 interface Member {
   userId: string
   role: MemberRole
+  name?: string
+  email?: string
 }
 
 function isMarkdown(doc: Document): boolean {
@@ -79,11 +81,15 @@ export default function IssueDetailPage() {
   const [reviewers, setReviewers] = useState<Reviewer[]>([])
   const [reviews, setReviews] = useState<Review[]>([])
   const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
+  const [allMembers, setAllMembers] = useState<Member[]>([])
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
   const [comments, setComments] = useState<Comment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<MobileTab>('documents')
+  const [assignDropdownOpen, setAssignDropdownOpen] = useState(false)
+  const [assigning, setAssigning] = useState(false)
+  const assignDropdownRef = useRef<HTMLDivElement>(null)
 
   const fetchDocuments = useCallback(async () => {
     if (!accessToken) return
@@ -156,6 +162,7 @@ export default function IssueDetailPage() {
             `/api/v1/projects/${projectId}/members`,
             accessToken!
           )
+          setAllMembers(members)
           const currentMember = members.find((m) => m.userId === user?.id)
           if (currentMember) setUserRole(currentMember.role)
         } catch {
@@ -191,6 +198,54 @@ export default function IssueDetailPage() {
 
   const isAssignedReviewer = reviewers.some((r) => r.userId === user?.id)
   const currentUserReview = reviews.find((r) => r.reviewerId === user?.id)
+  const canManage = userRole === 'CREATOR' || userRole === 'ADMIN'
+
+  const assignedIds = new Set(reviewers.map((r) => r.userId))
+  const assignableMembers = allMembers.filter(
+    (m) => m.role === 'REVIEWER' && !assignedIds.has(m.userId)
+  )
+
+  async function handleUnassign(userId: string) {
+    if (!accessToken) return
+    try {
+      await apiDelete(
+        `/api/v1/projects/${projectId}/issues/${issueId}/reviewers/${userId}`,
+        accessToken
+      )
+      await fetchReviewers()
+    } catch {
+      // Non-fatal
+    }
+  }
+
+  async function handleAssign(userId: string) {
+    if (!accessToken || assigning) return
+    setAssigning(true)
+    try {
+      await apiPost(
+        `/api/v1/projects/${projectId}/issues/${issueId}/reviewers`,
+        { userId },
+        accessToken
+      )
+      await fetchReviewers()
+      setAssignDropdownOpen(false)
+    } catch {
+      // Non-fatal
+    } finally {
+      setAssigning(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!assignDropdownOpen) return
+    function handleClickOutside(e: MouseEvent) {
+      if (assignDropdownRef.current && !assignDropdownRef.current.contains(e.target as Node)) {
+        setAssignDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [assignDropdownOpen])
 
   if (loading) {
     return (
@@ -307,7 +362,59 @@ export default function IssueDetailPage() {
             />
           </div>
         </div>
-        <ReviewersSummaryPanel reviewers={reviewers} />
+        <div className="flex items-start gap-3 flex-wrap">
+          <div className="flex-1 min-w-0">
+            <ReviewersSummaryPanel
+              reviewers={reviewers}
+              canManage={canManage}
+              onUnassign={handleUnassign}
+              reviews={reviews}
+            />
+          </div>
+          {canManage && (
+            <div className="relative shrink-0 mt-3" ref={assignDropdownRef}>
+              <button
+                onClick={() => setAssignDropdownOpen((prev) => !prev)}
+                className="px-2 py-1 text-xs border border-border rounded bg-background text-foreground hover:bg-muted transition-colors"
+              >
+                + Assign Reviewer
+              </button>
+              {assignDropdownOpen && (
+                <div className="absolute right-0 top-full mt-1 z-50 w-56 bg-background border border-border rounded shadow-md">
+                  {assignableMembers.length === 0 ? (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">
+                      No reviewers available to assign
+                    </div>
+                  ) : (
+                    <ul className="py-1">
+                      {assignableMembers.map((m) => (
+                        <li key={m.userId}>
+                          <button
+                            onClick={() => handleAssign(m.userId)}
+                            disabled={assigning}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+                          >
+                            <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground shrink-0">
+                              {(m.name ?? m.email ?? '?').charAt(0).toUpperCase()}
+                            </div>
+                            <div className="flex flex-col items-start min-w-0">
+                              <span className="truncate max-w-full">{m.name ?? m.email}</span>
+                              {m.name && m.email && (
+                                <span className="text-xs text-muted-foreground truncate max-w-full">
+                                  {m.email}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Mobile tab bar */}

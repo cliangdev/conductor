@@ -11,6 +11,7 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.CreateIssueRequest;
 import com.conductor.generated.model.IssueResponse;
 import com.conductor.generated.model.PatchIssueRequest;
+import com.conductor.repository.CommentRepository;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,18 +41,21 @@ public class IssueService {
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
     private final DiscordWebhookClient discordWebhookClient;
+    private final CommentRepository commentRepository;
 
     public IssueService(
             IssueRepository issueRepository,
             ProjectRepository projectRepository,
             ProjectSecurityService projectSecurityService,
             ProjectMemberRepository projectMemberRepository,
-            DiscordWebhookClient discordWebhookClient) {
+            DiscordWebhookClient discordWebhookClient,
+            CommentRepository commentRepository) {
         this.issueRepository = issueRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
         this.discordWebhookClient = discordWebhookClient;
+        this.commentRepository = commentRepository;
     }
 
     @Transactional
@@ -94,14 +99,25 @@ public class IssueService {
             issues = issueRepository.findByProjectId(projectId);
         }
 
-        return issues.stream().map(this::toIssueResponse).toList();
+        List<String> issueIds = issues.stream().map(Issue::getId).toList();
+        Map<String, Long> unresolvedCounts = new HashMap<>();
+        if (!issueIds.isEmpty()) {
+            commentRepository.countUnresolvedByIssueIds(issueIds).forEach(row ->
+                unresolvedCounts.put((String) row[0], (Long) row[1]));
+        }
+
+        return issues.stream()
+                .map(issue -> toIssueResponse(issue)
+                        .unresolvedCommentCount(unresolvedCounts.getOrDefault(issue.getId(), 0L).intValue()))
+                .toList();
     }
 
     @Transactional(readOnly = true)
     public IssueResponse getIssue(String projectId, String issueId, User caller) {
         verifyMembership(projectId, caller.getId());
         Issue issue = findIssueInProject(projectId, issueId);
-        return toIssueResponse(issue);
+        long count = commentRepository.countUnresolvedByIssueId(issue.getId());
+        return toIssueResponse(issue).unresolvedCommentCount((int) count);
     }
 
     @Transactional
@@ -132,7 +148,8 @@ public class IssueService {
             }
         }
 
-        return toIssueResponse(issue);
+        long count = commentRepository.countUnresolvedByIssueId(issue.getId());
+        return toIssueResponse(issue).unresolvedCommentCount((int) count);
     }
 
     private void verifyMembership(String projectId, String userId) {

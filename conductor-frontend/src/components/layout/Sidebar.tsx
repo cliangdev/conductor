@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { ChevronDownIcon, FileTextIcon, PlusIcon, UsersIcon } from 'lucide-react'
+import { ChevronDownIcon, FileTextIcon, PlusIcon, SettingsIcon, UsersIcon } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -105,6 +105,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             onNavigate={onNavigate}
           >
             Members
+          </SidebarNavLink>
+          <SidebarNavLink
+            href={`/app/projects/${activeProject.id}/settings`}
+            icon={<SettingsIcon className="h-4 w-4" />}
+            onNavigate={onNavigate}
+          >
+            Settings
           </SidebarNavLink>
         </nav>
       )}

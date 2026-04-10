@@ -30,42 +30,6 @@ interface LineThreadState {
   showForm: boolean
 }
 
-function buildHighlightedContent(content: string, selectionComments: Comment[]): string {
-  if (selectionComments.length === 0) return content
-
-  const sorted = [...selectionComments]
-    .filter((c) => c.selectionStart != null && c.selectionLength != null && !c.resolvedAt)
-    .sort((a, b) => (a.selectionStart ?? 0) - (b.selectionStart ?? 0))
-
-  if (sorted.length === 0) return content
-
-  let result = ''
-  let cursor = 0
-
-  for (const c of sorted) {
-    const start = c.selectionStart ?? 0
-    const end = start + (c.selectionLength ?? 0)
-    if (start < cursor) continue
-    result += escapeHtmlEntities(content.slice(cursor, start))
-    result += `<mark class="bg-yellow-200 rounded" title="${escapeAttr(c.authorName)}: ${escapeAttr(c.content)}">`
-    result += escapeHtmlEntities(content.slice(start, end))
-    result += '</mark>'
-    cursor = end
-  }
-  result += escapeHtmlEntities(content.slice(cursor))
-  return result
-}
-
-function escapeHtmlEntities(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-}
-
-function escapeAttr(str: string): string {
-  return str.replace(/"/g, '&quot;').replace(/'/g, '&#39;')
-}
 
 function getSelectionOffsets(
   container: HTMLElement,
@@ -96,6 +60,7 @@ export function CommentableDocument({
   currentUserId,
 }: Props) {
   const contentRef = useRef<HTMLDivElement>(null)
+  const skipNextMouseUpRef = useRef(false)
   const [openLineThread, setOpenLineThread] = useState<LineThreadState | null>(null)
   const [selectionState, setSelectionState] = useState<SelectionState | null>(null)
   const [showSelectionForm, setShowSelectionForm] = useState(false)
@@ -112,6 +77,10 @@ export function CommentableDocument({
   }
 
   const handleMouseUp = useCallback(() => {
+    if (skipNextMouseUpRef.current) {
+      skipNextMouseUpRef.current = false
+      return
+    }
     const selection = window.getSelection()
     if (!selection || selection.isCollapsed || !contentRef.current) return
     if (!contentRef.current.contains(selection.anchorNode)) return
@@ -173,9 +142,6 @@ export function CommentableDocument({
     window.getSelection()?.removeAllRanges()
   }
 
-  const highlightedContent = buildHighlightedContent(content, selectionComments)
-  const useHighlighted = selectionComments.some((c) => !c.resolvedAt)
-
   return (
     <div className="relative">
       <div className="flex gap-0">
@@ -219,14 +185,7 @@ export function CommentableDocument({
         {/* Document content */}
         <div className="flex-1 relative min-w-0">
           <div ref={contentRef} className="relative" onMouseUp={handleMouseUp}>
-            {useHighlighted ? (
-              <div
-                className="prose prose-sm dark:prose-invert max-w-none"
-                dangerouslySetInnerHTML={{ __html: highlightedContent }}
-              />
-            ) : (
-              <MarkdownRenderer content={content} />
-            )}
+            <MarkdownRenderer content={content} />
           </div>
 
           {/* Floating "Add comment" button — desktop only */}
@@ -239,6 +198,7 @@ export function CommentableDocument({
               <button
                 onMouseDown={(e) => {
                   e.preventDefault()
+                  skipNextMouseUpRef.current = true
                   setShowSelectionForm(true)
                 }}
                 className="bg-primary text-primary-foreground text-xs px-2 py-1 rounded shadow-md hover:bg-primary/90 whitespace-nowrap"
