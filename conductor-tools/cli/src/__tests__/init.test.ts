@@ -99,8 +99,8 @@ describe('init command', () => {
       const { buildMcpJson } = await import('../commands/init.js')
       const result = buildMcpJson({})
       expect(result.mcpServers?.['conductor']).toEqual({
-        command: 'npx',
-        args: ['@conductor/mcp'],
+        command: 'conductor',
+        args: ['mcp'],
       })
     })
 
@@ -117,8 +117,8 @@ describe('init command', () => {
         args: ['--flag'],
       })
       expect(result.mcpServers?.['conductor']).toEqual({
-        command: 'npx',
-        args: ['@conductor/mcp'],
+        command: 'conductor',
+        args: ['mcp'],
       })
     })
 

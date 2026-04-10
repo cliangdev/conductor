@@ -18,8 +18,8 @@ interface McpJson {
 }
 
 const CONDUCTOR_MCP_ENTRY: McpServerEntry = {
-  command: 'npx',
-  args: ['@conductor/mcp'],
+  command: 'conductor',
+  args: ['mcp'],
 }
 
 const CONDUCTOR_SKILL_CONTENT = `# /conductor:prd

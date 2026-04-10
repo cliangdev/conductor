@@ -128,7 +128,7 @@ function errorResponse(message: string) {
   }
 }
 
-async function main() {
+export async function runMcpServer(): Promise<void> {
   const server = new Server(
     { name: 'conductor-mcp', version: '0.1.0' },
     { capabilities: { tools: {} } }
@@ -234,7 +234,10 @@ async function main() {
   await server.connect(transport)
 }
 
-main().catch((err) => {
-  process.stderr.write(`Fatal error: ${String(err)}\n`)
-  process.exit(1)
-})
+// Only auto-run if executed directly
+if (import.meta.url === new URL(process.argv[1], 'file:').href) {
+  runMcpServer().catch((err) => {
+    process.stderr.write(`Fatal error: ${String(err)}\n`)
+    process.exit(1)
+  })
+}
