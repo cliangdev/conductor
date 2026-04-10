@@ -1,0 +1,35 @@
+# Build artifacts
+conductor-backend/target/
+conductor-tools/cli/dist/
+conductor-tools/mcp/dist/
+conductor-frontend/.next/
+conductor-frontend/tsconfig.tsbuildinfo
+
+# Dependencies
+conductor-tools/cli/node_modules/
+conductor-tools/mcp/node_modules/
+conductor-frontend/node_modules/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+conductor-frontend/.env.local
+
+# IDE / OS
+.DS_Store
+*.iml
+.idea/
+.vscode/
+
+# Claude Code session data
+.claude/
+
+# Flux workflow data
+.flux/
+
+# Local dev uploads (docker volume mount)
+local-uploads/
+
+# Misc
+*.log

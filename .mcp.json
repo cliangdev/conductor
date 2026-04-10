@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "flux": {
+      "command": "bunx",
+      "args": [
+        "@cliangdev/flux-plugin@next",
+        "serve"
+      ]
+    }
+  }
+}
