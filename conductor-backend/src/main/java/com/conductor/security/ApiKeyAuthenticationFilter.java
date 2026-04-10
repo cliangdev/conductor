@@ -1,7 +1,9 @@
 package com.conductor.security;
 
 import com.conductor.entity.ProjectApiKey;
+import com.conductor.entity.UserApiKey;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,9 +22,11 @@ import java.util.Optional;
 public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
     private final ProjectApiKeyRepository projectApiKeyRepository;
+    private final UserApiKeyRepository userApiKeyRepository;
 
-    public ApiKeyAuthenticationFilter(ProjectApiKeyRepository projectApiKeyRepository) {
+    public ApiKeyAuthenticationFilter(ProjectApiKeyRepository projectApiKeyRepository, UserApiKeyRepository userApiKeyRepository) {
         this.projectApiKeyRepository = projectApiKeyRepository;
+        this.userApiKeyRepository = userApiKeyRepository;
     }
 
     @Override
@@ -46,19 +50,28 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         }
 
         String keyHash = sha256(token);
-        Optional<ProjectApiKey> apiKeyOpt = projectApiKeyRepository.findByKeyHash(keyHash);
 
-        if (apiKeyOpt.isEmpty() || apiKeyOpt.get().isRevoked()) {
+        Optional<ProjectApiKey> projectApiKeyOpt = projectApiKeyRepository.findByKeyHash(keyHash);
+        if (projectApiKeyOpt.isPresent() && !projectApiKeyOpt.get().isRevoked()) {
+            ProjectApiKey apiKey = projectApiKeyOpt.get();
+            apiKey.setLastUsedAt(OffsetDateTime.now());
+            projectApiKeyRepository.save(apiKey);
+
+            ApiKeyAuthenticationToken authentication = new ApiKeyAuthenticationToken(apiKey.getProject().getId());
+            SecurityContextHolder.getContext().setAuthentication(authentication);
             filterChain.doFilter(request, response);
             return;
         }
 
-        ProjectApiKey apiKey = apiKeyOpt.get();
-        apiKey.setLastUsedAt(OffsetDateTime.now());
-        projectApiKeyRepository.save(apiKey);
+        Optional<UserApiKey> userApiKeyOpt = userApiKeyRepository.findByKeyHash(keyHash);
+        if (userApiKeyOpt.isPresent() && !userApiKeyOpt.get().isRevoked()) {
+            UserApiKey userApiKey = userApiKeyOpt.get();
+            userApiKey.setLastUsedAt(OffsetDateTime.now());
+            userApiKeyRepository.save(userApiKey);
 
-        ApiKeyAuthenticationToken authentication = new ApiKeyAuthenticationToken(apiKey.getProject().getId());
-        SecurityContextHolder.getContext().setAuthentication(authentication);
+            UserApiKeyAuthenticationToken authentication = new UserApiKeyAuthenticationToken(userApiKey.getUser());
+            SecurityContextHolder.getContext().setAuthentication(authentication);
+        }
 
         filterChain.doFilter(request, response);
     }

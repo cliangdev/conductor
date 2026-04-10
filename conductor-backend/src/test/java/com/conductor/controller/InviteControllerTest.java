@@ -9,6 +9,7 @@ import com.conductor.exception.InviteExpiredException;
 import com.conductor.generated.model.AcceptInviteResponse;
 import com.conductor.generated.model.InviteResponse;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.InviteService;
 import com.conductor.service.JwtService;
@@ -56,6 +57,9 @@ class InviteControllerTest {
 
     @MockBean
     private ProjectApiKeyRepository projectApiKeyRepository;
+
+    @MockBean
+    private UserApiKeyRepository userApiKeyRepository;
 
     private User adminUser;
     private User creatorUser;

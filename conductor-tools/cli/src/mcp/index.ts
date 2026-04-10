@@ -4,7 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { getConfig } from './config.js'
 import { createIssue, updateIssue, setIssueStatus, listIssues, getIssue } from './tools/issues.js'
-import { createDocument, updateDocument, deleteDocument } from './tools/documents.js'
+import { deleteDocument, scaffoldDocument } from './tools/documents.js'
 
 const TOOLS = [
   {
@@ -68,29 +68,15 @@ const TOOLS = [
     },
   },
   {
-    name: 'create_document',
-    description: 'Create a document attached to an issue',
+    name: 'scaffold_document',
+    description: 'Create an empty document file locally and register it with the backend. Use the returned localPath to write content with the Write tool.',
     inputSchema: {
       type: 'object',
       properties: {
         issueId: { type: 'string', description: 'Issue ID' },
-        filename: { type: 'string', description: 'Document filename' },
-        content: { type: 'string', description: 'Document content' },
+        filename: { type: 'string', description: 'Document filename (e.g., prd.md)' },
       },
-      required: ['issueId', 'filename', 'content'],
-    },
-  },
-  {
-    name: 'update_document',
-    description: 'Update a document attached to an issue',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue ID' },
-        documentId: { type: 'string', description: 'Document ID' },
-        content: { type: 'string', description: 'New document content' },
-      },
-      required: ['issueId', 'documentId', 'content'],
+      required: ['issueId', 'filename'],
     },
   },
   {
@@ -142,7 +128,7 @@ function errorResponse(message: string) {
   }
 }
 
-async function main() {
+export async function runMcpServer(): Promise<void> {
   const server = new Server(
     { name: 'conductor-mcp', version: '0.1.0' },
     { capabilities: { tools: {} } }
@@ -214,23 +200,11 @@ async function main() {
           )
           return successResponse(result)
         }
-        case 'create_document': {
-          const result = await createDocument(
+        case 'scaffold_document': {
+          const result = await scaffoldDocument(
             {
               issueId: params['issueId'] as string,
               filename: params['filename'] as string,
-              content: params['content'] as string,
-            },
-            config
-          )
-          return successResponse(result)
-        }
-        case 'update_document': {
-          const result = await updateDocument(
-            {
-              issueId: params['issueId'] as string,
-              documentId: params['documentId'] as string,
-              content: params['content'] as string,
             },
             config
           )
@@ -260,7 +234,10 @@ async function main() {
   await server.connect(transport)
 }
 
-main().catch((err) => {
-  process.stderr.write(`Fatal error: ${String(err)}\n`)
-  process.exit(1)
-})
+// Only auto-run if executed directly
+if (import.meta.url === new URL(process.argv[1], 'file:').href) {
+  runMcpServer().catch((err) => {
+    process.stderr.write(`Fatal error: ${String(err)}\n`)
+    process.exit(1)
+  })
+}

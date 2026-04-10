@@ -13,4 +13,6 @@ public interface DocumentRepository extends JpaRepository<Document, String> {
     List<Document> findByIssueId(String issueId);
 
     Optional<Document> findByIdAndIssueId(String id, String issueId);
+
+    Optional<Document> findByIssueIdAndFilename(String issueId, String filename);
 }

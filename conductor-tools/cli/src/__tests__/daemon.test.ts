@@ -21,6 +21,7 @@ const mockConfig = {
   projectName: 'Test Project',
   email: 'test@example.com',
   apiUrl: 'http://localhost:8080',
+  localPath: '/home/user/myproject',
 }
 
 const CONDUCTOR_DIR = path.join(os.homedir(), '.conductor')
@@ -215,6 +216,44 @@ describe('conductor stop', () => {
   })
 })
 
+// ─── T89: parseFilePath new pattern ──────────────────────────────────────────
+
+describe('parseFilePath', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('parses localPath-based path correctly', async () => {
+    const { parseFilePath } = await import('../daemon/watcher.js')
+    const result = parseFilePath('/home/user/myproject/.conductor/issues/iss_abc/spec.md')
+    expect(result).toEqual({ issueId: 'iss_abc', filename: 'spec.md' })
+  })
+
+  it('parses issue.md filename', async () => {
+    const { parseFilePath } = await import('../daemon/watcher.js')
+    const result = parseFilePath('/home/user/myproject/.conductor/issues/iss_xyz/issue.md')
+    expect(result).toEqual({ issueId: 'iss_xyz', filename: 'issue.md' })
+  })
+
+  it('returns null for path not matching the pattern', async () => {
+    const { parseFilePath } = await import('../daemon/watcher.js')
+    const result = parseFilePath('/home/user/myproject/src/some-file.ts')
+    expect(result).toBeNull()
+  })
+
+  it('returns null for empty string', async () => {
+    const { parseFilePath } = await import('../daemon/watcher.js')
+    const result = parseFilePath('')
+    expect(result).toBeNull()
+  })
+
+  it('handles Windows-style backslash paths', async () => {
+    const { parseFilePath } = await import('../daemon/watcher.js')
+    const result = parseFilePath('C:\\Users\\user\\myproject\\.conductor\\issues\\iss_abc\\spec.md')
+    expect(result).toEqual({ issueId: 'iss_abc', filename: 'spec.md' })
+  })
+})
+
 // ─── T38: debounce behavior ───────────────────────────────────────────────────
 
 describe('debounce', () => {
@@ -261,12 +300,45 @@ describe('debounce', () => {
   })
 })
 
-// ─── T38: file sync calls API ─────────────────────────────────────────────────
+// ─── T38 / T90: file sync calls API ──────────────────────────────────────────
 
 describe('syncFile', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.resetAllMocks()
+  })
+
+  it('skips issue.md files and does not call API', async () => {
+    const mockFetch = vi.fn()
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncFile } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await syncFile(filePath, mockConfig)
+
+    expect(mockFetch).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('calls PUT with contentType for non-issue.md files', async () => {
+    const fileContent = '# PRD content'
+    mockFs.readFileSync.mockReturnValue(fileContent)
+
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncFile } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'prd.md')
+    await syncFile(filePath, mockConfig)
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('contentType'),
+      })
+    )
+    vi.unstubAllGlobals()
   })
 
   it('reads file and calls PUT API within expected flow', async () => {
@@ -284,7 +356,7 @@ describe('syncFile', () => {
 
     const { syncFile } = await import('../daemon/watcher.js')
 
-    const filePath = path.join(os.homedir(), '.conductor', 'proj_123', 'issues', 'iss_abc', 'spec.md')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'spec.md')
     await syncFile(filePath, mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
@@ -295,6 +367,125 @@ describe('syncFile', () => {
       })
     )
 
+    vi.unstubAllGlobals()
+  })
+})
+
+// ─── T91: syncIssueMd and parseFrontmatter ───────────────────────────────────
+
+describe('syncIssueMd', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('sends PATCH with title and status from frontmatter', async () => {
+    const content = `---\nid: iss_abc\ntype: PRD\ntitle: My PRD\nstatus: DRAFT\n---\n\nDescription body`
+    mockFs.readFileSync.mockReturnValue(content)
+
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncIssueMd } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await syncIssueMd(filePath, mockConfig)
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.stringContaining('My PRD'),
+      })
+    )
+
+    const callBody = JSON.parse(mockFetch.mock.calls[0][1].body as string)
+    expect(callBody).toMatchObject({
+      title: 'My PRD',
+      status: 'DRAFT',
+      description: 'Description body',
+    })
+
+    vi.unstubAllGlobals()
+  })
+
+  it('queues change when PATCH fails', async () => {
+    const content = `---\nid: iss_abc\ntitle: My PRD\nstatus: DRAFT\n---\n\nBody`
+    mockFs.readFileSync
+      .mockReturnValueOnce(content)
+      .mockReturnValueOnce('[]')
+    mockFs.mkdirSync.mockReturnValue(undefined)
+    mockFs.writeFileSync.mockReturnValue(undefined)
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => 'Error',
+      statusText: 'Error',
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const { syncIssueMd } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await syncIssueMd(filePath, mockConfig)
+
+    expect(mockFs.writeFileSync).toHaveBeenCalledWith(
+      path.join(os.homedir(), '.conductor', 'sync-queue.json'),
+      expect.stringContaining('iss_abc'),
+      'utf8'
+    )
+
+    consoleSpy.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('does nothing when file has no frontmatter', async () => {
+    mockFs.readFileSync.mockReturnValue('Just plain content with no frontmatter')
+
+    const mockFetch = vi.fn()
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncIssueMd } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await syncIssueMd(filePath, mockConfig)
+
+    expect(mockFetch).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+})
+
+// ─── T90: deleteFile ─────────────────────────────────────────────────────────
+
+describe('deleteFile', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('calls DELETE for non-issue.md file', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { deleteFile } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'spec.md')
+    await deleteFile(filePath, mockConfig)
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      expect.objectContaining({ method: 'DELETE' })
+    )
+    vi.unstubAllGlobals()
+  })
+
+  it('skips issue.md and does not call DELETE', async () => {
+    const mockFetch = vi.fn()
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { deleteFile } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await deleteFile(filePath, mockConfig)
+
+    expect(mockFetch).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
   })
 })
@@ -326,7 +517,7 @@ describe('queueChange and replayQueue', () => {
 
     const { syncFile } = await import('../daemon/watcher.js')
 
-    const filePath = path.join(os.homedir(), '.conductor', 'proj_123', 'issues', 'iss_abc', 'spec.md')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'spec.md')
 
     // readFileSync for the file content + readFileSync for the queue
     mockFs.readFileSync

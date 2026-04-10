@@ -6,10 +6,14 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.generated.model.ApiKeyResponse;
 import com.conductor.generated.model.CreateApiKeyResponse;
+import com.conductor.generated.model.CreateUserApiKeyResponse;
+import com.conductor.generated.model.UserApiKeyResponse;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.ApiKeyService;
 import com.conductor.service.JwtService;
+import com.conductor.service.UserApiKeyService;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,6 +50,9 @@ class ApiKeyControllerTest {
     private ApiKeyService apiKeyService;
 
     @MockBean
+    private UserApiKeyService userApiKeyService;
+
+    @MockBean
     private JwtService jwtService;
 
     @MockBean
@@ -53,6 +60,9 @@ class ApiKeyControllerTest {
 
     @MockBean
     private ProjectApiKeyRepository projectApiKeyRepository;
+
+    @MockBean
+    private UserApiKeyRepository userApiKeyRepository;
 
     private User testUser;
 
@@ -146,5 +156,56 @@ class ApiKeyControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\": \"My Key\"}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void listUserApiKeysReturnsMaskedKeys() throws Exception {
+        UserApiKeyResponse keyResponse = new UserApiKeyResponse("key-1", "****abcd", OffsetDateTime.now())
+                .label("CLI Key");
+
+        when(userApiKeyService.listUserApiKeys(eq(testUser))).thenReturn(List.of(keyResponse));
+
+        mockMvc.perform(get("/api/v1/api-keys")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].maskedKey").value("****abcd"))
+                .andExpect(jsonPath("$[0].key").doesNotExist());
+    }
+
+    @Test
+    void createUserApiKeyReturns201WithFullKey() throws Exception {
+        CreateUserApiKeyResponse createResponse = new CreateUserApiKeyResponse(
+                "key-1", "uk_abc123fullsecret", "****cret", OffsetDateTime.now())
+                .label("CLI Key");
+
+        when(userApiKeyService.createUserApiKey(any(), eq(testUser))).thenReturn(createResponse);
+
+        mockMvc.perform(post("/api/v1/api-keys")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"label\": \"CLI Key\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.key").value("uk_abc123fullsecret"))
+                .andExpect(jsonPath("$.maskedKey").value("****cret"));
+    }
+
+    @Test
+    void deleteUserApiKeyReturns204() throws Exception {
+        mockMvc.perform(delete("/api/v1/api-keys/key-1")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNoContent());
+
+        verify(userApiKeyService).deleteUserApiKey("key-1", testUser);
+    }
+
+    @Test
+    void deleteUserApiKeyReturns404WhenNotFound() throws Exception {
+        doThrow(new jakarta.persistence.EntityNotFoundException("API key not found"))
+                .when(userApiKeyService).deleteUserApiKey(eq("key-1"), eq(testUser));
+
+        mockMvc.perform(delete("/api/v1/api-keys/key-1")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNotFound());
     }
 }

@@ -28,9 +28,9 @@ export function debounce(key: string, fn: () => void, ms = 500): void {
 export function parseFilePath(
   filePath: string
 ): { issueId: string; filename: string } | null {
-  // Expected: ~/.conductor/{projectId}/issues/{issueId}/{filename}
+  // Expected: {localPath}/.conductor/issues/{issueId}/{filename}
   const normalized = filePath.replace(/\\/g, '/')
-  const match = normalized.match(/\/issues\/([^/]+)\/([^/]+)$/)
+  const match = normalized.match(/\.conductor\/issues\/([^/]+)\/([^/]+)$/)
   if (!match) return null
   return { issueId: match[1], filename: match[2] }
 }
@@ -88,6 +88,9 @@ export async function syncFile(filePath: string, config: Config): Promise<void> 
   const parsed = parseFilePath(filePath)
   if (!parsed) return
 
+  // issue.md is handled by syncIssueMd
+  if (parsed.filename === 'issue.md') return
+
   let content: string
   try {
     content = fs.readFileSync(filePath, 'utf8')
@@ -96,8 +99,8 @@ export async function syncFile(filePath: string, config: Config): Promise<void> 
     return
   }
 
-  const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}/documents/${parsed.filename}`
-  const body = { content, filename: parsed.filename }
+  const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
+  const body = { content, contentType: 'text/markdown' }
 
   try {
     await callApi('PUT', apiPath, body, config)
@@ -112,7 +115,9 @@ export async function deleteFile(filePath: string, config: Config): Promise<void
   const parsed = parseFilePath(filePath)
   if (!parsed) return
 
-  const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}/documents/${parsed.filename}`
+  if (parsed.filename === 'issue.md') return
+
+  const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
 
   try {
     await callApi('DELETE', apiPath, undefined, config)
@@ -120,6 +125,48 @@ export async function deleteFile(filePath: string, config: Config): Promise<void
   } catch (err) {
     console.error(`Delete failed, queuing: ${filePath} — ${(err as Error).message}`)
     queueChange({ method: 'DELETE', path: apiPath })
+  }
+}
+
+function parseFrontmatter(content: string): { title?: string; status?: string; body?: string } {
+  const match = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
+  if (!match) return {}
+  const frontmatterStr = match[1]
+  const body = match[2].trim()
+
+  const title = frontmatterStr.match(/^title:\s*(.+)$/m)?.[1]?.trim()
+  const status = frontmatterStr.match(/^status:\s*(.+)$/m)?.[1]?.trim()
+  return { title, status, body }
+}
+
+export async function syncIssueMd(filePath: string, config: Config): Promise<void> {
+  const parsed = parseFilePath(filePath)
+  if (!parsed) return
+
+  let content: string
+  try {
+    content = fs.readFileSync(filePath, 'utf8')
+  } catch {
+    console.error(`Failed to read file: ${filePath}`)
+    return
+  }
+
+  const { title, status, body } = parseFrontmatter(content)
+  const patchBody: Record<string, string> = {}
+  if (title !== undefined) patchBody['title'] = title
+  if (status !== undefined) patchBody['status'] = status
+  if (body !== undefined) patchBody['description'] = body
+
+  if (Object.keys(patchBody).length === 0) return
+
+  const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}`
+
+  try {
+    await callApi('PATCH', apiPath, patchBody, config)
+    console.log(`Synced issue.md: ${filePath}`)
+  } catch (err) {
+    console.error(`Issue sync failed, queuing: ${filePath} — ${(err as Error).message}`)
+    queueChange({ method: 'PUT', path: apiPath, body: patchBody })
   }
 }
 
@@ -149,16 +196,37 @@ export async function replayQueue(config: Config): Promise<void> {
 }
 
 function startWatcher(config: Config): void {
-  const watchPath = path.join(CONDUCTOR_DIR, config.projectId, 'issues', '**', '*')
+  if (!config.localPath) {
+    console.error('localPath not set in config — run conductor init first')
+    process.exit(1)
+  }
+
+  const watchPath = path.join(config.localPath, '.conductor', 'issues', '**', '*')
+  console.log(`Watching: ${watchPath}`)
 
   const watcher = chokidar.watch(watchPath, { ignoreInitial: true, persistent: true })
 
   watcher
-    .on('add', (filePath) => debounce(filePath, () => { syncFile(filePath, config).catch(console.error) }))
-    .on('change', (filePath) => debounce(filePath, () => { syncFile(filePath, config).catch(console.error) }))
-    .on('unlink', (filePath) => debounce(filePath, () => { deleteFile(filePath, config).catch(console.error) }))
-
-  console.log(`Watching: ${watchPath}`)
+    .on('add', (filePath) => debounce(filePath, () => {
+      if (path.basename(filePath) === 'issue.md') {
+        syncIssueMd(filePath, config).catch(console.error)
+      } else {
+        syncFile(filePath, config).catch(console.error)
+      }
+    }))
+    .on('change', (filePath) => debounce(filePath, () => {
+      if (path.basename(filePath) === 'issue.md') {
+        syncIssueMd(filePath, config).catch(console.error)
+      } else {
+        syncFile(filePath, config).catch(console.error)
+      }
+    }))
+    .on('unlink', (filePath) => debounce(filePath, () => {
+      if (path.basename(filePath) !== 'issue.md') {
+        deleteFile(filePath, config).catch(console.error)
+      }
+      // issue.md delete is ignored
+    }))
 
   process.on('SIGTERM', () => {
     watcher.close().then(() => {

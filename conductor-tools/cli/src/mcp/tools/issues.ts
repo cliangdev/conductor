@@ -19,7 +19,8 @@ function buildIssueFrontmatter(
   description?: string
 ): string {
   const body = description ?? ''
-  return `---\nid: ${issueId}\ntype: ${type}\ntitle: ${title}\nstatus: ${status}\n---\n\n${body}`
+  const createdAt = new Date().toISOString()
+  return `---\nid: ${issueId}\ntype: ${type}\ntitle: ${title}\nstatus: ${status}\ncreatedAt: ${createdAt}\n---\n\n${body}`
 }
 
 function updateFrontmatterField(content: string, field: string, value: string): string {
@@ -34,6 +35,10 @@ export async function createIssue(
   params: { type: string; title: string; description?: string },
   config: Config
 ): Promise<Record<string, unknown>> {
+  if (!config.localPath) {
+    return { error: 'Run conductor init to set up local project directory' }
+  }
+
   let issueId: string
   let backendResult: IssueResponse | null = null
   let warning: string | undefined
@@ -65,13 +70,16 @@ export async function createIssue(
     'DRAFT',
     params.description
   )
-  writeIssueFile(config.projectId, issueId, content)
+  writeIssueFile(config, issueId, content)
+
+  const localPath = `.conductor/issues/${issueId}/`
 
   const result: Record<string, unknown> = {
     issueId,
     type: params.type,
     title: params.title,
     status: 'DRAFT',
+    localPath,
   }
 
   if (warning !== undefined) {
@@ -110,13 +118,13 @@ export async function updateIssue(
     queueSize = size
   }
 
-  const existing = readIssueFile(config.projectId, params.issueId)
+  const existing = readIssueFile(config, params.issueId)
   if (existing !== null) {
     let updated = existing
     if (params.title !== undefined) {
       updated = updateFrontmatterField(updated, 'title', params.title)
     }
-    writeIssueFile(config.projectId, params.issueId, updated)
+    writeIssueFile(config, params.issueId, updated)
   }
 
   const result: Record<string, unknown> = { issueId: params.issueId, ...body }
@@ -151,10 +159,10 @@ export async function setIssueStatus(
     queueSize = size
   }
 
-  const existing = readIssueFile(config.projectId, params.issueId)
+  const existing = readIssueFile(config, params.issueId)
   if (existing !== null) {
     const updated = updateFrontmatterField(existing, 'status', params.status)
-    writeIssueFile(config.projectId, params.issueId, updated)
+    writeIssueFile(config, params.issueId, updated)
   }
 
   const result: Record<string, unknown> = {
@@ -185,7 +193,7 @@ export async function getIssue(
   params: { issueId: string },
   config: Config
 ): Promise<Record<string, unknown>> {
-  const local = readIssueFile(config.projectId, params.issueId)
+  const local = readIssueFile(config, params.issueId)
   if (local !== null) {
     return { issueId: params.issueId, content: local, source: 'local' }
   }

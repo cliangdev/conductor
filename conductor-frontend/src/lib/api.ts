@@ -2,7 +2,11 @@ export async function apiGet<T>(path: string, token: string): Promise<T> {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
-  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  if (!res.ok) {
+    const err = new Error(`API error: ${res.status}`) as Error & { status: number }
+    err.status = res.status
+    throw err
+  }
   return res.json()
 }
 

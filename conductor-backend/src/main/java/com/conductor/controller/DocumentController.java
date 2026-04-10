@@ -4,6 +4,7 @@ import com.conductor.generated.api.DocumentsApi;
 import com.conductor.generated.model.CreateDocumentRequest;
 import com.conductor.generated.model.DocumentResponse;
 import com.conductor.generated.model.UpdateDocumentRequest;
+import com.conductor.generated.model.UpsertDocumentByFilenameRequest;
 import com.conductor.service.DocumentService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -48,6 +49,19 @@ public class DocumentController implements DocumentsApi {
     @Override
     public ResponseEntity<Void> deleteDocument(String projectId, String issueId, String docId) {
         documentService.deleteDocument(projectId, issueId, docId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public ResponseEntity<DocumentResponse> upsertDocumentByFilename(String projectId, String issueId, String filename, UpsertDocumentByFilenameRequest upsertDocumentByFilenameRequest) {
+        boolean created = documentService.upsertDocumentByFilename(projectId, issueId, filename, upsertDocumentByFilenameRequest);
+        DocumentResponse response = documentService.getDocumentByFilename(projectId, issueId, filename);
+        return ResponseEntity.status(created ? 201 : 200).body(response);
+    }
+
+    @Override
+    public ResponseEntity<Void> deleteDocumentByFilename(String projectId, String issueId, String filename) {
+        documentService.deleteDocumentByFilename(projectId, issueId, filename);
         return ResponseEntity.noContent().build();
     }
 }

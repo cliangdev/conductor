@@ -11,6 +11,7 @@ import com.conductor.exception.StorageUploadException;
 import com.conductor.generated.model.CreateDocumentRequest;
 import com.conductor.generated.model.DocumentResponse;
 import com.conductor.generated.model.UpdateDocumentRequest;
+import com.conductor.generated.model.UpsertDocumentByFilenameRequest;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.IssueRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -100,7 +101,7 @@ class DocumentServiceTest {
             return d;
         });
 
-        CreateDocumentRequest request = new CreateDocumentRequest("spec.md", "# Content");
+        CreateDocumentRequest request = new CreateDocumentRequest("spec.md").content("# Content");
 
         DocumentResponse response = documentService.createDocument("proj-1", "issue-1", request);
 
@@ -123,7 +124,7 @@ class DocumentServiceTest {
             return d;
         });
 
-        CreateDocumentRequest request = new CreateDocumentRequest("spec.md", "# Content");
+        CreateDocumentRequest request = new CreateDocumentRequest("spec.md").content("# Content");
 
         DocumentResponse response = documentService.createDocument("proj-1", "issue-1", request);
 
@@ -147,7 +148,7 @@ class DocumentServiceTest {
             return d;
         });
 
-        CreateDocumentRequest request = new CreateDocumentRequest("spec.md", "# Content");
+        CreateDocumentRequest request = new CreateDocumentRequest("spec.md").content("# Content");
         documentService.createDocument("proj-1", "issue-1", request);
 
         verify(gcpStorageService).upload(anyString(), any(byte[].class), anyString());
@@ -160,7 +161,7 @@ class DocumentServiceTest {
         doThrow(new RuntimeException("GCS unavailable"))
                 .when(gcpStorageService).upload(anyString(), any(byte[].class), anyString());
 
-        CreateDocumentRequest request = new CreateDocumentRequest("spec.md", "# Content");
+        CreateDocumentRequest request = new CreateDocumentRequest("spec.md").content("# Content");
 
         assertThatThrownBy(() -> documentService.createDocument("proj-1", "issue-1", request))
                 .isInstanceOf(StorageUploadException.class)
@@ -174,7 +175,7 @@ class DocumentServiceTest {
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
 
         String oversizedContent = "x".repeat(DocumentService.MAX_CONTENT_BYTES + 1);
-        CreateDocumentRequest request = new CreateDocumentRequest("big.md", oversizedContent);
+        CreateDocumentRequest request = new CreateDocumentRequest("big.md").content(oversizedContent);
 
         assertThatThrownBy(() -> documentService.createDocument("proj-1", "issue-1", request))
                 .isInstanceOf(FileTooLargeException.class);
@@ -348,6 +349,82 @@ class DocumentServiceTest {
 
         DocumentResponse imageResponse = documentService.getDocument("proj-1", "issue-1", "doc-2");
         assertThat(imageResponse.getContent()).isNull();
+    }
+
+    // --- upsert by filename tests ---
+
+    @Test
+    void upsertByFilenameCreatesNewDocumentWhenNotFound() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIssueIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
+        when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> {
+            Document d = invocation.getArgument(0);
+            if (d.getCreatedAt() == null) d.setCreatedAt(OffsetDateTime.now());
+            if (d.getUpdatedAt() == null) d.setUpdatedAt(OffsetDateTime.now());
+            return d;
+        });
+
+        UpsertDocumentByFilenameRequest request = new UpsertDocumentByFilenameRequest("# New Content");
+
+        boolean created = documentService.upsertDocumentByFilename("proj-1", "issue-1", "new.md", request);
+
+        assertThat(created).isTrue();
+        verify(documentRepository).save(any(Document.class));
+    }
+
+    @Test
+    void upsertByFilenameUpdatesExistingDocumentWhenFound() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIssueIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
+
+        UpsertDocumentByFilenameRequest request = new UpsertDocumentByFilenameRequest("# Updated Content");
+
+        boolean created = documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", request);
+
+        assertThat(created).isFalse();
+        assertThat(testDocument.getContent()).isEqualTo("# Updated Content");
+        verify(documentRepository).save(testDocument);
+    }
+
+    @Test
+    void upsertByFilenameUploadsToGcsOnCreate() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIssueIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
+        when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> {
+            Document d = invocation.getArgument(0);
+            if (d.getCreatedAt() == null) d.setCreatedAt(OffsetDateTime.now());
+            if (d.getUpdatedAt() == null) d.setUpdatedAt(OffsetDateTime.now());
+            return d;
+        });
+
+        UpsertDocumentByFilenameRequest request = new UpsertDocumentByFilenameRequest("# Content");
+        documentService.upsertDocumentByFilename("proj-1", "issue-1", "new.md", request);
+
+        verify(gcpStorageService).upload(anyString(), any(byte[].class), anyString());
+    }
+
+    // --- delete by filename tests ---
+
+    @Test
+    void deleteByFilenameRemovesDocument() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIssueIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+
+        documentService.deleteDocumentByFilename("proj-1", "issue-1", "spec.md");
+
+        verify(documentRepository).delete(testDocument);
+        verify(gcpStorageService).delete("proj-1/issues/issue-1/doc-1/spec.md");
+    }
+
+    @Test
+    void deleteByFilenameThrows404WhenNotFound() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIssueIdAndFilename("issue-1", "nonexistent.md")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> documentService.deleteDocumentByFilename("proj-1", "issue-1", "nonexistent.md"))
+                .isInstanceOf(EntityNotFoundException.class)
+                .hasMessage("Document not found");
     }
 
     @Test

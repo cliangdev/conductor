@@ -2,6 +2,7 @@ package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.GcpStorageService;
 import com.conductor.service.JwtService;
@@ -35,6 +36,9 @@ class HealthControllerTest {
 
     @MockBean
     private ProjectApiKeyRepository projectApiKeyRepository;
+
+    @MockBean
+    private UserApiKeyRepository userApiKeyRepository;
 
     @Test
     void healthEndpointReturns200WithStatusOk() throws Exception {

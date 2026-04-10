@@ -8,6 +8,7 @@ export interface Config {
   projectName: string
   email: string
   apiUrl: string
+  localPath?: string
 }
 
 export const CONFIG_PATH = path.join(os.homedir(), '.conductor', 'config.json')

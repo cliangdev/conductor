@@ -46,11 +46,16 @@ export function registerStatus(program: Command): void {
       const daemonRunning = isDaemonRunning()
       const queueCount = getQueueCount()
 
+      const watchDir = config.localPath
+        ? `${config.localPath}/.conductor/issues`
+        : chalk.yellow('not set — run conductor init')
+
       console.log(`Auth:      ${chalk.green('✓')} Logged in as ${config.email}`)
       console.log(`Project:   ${config.projectName} (${config.projectId})`)
       console.log(
         `Daemon:    ${daemonRunning ? chalk.green('✓ Running') : chalk.red('✗ Not running')}`
       )
+      console.log(`Watch dir: ${watchDir}`)
       console.log(`API URL:   ${config.apiUrl}`)
       console.log(`Queue:     ${queueCount} pending changes`)
     })
