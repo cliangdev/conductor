@@ -1,10 +1,15 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import * as readline from 'readline'
 import { execSync } from 'child_process'
 import { Command } from 'commander'
 import chalk from 'chalk'
+import ora from 'ora'
 import { readConfig, writeConfig } from '../lib/config.js'
+import { apiGet } from '../lib/api.js'
+import { findAvailablePort, waitForOAuthCallback } from '../lib/oauth-server.js'
+import { startDaemon } from './start.js'
 
 interface McpServerEntry {
   command: string
@@ -22,7 +27,7 @@ const CONDUCTOR_MCP_ENTRY: McpServerEntry = {
   args: ['mcp'],
 }
 
-const CONDUCTOR_SKILL_CONTENT = `# /conductor:prd
+export const CONDUCTOR_SKILL_CONTENT = `# /conductor:prd
 
 You are a PRD creation assistant for the Conductor workflow.
 
@@ -303,45 +308,102 @@ export function buildMcpJson(existing: McpJson): McpJson {
   }
 }
 
+async function askYesNo(question: string): Promise<boolean> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  return new Promise(resolve => {
+    rl.question(question, answer => {
+      rl.close()
+      resolve(answer.trim().toLowerCase() !== 'n')
+    })
+  })
+}
+
 export function registerInit(program: Command): void {
   program
     .command('init')
     .description('Initialize Conductor in the current project')
-    .option('--path <dir>', 'Working directory to initialize', process.cwd())
-    .action((options: { path: string }) => {
-      const config = readConfig()
-      if (!config) {
-        console.error('Please run `conductor login` first')
+    .option('--project-id <id>', 'Project ID to connect to (for new members or switching projects)')
+    .option('--path <dir>', 'Working directory', process.cwd())
+    .action(async (options: { projectId?: string, path: string }) => {
+      const workingDir = path.resolve(options.path)
+
+      let config = readConfig()
+
+      if (options.projectId && options.projectId !== config?.projectId) {
+        if (!config) {
+          const apiUrl = process.env['CONDUCTOR_API_URL'] ?? 'http://localhost:8080'
+          console.log('Not logged in. Opening browser for authentication...')
+          const spinner = ora('Waiting for browser... (Ctrl+C to cancel)').start()
+          const port = await findAvailablePort()
+          const { default: open } = await import('open')
+          const loginUrl = `${apiUrl}/auth/cli-login?port=${port}&projectId=${options.projectId}`
+          await open(loginUrl)
+          const payload = await waitForOAuthCallback(port, spinner)
+          config = { ...payload, apiUrl }
+          writeConfig(config)
+          spinner.succeed(chalk.green(`Logged in as ${config.email}`))
+        } else {
+          console.log(chalk.green(`✓ Logged in as ${config.email}`))
+          try {
+            const project = await apiGet<{ id: string, name: string }>(
+              `/api/v1/projects/${options.projectId}`,
+              config.apiKey,
+              config.apiUrl
+            )
+            config = { ...config, projectId: project.id, projectName: project.name }
+            writeConfig(config)
+          } catch (err) {
+            const status = (err as { statusCode?: number }).statusCode
+            if (status === 403 || status === 404) {
+              console.error(chalk.red(`✗ You don't have access to project "${options.projectId}".`))
+              console.error(`  Ask your admin to invite you, then run this command again.`)
+              process.exit(1)
+              return
+            }
+            throw err
+          }
+        }
+        console.log(chalk.green(`✓ Connected to "${config.projectName}"`))
+      } else if (!config) {
+        console.error(chalk.red('✗ Not logged in. Run `conductor login` first,'))
+        console.error(`  or \`conductor init --project-id <id>\` to join a project.`)
         process.exit(1)
         return
+      } else {
+        console.log(chalk.green(`✓ Logged in as ${config.email}`))
       }
+
+      console.log(`\nSetting up local project directory for "${config.projectName}"...`)
+      const projectRoot = getProjectRoot(workingDir)
+      console.log(chalk.green(`✓ Detected project root: ${projectRoot}`))
 
       const issuesDir = getIssuesDir(config.projectId)
       fs.mkdirSync(issuesDir, { recursive: true })
 
-      const workingDir = path.resolve(options.path)
-      const existing = readMcpJson(workingDir)
-      const updated = buildMcpJson(existing)
-      writeMcpJson(workingDir, updated)
+      fs.mkdirSync(path.join(projectRoot, '.conductor', 'issues'), { recursive: true })
+      console.log(chalk.green('✓ Created .conductor/issues/'))
 
-      const relativeIssuesDir = issuesDir.replace(os.homedir(), '~')
-      console.log(chalk.green(`✓ Local directory: ${relativeIssuesDir}`))
-      console.log(chalk.green('✓ .mcp.json updated'))
-
-      const projectRoot = getProjectRoot(workingDir)
-      const conductorIssuesDir = path.join(projectRoot, '.conductor', 'issues')
-      fs.mkdirSync(conductorIssuesDir, { recursive: true })
       ensureGitignore(projectRoot)
-      console.log(chalk.green('✓ Created: .conductor/issues/'))
-      console.log(chalk.green('✓ .gitignore updated'))
-
-      const existingConfig = readConfig()
-      if (existingConfig) {
-        writeConfig({ ...existingConfig, localPath: projectRoot })
-        console.log(chalk.green(`✓ localPath saved: ${projectRoot}`))
-      }
+      console.log(chalk.green('✓ Updated .gitignore'))
 
       writeSkillFile(projectRoot)
-      console.log(chalk.green('✓ Skill installed: .claude/skills/conductor.md'))
+      console.log(chalk.green('✓ Installed /conductor:prd skill'))
+
+      const existing = readMcpJson(workingDir)
+      writeMcpJson(workingDir, buildMcpJson(existing))
+      console.log(chalk.green('✓ Updated .mcp.json'))
+
+      writeConfig({ ...config, localPath: projectRoot })
+
+      if (process.stdin.isTTY) {
+        console.log()
+        const shouldSync = await askYesNo('Start syncing now? [Y/n] ')
+        if (shouldSync) {
+          await startDaemon()
+          console.log(chalk.green('✓ Sync daemon started'))
+        } else {
+          console.log(chalk.dim('  Run `conductor start` when ready.'))
+        }
+      }
     })
 }
