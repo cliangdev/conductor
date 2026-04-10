@@ -16,6 +16,7 @@ interface Issue {
   type: string
   status: string
   updatedAt: string
+  unresolvedCommentCount?: number
 }
 
 interface IssueReviewer {
@@ -199,6 +200,11 @@ export default function IssuesListPage() {
                   <Badge variant="outline" className="text-xs">{issue.type}</Badge>
                   <div className="flex items-center gap-1 ml-auto">
                     <ReviewerAvatars reviewers={issue.reviewers} />
+                    {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 && (
+                      <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+                        💬 {issue.unresolvedCommentCount}
+                      </span>
+                    )}
                   </div>
                   <span className="text-foreground-subtle text-xs w-full">{formatDate(issue.updatedAt)}</span>
                 </div>
@@ -215,6 +221,7 @@ export default function IssuesListPage() {
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Type</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Reviewers</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Comments</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Last Updated</th>
                 </tr>
               </thead>
@@ -239,6 +246,15 @@ export default function IssuesListPage() {
                     </td>
                     <td className="px-4 py-3">
                       <ReviewerAvatars reviewers={issue.reviewers} />
+                    </td>
+                    <td className="px-4 py-3">
+                      {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 ? (
+                        <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+                          💬 {issue.unresolvedCommentCount}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(issue.updatedAt)}</td>
                   </tr>
