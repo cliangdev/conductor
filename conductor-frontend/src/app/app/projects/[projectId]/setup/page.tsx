@@ -155,7 +155,6 @@ function ApiKeySection({ accessToken }: { accessToken: string | null }) {
 export default function SetupPage() {
   const params = useParams()
   const projectId = params.projectId as string
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
   const { accessToken } = useAuth()
 
   return (
@@ -189,28 +188,7 @@ export default function SetupPage() {
         <ApiKeySection accessToken={accessToken} />
       </SetupStep>
 
-      <SetupStep number={5} title="MCP Configuration">
-        <p className="text-sm text-muted-foreground mb-3">
-          Add this to your project&apos;s <code className="text-xs bg-muted px-1 rounded">.mcp.json</code> or Claude Desktop config:
-        </p>
-        <CodeBlock
-          code={JSON.stringify({
-            mcpServers: {
-              conductor: {
-                command: 'conductor',
-                args: ['mcp'],
-                env: {
-                  CONDUCTOR_API_URL: apiUrl,
-                  CONDUCTOR_API_KEY: '{your-api-key}',
-                },
-              },
-            },
-          }, null, 2)}
-          language="json"
-        />
-      </SetupStep>
-
-      <SetupStep number={6} title="Verify">
+      <SetupStep number={5} title="Verify">
         <CodeBlock code="conductor status" />
       </SetupStep>
     </div>
