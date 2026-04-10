@@ -21,6 +21,7 @@ const mockConfig = {
   projectName: 'Test Project',
   email: 'test@example.com',
   apiUrl: 'http://localhost:8080',
+  localPath: '/home/user/myproject',
 }
 
 const CONDUCTOR_DIR = path.join(os.homedir(), '.conductor')
@@ -215,6 +216,44 @@ describe('conductor stop', () => {
   })
 })
 
+// ─── T89: parseFilePath new pattern ──────────────────────────────────────────
+
+describe('parseFilePath', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('parses localPath-based path correctly', async () => {
+    const { parseFilePath } = await import('../daemon/watcher.js')
+    const result = parseFilePath('/home/user/myproject/.conductor/issues/iss_abc/spec.md')
+    expect(result).toEqual({ issueId: 'iss_abc', filename: 'spec.md' })
+  })
+
+  it('parses issue.md filename', async () => {
+    const { parseFilePath } = await import('../daemon/watcher.js')
+    const result = parseFilePath('/home/user/myproject/.conductor/issues/iss_xyz/issue.md')
+    expect(result).toEqual({ issueId: 'iss_xyz', filename: 'issue.md' })
+  })
+
+  it('returns null for path not matching the pattern', async () => {
+    const { parseFilePath } = await import('../daemon/watcher.js')
+    const result = parseFilePath('/home/user/myproject/src/some-file.ts')
+    expect(result).toBeNull()
+  })
+
+  it('returns null for empty string', async () => {
+    const { parseFilePath } = await import('../daemon/watcher.js')
+    const result = parseFilePath('')
+    expect(result).toBeNull()
+  })
+
+  it('handles Windows-style backslash paths', async () => {
+    const { parseFilePath } = await import('../daemon/watcher.js')
+    const result = parseFilePath('C:\\Users\\user\\myproject\\.conductor\\issues\\iss_abc\\spec.md')
+    expect(result).toEqual({ issueId: 'iss_abc', filename: 'spec.md' })
+  })
+})
+
 // ─── T38: debounce behavior ───────────────────────────────────────────────────
 
 describe('debounce', () => {
@@ -284,7 +323,7 @@ describe('syncFile', () => {
 
     const { syncFile } = await import('../daemon/watcher.js')
 
-    const filePath = path.join(os.homedir(), '.conductor', 'proj_123', 'issues', 'iss_abc', 'spec.md')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'spec.md')
     await syncFile(filePath, mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
@@ -326,7 +365,7 @@ describe('queueChange and replayQueue', () => {
 
     const { syncFile } = await import('../daemon/watcher.js')
 
-    const filePath = path.join(os.homedir(), '.conductor', 'proj_123', 'issues', 'iss_abc', 'spec.md')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'spec.md')
 
     // readFileSync for the file content + readFileSync for the queue
     mockFs.readFileSync
