@@ -19,7 +19,8 @@ function buildIssueFrontmatter(
   description?: string
 ): string {
   const body = description ?? ''
-  return `---\nid: ${issueId}\ntype: ${type}\ntitle: ${title}\nstatus: ${status}\n---\n\n${body}`
+  const createdAt = new Date().toISOString()
+  return `---\nid: ${issueId}\ntype: ${type}\ntitle: ${title}\nstatus: ${status}\ncreatedAt: ${createdAt}\n---\n\n${body}`
 }
 
 function updateFrontmatterField(content: string, field: string, value: string): string {
@@ -34,6 +35,10 @@ export async function createIssue(
   params: { type: string; title: string; description?: string },
   config: Config
 ): Promise<Record<string, unknown>> {
+  if (!config.localPath) {
+    return { error: 'Run conductor init to set up local project directory' }
+  }
+
   let issueId: string
   let backendResult: IssueResponse | null = null
   let warning: string | undefined
@@ -67,11 +72,14 @@ export async function createIssue(
   )
   writeIssueFile(config, issueId, content)
 
+  const localPath = `.conductor/issues/${issueId}/`
+
   const result: Record<string, unknown> = {
     issueId,
     type: params.type,
     title: params.title,
     status: 'DRAFT',
+    localPath,
   }
 
   if (warning !== undefined) {

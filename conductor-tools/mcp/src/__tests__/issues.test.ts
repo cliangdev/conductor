@@ -60,6 +60,7 @@ describe('createIssue', () => {
       type: 'task',
       title: 'My Task',
       status: 'DRAFT',
+      localPath: '.conductor/issues/issue_abc/',
     })
   })
 
@@ -85,6 +86,31 @@ describe('createIssue', () => {
     expect(content).toContain('title: My Epic')
     expect(content).toContain('status: DRAFT')
     expect(content).toContain('Some content')
+  })
+
+  it('returns error when localPath is missing from config', async () => {
+    const { createIssue } = await import('../tools/issues.js')
+    const configWithoutLocalPath = { ...config, localPath: undefined }
+    const result = await createIssue({ type: 'task', title: 'Test' }, configWithoutLocalPath)
+    expect(result).toMatchObject({ error: expect.stringContaining('conductor init') })
+  })
+
+  it('includes createdAt in frontmatter', async () => {
+    const { apiPost } = await import('../api.js')
+    const { createIssue } = await import('../tools/issues.js')
+
+    vi.mocked(apiPost).mockResolvedValue({
+      id: 'issue_ts',
+      type: 'PRD',
+      title: 'Time Test',
+      status: 'DRAFT',
+    })
+
+    await createIssue({ type: 'PRD', title: 'Time Test' }, config)
+
+    const writeCall = mockFs.writeFileSync.mock.calls[0]
+    const content = writeCall?.[1] as string
+    expect(content).toMatch(/createdAt: \d{4}-\d{2}-\d{2}T/)
   })
 
   it('queues change and returns warning when backend fails', async () => {
