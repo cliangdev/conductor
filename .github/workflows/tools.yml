@@ -1,0 +1,44 @@
+name: Tools CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'conductor-tools/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'conductor-tools/**'
+
+jobs:
+  test-cli:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: conductor-tools/cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: conductor-tools/cli/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test
+
+  test-mcp:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: conductor-tools/mcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: conductor-tools/mcp/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test
