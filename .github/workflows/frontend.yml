@@ -1,4 +1,4 @@
-name: deploy_ui
+name: Frontend CI
 
 on:
   push:
@@ -9,7 +9,6 @@ on:
     branches: [main]
     paths:
       - 'conductor-frontend/**'
-  workflow_dispatch:
 
 jobs:
   test:
@@ -27,22 +26,3 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run test
-
-  build:
-    needs: test
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: conductor-frontend
-    env:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: conductor-frontend/package-lock.json
-      - run: npm ci
-      - run: npm run build
