@@ -25,14 +25,14 @@ export function ReviewersSummaryPanel({ reviewers }: ReviewersSummaryPanelProps)
   if (reviewers.length === 0) {
     return (
       <div className="flex items-center gap-2 mt-3">
-        <span className="text-xs text-gray-500">No reviewers assigned yet</span>
+        <span className="text-xs text-muted-foreground">No reviewers assigned yet</span>
       </div>
     )
   }
 
   return (
-    <div className="flex items-center gap-2 mt-3">
-      <span className="text-xs text-gray-500">Reviewers:</span>
+    <div className="flex items-center gap-2 mt-3 flex-wrap">
+      <span className="text-xs text-muted-foreground">Reviewers:</span>
       {reviewers.map((r) => (
         <div
           key={r.userId}
@@ -44,10 +44,10 @@ export function ReviewersSummaryPanel({ reviewers }: ReviewersSummaryPanelProps)
             <img
               src={r.avatarUrl}
               alt={r.name}
-              className="w-6 h-6 rounded-full border border-gray-200"
+              className="w-6 h-6 rounded-full border border-border"
             />
           ) : (
-            <div className="w-6 h-6 rounded-full bg-gray-300 flex items-center justify-center text-xs font-medium text-gray-600">
+            <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">
               {r.name.charAt(0).toUpperCase()}
             </div>
           )}

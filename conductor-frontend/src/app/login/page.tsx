@@ -32,13 +32,13 @@ function LocalLoginForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50">
-      <div className="w-full max-w-sm rounded-xl border bg-white p-8 shadow-sm">
-        <h1 className="mb-2 text-2xl font-bold text-gray-900">Conductor</h1>
-        <p className="mb-8 text-sm text-gray-500">Team PRD collaboration platform</p>
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm">
+        <h1 className="mb-2 text-2xl font-bold text-foreground">Conductor</h1>
+        <p className="mb-8 text-sm text-muted-foreground">Team PRD collaboration platform</p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="email" className="block text-sm font-medium text-foreground mb-1">
               Email
             </label>
             <input
@@ -47,11 +47,11 @@ function LocalLoginForm() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="password" className="block text-sm font-medium text-foreground mb-1">
               Password
             </label>
             <input
@@ -60,10 +60,10 @@ function LocalLoginForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" className="w-full" size="lg" disabled={loading}>
             {loading ? 'Signing in...' : 'Sign in'}
           </Button>
@@ -85,10 +85,10 @@ function GoogleLoginForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50">
-      <div className="w-full max-w-sm rounded-xl border bg-white p-8 shadow-sm">
-        <h1 className="mb-2 text-2xl font-bold text-gray-900">Conductor</h1>
-        <p className="mb-8 text-sm text-gray-500">Team PRD collaboration platform</p>
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm">
+        <h1 className="mb-2 text-2xl font-bold text-foreground">Conductor</h1>
+        <p className="mb-8 text-sm text-muted-foreground">Team PRD collaboration platform</p>
         <Button onClick={handleSignIn} className="w-full" size="lg">
           Sign in with Google
         </Button>
@@ -104,7 +104,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="flex min-h-screen items-center justify-center">Loading...</div>}>
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">Loading...</div>}>
       <LoginForm />
     </Suspense>
   )

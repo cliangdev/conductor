@@ -43,29 +43,29 @@ export function MemberRow({ member, isAdmin, currentUserId, onRoleChange, onRemo
   const isCurrentUser = member.userId === currentUserId
 
   return (
-    <div className="flex items-center justify-between py-3 border-b last:border-b-0">
+    <div className="flex items-center justify-between py-3 border-b border-border last:border-b-0">
       <div className="flex items-center gap-3">
         <Avatar className="h-9 w-9">
           <AvatarImage src={member.avatarUrl ?? undefined} alt={member.name} />
           <AvatarFallback>{initials}</AvatarFallback>
         </Avatar>
         <div>
-          <p className="text-sm font-medium text-gray-900">
+          <p className="text-sm font-medium text-foreground">
             {member.name}
-            {isCurrentUser && <span className="ml-1 text-xs text-gray-400">(you)</span>}
+            {isCurrentUser && <span className="ml-1 text-xs text-foreground-subtle">(you)</span>}
           </p>
-          <p className="text-xs text-gray-500">{member.email}</p>
+          <p className="text-xs text-muted-foreground">{member.email}</p>
         </div>
       </div>
 
       <div className="flex items-center gap-3">
-        <p className="text-xs text-gray-400 hidden sm:block">Joined {joinedDate}</p>
+        <p className="text-xs text-foreground-subtle hidden sm:block">Joined {joinedDate}</p>
 
         {isAdmin && !isCurrentUser ? (
           <select
             value={member.role}
             onChange={(e) => onRoleChange(member.userId, e.target.value as MemberRole)}
-            className="text-sm border border-gray-200 rounded-md px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-primary"
+            className="text-sm border border-input bg-background text-foreground rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-ring"
             aria-label={`Role for ${member.name}`}
           >
             <option value="ADMIN">Admin</option>
@@ -81,7 +81,7 @@ export function MemberRow({ member, isAdmin, currentUserId, onRoleChange, onRemo
             variant="ghost"
             size="sm"
             onClick={() => onRemove(member.userId, member.name)}
-            className="text-red-500 hover:text-red-700 hover:bg-red-50"
+            className="text-destructive hover:text-destructive hover:bg-destructive/10"
             aria-label={`Remove ${member.name}`}
           >
             Remove

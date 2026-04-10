@@ -43,16 +43,16 @@ export function CommentThread({
   const isResolved = !!comment.resolvedAt
   if (isResolved && !showResolved) {
     return (
-      <div className="text-xs text-gray-400 flex items-center gap-2 py-1">
+      <div className="text-xs text-foreground-subtle flex items-center gap-2 py-1">
         <span>Thread resolved</span>
         <button
           onClick={() => setShowResolved(true)}
-          className="text-blue-500 hover:underline"
+          className="text-primary hover:underline"
         >
           Show
         </button>
         {onClose && (
-          <button onClick={onClose} className="ml-auto text-gray-400 hover:text-gray-600">
+          <button onClick={onClose} className="ml-auto text-foreground-subtle hover:text-foreground">
             ✕
           </button>
         )}
@@ -89,27 +89,27 @@ export function CommentThread({
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded shadow-sm text-sm w-72">
-      <div className="p-3 border-b border-gray-100">
+    <div className="bg-card border border-border rounded shadow-sm text-sm w-72">
+      <div className="p-3 border-b border-border">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1">
-            <div className="flex items-center gap-1.5 mb-1">
-              <span className="font-medium text-gray-800">{comment.authorName}</span>
+            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+              <span className="font-medium text-foreground">{comment.authorName}</span>
               {comment.createdAt && (
-                <span className="text-xs text-gray-400">{formatTime(comment.createdAt)}</span>
+                <span className="text-xs text-foreground-subtle">{formatTime(comment.createdAt)}</span>
               )}
               {isResolved && (
-                <span className="text-xs text-green-600 font-medium ml-1">Resolved</span>
+                <span className="text-xs text-status-approved font-medium ml-1">Resolved</span>
               )}
             </div>
-            <p className="text-gray-700 text-xs leading-relaxed whitespace-pre-wrap">
+            <p className="text-foreground text-xs leading-relaxed whitespace-pre-wrap">
               {comment.content}
             </p>
           </div>
           {onClose && (
             <button
               onClick={onClose}
-              className="text-gray-300 hover:text-gray-500 flex-shrink-0 text-xs leading-none"
+              className="text-foreground-subtle hover:text-foreground flex-shrink-0 text-xs leading-none transition-colors"
             >
               ✕
             </button>
@@ -120,7 +120,7 @@ export function CommentThread({
           {!isResolved && (
             <button
               onClick={handleResolve}
-              className="text-xs text-green-600 hover:text-green-700 hover:underline"
+              className="text-xs text-status-approved hover:underline transition-colors"
             >
               Resolve
             </button>
@@ -128,7 +128,7 @@ export function CommentThread({
           {isResolved && showResolved && (
             <button
               onClick={() => setShowResolved(false)}
-              className="text-xs text-gray-400 hover:text-gray-600 hover:underline"
+              className="text-xs text-foreground-subtle hover:text-foreground hover:underline transition-colors"
             >
               Hide resolved
             </button>
@@ -136,14 +136,14 @@ export function CommentThread({
           {currentUserId === comment.authorId && (
             <button
               onClick={handleDelete}
-              className="text-xs text-red-500 hover:text-red-600 hover:underline"
+              className="text-xs text-destructive hover:text-destructive/80 hover:underline transition-colors"
             >
               Delete
             </button>
           )}
           <button
             onClick={() => setShowReplyForm((v) => !v)}
-            className="text-xs text-blue-500 hover:text-blue-600 hover:underline ml-auto"
+            className="text-xs text-primary hover:text-primary/80 hover:underline ml-auto transition-colors"
           >
             Reply
           </button>
@@ -151,16 +151,16 @@ export function CommentThread({
       </div>
 
       {comment.replies.length > 0 && (
-        <div className="px-3 py-2 border-b border-gray-100 space-y-2">
+        <div className="px-3 py-2 border-b border-border space-y-2">
           {comment.replies.map((reply) => (
-            <div key={reply.id} className="pl-2 border-l-2 border-gray-200">
+            <div key={reply.id} className="pl-2 border-l-2 border-border">
               <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="font-medium text-gray-700 text-xs">{reply.authorName}</span>
+                <span className="font-medium text-foreground text-xs">{reply.authorName}</span>
                 {reply.createdAt && (
-                  <span className="text-xs text-gray-400">{formatTime(reply.createdAt)}</span>
+                  <span className="text-xs text-foreground-subtle">{formatTime(reply.createdAt)}</span>
                 )}
               </div>
-              <p className="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap">
+              <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
                 {reply.content}
               </p>
             </div>

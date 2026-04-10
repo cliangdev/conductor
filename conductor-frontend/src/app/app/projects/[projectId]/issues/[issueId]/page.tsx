@@ -67,6 +67,8 @@ function isExpiringSoon(doc: Document): boolean {
   return expiresAt - Date.now() < 60_000
 }
 
+type MobileTab = 'documents' | 'content'
+
 export default function IssueDetailPage() {
   const params = useParams<{ projectId: string; issueId: string }>()
   const { projectId, issueId } = params
@@ -81,6 +83,7 @@ export default function IssueDetailPage() {
   const [comments, setComments] = useState<Comment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<MobileTab>('documents')
 
   const fetchDocuments = useCallback(async () => {
     if (!accessToken) return
@@ -105,7 +108,7 @@ export default function IssueDetailPage() {
       )
       setComments(data)
     } catch {
-      // Non-fatal: comments failing to load shouldn't break the page
+      // Non-fatal
     }
   }, [accessToken, projectId, issueId])
 
@@ -154,11 +157,9 @@ export default function IssueDetailPage() {
             accessToken!
           )
           const currentMember = members.find((m) => m.userId === user?.id)
-          if (currentMember) {
-            setUserRole(currentMember.role)
-          }
+          if (currentMember) setUserRole(currentMember.role)
         } catch {
-          // Default to REVIEWER if members fetch fails
+          // Default to REVIEWER
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load issue')
@@ -182,6 +183,7 @@ export default function IssueDetailPage() {
   function handleDocClick(doc: Document) {
     if (isMarkdown(doc)) {
       setSelectedDocId(doc.id)
+      setActiveTab('content')
     } else if (doc.storageUrl) {
       window.open(doc.storageUrl, '_blank', 'noopener,noreferrer')
     }
@@ -192,26 +194,109 @@ export default function IssueDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-500">Loading issue...</div>
+      <div className="flex items-center justify-center h-64 text-muted-foreground">
+        Loading issue...
+      </div>
     )
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64 text-red-500">Error: {error}</div>
+      <div className="flex items-center justify-center h-64 text-destructive">Error: {error}</div>
     )
   }
 
   if (!issue) return null
 
+  const sidebar = (
+    <aside className="w-full md:w-72 border-r border-border bg-sidebar-bg flex flex-col shrink-0 overflow-y-auto">
+      <div className="px-4 py-3 border-b border-border">
+        <span className="text-xs font-semibold text-foreground-subtle uppercase tracking-wide">
+          Documents
+        </span>
+      </div>
+      {documents.length === 0 ? (
+        <div className="px-4 py-6 text-sm text-muted-foreground text-center">
+          No documents attached yet
+        </div>
+      ) : (
+        <ul className="py-2">
+          {documents.map((doc) => (
+            <li key={doc.id}>
+              <button
+                onClick={() => handleDocClick(doc)}
+                className={`w-full text-left px-4 py-2 text-sm truncate transition-colors ${
+                  selectedDocId === doc.id
+                    ? 'bg-sidebar-active text-sidebar-active-text font-medium'
+                    : 'text-foreground hover:bg-sidebar-hover'
+                }`}
+                title={doc.filename}
+              >
+                {doc.filename}
+                {!isMarkdown(doc) && (
+                  <span className="ml-1 text-xs text-muted-foreground">(binary)</span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {(isAssignedReviewer || userRole === 'REVIEWER') && (
+        <div className="mt-auto border-t border-border p-4">
+          <ReviewSubmissionForm
+            projectId={projectId}
+            issueId={issueId}
+            token={accessToken!}
+            isAssignedReviewer={isAssignedReviewer}
+            existingVerdict={currentUserReview?.verdict}
+            existingBody={currentUserReview?.body}
+            onReviewSubmitted={async () => {
+              await Promise.all([fetchReviewers(), fetchReviews()])
+            }}
+          />
+        </div>
+      )}
+    </aside>
+  )
+
+  const mainContent = (
+    <main className="flex-1 overflow-y-auto p-4 md:p-6">
+      {documents.length === 0 ? (
+        <div className="flex items-center justify-center h-full text-muted-foreground">
+          No documents attached yet
+        </div>
+      ) : selectedDoc && isMarkdown(selectedDoc) && selectedDoc.content ? (
+        <CommentableDocument
+          content={selectedDoc.content}
+          documentId={selectedDoc.id}
+          issueId={issueId}
+          projectId={projectId}
+          comments={comments.filter((c) => c.documentId === selectedDoc.id)}
+          onCommentAdded={fetchComments}
+          token={accessToken!}
+          currentUserId={user?.id ?? ''}
+        />
+      ) : selectedDoc && isMarkdown(selectedDoc) && !selectedDoc.content ? (
+        <div className="text-muted-foreground text-sm">Document content is empty.</div>
+      ) : (
+        <div className="text-muted-foreground text-sm">
+          Select a document from the sidebar to view its contents.
+        </div>
+      )}
+    </main>
+  )
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="border-b bg-white px-6 py-4">
+      <div className="border-b border-border bg-background px-4 sm:px-6 py-4 shrink-0">
         <div className="flex items-start gap-3 flex-wrap">
-          <h1 className="text-xl font-semibold text-gray-900 flex-1">{issue.title}</h1>
-          <div className="flex items-center gap-2">
-            <Badge className="border bg-gray-50 text-gray-600 border-gray-200">{issue.type}</Badge>
+          <h1 className="text-lg sm:text-xl font-semibold text-foreground flex-1 min-w-0">
+            {issue.title}
+          </h1>
+          <div className="flex items-center gap-2 shrink-0">
+            <Badge variant="outline">{issue.type}</Badge>
             <StatusDropdown
               projectId={projectId}
               issueId={issueId}
@@ -222,86 +307,37 @@ export default function IssueDetailPage() {
             />
           </div>
         </div>
-
         <ReviewersSummaryPanel reviewers={reviewers} />
       </div>
 
-      {/* Body: sidebar + main */}
+      {/* Mobile tab bar */}
+      <div className="md:hidden flex border-b border-border bg-background shrink-0">
+        {(['documents', 'content'] as MobileTab[]).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`flex-1 py-2.5 text-sm font-medium transition-colors capitalize ${
+              activeTab === tab
+                ? 'text-primary border-b-2 border-primary'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {tab === 'documents' ? 'Documents' : 'Content'}
+          </button>
+        ))}
+      </div>
+
+      {/* Body */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar: document list + review form */}
-        <aside className="w-72 border-r bg-gray-50 flex flex-col shrink-0 overflow-y-auto">
-          <div className="px-4 py-3 border-b">
-            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              Documents
-            </span>
-          </div>
-          {documents.length === 0 ? (
-            <div className="px-4 py-6 text-sm text-gray-400 text-center">
-              No documents attached yet
-            </div>
-          ) : (
-            <ul className="py-2">
-              {documents.map((doc) => (
-                <li key={doc.id}>
-                  <button
-                    onClick={() => handleDocClick(doc)}
-                    className={`w-full text-left px-4 py-2 text-sm truncate hover:bg-gray-100 transition-colors ${
-                      selectedDocId === doc.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'
-                    }`}
-                    title={doc.filename}
-                  >
-                    {doc.filename}
-                    {!isMarkdown(doc) && (
-                      <span className="ml-1 text-xs text-gray-400">(binary)</span>
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+        {/* Sidebar: visible on desktop always; on mobile only when documents tab active */}
+        <div className={`${activeTab === 'documents' ? 'flex' : 'hidden'} md:flex w-full md:w-auto`}>
+          {sidebar}
+        </div>
 
-          {(isAssignedReviewer || userRole === 'REVIEWER') && (
-            <div className="mt-auto border-t p-4">
-              <ReviewSubmissionForm
-                projectId={projectId}
-                issueId={issueId}
-                token={accessToken!}
-                isAssignedReviewer={isAssignedReviewer}
-                existingVerdict={currentUserReview?.verdict}
-                existingBody={currentUserReview?.body}
-                onReviewSubmitted={async () => {
-                  await Promise.all([fetchReviewers(), fetchReviews()])
-                }}
-              />
-            </div>
-          )}
-        </aside>
-
-        {/* Main content */}
-        <main className="flex-1 overflow-y-auto p-6">
-          {documents.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-gray-400">
-              No documents attached yet
-            </div>
-          ) : selectedDoc && isMarkdown(selectedDoc) && selectedDoc.content ? (
-            <CommentableDocument
-              content={selectedDoc.content}
-              documentId={selectedDoc.id}
-              issueId={issueId}
-              projectId={projectId}
-              comments={comments.filter((c) => c.documentId === selectedDoc.id)}
-              onCommentAdded={fetchComments}
-              token={accessToken!}
-              currentUserId={user?.id ?? ''}
-            />
-          ) : selectedDoc && isMarkdown(selectedDoc) && !selectedDoc.content ? (
-            <div className="text-gray-400 text-sm">Document content is empty.</div>
-          ) : (
-            <div className="text-gray-400 text-sm">
-              Select a document from the sidebar to view its contents.
-            </div>
-          )}
-        </main>
+        {/* Main: visible on desktop always; on mobile only when content tab active */}
+        <div className={`${activeTab === 'content' ? 'flex' : 'hidden'} md:flex flex-1 overflow-hidden`}>
+          {mainContent}
+        </div>
       </div>
     </div>
   )

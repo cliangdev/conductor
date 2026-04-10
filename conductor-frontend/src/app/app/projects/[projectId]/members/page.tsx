@@ -173,7 +173,7 @@ export default function MembersPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Members</h1>
+        <h1 className="text-2xl font-bold text-foreground">Members</h1>
         {isAdmin && (
           <Button onClick={openInviteModal} size="sm">
             Invite Member
@@ -182,17 +182,17 @@ export default function MembersPage() {
       </div>
 
       {membersLoading && (
-        <p className="text-sm text-gray-500">Loading members…</p>
+        <p className="text-sm text-muted-foreground">Loading members…</p>
       )}
 
       {membersError && (
-        <p className="text-sm text-red-600" role="alert">{membersError}</p>
+        <p className="text-sm text-destructive" role="alert">{membersError}</p>
       )}
 
       {!membersLoading && !membersError && (
-        <div className="bg-white rounded-lg border">
+        <div className="bg-card rounded-lg border border-border">
           {members.length === 0 ? (
-            <p className="text-sm text-gray-500 p-4">No members yet.</p>
+            <p className="text-sm text-muted-foreground p-4">No members yet.</p>
           ) : (
             <div className="px-4">
               {members.map((member) => (
@@ -212,13 +212,13 @@ export default function MembersPage() {
 
       {isAdmin && invites.length > 0 && (
         <div className="mt-8">
-          <h2 className="text-lg font-semibold text-gray-900 mb-3">Pending Invites</h2>
-          <div className="bg-white rounded-lg border divide-y">
+          <h2 className="text-lg font-semibold text-foreground mb-3">Pending Invites</h2>
+          <div className="bg-card rounded-lg border border-border divide-y divide-border">
             {invites.map((invite) => (
               <div key={invite.id} className="flex items-center justify-between px-4 py-3">
                 <div>
-                  <p className="text-sm text-gray-900">{invite.email}</p>
-                  <p className="text-xs text-gray-500">
+                  <p className="text-sm text-foreground">{invite.email}</p>
+                  <p className="text-xs text-muted-foreground">
                     {invite.role} · Expires{' '}
                     {new Date(invite.expiresAt).toLocaleDateString('en-US', {
                       year: 'numeric',
@@ -231,7 +231,7 @@ export default function MembersPage() {
                   variant="ghost"
                   size="sm"
                   onClick={() => handleCancelInvite(invite.id)}
-                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
                 >
                   Cancel
                 </Button>
@@ -250,8 +250,8 @@ export default function MembersPage() {
       >
         <form onSubmit={handleInviteSubmit} noValidate className="space-y-4">
           <div>
-            <label htmlFor="invite-email" className="block text-sm font-medium text-gray-700 mb-1">
-              Email address <span className="text-red-500">*</span>
+            <label htmlFor="invite-email" className="block text-sm font-medium text-foreground mb-1">
+              Email address <span className="text-destructive">*</span>
             </label>
             <input
               id="invite-email"
@@ -259,19 +259,19 @@ export default function MembersPage() {
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
               placeholder="colleague@example.com"
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
             />
           </div>
 
           <div>
-            <label htmlFor="invite-role" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="invite-role" className="block text-sm font-medium text-foreground mb-1">
               Role
             </label>
             <select
               id="invite-role"
               value={inviteRole}
               onChange={(e) => setInviteRole(e.target.value as MemberRole)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white"
+              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
               {INVITEABLE_ROLES.map((role) => (
                 <option key={role} value={role}>
@@ -282,7 +282,7 @@ export default function MembersPage() {
           </div>
 
           {inviteError && (
-            <p className="text-sm text-red-600" role="alert">
+            <p className="text-sm text-destructive" role="alert">
               {inviteError}
             </p>
           )}
@@ -309,11 +309,11 @@ export default function MembersPage() {
         onOpenChange={(open) => { if (!open) setRemoveConfirm(null) }}
         title="Remove member"
       >
-        <p className="text-sm text-gray-700">
+        <p className="text-sm text-foreground">
           Remove <strong>{removeConfirm?.name}</strong> from {projectName}?
         </p>
         {removeError && (
-          <p className="mt-2 text-sm text-red-600" role="alert">{removeError}</p>
+          <p className="mt-2 text-sm text-destructive" role="alert">{removeError}</p>
         )}
         <div className="flex gap-3 mt-4">
           <Button variant="destructive" onClick={handleRemove}>

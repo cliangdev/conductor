@@ -13,12 +13,12 @@ interface Props {
 
 export function MarkdownRenderer({ content, className }: Props) {
   return (
-    <div className={`prose prose-sm max-w-none ${className ?? ''}`}>
+    <div className={`prose prose-sm dark:prose-invert max-w-none ${className ?? ''}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight, rehypeSlug]}
         components={{
-          img: ({ src, alt }) => <SignedImage src={src} alt={alt} />,
+          img: ({ src, alt }) => <SignedImage src={typeof src === 'string' ? src : undefined} alt={alt} />,
         }}
       >
         {content}

@@ -42,16 +42,16 @@ export function NewCommentForm({
         onChange={(e) => setContent(e.target.value)}
         placeholder={placeholder}
         rows={3}
-        className="w-full text-sm border border-gray-300 rounded px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500"
+        className="w-full text-sm border border-input bg-background text-foreground rounded px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
         disabled={submitting}
       />
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-xs text-destructive">{error}</p>}
       <div className="flex items-center gap-2 justify-end">
         {onCancel && (
           <button
             type="button"
             onClick={onCancel}
-            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1"
+            className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 transition-colors"
             disabled={submitting}
           >
             Cancel
@@ -60,7 +60,7 @@ export function NewCommentForm({
         <button
           type="submit"
           disabled={submitting || !content.trim()}
-          className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="text-xs bg-primary text-primary-foreground px-3 py-1 rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {submitting ? 'Submitting...' : submitLabel}
         </button>

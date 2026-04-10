@@ -85,12 +85,12 @@ export default function NewProjectPage() {
 
   return (
     <div className="max-w-lg mx-auto mt-16 px-4">
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Create a new project</h1>
+      <h1 className="text-2xl font-bold text-foreground mb-6">Create a new project</h1>
 
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
         <div>
-          <label htmlFor="project-name" className="block text-sm font-medium text-gray-700 mb-1">
-            Project name <span className="text-red-500">*</span>
+          <label htmlFor="project-name" className="block text-sm font-medium text-foreground mb-1">
+            Project name <span className="text-destructive">*</span>
           </label>
           <input
             id="project-name"
@@ -100,20 +100,20 @@ export default function NewProjectPage() {
             onBlur={() => setNameError(validateName(name))}
             placeholder="My project"
             maxLength={NAME_MAX_LENGTH + 50}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+            className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
             aria-describedby={nameError ? 'name-error' : undefined}
           />
           {nameError && (
-            <p id="name-error" className="mt-1 text-xs text-red-600" role="alert">
+            <p id="name-error" className="mt-1 text-xs text-destructive" role="alert">
               {nameError}
             </p>
           )}
-          <p className="mt-1 text-xs text-gray-400">{name.length}/{NAME_MAX_LENGTH} characters</p>
+          <p className="mt-1 text-xs text-foreground-subtle">{name.length}/{NAME_MAX_LENGTH} characters</p>
         </div>
 
         <div>
-          <label htmlFor="project-description" className="block text-sm font-medium text-gray-700 mb-1">
-            Description <span className="text-gray-400 font-normal">(optional)</span>
+          <label htmlFor="project-description" className="block text-sm font-medium text-foreground mb-1">
+            Description <span className="text-foreground-subtle font-normal">(optional)</span>
           </label>
           <textarea
             id="project-description"
@@ -121,12 +121,12 @@ export default function NewProjectPage() {
             onChange={(e) => setDescription(e.target.value)}
             placeholder="What is this project about?"
             rows={3}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent resize-none"
+            className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent resize-none"
           />
         </div>
 
         {serverError && (
-          <p className="text-sm text-red-600" role="alert">
+          <p className="text-sm text-destructive" role="alert">
             {serverError}
           </p>
         )}
