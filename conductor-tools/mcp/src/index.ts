@@ -4,7 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { getConfig } from './config.js'
 import { createIssue, updateIssue, setIssueStatus, listIssues, getIssue } from './tools/issues.js'
-import { createDocument, updateDocument, deleteDocument } from './tools/documents.js'
+import { createDocument, updateDocument, deleteDocument, scaffoldDocument } from './tools/documents.js'
 
 const TOOLS = [
   {
@@ -91,6 +91,18 @@ const TOOLS = [
         content: { type: 'string', description: 'New document content' },
       },
       required: ['issueId', 'documentId', 'content'],
+    },
+  },
+  {
+    name: 'scaffold_document',
+    description: 'Create an empty document file locally and register it with the backend. Use the returned localPath to write content with the Write tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Issue ID' },
+        filename: { type: 'string', description: 'Document filename (e.g., prd.md)' },
+      },
+      required: ['issueId', 'filename'],
     },
   },
   {
@@ -231,6 +243,16 @@ async function main() {
               issueId: params['issueId'] as string,
               documentId: params['documentId'] as string,
               content: params['content'] as string,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'scaffold_document': {
+          const result = await scaffoldDocument(
+            {
+              issueId: params['issueId'] as string,
+              filename: params['filename'] as string,
             },
             config
           )
