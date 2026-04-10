@@ -87,7 +87,7 @@ describe('NewProjectPage', () => {
     expect(mockSetActiveProject).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'proj-1', name: 'My Project' }),
     )
-    expect(mockRouter.push).toHaveBeenCalledWith('/app/projects/proj-1')
+    expect(mockRouter.push).toHaveBeenCalledWith('/app/projects/proj-1/issues')
   })
 
   it('shows server error message when API call fails', async () => {
