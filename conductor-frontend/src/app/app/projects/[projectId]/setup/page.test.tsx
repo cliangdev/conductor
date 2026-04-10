@@ -34,14 +34,14 @@ describe('SetupPage', () => {
     expect(screen.getByText('conductor init --project-id proj-abc-123')).toBeInTheDocument()
   })
 
-  it('renders all six setup steps', async () => {
+  it('renders all five setup steps', async () => {
     render(<SetupPage />)
     expect(screen.getByText('Install')).toBeInTheDocument()
     expect(screen.getByText('Login')).toBeInTheDocument()
     expect(screen.getByText('Initialize project')).toBeInTheDocument()
     expect(screen.getByText('API Key')).toBeInTheDocument()
-    expect(screen.getByText('MCP Configuration')).toBeInTheDocument()
     expect(screen.getByText('Verify')).toBeInTheDocument()
+    expect(screen.queryByText('MCP Configuration')).not.toBeInTheDocument()
   })
 
   describe('ApiKeySection — no keys', () => {
