@@ -4,6 +4,7 @@ import com.conductor.config.SecurityConfig;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.AuthService;
 import com.conductor.service.CliLoginService;
@@ -55,6 +56,9 @@ class AuthControllerTest {
 
     @MockBean
     private ProjectApiKeyRepository projectApiKeyRepository;
+
+    @MockBean
+    private UserApiKeyRepository userApiKeyRepository;
 
     private User testUser;
 

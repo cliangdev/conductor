@@ -8,6 +8,7 @@ import com.conductor.generated.model.IssueResponse;
 import com.conductor.generated.model.IssueStatus;
 import com.conductor.generated.model.IssueType;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.IssueService;
 import com.conductor.service.JwtService;
@@ -53,6 +54,9 @@ class IssueControllerTest {
 
     @MockBean
     private ProjectApiKeyRepository projectApiKeyRepository;
+
+    @MockBean
+    private UserApiKeyRepository userApiKeyRepository;
 
     private User testUser;
 

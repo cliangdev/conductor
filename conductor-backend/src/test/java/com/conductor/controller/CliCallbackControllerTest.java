@@ -6,6 +6,7 @@ import com.conductor.exception.CliNotReachableException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.AuthService;
 import com.conductor.service.CliLoginService;
@@ -47,6 +48,9 @@ class CliCallbackControllerTest {
 
     @MockBean
     private ProjectApiKeyRepository projectApiKeyRepository;
+
+    @MockBean
+    private UserApiKeyRepository userApiKeyRepository;
 
     private User testUser;
 

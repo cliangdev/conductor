@@ -8,6 +8,7 @@ import com.conductor.generated.model.ProjectDetail;
 import com.conductor.generated.model.ProjectResponse;
 import com.conductor.generated.model.ProjectSummary;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectService;
@@ -52,6 +53,9 @@ class ProjectControllerTest {
 
     @MockBean
     private ProjectApiKeyRepository projectApiKeyRepository;
+
+    @MockBean
+    private UserApiKeyRepository userApiKeyRepository;
 
     private User testUser;
 

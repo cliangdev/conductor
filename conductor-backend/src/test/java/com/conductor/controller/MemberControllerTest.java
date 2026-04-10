@@ -6,6 +6,7 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.generated.model.MemberResponse;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectService;
@@ -52,6 +53,9 @@ class MemberControllerTest {
 
     @MockBean
     private ProjectApiKeyRepository projectApiKeyRepository;
+
+    @MockBean
+    private UserApiKeyRepository userApiKeyRepository;
 
     private User adminUser;
     private User creatorUser;

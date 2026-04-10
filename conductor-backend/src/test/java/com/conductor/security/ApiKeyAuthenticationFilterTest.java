@@ -2,7 +2,10 @@ package com.conductor.security;
 
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectApiKey;
+import com.conductor.entity.User;
+import com.conductor.entity.UserApiKey;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -10,7 +13,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -31,6 +33,9 @@ class ApiKeyAuthenticationFilterTest {
     private ProjectApiKeyRepository projectApiKeyRepository;
 
     @Mock
+    private UserApiKeyRepository userApiKeyRepository;
+
+    @Mock
     private HttpServletRequest request;
 
     @Mock
@@ -39,7 +44,6 @@ class ApiKeyAuthenticationFilterTest {
     @Mock
     private FilterChain filterChain;
 
-    @InjectMocks
     private ApiKeyAuthenticationFilter filter;
 
     private Project testProject;
@@ -48,6 +52,7 @@ class ApiKeyAuthenticationFilterTest {
     @BeforeEach
     void setUp() {
         SecurityContextHolder.clearContext();
+        filter = new ApiKeyAuthenticationFilter(projectApiKeyRepository, userApiKeyRepository);
 
         testProject = new Project();
         testProject.setId("proj-1");
@@ -99,6 +104,7 @@ class ApiKeyAuthenticationFilterTest {
         when(request.getHeader("Authorization")).thenReturn("Bearer my-secret-key");
         when(projectApiKeyRepository.findByKeyHash(ApiKeyAuthenticationFilter.sha256("my-secret-key")))
                 .thenReturn(Optional.of(validApiKey));
+        when(userApiKeyRepository.findByKeyHash(any())).thenReturn(Optional.empty());
 
         filter.doFilterInternal(request, response, filterChain);
 
@@ -110,11 +116,41 @@ class ApiKeyAuthenticationFilterTest {
     void unknownApiKeyDoesNotAuthenticate() throws Exception {
         when(request.getHeader("Authorization")).thenReturn("Bearer unknown-key");
         when(projectApiKeyRepository.findByKeyHash(any())).thenReturn(Optional.empty());
+        when(userApiKeyRepository.findByKeyHash(any())).thenReturn(Optional.empty());
 
         filter.doFilterInternal(request, response, filterChain);
 
         verify(filterChain).doFilter(request, response);
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    void validUserApiKeySetsUserAuthentication() throws Exception {
+        User testUser = new User();
+        testUser.setId("user-1");
+        testUser.setEmail("user@example.com");
+
+        UserApiKey userApiKey = new UserApiKey();
+        userApiKey.setId("uk-1");
+        userApiKey.setUser(testUser);
+        userApiKey.setLabel("CLI Key");
+        userApiKey.setKeyHash(ApiKeyAuthenticationFilter.sha256("uk_user-secret-key"));
+        userApiKey.setKeySuffix("ekey");
+        userApiKey.setCreatedAt(OffsetDateTime.now());
+
+        when(request.getHeader("Authorization")).thenReturn("Bearer uk_user-secret-key");
+        when(projectApiKeyRepository.findByKeyHash(ApiKeyAuthenticationFilter.sha256("uk_user-secret-key")))
+                .thenReturn(Optional.empty());
+        when(userApiKeyRepository.findByKeyHash(ApiKeyAuthenticationFilter.sha256("uk_user-secret-key")))
+                .thenReturn(Optional.of(userApiKey));
+        when(userApiKeyRepository.save(any())).thenReturn(userApiKey);
+
+        filter.doFilterInternal(request, response, filterChain);
+
+        verify(filterChain).doFilter(request, response);
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNotNull();
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isInstanceOf(UserApiKeyAuthenticationToken.class);
+        assertThat(SecurityContextHolder.getContext().getAuthentication().getPrincipal()).isEqualTo(testUser);
     }
 
     @Test
