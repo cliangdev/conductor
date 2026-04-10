@@ -300,12 +300,45 @@ describe('debounce', () => {
   })
 })
 
-// ─── T38: file sync calls API ─────────────────────────────────────────────────
+// ─── T38 / T90: file sync calls API ──────────────────────────────────────────
 
 describe('syncFile', () => {
   beforeEach(() => {
     vi.resetModules()
     vi.resetAllMocks()
+  })
+
+  it('skips issue.md files and does not call API', async () => {
+    const mockFetch = vi.fn()
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncFile } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await syncFile(filePath, mockConfig)
+
+    expect(mockFetch).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('calls PUT with contentType for non-issue.md files', async () => {
+    const fileContent = '# PRD content'
+    mockFs.readFileSync.mockReturnValue(fileContent)
+
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncFile } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'prd.md')
+    await syncFile(filePath, mockConfig)
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('contentType'),
+      })
+    )
+    vi.unstubAllGlobals()
   })
 
   it('reads file and calls PUT API within expected flow', async () => {
@@ -334,6 +367,42 @@ describe('syncFile', () => {
       })
     )
 
+    vi.unstubAllGlobals()
+  })
+})
+
+// ─── T90: deleteFile ─────────────────────────────────────────────────────────
+
+describe('deleteFile', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('calls DELETE for non-issue.md file', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { deleteFile } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'spec.md')
+    await deleteFile(filePath, mockConfig)
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      expect.objectContaining({ method: 'DELETE' })
+    )
+    vi.unstubAllGlobals()
+  })
+
+  it('skips issue.md and does not call DELETE', async () => {
+    const mockFetch = vi.fn()
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { deleteFile } = await import('../daemon/watcher.js')
+    const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
+    await deleteFile(filePath, mockConfig)
+
+    expect(mockFetch).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
   })
 })
