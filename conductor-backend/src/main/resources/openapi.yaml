@@ -32,6 +32,8 @@ tags:
     description: Comment management endpoints
   - name: settings
     description: Project settings endpoints
+  - name: notifications
+    description: Notification channel configuration endpoints
 
 paths:
   /health:
@@ -1787,6 +1789,131 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/notifications/channels:
+    get:
+      tags:
+        - notifications
+      summary: List notification channels (Admin only)
+      operationId: getNotificationChannels
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of notification channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationChannelResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /projects/{projectId}/notifications/channels/{eventType}:
+    put:
+      tags:
+        - notifications
+      summary: Create or update notification channel (Admin only)
+      operationId: upsertNotificationChannel
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: eventType
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationChannelRequest"
+      responses:
+        "200":
+          description: Updated channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationChannelResponse"
+        "201":
+          description: Created channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationChannelResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags:
+        - notifications
+      summary: Delete notification channel (Admin only)
+      operationId: deleteNotificationChannel
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: eventType
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{projectId}/notifications/test/{eventType}:
+    post:
+      tags:
+        - notifications
+      summary: Send test notification (Admin only)
+      operationId: testNotificationChannel
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: eventType
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Test result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationTestResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /invites/{token}/accept:
     post:
       tags:
@@ -1834,6 +1961,26 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
 components:
+  responses:
+    Forbidden:
+      description: Caller is not authorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
   securitySchemes:
     bearerAuth:
       type: http
@@ -2562,3 +2709,42 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    NotificationChannelRequest:
+      type: object
+      required: [provider, webhookUrl, enabled]
+      properties:
+        provider:
+          type: string
+          enum: [DISCORD, SLACK, TEAMS]
+        webhookUrl:
+          type: string
+          maxLength: 512
+        enabled:
+          type: boolean
+
+    NotificationChannelResponse:
+      type: object
+      properties:
+        eventType:
+          type: string
+        provider:
+          type: string
+        webhookUrl:
+          type: string
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    NotificationTestResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
