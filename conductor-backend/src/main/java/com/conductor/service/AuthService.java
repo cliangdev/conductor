@@ -8,7 +8,7 @@ import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseToken;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @Profile("!local")
@@ -17,25 +17,28 @@ public class AuthService {
     private final FirebaseTokenVerifier firebaseTokenVerifier;
     private final JwtService jwtService;
     private final UserRepository userRepository;
+    private final TransactionTemplate transactionTemplate;
 
     public AuthService(
             FirebaseTokenVerifier firebaseTokenVerifier,
             JwtService jwtService,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            TransactionTemplate transactionTemplate) {
         this.firebaseTokenVerifier = firebaseTokenVerifier;
         this.jwtService = jwtService;
         this.userRepository = userRepository;
+        this.transactionTemplate = transactionTemplate;
     }
 
-    @Transactional
     public AuthResponse authenticateWithFirebase(String idToken) throws FirebaseAuthException {
         FirebaseToken firebaseToken = firebaseTokenVerifier.verifyToken(idToken);
 
-        User user = userRepository.findByFirebaseUid(firebaseToken.getUid())
-                .orElseGet(() -> createUser(firebaseToken));
-
-        syncProfile(user, firebaseToken);
-        userRepository.save(user);
+        User user = transactionTemplate.execute(status -> {
+            User u = userRepository.findByFirebaseUid(firebaseToken.getUid())
+                    .orElseGet(() -> createUser(firebaseToken));
+            syncProfile(u, firebaseToken);
+            return userRepository.save(u);
+        });
 
         String accessToken = jwtService.generateToken(user.getId());
 
