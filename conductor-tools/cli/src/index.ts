@@ -10,6 +10,7 @@ import { registerDoc } from './commands/doc.js'
 import { registerStart } from './commands/start.js'
 import { registerStop } from './commands/stop.js'
 import { registerMcp } from './commands/mcp.js'
+import { registerConfig } from './commands/config.js'
 
 const program = new Command()
 
@@ -28,5 +29,6 @@ registerDoc(program)
 registerStart(program)
 registerStop(program)
 registerMcp(program)
+registerConfig(program)
 
 program.parse()
