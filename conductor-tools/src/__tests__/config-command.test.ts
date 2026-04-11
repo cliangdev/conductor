@@ -154,13 +154,13 @@ describe('config use command', () => {
 
     expect(mockWriteConfig).toHaveBeenCalledWith(
       expect.objectContaining({
-        apiUrl: 'https://conductor-backend-x6setx6tpa-uc.a.run.app',
-        frontendUrl: 'https://conductor-frontend-x6setx6tpa-uc.a.run.app',
+        apiUrl: 'https://conductor-backend-199707291514.us-central1.run.app',
+        frontendUrl: 'https://conductor-frontend-199707291514.us-central1.run.app',
       })
     )
     const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
     expect(allOutput).toContain('prod')
-    expect(allOutput).toContain('https://conductor-backend-x6setx6tpa-uc.a.run.app')
+    expect(allOutput).toContain('https://conductor-backend-199707291514.us-central1.run.app')
 
     consoleSpy.mockRestore()
     exitSpy.mockRestore()

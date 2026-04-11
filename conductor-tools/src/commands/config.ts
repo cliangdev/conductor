@@ -12,8 +12,8 @@ const PRESETS: Record<string, Preset> = {
     frontendUrl: 'http://localhost:3000',
   },
   prod: {
-    apiUrl: 'https://conductor-backend-x6setx6tpa-uc.a.run.app',
-    frontendUrl: 'https://conductor-frontend-x6setx6tpa-uc.a.run.app',
+    apiUrl: 'https://conductor-backend-199707291514.us-central1.run.app',
+    frontendUrl: 'https://conductor-frontend-199707291514.us-central1.run.app',
   },
 }
 
