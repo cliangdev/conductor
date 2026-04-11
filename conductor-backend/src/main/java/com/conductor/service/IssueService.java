@@ -11,6 +11,9 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.CreateIssueRequest;
 import com.conductor.generated.model.IssueResponse;
 import com.conductor.generated.model.PatchIssueRequest;
+import com.conductor.notification.EventType;
+import com.conductor.notification.NotificationDispatcher;
+import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -40,7 +43,7 @@ public class IssueService {
     private final ProjectRepository projectRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
-    private final DiscordWebhookClient discordWebhookClient;
+    private final NotificationDispatcher notificationDispatcher;
     private final CommentRepository commentRepository;
 
     public IssueService(
@@ -48,13 +51,13 @@ public class IssueService {
             ProjectRepository projectRepository,
             ProjectSecurityService projectSecurityService,
             ProjectMemberRepository projectMemberRepository,
-            DiscordWebhookClient discordWebhookClient,
+            NotificationDispatcher notificationDispatcher,
             CommentRepository commentRepository) {
         this.issueRepository = issueRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
-        this.discordWebhookClient = discordWebhookClient;
+        this.notificationDispatcher = notificationDispatcher;
         this.commentRepository = commentRepository;
     }
 
@@ -144,7 +147,9 @@ public class IssueService {
         if (request.getStatus() != null) {
             IssueStatus newStatus = issue.getStatus();
             if (previousStatus != IssueStatus.IN_REVIEW && newStatus == IssueStatus.IN_REVIEW) {
-                discordWebhookClient.notifyInReview(projectId, issue.getId(), issue.getTitle());
+                notificationDispatcher.dispatch(NotificationEvent.of(
+                        EventType.ISSUE_SUBMITTED, projectId,
+                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
             }
         }
 

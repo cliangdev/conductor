@@ -1,3 +1,4 @@
+import * as readline from 'readline'
 import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
@@ -6,18 +7,108 @@ import { findAvailablePort, waitForOAuthCallback } from '../lib/oauth-server.js'
 
 const CONDUCTOR_API_URL = process.env['CONDUCTOR_API_URL'] ?? 'http://localhost:8080'
 
+function prompt(question: string, hidden = false): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+    if (hidden) {
+      process.stdout.write(question)
+      process.stdin.setRawMode?.(true)
+      let input = ''
+      process.stdin.resume()
+      process.stdin.setEncoding('utf8')
+      const onData = (ch: string) => {
+        if (ch === '\n' || ch === '\r' || ch === '\u0003') {
+          process.stdin.setRawMode?.(false)
+          process.stdin.pause()
+          process.stdin.removeListener('data', onData)
+          process.stdout.write('\n')
+          rl.close()
+          resolve(input)
+        } else if (ch === '\u007f') {
+          input = input.slice(0, -1)
+        } else {
+          input += ch
+        }
+      }
+      process.stdin.on('data', onData)
+    } else {
+      rl.question(question, (answer) => {
+        rl.close()
+        resolve(answer)
+      })
+    }
+  })
+}
+
+async function loginLocal(apiUrl: string): Promise<void> {
+  const email = await prompt('Email: ')
+  const password = await prompt('Password: ', true)
+
+  const spinner = ora('Authenticating...').start()
+
+  const res = await fetch(`${apiUrl}/api/v1/auth/local`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  })
+
+  if (!res.ok) {
+    spinner.fail(chalk.red('Authentication failed — check your email and password.'))
+    process.exit(1)
+  }
+
+  const { accessToken, user } = await res.json() as { accessToken: string; user: { email: string } }
+
+  // Fetch first available project
+  const projectsRes = await fetch(`${apiUrl}/api/v1/projects`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+
+  if (!projectsRes.ok) {
+    spinner.fail(chalk.red('Authenticated but failed to fetch projects.'))
+    process.exit(1)
+  }
+
+  const projects = await projectsRes.json() as Array<{ id: string; name: string }>
+
+  if (projects.length === 0) {
+    spinner.fail(chalk.red('No projects found. Create a project in the Conductor UI first.'))
+    process.exit(1)
+  }
+
+  const project = projects[0]!
+  writeConfig({
+    apiKey: accessToken,
+    projectId: project.id,
+    projectName: project.name,
+    email: user?.email ?? email,
+    apiUrl,
+  })
+
+  spinner.succeed(chalk.green(`Logged in as ${email} (project: ${project.name})`))
+}
+
 export function registerLogin(program: Command): void {
   program
     .command('login')
     .description('Authenticate with Conductor via browser')
     .option('--force', 'Re-authenticate even if already logged in')
-    .action(async (options: { force?: boolean }) => {
+    .option('--local', 'Use email/password login (local dev only)')
+    .action(async (options: { force?: boolean; local?: boolean }) => {
       const existing = readConfig()
 
       if (existing && !options.force) {
         console.log(
           `Already logged in as ${existing.email}. Use --force to re-authenticate.`
         )
+        process.exit(0)
+        return
+      }
+
+      const apiUrl = CONDUCTOR_API_URL
+
+      if (options.local) {
+        await loginLocal(apiUrl)
         process.exit(0)
         return
       }
@@ -35,11 +126,11 @@ export function registerLogin(program: Command): void {
 
       try {
         const { default: open } = await import('open')
-        const loginUrl = `${CONDUCTOR_API_URL}/auth/cli-login?port=${port}`
+        const loginUrl = `${apiUrl}/auth/cli-login?port=${port}`
         await open(loginUrl)
 
         const payload = await waitForOAuthCallback(port, spinner)
-        const config = { ...payload, apiUrl: CONDUCTOR_API_URL }
+        const config = { ...payload, apiUrl }
         writeConfig(config)
         spinner.succeed(
           chalk.green(`Logged in as ${config.email} (project: ${config.projectName})`)

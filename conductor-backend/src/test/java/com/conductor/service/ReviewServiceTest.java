@@ -14,6 +14,7 @@ import com.conductor.generated.model.ReviewResponse;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.IssueReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
+import com.conductor.notification.NotificationDispatcher;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,7 +53,7 @@ class ReviewServiceTest {
     private UserRepository userRepository;
 
     @Mock
-    private DiscordWebhookClient discordWebhookClient;
+    private NotificationDispatcher notificationDispatcher;
 
     @InjectMocks
     private ReviewService reviewService;

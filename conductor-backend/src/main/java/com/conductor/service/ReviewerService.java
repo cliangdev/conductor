@@ -9,6 +9,9 @@ import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.AssignReviewerResponse;
 import com.conductor.generated.model.ReviewerResponse;
+import com.conductor.notification.EventType;
+import com.conductor.notification.NotificationDispatcher;
+import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.IssueReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserRepository;
@@ -17,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class ReviewerService {
@@ -24,17 +28,17 @@ public class ReviewerService {
     private final IssueReviewerRepository issueReviewerRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final UserRepository userRepository;
-    private final DiscordWebhookClient discordWebhookClient;
+    private final NotificationDispatcher notificationDispatcher;
 
     public ReviewerService(
             IssueReviewerRepository issueReviewerRepository,
             ProjectMemberRepository projectMemberRepository,
             UserRepository userRepository,
-            DiscordWebhookClient discordWebhookClient) {
+            NotificationDispatcher notificationDispatcher) {
         this.issueReviewerRepository = issueReviewerRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.userRepository = userRepository;
-        this.discordWebhookClient = discordWebhookClient;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     @Transactional
@@ -61,7 +65,9 @@ public class ReviewerService {
         String reviewerName = userRepository.findById(targetUserId)
                 .map(u -> u.getName() != null ? u.getName() : u.getEmail())
                 .orElse(targetUserId);
-        discordWebhookClient.notifyReviewerAssigned(projectId, issueId, issueId, reviewerName);
+        notificationDispatcher.dispatch(NotificationEvent.of(
+                EventType.REVIEWER_ASSIGNED, projectId,
+                Map.of("issueId", issueId, "issueTitle", issueId, "reviewerId", targetUserId, "reviewerName", reviewerName)));
 
         return new AssignReviewerResponse(issueId, targetUserId, reviewer.getAssignedAt());
     }

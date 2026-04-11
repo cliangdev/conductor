@@ -12,6 +12,7 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.CreateIssueRequest;
 import com.conductor.generated.model.IssueResponse;
 import com.conductor.generated.model.PatchIssueRequest;
+import com.conductor.notification.NotificationDispatcher;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -51,7 +52,7 @@ class IssueServiceTest {
     private ProjectMemberRepository projectMemberRepository;
 
     @Mock
-    private DiscordWebhookClient discordWebhookClient;
+    private NotificationDispatcher notificationDispatcher;
 
     @Mock
     private CommentRepository commentRepository;

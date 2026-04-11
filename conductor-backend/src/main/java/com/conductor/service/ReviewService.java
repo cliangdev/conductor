@@ -9,6 +9,9 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.ReviewResponse;
 import com.conductor.generated.model.ReviewWithUserResponse;
+import com.conductor.notification.EventType;
+import com.conductor.notification.NotificationDispatcher;
+import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.IssueReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -20,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
@@ -32,7 +36,7 @@ public class ReviewService {
     private final ProjectMemberRepository projectMemberRepository;
     private final IssueRepository issueRepository;
     private final UserRepository userRepository;
-    private final DiscordWebhookClient discordWebhookClient;
+    private final NotificationDispatcher notificationDispatcher;
 
     public ReviewService(
             ReviewRepository reviewRepository,
@@ -40,13 +44,13 @@ public class ReviewService {
             ProjectMemberRepository projectMemberRepository,
             IssueRepository issueRepository,
             UserRepository userRepository,
-            DiscordWebhookClient discordWebhookClient) {
+            NotificationDispatcher notificationDispatcher) {
         this.reviewRepository = reviewRepository;
         this.issueReviewerRepository = issueReviewerRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.issueRepository = issueRepository;
         this.userRepository = userRepository;
-        this.discordWebhookClient = discordWebhookClient;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     @Transactional
@@ -86,7 +90,9 @@ public class ReviewService {
 
         Issue issue = issueRepository.findById(issueId).orElse(null);
         String issueTitle = issue != null ? issue.getTitle() : issueId;
-        discordWebhookClient.notifyReviewSubmitted(projectId, issueId, issueTitle, verdict);
+        notificationDispatcher.dispatch(NotificationEvent.of(
+                EventType.REVIEW_SUBMITTED, projectId,
+                Map.of("issueId", issueId, "issueTitle", issueTitle, "verdict", verdict)));
 
         return toReviewResponse(review);
     }

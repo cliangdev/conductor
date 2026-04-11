@@ -2,7 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { ChevronDownIcon, FileTextIcon, PlusIcon, SettingsIcon, TerminalIcon, UsersIcon } from 'lucide-react'
+import { BellIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, PlusIcon, SettingsIcon, TerminalIcon, UsersIcon } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,6 +43,51 @@ function SidebarNavLink({
       <span className="h-4 w-4 shrink-0">{icon}</span>
       <span className="truncate">{children}</span>
     </Link>
+  )
+}
+
+function SidebarNavGroup({
+  href,
+  icon,
+  label,
+  subLinks,
+  onNavigate,
+}: {
+  href: string
+  icon: React.ReactNode
+  label: string
+  subLinks: React.ReactNode
+  onNavigate?: () => void
+}) {
+  const pathname = usePathname()
+  const isGroupActive = pathname.startsWith(href)
+  const [expanded, setExpanded] = useState(isGroupActive)
+
+  useEffect(() => {
+    if (isGroupActive) setExpanded(true)
+  }, [isGroupActive])
+
+  return (
+    <div>
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className={cn(
+          'flex items-center gap-2.5 px-2.5 py-2 rounded-md text-sm w-full transition-colors',
+          isGroupActive
+            ? 'bg-sidebar-active text-sidebar-active-text font-medium'
+            : 'text-foreground hover:bg-sidebar-hover'
+        )}
+      >
+        <span className="h-4 w-4 shrink-0">{icon}</span>
+        <span className="flex-1 truncate text-left">{label}</span>
+        <ChevronRightIcon className={cn('h-3 w-3 transition-transform shrink-0', expanded && 'rotate-90')} />
+      </button>
+      {expanded && (
+        <div className="ml-6 mt-0.5 space-y-0.5">
+          {subLinks}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -113,13 +159,21 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           >
             Setup
           </SidebarNavLink>
-          <SidebarNavLink
+          <SidebarNavGroup
             href={`/app/projects/${activeProject.id}/settings`}
             icon={<SettingsIcon className="h-4 w-4" />}
+            label="Settings"
             onNavigate={onNavigate}
-          >
-            Settings
-          </SidebarNavLink>
+            subLinks={
+              <SidebarNavLink
+                href={`/app/projects/${activeProject.id}/settings/notifications`}
+                icon={<BellIcon className="h-4 w-4" />}
+                onNavigate={onNavigate}
+              >
+                Notifications
+              </SidebarNavLink>
+            }
+          />
         </nav>
       )}
     </div>
