@@ -10,4 +10,5 @@ import java.util.Optional;
 public interface NotificationChannelConfigRepository extends JpaRepository<NotificationChannelConfig, String> {
     Optional<NotificationChannelConfig> findByProjectIdAndEventType(String projectId, EventType eventType);
     List<NotificationChannelConfig> findByProjectId(String projectId);
+    void deleteByProjectIdAndEventType(String projectId, EventType eventType);
 }
