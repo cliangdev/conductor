@@ -1,6 +1,6 @@
 # Conductor
 
-Team PRD collaboration platform. Claude Code generates PRDs; Conductor handles review, approval, and team workflow — bridging AI-assisted spec writing with structured team processes.
+Agentic software development platform. Conductor uses AI to orchestrate the full software development lifecycle — from spec to ship. PRD collaboration is the starting point: AI agents author specs, teams review and approve them, and Conductor coordinates what gets built, by whom, and when.
 
 ## How it works
 
