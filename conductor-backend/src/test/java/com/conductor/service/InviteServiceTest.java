@@ -106,6 +106,29 @@ class InviteServiceTest {
     }
 
     @Test
+    void createInviteSucceedsEvenWhenEmailServiceThrows() {
+        when(projectSecurityService.isProjectAdmin("proj-1", "admin-id")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(userRepository.findByEmail("invitee@example.com")).thenReturn(Optional.empty());
+        when(inviteRepository.findByProjectIdAndEmailAndStatus("proj-1", "invitee@example.com", "PENDING"))
+                .thenReturn(Optional.empty());
+        when(inviteRepository.save(any(Invite.class))).thenAnswer(invocation -> {
+            Invite inv = invocation.getArgument(0);
+            inv.setId("invite-1");
+            inv.setStatus("PENDING");
+            return inv;
+        });
+        doThrow(new RuntimeException("Resend connection refused"))
+                .when(emailService).sendInviteEmail(any(), any(), any(), any());
+
+        InviteResponse response = inviteService.createInvite("proj-1", "invitee@example.com", "CREATOR", admin);
+
+        assertThat(response.getEmail()).isEqualTo("invitee@example.com");
+        assertThat(response.getRole()).isEqualTo("CREATOR");
+        verify(inviteRepository).save(any(Invite.class));
+    }
+
+    @Test
     void createInviteDuplicateEmailReturnsWith409() {
         when(projectSecurityService.isProjectAdmin("proj-1", "admin-id")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
