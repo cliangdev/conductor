@@ -35,4 +35,5 @@ export interface Invite {
   email: string
   role: MemberRole
   expiresAt: string
+  token?: string
 }

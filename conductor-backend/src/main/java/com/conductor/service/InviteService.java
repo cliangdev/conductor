@@ -15,6 +15,8 @@ import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +27,8 @@ import java.util.UUID;
 
 @Service
 public class InviteService {
+
+    private static final Logger log = LoggerFactory.getLogger(InviteService.class);
 
     private final InviteRepository inviteRepository;
     private final ProjectRepository projectRepository;
@@ -78,7 +82,11 @@ public class InviteService {
         invite.setExpiresAt(OffsetDateTime.now().plusHours(72));
         inviteRepository.save(invite);
 
-        emailService.sendInviteEmail(email, inviter.getName(), project.getName(), invite.getToken());
+        try {
+            emailService.sendInviteEmail(email, inviter.getName(), project.getName(), invite.getToken());
+        } catch (Exception e) {
+            log.warn("Failed to send invite email to {}: {}", email, e.getMessage());
+        }
 
         return toInviteResponse(invite);
     }

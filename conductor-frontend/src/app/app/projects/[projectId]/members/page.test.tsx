@@ -179,12 +179,13 @@ describe('MembersPage', () => {
     ).toBeInTheDocument()
   })
 
-  it('successful invite closes modal and shows success toast', async () => {
+  it('successful invite shows link panel with invite URL', async () => {
     const newInvite = {
       id: 'invite-1',
       email: 'new@example.com',
       role: 'CREATOR',
       expiresAt: '2024-02-01T00:00:00Z',
+      token: 'abc-token-123',
     }
     vi.mocked(api.apiPost).mockResolvedValue(newInvite)
 
@@ -192,14 +193,109 @@ describe('MembersPage', () => {
     await screen.findByText('Creator User')
 
     fireEvent.click(screen.getByRole('button', { name: /invite member/i }))
-
     const modal = await screen.findByTestId('modal')
     await userEvent.type(within(modal).getByLabelText(/email address/i), 'new@example.com')
     fireEvent.click(within(modal).getByRole('button', { name: /send invite/i }))
 
     await waitFor(() => {
-      expect(mockShowToast).toHaveBeenCalledWith('Invite sent to new@example.com')
+      expect(screen.getByText(/invite created/i)).toBeInTheDocument()
     })
+    expect(screen.getByText(/new@example\.com/)).toBeInTheDocument()
+    expect(screen.getByDisplayValue(/\/invites\/abc-token-123\/accept/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /copy/i })).toBeInTheDocument()
+  })
+
+  it('Done button closes link panel after invite creation', async () => {
+    const newInvite = {
+      id: 'invite-1',
+      email: 'new@example.com',
+      role: 'CREATOR',
+      expiresAt: '2024-02-01T00:00:00Z',
+      token: 'abc-token-123',
+    }
+    vi.mocked(api.apiPost).mockResolvedValue(newInvite)
+
+    render(<MembersPage />)
+    await screen.findByText('Creator User')
+
+    fireEvent.click(screen.getByRole('button', { name: /invite member/i }))
+    const modal = await screen.findByTestId('modal')
+    await userEvent.type(within(modal).getByLabelText(/email address/i), 'new@example.com')
+    fireEvent.click(within(modal).getByRole('button', { name: /send invite/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/invite created/i)).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /done/i }))
+    await waitFor(() => {
+      expect(screen.queryByTestId('modal')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows 403 error message when user lacks admin access', async () => {
+    const err = Object.assign(new Error('API error: 403'), { status: 403 })
+    vi.mocked(api.apiPost).mockRejectedValue(err)
+
+    render(<MembersPage />)
+    await screen.findByText('Creator User')
+
+    fireEvent.click(screen.getByRole('button', { name: /invite member/i }))
+    const modal = await screen.findByTestId('modal')
+    await userEvent.type(within(modal).getByLabelText(/email address/i), 'test@example.com')
+    fireEvent.click(within(modal).getByRole('button', { name: /send invite/i }))
+
+    expect(
+      await screen.findByText(/you need admin access to invite members/i),
+    ).toBeInTheDocument()
+  })
+
+  it('pending invite with token shows Copy Link button', async () => {
+    const pendingInvite = {
+      id: 'invite-2',
+      email: 'pending@example.com',
+      role: 'REVIEWER',
+      expiresAt: '2024-02-01T00:00:00Z',
+      token: 'pending-token-456',
+    }
+    vi.mocked(api.apiGet).mockImplementation((path: string) => {
+      if (path.includes('/members')) return Promise.resolve([adminMember, regularMember])
+      if (path.includes('/invites')) return Promise.resolve([pendingInvite])
+      return Promise.resolve([])
+    })
+
+    render(<MembersPage />)
+    await screen.findByText('pending@example.com')
+
+    expect(screen.getByRole('button', { name: /copy link/i })).toBeInTheDocument()
+  })
+
+  it('Copy Link button in pending invites copies URL to clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+
+    const pendingInvite = {
+      id: 'invite-2',
+      email: 'pending@example.com',
+      role: 'REVIEWER',
+      expiresAt: '2024-02-01T00:00:00Z',
+      token: 'pending-token-456',
+    }
+    vi.mocked(api.apiGet).mockImplementation((path: string) => {
+      if (path.includes('/members')) return Promise.resolve([adminMember, regularMember])
+      if (path.includes('/invites')) return Promise.resolve([pendingInvite])
+      return Promise.resolve([])
+    })
+
+    render(<MembersPage />)
+    await screen.findByText('pending@example.com')
+
+    fireEvent.click(screen.getByRole('button', { name: /copy link/i }))
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining('/invites/pending-token-456/accept'))
+    })
+    expect(mockShowToast).toHaveBeenCalledWith('Invite link copied to clipboard')
   })
 
   it('shows pending invites for admin', async () => {
