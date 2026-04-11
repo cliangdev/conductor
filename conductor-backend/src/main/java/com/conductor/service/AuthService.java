@@ -8,6 +8,7 @@ import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseToken;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @Profile("!local")
@@ -26,6 +27,7 @@ public class AuthService {
         this.userRepository = userRepository;
     }
 
+    @Transactional
     public AuthResponse authenticateWithFirebase(String idToken) throws FirebaseAuthException {
         FirebaseToken firebaseToken = firebaseTokenVerifier.verifyToken(idToken);
 
