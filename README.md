@@ -1,6 +1,6 @@
 # Conductor
 
-Agentic software development platform. Conductor uses AI to orchestrate the full software development lifecycle — from spec to ship. PRD collaboration is the starting point: AI agents author specs, teams review and approve them, and Conductor coordinates what gets built, by whom, and when.
+Agentic software development platform. Conductor uses AI to orchestrate the full software development lifecycle — from spec to ship. AI agents author PRDs, teams review and approve them, and Conductor coordinates what gets built, by whom, and when.
 
 ## How it works
 
