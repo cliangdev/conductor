@@ -26,3 +26,15 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run test
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: test
+    uses: ./.github/workflows/deploy-cloudrun.yml
+    with:
+      service: conductor-frontend
+      image-name: frontend
+      build-context: conductor-frontend/
+      is-frontend: true
+      cloudrun-flags: --allow-unauthenticated
+    secrets: inherit

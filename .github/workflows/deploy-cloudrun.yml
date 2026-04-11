@@ -1,0 +1,70 @@
+name: Deploy to Cloud Run
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: 'Cloud Run service name'
+        type: string
+        required: true
+      image-name:
+        description: 'Image name (backend or frontend)'
+        type: string
+        required: true
+      build-context:
+        description: 'Docker build context directory'
+        type: string
+        required: true
+      is-frontend:
+        description: 'Adds NEXT_PUBLIC_* build args for the frontend image'
+        type: boolean
+        required: false
+        default: false
+      cloudrun-flags:
+        description: 'Additional Cloud Run flags (e.g. --allow-unauthenticated)'
+        type: string
+        required: false
+        default: ''
+      cloudrun-secrets:
+        description: 'Cloud Run secret bindings (KEY=SECRET_NAME:VERSION, one per line)'
+        type: string
+        required: false
+        default: ''
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Configure Docker
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+      - name: Build and push image
+        run: |
+          IMAGE=us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/conductor/${{ inputs.image-name }}:${{ github.sha }}
+          if [ "${{ inputs.is-frontend }}" == "true" ]; then
+            docker build -t $IMAGE \
+              --build-arg NEXT_PUBLIC_FIREBASE_API_KEY="${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}" \
+              --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN="${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}" \
+              --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID="${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}" \
+              --build-arg NEXT_PUBLIC_API_URL="${{ vars.NEXT_PUBLIC_API_URL }}" \
+              ${{ inputs.build-context }}
+          else
+            docker build -t $IMAGE ${{ inputs.build-context }}
+          fi
+          docker push $IMAGE
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+      - uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ inputs.service }}
+          region: ${{ vars.GCP_REGION }}
+          image: ${{ env.IMAGE }}
+          flags: ${{ inputs.cloudrun-flags }}
+          secrets: ${{ inputs.cloudrun-secrets }}

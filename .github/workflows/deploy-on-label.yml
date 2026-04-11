@@ -1,32 +1,12 @@
-name: Backend CI
+name: Deploy on label
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'conductor-backend/**'
   pull_request:
-    branches: [main]
-    paths:
-      - 'conductor-backend/**'
+    types: [labeled]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: maven
-      - name: Run tests
-        working-directory: conductor-backend
-        run: mvn test
-
-  deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: test
+  deploy-backend:
+    if: github.event.label.name == 'deploy_backend'
     uses: ./.github/workflows/deploy-cloudrun.yml
     with:
       service: conductor-backend
@@ -42,4 +22,15 @@ jobs:
         GCP_SERVICE_ACCOUNT_KEY=GCP_SERVICE_ACCOUNT_KEY:latest
         GCP_STORAGE_BUCKET_NAME=GCP_STORAGE_BUCKET_NAME:latest
         FRONTEND_URL=FRONTEND_URL:latest
+    secrets: inherit
+
+  deploy-frontend:
+    if: github.event.label.name == 'deploy_ui'
+    uses: ./.github/workflows/deploy-cloudrun.yml
+    with:
+      service: conductor-frontend
+      image-name: frontend
+      build-context: conductor-frontend/
+      is-frontend: true
+      cloudrun-flags: --allow-unauthenticated
     secrets: inherit
