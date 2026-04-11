@@ -15,14 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: conductor-tools/cli
+        working-directory: conductor-tools
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: conductor-tools/cli/package-lock.json
+          cache-dependency-path: conductor-tools/package-lock.json
       - run: npm ci
       - run: npm run build
       - run: npm run test

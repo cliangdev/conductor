@@ -12,7 +12,7 @@
 1. **Build the CLI**
 
    ```bash
-   cd conductor-tools/cli && npm run build
+   cd conductor-tools && npm run build
    ```
 
 2. **Link globally**
