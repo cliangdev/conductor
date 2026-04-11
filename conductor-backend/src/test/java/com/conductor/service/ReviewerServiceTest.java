@@ -8,7 +8,7 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.service.DiscordWebhookClient;
+import com.conductor.notification.NotificationDispatcher;
 import com.conductor.generated.model.AssignReviewerResponse;
 import com.conductor.generated.model.ReviewerResponse;
 import com.conductor.repository.IssueReviewerRepository;
@@ -46,7 +46,7 @@ class ReviewerServiceTest {
     private UserRepository userRepository;
 
     @Mock
-    private DiscordWebhookClient discordWebhookClient;
+    private NotificationDispatcher notificationDispatcher;
 
     @InjectMocks
     private ReviewerService reviewerService;
