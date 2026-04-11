@@ -1,13 +1,11 @@
 # Build artifacts
 conductor-backend/target/
-conductor-tools/cli/dist/
-conductor-tools/mcp/dist/
+conductor-tools/dist/
 conductor-frontend/.next/
 conductor-frontend/tsconfig.tsbuildinfo
 
 # Dependencies
-conductor-tools/cli/node_modules/
-conductor-tools/mcp/node_modules/
+conductor-tools/node_modules/
 conductor-frontend/node_modules/
 
 # Environment / secrets
