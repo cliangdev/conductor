@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'conductor-backend/**'
+  workflow_dispatch:
 
 jobs:
   test:
@@ -25,7 +26,7 @@ jobs:
         run: mvn test
 
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: test
     uses: ./.github/workflows/deploy-cloudrun.yml
     with:
