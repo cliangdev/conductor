@@ -74,8 +74,6 @@ function LocalLoginForm() {
 }
 
 function GoogleLoginForm() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
   const { signIn } = useAuth()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -85,8 +83,7 @@ function GoogleLoginForm() {
     setError(null)
     try {
       await signIn()
-      const next = searchParams.get('next') ?? '/app/projects'
-      router.push(next)
+      // signInWithRedirect navigates away — loading stays true intentionally
     } catch {
       setError('Sign in failed. Please try again.')
       setLoading(false)

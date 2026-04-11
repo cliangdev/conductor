@@ -51,7 +51,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
     }
-    setLoading(false)
+
+    const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
+    if (!isLocalMode) {
+      import('@/lib/firebase').then(({ getFirebaseAuth }) =>
+        import('firebase/auth').then(({ getRedirectResult, getIdToken }) =>
+          getRedirectResult(getFirebaseAuth()).then(async (credential) => {
+            if (credential) {
+              const idToken = await getIdToken(credential.user)
+              const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
+              setUser(response.user)
+              setAccessToken(response.accessToken)
+              localStorage.setItem('access_token', response.accessToken)
+              localStorage.setItem('user', JSON.stringify(response.user))
+              setAccessTokenCookie(response.accessToken)
+              window.location.href = new URLSearchParams(window.location.search).get('next') ?? '/app/projects'
+            }
+          }).catch(() => {
+            // No redirect result or error — continue normally
+          }).finally(() => setLoading(false))
+        )
+      )
+    } else {
+      setLoading(false)
+    }
   }, [])
 
   async function signIn(credentials?: { email: string; password: string }): Promise<void> {
@@ -68,20 +91,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const { getFirebaseAuth } = await import('@/lib/firebase')
-    const { GoogleAuthProvider, signInWithPopup, getIdToken } = await import('firebase/auth')
+    const { GoogleAuthProvider, signInWithRedirect } = await import('firebase/auth')
 
     const auth = getFirebaseAuth()
     const provider = new GoogleAuthProvider()
-    const credential = await signInWithPopup(auth, provider)
-    const idToken = await getIdToken(credential.user)
-
-    const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
-
-    setUser(response.user)
-    setAccessToken(response.accessToken)
-    localStorage.setItem('access_token', response.accessToken)
-    localStorage.setItem('user', JSON.stringify(response.user))
-    setAccessTokenCookie(response.accessToken)
+    await signInWithRedirect(auth, provider)
+    // Page will redirect — result is handled in useEffect via getRedirectResult
   }
 
   async function signOut(): Promise<void> {
