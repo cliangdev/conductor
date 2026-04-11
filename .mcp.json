@@ -6,6 +6,12 @@
         "@cliangdev/flux-plugin@next",
         "serve"
       ]
+    },
+    "conductor": {
+      "command": "conductor",
+      "args": [
+        "mcp"
+      ]
     }
   }
 }

@@ -111,6 +111,102 @@ describe('config show command', () => {
   })
 })
 
+describe('config use command', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('switches to local and prints the URL', async () => {
+    mockReadConfig.mockReturnValue({ ...mockConfig })
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'use', 'local'])
+
+    expect(mockWriteConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ apiUrl: 'http://localhost:8080', frontendUrl: 'http://localhost:3000' })
+    )
+    const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
+    expect(allOutput).toContain('local')
+    expect(allOutput).toContain('http://localhost:8080')
+
+    consoleSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+
+  it('switches to prod and prints the URL', async () => {
+    mockReadConfig.mockReturnValue({ ...mockConfig })
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'use', 'prod'])
+
+    expect(mockWriteConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiUrl: 'https://conductor-backend-x6setx6tpa-uc.a.run.app',
+        frontendUrl: 'https://conductor-frontend-x6setx6tpa-uc.a.run.app',
+      })
+    )
+    const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
+    expect(allOutput).toContain('prod')
+    expect(allOutput).toContain('https://conductor-backend-x6setx6tpa-uc.a.run.app')
+
+    consoleSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+
+  it('prints error and exits 1 for unknown environment', async () => {
+    mockReadConfig.mockReturnValue({ ...mockConfig })
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'use', 'staging'])
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Unknown environment'))
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(mockWriteConfig).not.toHaveBeenCalled()
+
+    consoleSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+
+  it('prints error and exits 1 when no config exists', async () => {
+    mockReadConfig.mockReturnValue(null)
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'use', 'local'])
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('No config found'))
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(mockWriteConfig).not.toHaveBeenCalled()
+
+    consoleSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+})
+
 describe('config set-url command', () => {
   beforeEach(() => {
     vi.resetModules()

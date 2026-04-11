@@ -238,17 +238,17 @@ describe('writeSkillFile', () => {
     realFs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('creates .claude/skills/conductor.md', async () => {
+  it('creates .claude/commands/conductor/prd.md', async () => {
     const { writeSkillFile } = await import('../commands/init.js')
     writeSkillFile(tmpDir)
-    const skillPath = path.join(tmpDir, '.claude', 'skills', 'conductor.md')
+    const skillPath = path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md')
     expect(realFs.existsSync(skillPath)).toBe(true)
   })
 
   it('skill file contains Phase 1 discovery prompt', async () => {
     const { writeSkillFile } = await import('../commands/init.js')
     writeSkillFile(tmpDir)
-    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'skills', 'conductor.md'), 'utf8')
+    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md'), 'utf8')
     expect(content).toContain('Phase 1')
     expect(content).toContain("What are you trying to build?")
   })
@@ -256,7 +256,7 @@ describe('writeSkillFile', () => {
   it('skill file contains Phase 2 research instructions', async () => {
     const { writeSkillFile } = await import('../commands/init.js')
     writeSkillFile(tmpDir)
-    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'skills', 'conductor.md'), 'utf8')
+    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md'), 'utf8')
     expect(content).toContain('Phase 2')
     expect(content).toContain('CLAUDE.md')
   })
@@ -264,7 +264,7 @@ describe('writeSkillFile', () => {
   it('skill file contains Phase 3 generate with PRD format', async () => {
     const { writeSkillFile } = await import('../commands/init.js')
     writeSkillFile(tmpDir)
-    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'skills', 'conductor.md'), 'utf8')
+    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md'), 'utf8')
     expect(content).toContain('Phase 3')
     expect(content).toContain('PRD Format')
   })
@@ -272,7 +272,7 @@ describe('writeSkillFile', () => {
   it('skill file contains Phase 4 save with MCP call sequence', async () => {
     const { writeSkillFile } = await import('../commands/init.js')
     writeSkillFile(tmpDir)
-    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'skills', 'conductor.md'), 'utf8')
+    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md'), 'utf8')
     expect(content).toContain('Phase 4')
     expect(content).toContain('create_issue')
     expect(content).toContain('scaffold_document')
@@ -281,7 +281,7 @@ describe('writeSkillFile', () => {
   it('skill file contains all three supporting document templates', async () => {
     const { writeSkillFile } = await import('../commands/init.js')
     writeSkillFile(tmpDir)
-    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'skills', 'conductor.md'), 'utf8')
+    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md'), 'utf8')
     expect(content).toContain('architecture.md')
     expect(content).toContain('wireframes.md')
     expect(content).toContain('mockup.html')

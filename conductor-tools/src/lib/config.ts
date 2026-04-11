@@ -8,6 +8,7 @@ export interface Config {
   projectName: string
   email: string
   apiUrl: string
+  frontendUrl?: string
   localPath?: string
 }
 

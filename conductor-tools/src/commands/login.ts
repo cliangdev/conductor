@@ -7,6 +7,18 @@ import { findAvailablePort, waitForOAuthCallback } from '../lib/oauth-server.js'
 
 const CONDUCTOR_API_URL = process.env['CONDUCTOR_API_URL'] ?? 'http://localhost:8080'
 
+const CONDUCTOR_FRONTEND_URL = process.env['CONDUCTOR_FRONTEND_URL'] ?? 'http://localhost:3000'
+
+function resolveApiUrl(): string {
+  const cfg = readConfig()
+  return cfg?.apiUrl ?? CONDUCTOR_API_URL
+}
+
+function resolveFrontendUrl(): string {
+  const cfg = readConfig()
+  return cfg?.frontendUrl ?? CONDUCTOR_FRONTEND_URL
+}
+
 function prompt(question: string, hidden = false): Promise<string> {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
@@ -105,7 +117,7 @@ export function registerLogin(program: Command): void {
         return
       }
 
-      const apiUrl = CONDUCTOR_API_URL
+      const apiUrl = resolveApiUrl()
 
       if (options.local) {
         await loginLocal(apiUrl)
@@ -126,7 +138,8 @@ export function registerLogin(program: Command): void {
 
       try {
         const { default: open } = await import('open')
-        const loginUrl = `${apiUrl}/auth/cli-login?port=${port}`
+        const frontendUrl = resolveFrontendUrl()
+        const loginUrl = `${frontendUrl}/auth/cli-login?port=${port}`
         await open(loginUrl)
 
         const payload = await waitForOAuthCallback(port, spinner)
