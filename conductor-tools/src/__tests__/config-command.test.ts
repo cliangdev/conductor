@@ -135,6 +135,7 @@ describe('config use command', () => {
     const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
     expect(allOutput).toContain('local')
     expect(allOutput).toContain('http://localhost:8080')
+    expect(allOutput).toContain('http://localhost:3000')
 
     consoleSpy.mockRestore()
     exitSpy.mockRestore()
@@ -161,6 +162,7 @@ describe('config use command', () => {
     const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
     expect(allOutput).toContain('prod')
     expect(allOutput).toContain('https://conductor-backend-199707291514.us-central1.run.app')
+    expect(allOutput).toContain('https://conductor-frontend-199707291514.us-central1.run.app')
 
     consoleSpy.mockRestore()
     exitSpy.mockRestore()

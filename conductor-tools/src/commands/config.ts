@@ -61,7 +61,9 @@ export function registerConfig(program: Command): void {
       cfg.apiUrl = preset.apiUrl
       cfg.frontendUrl = preset.frontendUrl
       writeConfig(cfg)
-      console.log(`Switched to ${env}: ${preset.apiUrl}`)
+      console.log(`Switched to ${env}:`)
+      console.log(`  backend:  ${preset.apiUrl}`)
+      console.log(`  frontend: ${preset.frontendUrl}`)
     })
 
   config
