@@ -20,82 +20,141 @@ vi.mock('@/components/ui/modal', () => ({
     ) : null,
 }))
 
-import { ChannelConfigModal } from './ChannelConfigModal'
-import type { NotificationChannelResponse } from '@/hooks/useNotifications'
+import { GroupChannelConfigModal } from './GroupChannelConfigModal'
+import type { NotificationGroupResponse } from '@/hooks/useNotifications'
 
-const existingChannel: NotificationChannelResponse = {
-  eventType: 'ISSUE_SUBMITTED',
+const availableGroups = [
+  {
+    value: 'ISSUES',
+    label: 'Issues',
+    eventTypes: ['ISSUE_SUBMITTED', 'ISSUE_APPROVED', 'ISSUE_COMPLETED'],
+  },
+]
+
+const existingGroup: NotificationGroupResponse = {
+  channelGroup: 'ISSUES',
+  label: 'Issues',
   provider: 'DISCORD',
   webhookUrl: 'https://discord.com/api/webhooks/123/abc',
   enabled: true,
+  events: [
+    { eventType: 'ISSUE_SUBMITTED', label: 'PRD submitted for review', enabled: true },
+    { eventType: 'ISSUE_APPROVED', label: 'PRD approved', enabled: false },
+    { eventType: 'ISSUE_COMPLETED', label: 'PRD marked as completed', enabled: false },
+  ],
   createdAt: '2024-01-01T00:00:00Z',
   updatedAt: '2024-01-01T00:00:00Z',
 }
 
-describe('ChannelConfigModal', () => {
+describe('GroupChannelConfigModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
   it('renders nothing when closed', () => {
     render(
-      <ChannelConfigModal
+      <GroupChannelConfigModal
         open={false}
         onClose={vi.fn()}
         onSave={vi.fn()}
-        usedEventTypes={[]}
+        availableGroups={availableGroups}
       />,
     )
     expect(screen.queryByTestId('modal')).not.toBeInTheDocument()
   })
 
-  it('renders Add title when no existingChannel', () => {
+  it('renders Add title when no existingGroup', () => {
     render(
-      <ChannelConfigModal
+      <GroupChannelConfigModal
         open={true}
         onClose={vi.fn()}
         onSave={vi.fn()}
-        usedEventTypes={[]}
+        availableGroups={availableGroups}
       />,
     )
     expect(screen.getByText('Add Notification Channel')).toBeInTheDocument()
   })
 
-  it('renders Edit title when existingChannel provided', () => {
+  it('renders Edit title with group label when existingGroup provided', () => {
     render(
-      <ChannelConfigModal
+      <GroupChannelConfigModal
         open={true}
         onClose={vi.fn()}
         onSave={vi.fn()}
-        existingChannel={existingChannel}
-        usedEventTypes={[]}
+        existingGroup={existingGroup}
+        availableGroups={[]}
       />,
     )
-    expect(screen.getByText('Edit Notification Channel')).toBeInTheDocument()
+    expect(screen.getByText('Edit: Issues')).toBeInTheDocument()
   })
 
-  it('pre-fills fields when editing', () => {
+  it('pre-fills webhook URL when editing', () => {
     render(
-      <ChannelConfigModal
+      <GroupChannelConfigModal
         open={true}
         onClose={vi.fn()}
         onSave={vi.fn()}
-        existingChannel={existingChannel}
-        usedEventTypes={[]}
+        existingGroup={existingGroup}
+        availableGroups={[]}
       />,
     )
     const urlInput = screen.getByLabelText(/webhook url/i) as HTMLInputElement
     expect(urlInput.value).toBe('https://discord.com/api/webhooks/123/abc')
   })
 
-  it('shows validation error for blank webhook URL', async () => {
+  it('pre-checks enabled event types when editing', () => {
     render(
-      <ChannelConfigModal
+      <GroupChannelConfigModal
         open={true}
         onClose={vi.fn()}
         onSave={vi.fn()}
-        existingChannel={existingChannel}
-        usedEventTypes={[]}
+        existingGroup={existingGroup}
+        availableGroups={[]}
+      />,
+    )
+    const submittedCheckbox = screen.getByRole('checkbox', {
+      name: /prd submitted for review/i,
+    }) as HTMLInputElement
+    const approvedCheckbox = screen.getByRole('checkbox', {
+      name: /prd approved/i,
+    }) as HTMLInputElement
+    expect(submittedCheckbox.checked).toBe(true)
+    expect(approvedCheckbox.checked).toBe(false)
+  })
+
+  it('shows event type checkboxes for available group', () => {
+    render(
+      <GroupChannelConfigModal
+        open={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        availableGroups={availableGroups}
+      />,
+    )
+    expect(screen.getByRole('checkbox', { name: /prd submitted for review/i })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: /prd approved/i })).toBeInTheDocument()
+  })
+
+  it('shows Discord webhook instructions when Discord selected', () => {
+    render(
+      <GroupChannelConfigModal
+        open={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        availableGroups={availableGroups}
+      />,
+    )
+    expect(screen.getByText(/server settings → integrations → webhooks/i)).toBeInTheDocument()
+  })
+
+  it('shows validation error for blank webhook URL', async () => {
+    render(
+      <GroupChannelConfigModal
+        open={true}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        existingGroup={existingGroup}
+        availableGroups={[]}
       />,
     )
     const urlInput = screen.getByLabelText(/webhook url/i)
@@ -104,35 +163,15 @@ describe('ChannelConfigModal', () => {
     expect(await screen.findByText(/webhook url is required/i)).toBeInTheDocument()
   })
 
-  it('shows validation error for non-http URL', async () => {
+  it('calls onSave with channelGroup and request on valid submit', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
     render(
-      <ChannelConfigModal
+      <GroupChannelConfigModal
         open={true}
         onClose={vi.fn()}
-        onSave={vi.fn()}
-        existingChannel={existingChannel}
-        usedEventTypes={[]}
-      />,
-    )
-    const urlInput = screen.getByLabelText(/webhook url/i)
-    await userEvent.clear(urlInput)
-    await userEvent.type(urlInput, 'ftp://invalid.url')
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!)
-    expect(
-      await screen.findByText(/must start with http:\/\/ or https:\/\//i),
-    ).toBeInTheDocument()
-  })
-
-  it('calls onSave with correct payload on valid submit', async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined)
-    const onClose = vi.fn()
-    render(
-      <ChannelConfigModal
-        open={true}
-        onClose={onClose}
         onSave={onSave}
-        existingChannel={existingChannel}
-        usedEventTypes={[]}
+        existingGroup={existingGroup}
+        availableGroups={[]}
       />,
     )
     const urlInput = screen.getByLabelText(/webhook url/i)
@@ -140,24 +179,23 @@ describe('ChannelConfigModal', () => {
     await userEvent.type(urlInput, 'https://discord.com/api/webhooks/new/url')
     fireEvent.click(screen.getByRole('button', { name: /save/i }))
     await waitFor(() => {
-      expect(onSave).toHaveBeenCalledWith({
+      expect(onSave).toHaveBeenCalledWith('ISSUES', expect.objectContaining({
         provider: 'DISCORD',
         webhookUrl: 'https://discord.com/api/webhooks/new/url',
         enabled: true,
-      })
+      }))
     })
-    await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 
   it('calls onClose when Cancel clicked', () => {
     const onClose = vi.fn()
     render(
-      <ChannelConfigModal
+      <GroupChannelConfigModal
         open={true}
         onClose={onClose}
         onSave={vi.fn()}
-        existingChannel={existingChannel}
-        usedEventTypes={[]}
+        existingGroup={existingGroup}
+        availableGroups={[]}
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
@@ -167,15 +205,15 @@ describe('ChannelConfigModal', () => {
   it('shows error when onSave throws', async () => {
     const onSave = vi.fn().mockRejectedValue(new Error('API error'))
     render(
-      <ChannelConfigModal
+      <GroupChannelConfigModal
         open={true}
         onClose={vi.fn()}
         onSave={onSave}
-        existingChannel={existingChannel}
-        usedEventTypes={[]}
+        existingGroup={existingGroup}
+        availableGroups={[]}
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: /save/i }))
-    expect(await screen.findByText(/failed to save channel/i)).toBeInTheDocument()
+    expect(await screen.findByText(/failed to save/i)).toBeInTheDocument()
   })
 })

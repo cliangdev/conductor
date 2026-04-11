@@ -9,11 +9,15 @@ import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.generated.model.NotificationTestResponse;
 import com.conductor.notification.EventType;
 import com.conductor.notification.ProviderType;
+import com.conductor.service.NotificationGroupService.UpsertResult;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
+import com.conductor.entity.NotificationGroupConfig;
+import com.conductor.notification.ChannelGroup;
 import com.conductor.service.NotificationChannelService;
+import com.conductor.service.NotificationGroupService;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,7 +43,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(NotificationChannelController.class)
+@WebMvcTest(NotificationGroupController.class)
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
 class NotificationChannelControllerTest {
 
@@ -48,6 +52,9 @@ class NotificationChannelControllerTest {
 
     @MockitoBean
     private NotificationChannelService notificationChannelService;
+
+    @MockitoBean
+    private NotificationGroupService notificationGroupService;
 
     @MockitoBean
     private JwtService jwtService;
@@ -253,5 +260,85 @@ class NotificationChannelControllerTest {
         mockMvc.perform(post("/api/v1/projects/proj-1/notifications/test/ISSUE_SUBMITTED")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isForbidden());
+    }
+
+    // Group endpoint tests
+
+    @Test
+    void getNotificationGroupsReturns200WithList() throws Exception {
+        NotificationGroupConfig config = buildGroupConfig();
+        when(notificationGroupService.getGroups(eq("proj-1"), any(User.class)))
+                .thenReturn(List.of(config));
+
+        mockMvc.perform(get("/api/v1/projects/proj-1/notifications/groups")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].channelGroup").value("ISSUES"))
+                .andExpect(jsonPath("$[0].label").value("Issues"))
+                .andExpect(jsonPath("$[0].provider").value("DISCORD"))
+                .andExpect(jsonPath("$[0].enabled").value(true));
+    }
+
+    @Test
+    void upsertNotificationGroupReturns201OnCreate() throws Exception {
+        NotificationGroupConfig config = buildGroupConfig();
+        when(notificationGroupService.upsertGroup(eq("proj-1"), eq("ISSUES"), any(), any(User.class)))
+                .thenReturn(new UpsertResult(config, true));
+
+        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/groups/ISSUES")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true,\"enabledEventTypes\":[\"ISSUE_SUBMITTED\"]}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.channelGroup").value("ISSUES"));
+    }
+
+    @Test
+    void upsertNotificationGroupReturns200OnUpdate() throws Exception {
+        NotificationGroupConfig config = buildGroupConfig();
+        when(notificationGroupService.upsertGroup(eq("proj-1"), eq("ISSUES"), any(), any(User.class)))
+                .thenReturn(new UpsertResult(config, false));
+
+        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/groups/ISSUES")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true,\"enabledEventTypes\":[\"ISSUE_SUBMITTED\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channelGroup").value("ISSUES"));
+    }
+
+    @Test
+    void deleteNotificationGroupReturns204() throws Exception {
+        mockMvc.perform(delete("/api/v1/projects/proj-1/notifications/groups/ISSUES")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void testNotificationGroupReturns200() throws Exception {
+        NotificationTestResponse response = new NotificationTestResponse();
+        response.setSuccess(true);
+        response.setMessage("Test notification sent");
+        when(notificationGroupService.testGroup(eq("proj-1"), eq("ISSUES"), any(User.class)))
+                .thenReturn(response);
+
+        mockMvc.perform(post("/api/v1/projects/proj-1/notifications/test/groups/ISSUES")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    private NotificationGroupConfig buildGroupConfig() {
+        NotificationGroupConfig config = new NotificationGroupConfig();
+        config.setProjectId("proj-1");
+        config.setChannelGroup(ChannelGroup.ISSUES);
+        config.setProvider(ProviderType.DISCORD);
+        config.setWebhookUrl("https://discord.com/api/webhooks/123/abc");
+        config.setEnabled(true);
+        config.setEnabledEventTypes(java.util.Set.of("ISSUE_SUBMITTED"));
+        config.setCreatedAt(OffsetDateTime.now());
+        config.setUpdatedAt(OffsetDateTime.now());
+        return config;
     }
 }

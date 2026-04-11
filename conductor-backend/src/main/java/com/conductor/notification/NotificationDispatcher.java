@@ -1,7 +1,7 @@
 package com.conductor.notification;
 
-import com.conductor.entity.NotificationChannelConfig;
-import com.conductor.repository.NotificationChannelConfigRepository;
+import com.conductor.entity.NotificationGroupConfig;
+import com.conductor.repository.NotificationGroupConfigRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -13,24 +13,37 @@ public class NotificationDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationDispatcher.class);
 
-    private final NotificationChannelConfigRepository channelConfigRepository;
+    private final NotificationGroupConfigRepository groupConfigRepository;
     private final DiscordProvider discordProvider;
 
-    public NotificationDispatcher(NotificationChannelConfigRepository channelConfigRepository, DiscordProvider discordProvider) {
-        this.channelConfigRepository = channelConfigRepository;
+    public NotificationDispatcher(NotificationGroupConfigRepository groupConfigRepository,
+                                  DiscordProvider discordProvider) {
+        this.groupConfigRepository = groupConfigRepository;
         this.discordProvider = discordProvider;
     }
 
     public void dispatch(NotificationEvent event) {
-        Optional<NotificationChannelConfig> configOpt = channelConfigRepository
-                .findByProjectIdAndEventType(event.getProjectId(), event.getEventType());
+        Optional<ChannelGroup> groupOpt = ChannelGroup.forEventType(event.getEventType());
+        if (groupOpt.isEmpty()) {
+            log.debug("No channel group defined for event type: {}", event.getEventType());
+            return;
+        }
 
+        ChannelGroup group = groupOpt.get();
+
+        Optional<NotificationGroupConfig> configOpt =
+                groupConfigRepository.findByProjectIdAndChannelGroup(event.getProjectId(), group);
         if (configOpt.isEmpty()) {
             return;
         }
 
-        NotificationChannelConfig config = configOpt.get();
+        NotificationGroupConfig config = configOpt.get();
+
         if (!config.isEnabled()) {
+            return;
+        }
+
+        if (!config.getEnabledEventTypes().contains(event.getEventType().name())) {
             return;
         }
 

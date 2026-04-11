@@ -3,14 +3,15 @@
 import { useState } from 'react'
 import { apiPut, apiDelete, apiPost } from '@/lib/api'
 import {
-  useNotifications,
-  type NotificationChannelRequest,
-  type NotificationChannelResponse,
+  useNotificationGroups,
+  CHANNEL_GROUPS,
+  type NotificationGroupRequest,
+  type NotificationGroupResponse,
   type NotificationTestResponse,
 } from '@/hooks/useNotifications'
 import { useToast } from '@/components/ui/toast'
-import { NotificationChannelTable } from './NotificationChannelTable'
-import { ChannelConfigModal } from './ChannelConfigModal'
+import { NotificationGroupTable } from './NotificationGroupTable'
+import { GroupChannelConfigModal } from './GroupChannelConfigModal'
 
 interface NotificationSettingsPageProps {
   projectId: string
@@ -18,53 +19,49 @@ interface NotificationSettingsPageProps {
 }
 
 export function NotificationSettingsPage({ projectId, accessToken }: NotificationSettingsPageProps) {
-  const { channels, loading, error, refetch } = useNotifications(projectId, accessToken)
+  const { groups, loading, error, refetch } = useNotificationGroups(projectId, accessToken)
   const { showToast } = useToast()
 
   const [showModal, setShowModal] = useState(false)
-  const [editingChannel, setEditingChannel] = useState<NotificationChannelResponse | undefined>(undefined)
-  const [pendingEventType, setPendingEventType] = useState('')
-  const [testingEventType, setTestingEventType] = useState<string | null>(null)
+  const [editingGroup, setEditingGroup] = useState<NotificationGroupResponse | undefined>(undefined)
+  const [testingGroup, setTestingGroup] = useState<string | null>(null)
 
   function handleAdd() {
-    setEditingChannel(undefined)
-    setPendingEventType('')
+    setEditingGroup(undefined)
     setShowModal(true)
   }
 
-  function handleEdit(channel: NotificationChannelResponse) {
-    setEditingChannel(channel)
-    setPendingEventType(channel.eventType)
+  function handleEdit(group: NotificationGroupResponse) {
+    setEditingGroup(group)
     setShowModal(true)
   }
 
   function handleClose() {
     setShowModal(false)
-    setEditingChannel(undefined)
-    setPendingEventType('')
+    setEditingGroup(undefined)
   }
 
-  async function handleDelete(eventType: string) {
-    if (!confirm(`Delete notification channel for "${eventType}"?`)) return
+  async function handleDelete(channelGroup: string) {
+    if (!confirm(`Remove notification channel for "${channelGroup}"?`)) return
     try {
       await apiDelete(
-        `/api/v1/projects/${projectId}/notifications/channels/${eventType}`,
-        accessToken,
+        `/api/v1/projects/${projectId}/notifications/groups/${channelGroup}`,
+        accessToken
       )
-      showToast('Notification channel deleted.')
+      showToast('Notification channel removed.')
       refetch()
     } catch {
-      showToast('Failed to delete channel. Please try again.', 'error')
+      showToast('Failed to remove channel. Please try again.', 'error')
     }
   }
 
-  async function handleTest(eventType: string) {
-    setTestingEventType(eventType)
+  async function handleTest(channelGroup: string) {
+    setTestingGroup(channelGroup)
     try {
       const result = await apiPost<NotificationTestResponse>(
-        `/api/v1/projects/${projectId}/notifications/test/${eventType}`,
+        `/api/v1/projects/${projectId}/notifications/test/groups/${channelGroup}`,
         {},
-        accessToken,
+        accessToken
       )
       if (result.success) {
         showToast(result.message || 'Test notification sent!')
@@ -74,62 +71,63 @@ export function NotificationSettingsPage({ projectId, accessToken }: Notificatio
     } catch {
       showToast('Failed to send test notification.', 'error')
     } finally {
-      setTestingEventType(null)
+      setTestingGroup(null)
     }
   }
 
-  async function handleSave(req: NotificationChannelRequest) {
-    const eventType = editingChannel ? editingChannel.eventType : pendingEventType
-    if (!eventType) throw new Error('No event type selected')
-    await apiPut<NotificationChannelResponse>(
-      `/api/v1/projects/${projectId}/notifications/channels/${eventType}`,
+  async function handleSave(channelGroup: string, req: NotificationGroupRequest) {
+    await apiPut<NotificationGroupResponse>(
+      `/api/v1/projects/${projectId}/notifications/groups/${channelGroup}`,
       req,
-      accessToken,
+      accessToken
     )
     showToast('Notification channel saved.')
     refetch()
   }
 
-  const usedEventTypes = channels.map((c) => c.eventType)
+  const configuredGroups = new Set(groups.map((g) => g.channelGroup))
+  const availableGroups = CHANNEL_GROUPS.filter((g) => !configuredGroups.has(g.value))
+  const hasUnconfiguredGroups = availableGroups.length > 0
 
   return (
     <section>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-base font-semibold text-foreground">Notifications</h2>
-        <button
-          type="button"
-          onClick={handleAdd}
-          className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium"
-        >
-          Add Channel
-        </button>
-      </div>
-
-      <div className="rounded-lg border border-border bg-card p-6">
-        {loading && (
-          <p className="text-sm text-muted-foreground">Loading channels…</p>
-        )}
-        {error && (
-          <p className="text-sm text-destructive" role="alert">{error}</p>
-        )}
-        {!loading && !error && (
-          <NotificationChannelTable
-            channels={channels}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onTest={handleTest}
-            testingEventType={testingEventType}
-          />
+        <p className="text-sm text-muted-foreground">
+          Configure webhooks to receive notifications for project events.
+        </p>
+        {hasUnconfiguredGroups && (
+          <button
+            type="button"
+            onClick={handleAdd}
+            className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium shrink-0"
+          >
+            Add Channel
+          </button>
         )}
       </div>
 
-      <ChannelConfigModal
+      {loading && (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      )}
+      {error && (
+        <p className="text-sm text-destructive" role="alert">{error}</p>
+      )}
+      {!loading && !error && (
+        <NotificationGroupTable
+          groups={groups}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+          onTest={handleTest}
+          testingGroup={testingGroup}
+        />
+      )}
+
+      <GroupChannelConfigModal
         open={showModal}
         onClose={handleClose}
         onSave={handleSave}
-        existingChannel={editingChannel}
-        usedEventTypes={usedEventTypes}
-        onEventTypeChange={setPendingEventType}
+        existingGroup={editingGroup}
+        availableGroups={availableGroups}
       />
     </section>
   )

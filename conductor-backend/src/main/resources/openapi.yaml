@@ -1914,6 +1914,131 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /projects/{projectId}/notifications/groups:
+    get:
+      tags:
+        - notifications
+      summary: List notification group configs (Admin only)
+      operationId: getNotificationGroups
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of notification group configs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationGroupResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /projects/{projectId}/notifications/groups/{channelGroup}:
+    put:
+      tags:
+        - notifications
+      summary: Create or update notification group config (Admin only)
+      operationId: upsertNotificationGroup
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channelGroup
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationGroupRequest"
+      responses:
+        "200":
+          description: Updated group config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationGroupResponse"
+        "201":
+          description: Created group config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationGroupResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags:
+        - notifications
+      summary: Delete notification group config (Admin only)
+      operationId: deleteNotificationGroup
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channelGroup
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /projects/{projectId}/notifications/test/groups/{channelGroup}:
+    post:
+      tags:
+        - notifications
+      summary: Send test notification for a group (Admin only)
+      operationId: testNotificationGroup
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channelGroup
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Test result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationTestResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /invites/{token}/accept:
     post:
       tags:
@@ -2748,3 +2873,54 @@ components:
           type: boolean
         message:
           type: string
+
+    NotificationGroupRequest:
+      type: object
+      required: [provider, webhookUrl, enabled, enabledEventTypes]
+      properties:
+        provider:
+          type: string
+          enum: [DISCORD, SLACK, TEAMS]
+        webhookUrl:
+          type: string
+          maxLength: 512
+        enabled:
+          type: boolean
+        enabledEventTypes:
+          type: array
+          items:
+            type: string
+
+    NotificationEventConfig:
+      type: object
+      properties:
+        eventType:
+          type: string
+        label:
+          type: string
+        enabled:
+          type: boolean
+
+    NotificationGroupResponse:
+      type: object
+      properties:
+        channelGroup:
+          type: string
+        label:
+          type: string
+        provider:
+          type: string
+        webhookUrl:
+          type: string
+        enabled:
+          type: boolean
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/NotificationEventConfig"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
