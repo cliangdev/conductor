@@ -2,9 +2,9 @@ package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
 import com.conductor.entity.User;
-import com.conductor.exception.CliNotReachableException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.GlobalExceptionHandler;
+import com.conductor.generated.model.CliCallbackResponse;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
@@ -66,21 +66,27 @@ class CliCallbackControllerTest {
     }
 
     @Test
-    void cliCallbackReturns200WithSuccessMessage() throws Exception {
-        when(cliLoginService.sendApiKeyToCli(eq(8080), eq("proj-1"), eq(testUser)))
-                .thenReturn("API key sent to CLI");
+    void cliCallbackReturns200WithCredentials() throws Exception {
+        CliCallbackResponse response = new CliCallbackResponse(
+                "API key generated", "ck_abc123", "proj-1", "My Project", "admin@example.com");
+        when(cliLoginService.generateCredentials(eq(8080), eq("proj-1"), eq(testUser)))
+                .thenReturn(response);
 
         mockMvc.perform(get("/api/v1/auth/cli-callback")
                         .header("Authorization", "Bearer valid-token")
                         .param("port", "8080")
                         .param("projectId", "proj-1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("API key sent to CLI"));
+                .andExpect(jsonPath("$.message").value("API key generated"))
+                .andExpect(jsonPath("$.apiKey").value("ck_abc123"))
+                .andExpect(jsonPath("$.projectId").value("proj-1"))
+                .andExpect(jsonPath("$.projectName").value("My Project"))
+                .andExpect(jsonPath("$.email").value("admin@example.com"));
     }
 
     @Test
     void cliCallbackReturns403ForNonAdmin() throws Exception {
-        when(cliLoginService.sendApiKeyToCli(eq(8080), eq("proj-1"), eq(testUser)))
+        when(cliLoginService.generateCredentials(eq(8080), eq("proj-1"), eq(testUser)))
                 .thenThrow(new ForbiddenException("Caller is not a project admin"));
 
         mockMvc.perform(get("/api/v1/auth/cli-callback")
@@ -88,19 +94,6 @@ class CliCallbackControllerTest {
                         .param("port", "8080")
                         .param("projectId", "proj-1"))
                 .andExpect(status().isForbidden());
-    }
-
-    @Test
-    void cliCallbackReturns502WhenCliNotReachable() throws Exception {
-        when(cliLoginService.sendApiKeyToCli(eq(9999), eq("proj-1"), eq(testUser)))
-                .thenThrow(new CliNotReachableException("CLI callback server not reachable"));
-
-        mockMvc.perform(get("/api/v1/auth/cli-callback")
-                        .header("Authorization", "Bearer valid-token")
-                        .param("port", "9999")
-                        .param("projectId", "proj-1"))
-                .andExpect(status().isBadGateway())
-                .andExpect(jsonPath("$.detail").value("CLI callback server not reachable"));
     }
 
     @Test

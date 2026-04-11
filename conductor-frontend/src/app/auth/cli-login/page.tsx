@@ -35,7 +35,17 @@ function CliLoginContent() {
       }
       const project = projects[0]!
 
-      await apiGet(`/api/v1/auth/cli-callback?port=${port}&projectId=${project.id}`, accessToken)
+      const creds = await apiGet<{ apiKey: string; projectId: string; projectName: string; email: string }>(
+        `/api/v1/auth/cli-callback?port=${port}&projectId=${project.id}`,
+        accessToken
+      )
+
+      const callbackUrl = new URL(`http://localhost:${port}/oauth/callback`)
+      callbackUrl.searchParams.set('apiKey', creds.apiKey)
+      callbackUrl.searchParams.set('projectId', creds.projectId)
+      callbackUrl.searchParams.set('projectName', creds.projectName)
+      callbackUrl.searchParams.set('email', creds.email)
+      window.location.href = callbackUrl.toString()
 
       setStatus('success')
     } catch (err) {
