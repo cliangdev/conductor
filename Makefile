@@ -1,4 +1,8 @@
-.PHONY: dev build logs down seed e2e e2e-ui
+.PHONY: dev build logs down seed e2e e2e-ui setup
+
+setup:
+	git config core.hooksPath .githooks
+	@echo "Git hooks installed."
 
 dev:
 	docker compose up --build

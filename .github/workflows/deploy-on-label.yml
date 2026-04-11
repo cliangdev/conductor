@@ -7,6 +7,9 @@ on:
 jobs:
   deploy-backend:
     if: github.event.label.name == 'deploy_backend'
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/deploy-cloudrun.yml
     with:
       service: conductor-backend
@@ -26,6 +29,9 @@ jobs:
 
   deploy-frontend:
     if: github.event.label.name == 'deploy_ui'
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/deploy-cloudrun.yml
     with:
       service: conductor-frontend
