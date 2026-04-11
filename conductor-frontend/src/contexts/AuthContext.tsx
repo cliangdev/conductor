@@ -67,9 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setAccessTokenCookie(response.accessToken)
               window.location.href = new URLSearchParams(window.location.search).get('next') ?? '/app/projects'
             }
-          }).catch(() => {
-            // No redirect result or error — continue normally
-          }).finally(() => setLoading(false))
+          }).catch(() => {}).finally(() => setLoading(false))
         )
       )
     } else {
@@ -96,7 +94,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const auth = getFirebaseAuth()
     const provider = new GoogleAuthProvider()
     await signInWithRedirect(auth, provider)
-    // Page will redirect — result is handled in useEffect via getRedirectResult
   }
 
   async function signOut(): Promise<void> {

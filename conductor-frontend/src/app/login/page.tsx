@@ -83,7 +83,6 @@ function GoogleLoginForm() {
     setError(null)
     try {
       await signIn()
-      // signInWithRedirect navigates away — loading stays true intentionally
     } catch {
       setError('Sign in failed. Please try again.')
       setLoading(false)
