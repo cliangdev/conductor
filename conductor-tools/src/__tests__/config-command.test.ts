@@ -117,10 +117,10 @@ describe('config use command', () => {
     vi.resetAllMocks()
   })
 
-  it('switches to local and prints the URL', async () => {
+  it('prints error and exits 1 for the removed local environment', async () => {
     mockReadConfig.mockReturnValue({ ...mockConfig })
 
-    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
 
     const { registerConfig } = await import('../commands/config.js')
@@ -129,13 +129,9 @@ describe('config use command', () => {
 
     await program.parseAsync(['node', 'conductor', 'config', 'use', 'local'])
 
-    expect(mockWriteConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ apiUrl: 'http://localhost:8080', frontendUrl: 'http://localhost:3000' })
-    )
-    const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
-    expect(allOutput).toContain('local')
-    expect(allOutput).toContain('http://localhost:8080')
-    expect(allOutput).toContain('http://localhost:3000')
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Unknown environment'))
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(mockWriteConfig).not.toHaveBeenCalled()
 
     consoleSpy.mockRestore()
     exitSpy.mockRestore()
@@ -188,24 +184,27 @@ describe('config use command', () => {
     exitSpy.mockRestore()
   })
 
-  it('prints error and exits 1 when no config exists', async () => {
+  it('creates a config stub and prints login hint when no config exists', async () => {
     mockReadConfig.mockReturnValue(null)
 
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
 
     const { registerConfig } = await import('../commands/config.js')
     const program = makeProgram()
     registerConfig(program)
 
-    await program.parseAsync(['node', 'conductor', 'config', 'use', 'local'])
+    await program.parseAsync(['node', 'conductor', 'config', 'use', 'prod'])
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('No config found'))
-    expect(exitSpy).toHaveBeenCalledWith(1)
-    expect(mockWriteConfig).not.toHaveBeenCalled()
+    expect(mockWriteConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiUrl: 'https://conductor-backend-199707291514.us-central1.run.app',
+        frontendUrl: 'https://conductor-frontend-199707291514.us-central1.run.app',
+      })
+    )
+    const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
+    expect(allOutput).toContain('conductor login')
 
     consoleSpy.mockRestore()
-    exitSpy.mockRestore()
   })
 })
 

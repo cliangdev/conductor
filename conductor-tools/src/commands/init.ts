@@ -383,8 +383,8 @@ export function registerInit(program: Command): void {
     .action(async (options: { projectId?: string, path: string }) => {
       const workingDir = path.resolve(options.path)
 
-      const apiUrl = process.env['CONDUCTOR_API_URL'] ?? 'http://localhost:8080'
-      const frontendUrl = process.env['CONDUCTOR_FRONTEND_URL'] ?? 'http://localhost:3000'
+      const apiUrl = process.env['CONDUCTOR_API_URL'] ?? 'https://conductor-backend-199707291514.us-central1.run.app'
+      const frontendUrl = process.env['CONDUCTOR_FRONTEND_URL'] ?? 'https://conductor-frontend-199707291514.us-central1.run.app'
 
       let config = readConfig()
       if (!config || !(await isKeyValid(config.apiUrl ?? apiUrl, config.apiKey))) {
