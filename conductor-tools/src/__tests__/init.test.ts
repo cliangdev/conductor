@@ -70,6 +70,7 @@ describe('init command', () => {
       projectName: '',
     })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200, ok: true }))
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
   })
 
   afterEach(() => {

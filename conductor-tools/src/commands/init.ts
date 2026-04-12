@@ -516,5 +516,6 @@ export function registerInit(program: Command): void {
           console.log(chalk.dim('  Run `conductor start` when ready.'))
         }
       }
+      process.exit(0)
     })
 }
