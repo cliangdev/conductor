@@ -22,4 +22,10 @@ public class ProjectSecurityService {
                 .map(member -> member.getRole() == MemberRole.ADMIN)
                 .orElse(false);
     }
+
+    public boolean isAdminOrCreator(String projectId, String userId) {
+        return projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
+                .map(member -> member.getRole() == MemberRole.ADMIN || member.getRole() == MemberRole.CREATOR)
+                .orElse(false);
+    }
 }

@@ -34,6 +34,10 @@ tags:
     description: Project settings endpoints
   - name: notifications
     description: Notification channel configuration endpoints
+  - name: workflows
+    description: Workflow management endpoints
+  - name: workflow-secrets
+    description: Workflow secret management endpoints
 
 paths:
   /health:
@@ -2071,6 +2075,290 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/workflows:
+    get:
+      tags: [workflows]
+      summary: List workflows for a project
+      operationId: listWorkflows
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of workflows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkflowDefinitionDto"
+    post:
+      tags: [workflows]
+      summary: Create a workflow
+      operationId: createWorkflow
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowCreateRequest"
+      responses:
+        "201":
+          description: Workflow created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowCreateResponse"
+        "422":
+          description: Validation error or limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/workflows/{workflowId}:
+    get:
+      tags: [workflows]
+      summary: Get a workflow
+      operationId: getWorkflow
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Workflow definition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowDefinitionDto"
+    put:
+      tags: [workflows]
+      summary: Update a workflow
+      operationId: updateWorkflow
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowUpdateRequest"
+      responses:
+        "200":
+          description: Workflow updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowCreateResponse"
+        "422":
+          description: Validation errors
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [workflows]
+      summary: Delete a workflow
+      operationId: deleteWorkflow
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Workflow deleted
+
+  /projects/{projectId}/workflows/{workflowId}/enabled:
+    patch:
+      tags: [workflows]
+      summary: Enable or disable a workflow
+      operationId: setWorkflowEnabled
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetWorkflowEnabledRequest"
+      responses:
+        "200":
+          description: Workflow enabled state updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowDefinitionDto"
+
+  /projects/{projectId}/workflow-secrets:
+    get:
+      tags: [workflow-secrets]
+      summary: List workflow secret keys (no values)
+      operationId: listWorkflowSecrets
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of secret keys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkflowSecretKeyDto"
+    post:
+      tags: [workflow-secrets]
+      summary: Create a workflow secret
+      operationId: createWorkflowSecret
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowSecretRequest"
+      responses:
+        "201":
+          description: Secret created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowSecretKeyDto"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/workflow-secrets/{key}:
+    put:
+      tags: [workflow-secrets]
+      summary: Update a workflow secret value
+      operationId: updateWorkflowSecret
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowSecretValueRequest"
+      responses:
+        "200":
+          description: Secret updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowSecretKeyDto"
+    delete:
+      tags: [workflow-secrets]
+      summary: Delete a workflow secret
+      operationId: deleteWorkflowSecret
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Secret deleted
+
 components:
   responses:
     Forbidden:
@@ -2926,3 +3214,108 @@ components:
         updatedAt:
           type: string
           format: date-time
+
+    WorkflowDefinitionDto:
+      type: object
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        name:
+          type: string
+        yaml:
+          type: string
+        enabled:
+          type: boolean
+        webhookToken:
+          type: string
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowValidationWarning"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    WorkflowCreateRequest:
+      type: object
+      required: [name, yaml]
+      properties:
+        name:
+          type: string
+        yaml:
+          type: string
+
+    WorkflowUpdateRequest:
+      type: object
+      required: [name, yaml]
+      properties:
+        name:
+          type: string
+        yaml:
+          type: string
+
+    SetWorkflowEnabledRequest:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+
+    WorkflowValidationError:
+      type: object
+      properties:
+        lineNumber:
+          type: integer
+        column:
+          type: integer
+        message:
+          type: string
+
+    WorkflowValidationWarning:
+      type: object
+      properties:
+        message:
+          type: string
+
+    WorkflowCreateResponse:
+      type: object
+      properties:
+        workflow:
+          $ref: "#/components/schemas/WorkflowDefinitionDto"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowValidationWarning"
+
+    WorkflowSecretKeyDto:
+      type: object
+      properties:
+        key:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    WorkflowSecretRequest:
+      type: object
+      required: [key, value]
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+
+    WorkflowSecretValueRequest:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: string
