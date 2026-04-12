@@ -3,9 +3,9 @@ package com.conductor.service;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.generated.model.CliCallbackResponse;
-import com.conductor.generated.model.CreateApiKeyResponse;
+import com.conductor.generated.model.CreateUserApiKeyRequest;
+import com.conductor.generated.model.CreateUserApiKeyResponse;
 import com.conductor.repository.ProjectRepository;
-import com.conductor.repository.UserApiKeyRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,17 +18,14 @@ public class CliLoginService {
     private static final Logger log = LoggerFactory.getLogger(CliLoginService.class);
     private static final String CLI_KEY_LABEL_PREFIX = "CLI - ";
 
-    private final ApiKeyService apiKeyService;
+    private final UserApiKeyService userApiKeyService;
     private final ProjectRepository projectRepository;
-    private final UserApiKeyRepository userApiKeyRepository;
 
     public CliLoginService(
-            ApiKeyService apiKeyService,
-            ProjectRepository projectRepository,
-            UserApiKeyRepository userApiKeyRepository) {
-        this.apiKeyService = apiKeyService;
+            UserApiKeyService userApiKeyService,
+            ProjectRepository projectRepository) {
+        this.userApiKeyService = userApiKeyService;
         this.projectRepository = projectRepository;
-        this.userApiKeyRepository = userApiKeyRepository;
     }
 
     @Transactional
@@ -38,7 +35,8 @@ public class CliLoginService {
 
         String keyName = CLI_KEY_LABEL_PREFIX + caller.getEmail();
         log.info("Generating CLI API key for user={} project={}", caller.getEmail(), projectId);
-        CreateApiKeyResponse apiKeyResponse = apiKeyService.generateUserApiKey(keyName, caller);
+        CreateUserApiKeyRequest keyRequest = new CreateUserApiKeyRequest().label(keyName);
+        CreateUserApiKeyResponse apiKeyResponse = userApiKeyService.createUserApiKey(keyRequest, caller);
         log.info("CLI API key created id={} user={} project={}", apiKeyResponse.getId(), caller.getEmail(), projectId);
 
         return new CliCallbackResponse(

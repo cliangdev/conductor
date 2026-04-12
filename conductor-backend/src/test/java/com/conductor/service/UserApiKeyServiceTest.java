@@ -50,8 +50,7 @@ class UserApiKeyServiceTest {
         key.setId("key-1");
         key.setUser(testUser);
         key.setLabel("CLI Key");
-        key.setKeyHash("hash");
-        key.setKeySuffix("abcd");
+        key.setKeyValue("uk_abc123abcd");
         key.setCreatedAt(OffsetDateTime.now());
 
         when(userApiKeyRepository.findByUserIdAndRevokedAtIsNull("user-1")).thenReturn(List.of(key));
@@ -94,7 +93,7 @@ class UserApiKeyServiceTest {
     }
 
     @Test
-    void createUserApiKeyStoresHash() {
+    void createUserApiKeyStoresKeyValue() {
         when(userApiKeyRepository.save(any(UserApiKey.class))).thenAnswer(invocation -> {
             UserApiKey k = invocation.getArgument(0);
             if (k.getCreatedAt() == null) k.setCreatedAt(OffsetDateTime.now());
@@ -107,8 +106,7 @@ class UserApiKeyServiceTest {
         verify(userApiKeyRepository).save(captor.capture());
         UserApiKey saved = captor.getValue();
 
-        String expectedHash = userApiKeyService.sha256(response.getKey());
-        assertThat(saved.getKeyHash()).isEqualTo(expectedHash);
+        assertThat(saved.getKeyValue()).isEqualTo(response.getKey());
     }
 
     @Test
@@ -117,8 +115,7 @@ class UserApiKeyServiceTest {
         key.setId("key-1");
         key.setUser(testUser);
         key.setLabel("CLI Key");
-        key.setKeyHash("hash");
-        key.setKeySuffix("abcd");
+        key.setKeyValue("uk_abc123abcd");
         key.setCreatedAt(OffsetDateTime.now());
 
         when(userApiKeyRepository.findById("key-1")).thenReturn(Optional.of(key));
@@ -180,8 +177,6 @@ class UserApiKeyServiceTest {
         key.setId("key-1");
         key.setUser(testUser);
         key.setLabel("CLI key");
-        key.setKeyHash("hash");
-        key.setKeySuffix("abcd");
         key.setKeyValue("uk_abc123abcd");
         key.setCreatedAt(OffsetDateTime.now());
 
@@ -193,19 +188,18 @@ class UserApiKeyServiceTest {
     }
 
     @Test
-    void listUserApiKeysReturnsNullKeyWhenKeyValueNotSet() {
+    void listUserApiKeysMaskedSuffixFromKeyValue() {
         UserApiKey key = new UserApiKey();
         key.setId("key-1");
         key.setUser(testUser);
         key.setLabel("CLI key");
-        key.setKeyHash("hash");
-        key.setKeySuffix("abcd");
         key.setCreatedAt(OffsetDateTime.now());
+        // keyValue not set
 
         when(userApiKeyRepository.findByUserIdAndRevokedAtIsNull("user-1")).thenReturn(List.of(key));
 
         List<UserApiKeyResponse> result = userApiKeyService.listUserApiKeys(testUser);
 
-        assertThat(result.get(0).getKey()).isNull();
+        assertThat(result.get(0).getMaskedKey()).isEqualTo("****????");
     }
 }

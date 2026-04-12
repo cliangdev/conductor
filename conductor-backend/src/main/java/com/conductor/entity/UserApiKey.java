@@ -27,12 +27,6 @@ public class UserApiKey {
     @Column(name = "label", length = 100, nullable = false)
     private String label;
 
-    @Column(name = "key_hash", length = 255, nullable = false)
-    private String keyHash;
-
-    @Column(name = "key_suffix", length = 4, nullable = false)
-    private String keySuffix;
-
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -65,12 +59,6 @@ public class UserApiKey {
 
     public String getLabel() { return label; }
     public void setLabel(String label) { this.label = label; }
-
-    public String getKeyHash() { return keyHash; }
-    public void setKeyHash(String keyHash) { this.keyHash = keyHash; }
-
-    public String getKeySuffix() { return keySuffix; }
-    public void setKeySuffix(String keySuffix) { this.keySuffix = keySuffix; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
