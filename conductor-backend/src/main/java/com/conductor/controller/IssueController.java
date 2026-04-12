@@ -56,6 +56,12 @@ public class IssueController implements IssuesApi {
         return ResponseEntity.ok(response);
     }
 
+    @Override
+    public ResponseEntity<Void> deleteIssue(String projectId, String issueId) {
+        issueService.deleteIssue(projectId, issueId);
+        return ResponseEntity.noContent().build();
+    }
+
     private static final Logger log = LoggerFactory.getLogger(IssueController.class);
 
     private User currentUser() {
