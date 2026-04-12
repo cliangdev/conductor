@@ -151,6 +151,15 @@ public class IssueService {
                         EventType.ISSUE_SUBMITTED, projectId,
                         Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
             }
+            notificationDispatcher.dispatch(NotificationEvent.of(
+                    EventType.ISSUE_STATUS_CHANGED, projectId,
+                    Map.of(
+                            "issueId", issue.getId(),
+                            "issueTitle", issue.getTitle(),
+                            "projectId", projectId,
+                            "fromStatus", previousStatus.name(),
+                            "toStatus", newStatus.name()
+                    )));
         }
 
         long count = commentRepository.countUnresolvedByIssueId(issue.getId());

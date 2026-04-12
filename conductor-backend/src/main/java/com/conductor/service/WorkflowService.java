@@ -68,6 +68,9 @@ public class WorkflowService {
         def.setName(request.getName());
         def.setYaml(request.getYaml());
         def.setEnabled(true);
+        if (request.getYaml().contains("webhook:")) {
+            def.setWebhookToken(java.util.UUID.randomUUID().toString().replace("-", ""));
+        }
         return workflowRepository.save(def);
     }
 

@@ -2359,6 +2359,64 @@ paths:
         "204":
           description: Secret deleted
 
+  /workflows/webhook/{token}:
+    post:
+      tags: [workflows]
+      summary: Webhook trigger endpoint
+      operationId: triggerWebhook
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-Conductor-Signature
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "202":
+          description: Webhook accepted
+        "401":
+          description: Invalid HMAC signature
+        "404":
+          description: Workflow not found
+
+  /projects/{projectId}/workflows/{workflowId}/dispatch:
+    post:
+      tags: [workflows]
+      summary: Manually trigger a workflow run
+      operationId: dispatchWorkflow
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Run created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowRunDto"
+
 components:
   responses:
     Forbidden:
@@ -3319,3 +3377,21 @@ components:
       properties:
         value:
           type: string
+
+    WorkflowRunDto:
+      type: object
+      properties:
+        id:
+          type: string
+        workflowId:
+          type: string
+        triggerType:
+          type: string
+        status:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time

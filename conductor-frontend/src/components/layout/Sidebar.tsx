@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { BellIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, PlusIcon, SettingsIcon, TerminalIcon, UsersIcon } from 'lucide-react'
+import { BellIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, GitBranchIcon, PlusIcon, SettingsIcon, TerminalIcon, UsersIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import {
   DropdownMenu,
@@ -144,6 +144,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             onNavigate={onNavigate}
           >
             Issues
+          </SidebarNavLink>
+          <SidebarNavLink
+            href={`/app/projects/${activeProject.id}/workflows`}
+            icon={<GitBranchIcon className="h-4 w-4" />}
+            onNavigate={onNavigate}
+          >
+            Workflows
           </SidebarNavLink>
           <SidebarNavGroup
             href={`/app/projects/${activeProject.id}/settings`}
