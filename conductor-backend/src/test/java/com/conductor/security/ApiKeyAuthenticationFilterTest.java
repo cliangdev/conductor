@@ -61,7 +61,7 @@ class ApiKeyAuthenticationFilterTest {
         validApiKey.setId("key-1");
         validApiKey.setProject(testProject);
         validApiKey.setName("Test Key");
-        validApiKey.setKeyHash(ApiKeyAuthenticationFilter.sha256("my-secret-key"));
+        validApiKey.setKeyValue("my-secret-key");
         validApiKey.setCreatedAt(OffsetDateTime.now());
     }
 
@@ -73,7 +73,7 @@ class ApiKeyAuthenticationFilterTest {
     @Test
     void validApiKeySetsProjectContextAuthentication() throws Exception {
         when(request.getHeader("Authorization")).thenReturn("Bearer my-secret-key");
-        when(projectApiKeyRepository.findByKeyHash(ApiKeyAuthenticationFilter.sha256("my-secret-key")))
+        when(projectApiKeyRepository.findByKeyValueWithProject("my-secret-key"))
                 .thenReturn(Optional.of(validApiKey));
         when(projectApiKeyRepository.save(any())).thenReturn(validApiKey);
 
@@ -88,7 +88,7 @@ class ApiKeyAuthenticationFilterTest {
     @Test
     void validApiKeyUpdatesLastUsedAt() throws Exception {
         when(request.getHeader("Authorization")).thenReturn("Bearer my-secret-key");
-        when(projectApiKeyRepository.findByKeyHash(ApiKeyAuthenticationFilter.sha256("my-secret-key")))
+        when(projectApiKeyRepository.findByKeyValueWithProject("my-secret-key"))
                 .thenReturn(Optional.of(validApiKey));
         when(projectApiKeyRepository.save(any(ProjectApiKey.class))).thenReturn(validApiKey);
 
@@ -99,12 +99,12 @@ class ApiKeyAuthenticationFilterTest {
     }
 
     @Test
-    void revokedApiKeyDoesNotAuthenticate() throws Exception {
+    void revokedProjectApiKeyDoesNotAuthenticate() throws Exception {
         validApiKey.setRevokedAt(OffsetDateTime.now().minusDays(1));
         when(request.getHeader("Authorization")).thenReturn("Bearer my-secret-key");
-        when(projectApiKeyRepository.findByKeyHash(ApiKeyAuthenticationFilter.sha256("my-secret-key")))
+        when(projectApiKeyRepository.findByKeyValueWithProject("my-secret-key"))
                 .thenReturn(Optional.of(validApiKey));
-        when(userApiKeyRepository.findByKeyHash(any())).thenReturn(Optional.empty());
+        when(userApiKeyRepository.findByKeyValueWithUser("my-secret-key")).thenReturn(Optional.empty());
 
         filter.doFilterInternal(request, response, filterChain);
 
@@ -115,8 +115,8 @@ class ApiKeyAuthenticationFilterTest {
     @Test
     void unknownApiKeyDoesNotAuthenticate() throws Exception {
         when(request.getHeader("Authorization")).thenReturn("Bearer unknown-key");
-        when(projectApiKeyRepository.findByKeyHash(any())).thenReturn(Optional.empty());
-        when(userApiKeyRepository.findByKeyHash(any())).thenReturn(Optional.empty());
+        when(projectApiKeyRepository.findByKeyValueWithProject("unknown-key")).thenReturn(Optional.empty());
+        when(userApiKeyRepository.findByKeyValueWithUser("unknown-key")).thenReturn(Optional.empty());
 
         filter.doFilterInternal(request, response, filterChain);
 
@@ -134,14 +134,12 @@ class ApiKeyAuthenticationFilterTest {
         userApiKey.setId("uk-1");
         userApiKey.setUser(testUser);
         userApiKey.setLabel("CLI Key");
-        userApiKey.setKeyHash(ApiKeyAuthenticationFilter.sha256("uk_user-secret-key"));
-        userApiKey.setKeySuffix("ekey");
+        userApiKey.setKeyValue("uk_user-secret-key");
         userApiKey.setCreatedAt(OffsetDateTime.now());
 
         when(request.getHeader("Authorization")).thenReturn("Bearer uk_user-secret-key");
-        when(projectApiKeyRepository.findByKeyHash(ApiKeyAuthenticationFilter.sha256("uk_user-secret-key")))
-                .thenReturn(Optional.empty());
-        when(userApiKeyRepository.findByKeyHash(ApiKeyAuthenticationFilter.sha256("uk_user-secret-key")))
+        when(projectApiKeyRepository.findByKeyValueWithProject("uk_user-secret-key")).thenReturn(Optional.empty());
+        when(userApiKeyRepository.findByKeyValueWithUser("uk_user-secret-key"))
                 .thenReturn(Optional.of(userApiKey));
         when(userApiKeyRepository.save(any())).thenReturn(userApiKey);
 
@@ -160,15 +158,8 @@ class ApiKeyAuthenticationFilterTest {
         filter.doFilterInternal(request, response, filterChain);
 
         verify(filterChain).doFilter(request, response);
-        verify(projectApiKeyRepository, never()).findByKeyHash(any());
+        verify(projectApiKeyRepository, never()).findByKeyValueWithProject(any());
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
     }
 
-    @Test
-    void sha256ProducesDeterministicHash() {
-        String hash1 = ApiKeyAuthenticationFilter.sha256("test-key");
-        String hash2 = ApiKeyAuthenticationFilter.sha256("test-key");
-        assertThat(hash1).isEqualTo(hash2);
-        assertThat(hash1).hasSize(64);
-    }
 }

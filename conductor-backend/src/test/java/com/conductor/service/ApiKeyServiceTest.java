@@ -62,7 +62,7 @@ class ApiKeyServiceTest {
     }
 
     @Test
-    void generateApiKeyReturnsRawKeyAndStoresHash() {
+    void generateApiKeyReturnsRawKeyAndStoresKeyValue() {
         when(projectSecurityService.isProjectAdmin("proj-1", "admin-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectApiKeyRepository.save(any(ProjectApiKey.class))).thenAnswer(invocation -> {
@@ -80,9 +80,7 @@ class ApiKeyServiceTest {
 
         assertThat(response.getKey()).startsWith("ck_");
         assertThat(response.getKey()).hasSize(35);
-        assertThat(saved.getKeyHash()).isNotEqualTo(response.getKey());
-        assertThat(saved.getKeyHash()).isEqualTo(apiKeyService.sha256(response.getKey()));
-        assertThat(saved.getKeyHash()).hasSize(64);
+        assertThat(saved.getKeyValue()).isEqualTo(response.getKey());
         assertThat(response.getName()).isEqualTo("My Key");
     }
 
@@ -149,7 +147,7 @@ class ApiKeyServiceTest {
         key.setId("key-1");
         key.setProject(otherProject);
         key.setName("Key");
-        key.setKeyHash("hash");
+        key.setKeyValue("ck_somerawvalue");
         key.setCreatedAt(OffsetDateTime.now());
 
         when(projectApiKeyRepository.findById("key-1")).thenReturn(Optional.of(key));
@@ -158,20 +156,12 @@ class ApiKeyServiceTest {
                 .isInstanceOf(EntityNotFoundException.class);
     }
 
-    @Test
-    void sha256ProducesDeterministicHash() {
-        String hash1 = apiKeyService.sha256("some-key");
-        String hash2 = apiKeyService.sha256("some-key");
-        assertThat(hash1).isEqualTo(hash2);
-        assertThat(hash1).hasSize(64);
-    }
-
     private ProjectApiKey buildKey(String id, String name) {
         ProjectApiKey key = new ProjectApiKey();
         key.setId(id);
         key.setProject(project);
         key.setName(name);
-        key.setKeyHash("hash-" + id);
+        key.setKeyValue("ck_" + id);
         key.setCreatedAt(OffsetDateTime.now());
         return key;
     }

@@ -27,8 +27,8 @@ public class ProjectApiKey {
     @Column(name = "name", length = 100, nullable = false)
     private String name;
 
-    @Column(name = "key_hash", length = 255, nullable = false)
-    private String keyHash;
+    @Column(name = "key_value", length = 255)
+    private String keyValue;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -60,8 +60,8 @@ public class ProjectApiKey {
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
-    public String getKeyHash() { return keyHash; }
-    public void setKeyHash(String keyHash) { this.keyHash = keyHash; }
+    public String getKeyValue() { return keyValue; }
+    public void setKeyValue(String keyValue) { this.keyValue = keyValue; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

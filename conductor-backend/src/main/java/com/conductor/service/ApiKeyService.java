@@ -5,22 +5,16 @@ import com.conductor.entity.ProjectApiKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.conductor.entity.User;
-import com.conductor.entity.UserApiKey;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.ApiKeyResponse;
 import com.conductor.generated.model.CreateApiKeyResponse;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.ProjectRepository;
-import com.conductor.repository.UserApiKeyRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
@@ -30,36 +24,16 @@ public class ApiKeyService {
     private static final Logger log = LoggerFactory.getLogger(ApiKeyService.class);
 
     private final ProjectApiKeyRepository projectApiKeyRepository;
-    private final UserApiKeyRepository userApiKeyRepository;
     private final ProjectRepository projectRepository;
     private final ProjectSecurityService projectSecurityService;
 
     public ApiKeyService(
             ProjectApiKeyRepository projectApiKeyRepository,
-            UserApiKeyRepository userApiKeyRepository,
             ProjectRepository projectRepository,
             ProjectSecurityService projectSecurityService) {
         this.projectApiKeyRepository = projectApiKeyRepository;
-        this.userApiKeyRepository = userApiKeyRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
-    }
-
-    @Transactional
-    public CreateApiKeyResponse generateUserApiKey(String label, User caller) {
-        String rawKey = "ck_" + UUID.randomUUID().toString().replace("-", "");
-        String keyHash = sha256(rawKey);
-        String keySuffix = rawKey.substring(rawKey.length() - 4);
-
-        UserApiKey apiKey = new UserApiKey();
-        apiKey.setUser(caller);
-        apiKey.setLabel(label);
-        apiKey.setKeyHash(keyHash);
-        apiKey.setKeySuffix(keySuffix);
-
-        userApiKeyRepository.save(apiKey);
-
-        return new CreateApiKeyResponse(apiKey.getId(), apiKey.getLabel(), rawKey, apiKey.getCreatedAt());
     }
 
     @Transactional
@@ -73,12 +47,11 @@ public class ApiKeyService {
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
 
         String rawKey = "ck_" + UUID.randomUUID().toString().replace("-", "");
-        String keyHash = sha256(rawKey);
 
         ProjectApiKey apiKey = new ProjectApiKey();
         apiKey.setProject(project);
         apiKey.setName(name);
-        apiKey.setKeyHash(keyHash);
+        apiKey.setKeyValue(rawKey);
 
         projectApiKeyRepository.save(apiKey);
 
@@ -112,16 +85,6 @@ public class ApiKeyService {
 
         apiKey.setRevokedAt(OffsetDateTime.now());
         projectApiKeyRepository.save(apiKey);
-    }
-
-    String sha256(String input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
-        }
     }
 
     private ApiKeyResponse toApiKeyResponse(ProjectApiKey apiKey) {

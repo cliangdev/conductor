@@ -14,11 +14,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
-import java.util.HexFormat;
 import java.util.Optional;
 
 public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
@@ -53,10 +49,9 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        String keyHash = sha256(token);
-
-        Optional<ProjectApiKey> projectApiKeyOpt = projectApiKeyRepository.findByKeyHash(keyHash);
         String keySuffix = token.substring(Math.max(0, token.length() - 4));
+
+        Optional<ProjectApiKey> projectApiKeyOpt = projectApiKeyRepository.findByKeyValueWithProject(token);
 
         if (projectApiKeyOpt.isPresent()) {
             if (projectApiKeyOpt.get().isRevoked()) {
@@ -76,7 +71,7 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
             }
         }
 
-        Optional<UserApiKey> userApiKeyOpt = userApiKeyRepository.findByKeyHash(keyHash);
+        Optional<UserApiKey> userApiKeyOpt = userApiKeyRepository.findByKeyValueWithUser(token);
         if (userApiKeyOpt.isPresent()) {
             if (userApiKeyOpt.get().isRevoked()) {
                 log.warn("Rejected revoked user API key suffix=...{} on {} {}",
@@ -99,13 +94,4 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    static String sha256(String input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
-        }
-    }
 }
