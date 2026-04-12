@@ -42,6 +42,9 @@ public class UserApiKey {
     @Column(name = "revoked_at")
     private OffsetDateTime revokedAt;
 
+    @Column(name = "key_value", length = 255)
+    private String keyValue;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -77,4 +80,7 @@ public class UserApiKey {
 
     public OffsetDateTime getRevokedAt() { return revokedAt; }
     public void setRevokedAt(OffsetDateTime revokedAt) { this.revokedAt = revokedAt; }
+
+    public String getKeyValue() { return keyValue; }
+    public void setKeyValue(String keyValue) { this.keyValue = keyValue; }
 }

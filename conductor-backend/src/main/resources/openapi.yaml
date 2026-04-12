@@ -2810,6 +2810,10 @@ components:
       properties:
         id:
           type: string
+        key:
+          type: string
+          nullable: true
+          description: "Full key value — null for keys created before this field was added"
         maskedKey:
           type: string
           description: "Key with last 4 chars visible (e.g. ****abcd)"

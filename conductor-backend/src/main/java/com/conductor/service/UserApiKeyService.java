@@ -48,6 +48,7 @@ public class UserApiKeyService {
         apiKey.setLabel(label);
         apiKey.setKeyHash(keyHash);
         apiKey.setKeySuffix(keySuffix);
+        apiKey.setKeyValue(rawKey);
 
         userApiKeyRepository.save(apiKey);
 
@@ -80,6 +81,7 @@ public class UserApiKeyService {
 
     private UserApiKeyResponse toUserApiKeyResponse(UserApiKey apiKey) {
         return new UserApiKeyResponse(apiKey.getId(), "****" + apiKey.getKeySuffix(), apiKey.getCreatedAt())
-                .label(apiKey.getLabel());
+                .label(apiKey.getLabel())
+                .key(apiKey.getKeyValue());
     }
 }

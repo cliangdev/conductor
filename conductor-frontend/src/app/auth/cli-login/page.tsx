@@ -6,8 +6,11 @@ import { useSearchParams } from 'next/navigation'
 import { useState, Suspense } from 'react'
 import { apiGet, apiPost } from '@/lib/api'
 
+const CLI_KEY_LABEL = 'CLI key'
+
 interface UserApiKey {
   id: string
+  key: string | null
   maskedKey: string
   label: string
   createdAt: string
@@ -24,13 +27,12 @@ interface CreateApiKeyResponse {
 function CliLoginContent() {
   const searchParams = useSearchParams()
   const port = searchParams.get('port')
-  const [status, setStatus] = useState<'idle' | 'loading' | 'has-keys' | 'success' | 'error'>('idle')
+  const [status, setStatus] = useState<'idle' | 'loading' | 'pick' | 'success' | 'error'>('idle')
+  const [isCreating, setIsCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [pastedKey, setPastedKey] = useState('')
-  const [pasteError, setPasteError] = useState<string | null>(null)
-  const [pasteLoading, setPasteLoading] = useState(false)
+  const [existingKeys, setExistingKeys] = useState<UserApiKey[]>([])
+  const [accessTokenStore, setAccessTokenStore] = useState<string>('')
 
-  // Shared: redirect to CLI callback with the resolved key
   async function finishWithKey(apiKey: string, accessToken: string) {
     const projects = await apiGet<Array<{ id: string; name: string }>>('/api/v1/projects', accessToken)
     if (projects.length === 0) {
@@ -65,18 +67,16 @@ function CliLoginContent() {
 
       const { accessToken } = await apiPost<{ accessToken: string }>('/api/v1/auth/firebase', { idToken })
 
-      // Check if user already has active API keys
-      const existingKeys = await apiGet<UserApiKey[]>('/api/v1/api-keys', accessToken)
+      const allKeys = await apiGet<UserApiKey[]>('/api/v1/api-keys', accessToken)
+      const cliKeys = allKeys.filter(k => k.label === CLI_KEY_LABEL)
 
-      if (existingKeys.length === 0) {
-        // First-time user: auto-create a key
-        const created = await apiPost<CreateApiKeyResponse>('/api/v1/api-keys', { label: 'CLI key' }, accessToken)
+      if (cliKeys.length === 0) {
+        const created = await apiPost<CreateApiKeyResponse>('/api/v1/api-keys', { label: CLI_KEY_LABEL }, accessToken)
         await finishWithKey(created.key, accessToken)
       } else {
-        // User already has keys — show paste UI
-        // Store accessToken in state for use when the user submits
-        ;(window as unknown as Record<string, unknown>)['_cliAccessToken'] = accessToken
-        setStatus('has-keys')
+        setExistingKeys(cliKeys)
+        setAccessTokenStore(accessToken)
+        setStatus('pick')
       }
     } catch (err) {
       setError((err as Error).message ?? 'Authentication failed')
@@ -84,40 +84,25 @@ function CliLoginContent() {
     }
   }
 
-  async function handleUseExistingKey() {
-    const key = pastedKey.trim()
-    if (!key) {
-      setPasteError('Please paste your API key.')
-      return
-    }
-    setPasteError(null)
-    setPasteLoading(true)
+  async function handleUseKey(key: string) {
     try {
-      const accessToken = (window as unknown as Record<string, unknown>)['_cliAccessToken'] as string
-      // Validate the pasted key by fetching projects with it
-      const projects = await apiGet<Array<{ id: string; name: string }>>('/api/v1/projects', key)
-      if (projects.length === 0) {
-        throw new Error('No projects found for this key.')
-      }
-      await finishWithKey(key, accessToken)
-    } catch {
-      setPasteError('Invalid or expired API key. Check the key and try again.')
-    } finally {
-      setPasteLoading(false)
+      await finishWithKey(key, accessTokenStore)
+    } catch (err) {
+      setError((err as Error).message ?? 'Failed to complete login')
+      setStatus('error')
     }
   }
 
-  async function handleCreateNewKey() {
-    setPasteLoading(true)
-    setPasteError(null)
+  async function handleCreateNew() {
+    setIsCreating(true)
     try {
-      const accessToken = (window as unknown as Record<string, unknown>)['_cliAccessToken'] as string
-      const created = await apiPost<CreateApiKeyResponse>('/api/v1/api-keys', { label: 'CLI key' }, accessToken)
-      await finishWithKey(created.key, accessToken)
+      const created = await apiPost<CreateApiKeyResponse>('/api/v1/api-keys', { label: CLI_KEY_LABEL }, accessTokenStore)
+      await finishWithKey(created.key, accessTokenStore)
     } catch (err) {
-      setPasteError((err as Error).message ?? 'Failed to create key.')
+      setError((err as Error).message ?? 'Failed to create key')
+      setStatus('error')
     } finally {
-      setPasteLoading(false)
+      setIsCreating(false)
     }
   }
 
@@ -132,43 +117,49 @@ function CliLoginContent() {
     )
   }
 
-  if (status === 'has-keys') {
+  if (status === 'pick') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm">
-          <h1 className="mb-2 text-2xl font-bold text-foreground text-center">Use existing API key</h1>
-          <p className="mb-6 text-sm text-muted-foreground text-center">
-            You already have an API key. Paste it below to use it on this machine, or create a new one.
+          <h1 className="mb-2 text-2xl font-bold text-foreground text-center">Select an API key</h1>
+          <p className="mb-5 text-sm text-muted-foreground text-center">
+            Choose an existing key to use on this machine, or create a new one.
           </p>
-          <div className="space-y-3">
-            <input
-              type="text"
-              value={pastedKey}
-              onChange={(e) => setPastedKey(e.target.value)}
-              placeholder="ck_..."
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            {pasteError && <p className="text-sm text-destructive">{pasteError}</p>}
-            <button
-              onClick={handleUseExistingKey}
-              disabled={pasteLoading}
-              className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {pasteLoading ? 'Validating...' : 'Use this key'}
-            </button>
-            <div className="relative flex items-center py-1">
-              <div className="flex-grow border-t border-border" />
-              <span className="mx-3 text-xs text-muted-foreground">or</span>
-              <div className="flex-grow border-t border-border" />
-            </div>
-            <button
-              onClick={handleCreateNewKey}
-              disabled={pasteLoading}
-              className="w-full rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Create a new key
-            </button>
+          <div className="space-y-2 mb-5">
+            {existingKeys.map((k) => (
+              <div key={k.id} className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-mono text-foreground truncate">{k.maskedKey}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Created {new Date(k.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </p>
+                </div>
+                {k.key ? (
+                  <button
+                    onClick={() => handleUseKey(k.key!)}
+                    className="ml-3 shrink-0 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                  >
+                    Use
+                  </button>
+                ) : (
+                  <span className="ml-3 shrink-0 text-xs text-muted-foreground italic">unavailable</span>
+                )}
+              </div>
+            ))}
           </div>
+          <div className="relative flex items-center py-1 mb-4">
+            <div className="flex-grow border-t border-border" />
+            <span className="mx-3 text-xs text-muted-foreground">or</span>
+            <div className="flex-grow border-t border-border" />
+          </div>
+          <button
+            onClick={handleCreateNew}
+            disabled={isCreating}
+            className="w-full rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Create a new key
+          </button>
+          {error && <p className="mt-3 text-sm text-destructive text-center">{error}</p>}
         </div>
       </div>
     )
