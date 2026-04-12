@@ -932,55 +932,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-    put:
-      tags:
-        - documents
-      summary: Update document content
-      operationId: updateDocument
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: issueId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: docId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateDocumentRequest"
-      responses:
-        "200":
-          description: Document updated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DocumentResponse"
-        "401":
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Document not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
     delete:
       tags:
         - documents
