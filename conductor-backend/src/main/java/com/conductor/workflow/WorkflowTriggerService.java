@@ -10,6 +10,7 @@ import com.conductor.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,13 +25,16 @@ public class WorkflowTriggerService {
 
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowRunRepository workflowRunRepository;
+    private final WorkflowExecutionEngine executionEngine;
     private final ObjectMapper objectMapper;
 
     public WorkflowTriggerService(WorkflowDefinitionRepository workflowRepository,
                                    WorkflowRunRepository workflowRunRepository,
+                                   @Lazy WorkflowExecutionEngine executionEngine,
                                    ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.workflowRunRepository = workflowRunRepository;
+        this.executionEngine = executionEngine;
         this.objectMapper = objectMapper;
     }
 
@@ -84,7 +88,31 @@ public class WorkflowTriggerService {
         run.setStatus(WorkflowRunStatus.PENDING);
         WorkflowRun saved = workflowRunRepository.save(run);
         log.info("Created WorkflowRun {} for workflow {} (trigger: {})", saved.getId(), workflow.getId(), triggerType);
+        enqueueInitialJobs(workflow, saved);
         return saved;
+    }
+
+    private void enqueueInitialJobs(WorkflowDefinition workflow, WorkflowRun run) {
+        try {
+            org.yaml.snakeyaml.Yaml yaml = new org.yaml.snakeyaml.Yaml();
+            Map<String, Object> parsed = yaml.load(workflow.getYaml());
+            Object jobsObj = parsed.get("jobs");
+            if (!(jobsObj instanceof Map)) return;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> jobs = (Map<String, Object>) jobsObj;
+            for (Map.Entry<String, Object> entry : jobs.entrySet()) {
+                String jobId = entry.getKey();
+                if (!(entry.getValue() instanceof Map)) continue;
+                @SuppressWarnings("unchecked")
+                Map<String, Object> job = (Map<String, Object>) entry.getValue();
+                Object needs = job.get("needs");
+                if (needs == null || (needs instanceof List && ((List<?>) needs).isEmpty())) {
+                    executionEngine.enqueueJob(run.getId(), jobId);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to enqueue initial jobs for run {}: {}", run.getId(), e.getMessage());
+        }
     }
 
     private boolean hasConductorIssueTrigger(String yaml) {
