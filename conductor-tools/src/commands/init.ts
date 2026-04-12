@@ -7,7 +7,7 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 import ora from 'ora'
 import { readConfig, writeConfig } from '../lib/config.js'
-import { apiGet } from '../lib/api.js'
+import { apiGet, apiPost } from '../lib/api.js'
 import { findAvailablePort, waitForOAuthCallback } from '../lib/oauth-server.js'
 import { startDaemon } from './start.js'
 
@@ -318,6 +318,62 @@ async function askYesNo(question: string): Promise<boolean> {
   })
 }
 
+async function isKeyValid(apiUrl: string, apiKey: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${apiUrl}/api/v1/projects`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+    return res.status === 200
+  } catch {
+    return false
+  }
+}
+
+async function performBrowserLogin(
+  apiUrl: string,
+  frontendUrl: string
+): Promise<{ apiKey: string; email: string }> {
+  const spinner = ora('Opening browser for authentication... (Ctrl+C to cancel)').start()
+  const port = await findAvailablePort()
+  const { default: open } = await import('open')
+  const loginUrl = `${frontendUrl}/auth/cli-login?port=${port}`
+  await open(loginUrl)
+  const payload = await waitForOAuthCallback(port, spinner)
+  spinner.succeed(chalk.green(`Logged in as ${payload.email}`))
+  return { apiKey: payload.apiKey, email: payload.email }
+}
+
+async function selectOption(promptText: string, choices: string[]): Promise<number> {
+  console.log(promptText)
+  choices.forEach((c, i) => console.log(`  [${i + 1}] ${c}`))
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  return new Promise(resolve => {
+    const ask = () => {
+      rl.question(`Select (1-${choices.length}): `, answer => {
+        const n = parseInt(answer.trim(), 10)
+        if (!isNaN(n) && n >= 1 && n <= choices.length) {
+          rl.close()
+          resolve(n - 1)
+        } else {
+          console.log(chalk.red(`  Please enter a number between 1 and ${choices.length}`))
+          ask()
+        }
+      })
+    }
+    ask()
+  })
+}
+
+async function askText(question: string): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  return new Promise(resolve => {
+    rl.question(question, answer => {
+      rl.close()
+      resolve(answer.trim())
+    })
+  })
+}
+
 export function registerInit(program: Command): void {
   program
     .command('init')
@@ -327,51 +383,102 @@ export function registerInit(program: Command): void {
     .action(async (options: { projectId?: string, path: string }) => {
       const workingDir = path.resolve(options.path)
 
-      let config = readConfig()
+      const apiUrl = process.env['CONDUCTOR_API_URL'] ?? 'https://conductor-backend-199707291514.us-central1.run.app'
+      const frontendUrl = process.env['CONDUCTOR_FRONTEND_URL'] ?? 'https://conductor-frontend-199707291514.us-central1.run.app'
 
-      if (options.projectId && options.projectId !== config?.projectId) {
-        if (!config) {
-          const apiUrl = process.env['CONDUCTOR_API_URL'] ?? 'http://localhost:8080'
-          console.log('Not logged in. Opening browser for authentication...')
-          const spinner = ora('Waiting for browser... (Ctrl+C to cancel)').start()
-          const port = await findAvailablePort()
-          const { default: open } = await import('open')
-          const loginUrl = `${apiUrl}/auth/cli-login?port=${port}&projectId=${options.projectId}`
-          await open(loginUrl)
-          const payload = await waitForOAuthCallback(port, spinner)
-          config = { ...payload, apiUrl }
-          writeConfig(config)
-          spinner.succeed(chalk.green(`Logged in as ${config.email}`))
-        } else {
-          console.log(chalk.green(`✓ Logged in as ${config.email}`))
-          try {
-            const project = await apiGet<{ id: string, name: string }>(
-              `/api/v1/projects/${options.projectId}`,
-              config.apiKey,
-              config.apiUrl
-            )
-            config = { ...config, projectId: project.id, projectName: project.name }
-            writeConfig(config)
-          } catch (err) {
-            const status = (err as { statusCode?: number }).statusCode
-            if (status === 403 || status === 404) {
-              console.error(chalk.red(`✗ You don't have access to project "${options.projectId}".`))
-              console.error(`  Ask your admin to invite you, then run this command again.`)
-              process.exit(1)
-              return
-            }
-            throw err
-          }
-        }
-        console.log(chalk.green(`✓ Connected to "${config.projectName}"`))
-      } else if (!config) {
-        console.error(chalk.red('✗ Not logged in. Run `conductor login` first,'))
-        console.error(`  or \`conductor init --project-id <id>\` to join a project.`)
-        process.exit(1)
-        return
+      let config = readConfig()
+      if (!config || !(await isKeyValid(config.apiUrl ?? apiUrl, config.apiKey))) {
+        console.log('Not logged in. Opening browser for authentication...')
+        const { apiKey, email } = await performBrowserLogin(apiUrl, frontendUrl)
+        config = { apiKey, email, projectId: '', projectName: '', apiUrl, frontendUrl }
       } else {
         console.log(chalk.green(`✓ Logged in as ${config.email}`))
       }
+
+      if (options.projectId && options.projectId !== config.projectId) {
+        try {
+          const project = await apiGet<{ id: string, name: string }>(
+            `/api/v1/projects/${options.projectId}`,
+            config.apiKey,
+            config.apiUrl ?? apiUrl
+          )
+          config = { ...config, projectId: project.id, projectName: project.name }
+          writeConfig(config)
+        } catch (err) {
+          const status = (err as { statusCode?: number }).statusCode
+          if (status === 403 || status === 404) {
+            console.error(chalk.red(`✗ You don't have access to project "${options.projectId}".`))
+            console.error(`  Ask your admin to invite you, then run this command again.`)
+            process.exit(1)
+            return
+          }
+          throw err
+        }
+        console.log(chalk.green(`✓ Connected to "${config.projectName}"`))
+      } else if (!options.projectId) {
+        const projects = await apiGet<Array<{ id: string; name: string }>>(
+          '/api/v1/projects',
+          config.apiKey,
+          config.apiUrl ?? apiUrl
+        )
+
+        let projectId: string
+        let projectName: string
+
+        if (projects.length === 0) {
+          console.log('\nNo projects found. Let\'s create one.')
+          const name = await askText('Project name: ')
+          if (!name) {
+            console.error(chalk.red('✗ Project name cannot be empty.'))
+            process.exit(1)
+            return
+          }
+          const spinner = ora('Creating project...').start()
+          const project = await apiPost<{ id: string; name: string }>(
+            '/api/v1/projects',
+            { name },
+            config.apiKey,
+            config.apiUrl ?? apiUrl
+          )
+          spinner.succeed(chalk.green(`Created project "${project.name}"`))
+          projectId = project.id
+          projectName = project.name
+        } else {
+          console.log()
+          const choices = ['Create a new project', ...projects.map(p => p.name)]
+          const idx = await selectOption('Select a project to link:', choices)
+
+          if (idx === 0) {
+            const name = await askText('Project name: ')
+            if (!name) {
+              console.error(chalk.red('✗ Project name cannot be empty.'))
+              process.exit(1)
+              return
+            }
+            const spinner = ora('Creating project...').start()
+            const project = await apiPost<{ id: string; name: string }>(
+              '/api/v1/projects',
+              { name },
+              config.apiKey,
+              config.apiUrl ?? apiUrl
+            )
+            spinner.succeed(chalk.green(`Created project "${project.name}"`))
+            projectId = project.id
+            projectName = project.name
+          } else {
+            const picked = projects[idx - 1]!
+            projectId = picked.id
+            projectName = picked.name
+          }
+        }
+
+        config = { ...config, projectId, projectName, apiUrl: config.apiUrl ?? apiUrl, frontendUrl: config.frontendUrl ?? frontendUrl }
+        writeConfig(config)
+        console.log(chalk.green(`✓ Connected to "${projectName}"`))
+      } else {
+        console.log(chalk.green(`✓ Connected to "${config.projectName}"`))
+      }
+
 
       console.log(`\nSetting up local project directory for "${config.projectName}"...`)
       const projectRoot = getProjectRoot(workingDir)
@@ -409,5 +516,6 @@ export function registerInit(program: Command): void {
           console.log(chalk.dim('  Run `conductor start` when ready.'))
         }
       }
+      process.exit(0)
     })
 }

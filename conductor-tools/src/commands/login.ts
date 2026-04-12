@@ -5,9 +5,11 @@ import ora from 'ora'
 import { readConfig, writeConfig } from '../lib/config.js'
 import { findAvailablePort, waitForOAuthCallback } from '../lib/oauth-server.js'
 
-const CONDUCTOR_API_URL = process.env['CONDUCTOR_API_URL'] ?? 'http://localhost:8080'
+const CONDUCTOR_API_URL =
+  process.env['CONDUCTOR_API_URL'] ?? 'https://conductor-backend-199707291514.us-central1.run.app'
 
-const CONDUCTOR_FRONTEND_URL = process.env['CONDUCTOR_FRONTEND_URL'] ?? 'http://localhost:3000'
+const CONDUCTOR_FRONTEND_URL =
+  process.env['CONDUCTOR_FRONTEND_URL'] ?? 'https://conductor-frontend-199707291514.us-central1.run.app'
 
 function resolveApiUrl(): string {
   const cfg = readConfig()
@@ -120,9 +122,9 @@ export function registerLogin(program: Command): void {
     .action(async (options: { force?: boolean; local?: boolean }) => {
       const existing = readConfig()
 
-      if (existing && !options.force) {
+      if (existing && existing.apiKey && !options.force) {
         const apiUrl = resolveApiUrl()
-        const valid = await isKeyValid(apiUrl, existing.apiKey ?? '')
+        const valid = await isKeyValid(apiUrl, existing.apiKey)
         if (valid) {
           console.log(
             `Already logged in as ${existing.email}. Use --force to re-authenticate.`
