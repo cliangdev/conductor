@@ -64,5 +64,6 @@ else
     --project="$PROJECT" \
     --limit="$LINES" \
     --format="$LOG_FORMAT" \
-    --order=asc
+    --order=desc \
+  | tac
 fi
