@@ -399,8 +399,12 @@ export function registerInit(program: Command): void {
         console.log()
         const shouldSync = await askYesNo('Start syncing now? [Y/n] ')
         if (shouldSync) {
-          await startDaemon()
-          console.log(chalk.green('✓ Sync daemon started'))
+          const ok = await startDaemon()
+          if (ok) {
+            console.log(chalk.green('✓ Sync daemon started'))
+          } else {
+            console.log(chalk.red('✗ Daemon failed to start — run `conductor start` to retry'))
+          }
         } else {
           console.log(chalk.dim('  Run `conductor start` when ready.'))
         }

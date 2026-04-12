@@ -2,6 +2,7 @@ import chokidar from 'chokidar'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { fileURLToPath } from 'url'
 import { readConfig, Config } from '../lib/config.js'
 
 const CONDUCTOR_DIR = path.join(os.homedir(), '.conductor')
@@ -237,7 +238,8 @@ function startWatcher(config: Config): void {
 }
 
 // Only run as daemon entrypoint when this file is executed directly
-if (require.main === module) {
+const __filename = fileURLToPath(import.meta.url)
+if (process.argv[1] === __filename) {
   const config = readConfig()
   if (!config) {
     console.error('Not authenticated — run conductor login')
