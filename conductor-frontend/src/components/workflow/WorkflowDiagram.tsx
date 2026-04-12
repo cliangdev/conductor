@@ -2,7 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-async function generateMermaidFromYaml(yamlText: string): Promise<string> {
+async function generateMermaidFromYaml(
+  yamlText: string,
+  jobStatuses?: Record<string, 'SUCCESS' | 'FAILED' | 'RUNNING' | 'SKIPPED' | 'PENDING'>
+): Promise<string> {
   if (!yamlText.trim()) return '';
 
   const jsYaml = await import('js-yaml');
@@ -74,6 +77,19 @@ async function generateMermaidFromYaml(yamlText: string): Promise<string> {
     }
   }
 
+  if (jobStatuses) {
+    for (const [jobId, status] of Object.entries(jobStatuses)) {
+      const color = ({
+        SUCCESS: '#22c55e',
+        FAILED: '#ef4444',
+        RUNNING: '#eab308',
+        SKIPPED: '#9ca3af',
+        PENDING: '#d1d5db',
+      } as Record<string, string>)[status] ?? '#d1d5db';
+      lines.push(`  style ${jobId} fill:${color},color:#fff`);
+    }
+  }
+
   return lines.join('\n');
 }
 
@@ -82,7 +98,7 @@ interface WorkflowDiagramProps {
   jobStatuses?: Record<string, 'SUCCESS' | 'FAILED' | 'RUNNING' | 'SKIPPED' | 'PENDING'>;
 }
 
-export default function WorkflowDiagram({ yaml }: WorkflowDiagramProps) {
+export default function WorkflowDiagram({ yaml, jobStatuses }: WorkflowDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -94,7 +110,7 @@ export default function WorkflowDiagram({ yaml }: WorkflowDiagramProps) {
       const renderId = ++renderIdRef.current;
       try {
         setError(null);
-        const definition = await generateMermaidFromYaml(yaml);
+        const definition = await generateMermaidFromYaml(yaml, jobStatuses);
         if (!definition || renderId !== renderIdRef.current) return;
 
         const mermaid = (await import('mermaid')).default;
@@ -114,7 +130,7 @@ export default function WorkflowDiagram({ yaml }: WorkflowDiagramProps) {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [yaml]);
+  }, [yaml, jobStatuses]);
 
   if (error) {
     return (
