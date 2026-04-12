@@ -1,42 +1,10 @@
 'use client'
 
-export const dynamic = 'force-dynamic'
-
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
-import { useAuth } from '@/contexts/AuthContext'
 import { apiDelete, apiGet, apiPost } from '@/lib/api'
+import type { UserApiKey, CreateApiKeyResponse } from '@/types'
 
-interface UserApiKey {
-  id: string
-  maskedKey: string
-  label: string
-  createdAt: string
-}
-
-interface CreateApiKeyResponse {
-  id: string
-  key: string
-  maskedKey: string
-  label: string
-  createdAt: string
-}
-
-function SetupStep({ number, title, children }: { number: number; title: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-3">
-        <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-bold shrink-0">
-          {number}
-        </span>
-        <h2 className="font-medium text-base">{title}</h2>
-      </div>
-      <div className="ml-9">{children}</div>
-    </div>
-  )
-}
-
-function CodeBlock({ code, language = 'bash' }: { code: string; language?: string }) {
+function CodeBlock({ code }: { code: string }) {
   const [copied, setCopied] = useState(false)
 
   function handleCopy() {
@@ -48,7 +16,7 @@ function CodeBlock({ code, language = 'bash' }: { code: string; language?: strin
 
   return (
     <div className="relative group">
-      <pre className="bg-muted rounded-md px-4 py-3 text-sm font-mono overflow-x-auto" data-language={language}>
+      <pre className="bg-muted rounded-md px-4 py-3 text-sm font-mono overflow-x-auto">
         <code>{code}</code>
       </pre>
       <button
@@ -62,7 +30,7 @@ function CodeBlock({ code, language = 'bash' }: { code: string; language?: strin
   )
 }
 
-function ApiKeySection({ accessToken }: { accessToken: string | null }) {
+export function ApiKeySection({ accessToken }: { accessToken: string | null }) {
   const [keys, setKeys] = useState<UserApiKey[]>([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
@@ -137,60 +105,15 @@ function ApiKeySection({ accessToken }: { accessToken: string | null }) {
               </button>
             </div>
           ))}
-          {keys.length === 0 && (
-            <button
-              onClick={handleGenerate}
-              disabled={generating}
-              className="text-sm px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {generating ? 'Generating...' : 'Generate API key'}
-            </button>
-          )}
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="text-sm px-3 py-1.5 rounded-md border border-border hover:bg-muted disabled:opacity-50"
+          >
+            {generating ? 'Generating...' : 'Generate new key'}
+          </button>
         </div>
       )}
-    </div>
-  )
-}
-
-export default function SetupPage() {
-  const params = useParams()
-  const projectId = params.projectId as string
-  const { accessToken } = useAuth()
-
-  return (
-    <div className="max-w-2xl mx-auto p-6 space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold">Setup</h1>
-        <p className="text-muted-foreground mt-1">
-          Get the Conductor CLI and MCP server running locally.
-        </p>
-      </div>
-
-      <SetupStep number={1} title="Install">
-        <CodeBlock code="npm install -g @conductor/cli" />
-      </SetupStep>
-
-      <SetupStep number={2} title="Login">
-        <p className="text-sm text-muted-foreground mb-3">
-          Opens your browser for Google OAuth. Saves credentials to ~/.conductor/config.json.
-        </p>
-        <CodeBlock code="conductor login" />
-      </SetupStep>
-
-      <SetupStep number={3} title="Initialize project">
-        <p className="text-sm text-muted-foreground mb-3">
-          Creates .conductor/issues/ directory and installs the /conductor:prd skill.
-        </p>
-        <CodeBlock code={`conductor init --project-id ${projectId}`} />
-      </SetupStep>
-
-      <SetupStep number={4} title="API Key">
-        <ApiKeySection accessToken={accessToken} />
-      </SetupStep>
-
-      <SetupStep number={5} title="Verify">
-        <CodeBlock code="conductor status" />
-      </SetupStep>
     </div>
   )
 }

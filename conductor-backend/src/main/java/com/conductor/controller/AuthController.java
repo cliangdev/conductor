@@ -68,8 +68,8 @@ public class AuthController implements AuthApi {
     @Override
     public ResponseEntity<CliCallbackResponse> cliCallback(Integer port, String projectId) {
         User caller = currentUser();
-        String message = cliLoginService.sendApiKeyToCli(port, projectId, caller);
-        return ResponseEntity.ok(new CliCallbackResponse(message));
+        CliCallbackResponse response = cliLoginService.generateCredentials(port, projectId, caller);
+        return ResponseEntity.ok(response);
     }
 
     private User currentUser() {

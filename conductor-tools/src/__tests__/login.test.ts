@@ -19,6 +19,9 @@ describe('login command', () => {
       clearConfig: vi.fn(),
     }))
 
+    // isKeyValid makes a fetch call — stub it to return 200 (valid key)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }))
+
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
 
@@ -38,6 +41,7 @@ describe('login command', () => {
 
     consoleSpy.mockRestore()
     exitSpy.mockRestore()
+    vi.unstubAllGlobals()
   })
 })
 

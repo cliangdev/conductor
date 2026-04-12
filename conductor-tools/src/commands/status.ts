@@ -12,10 +12,17 @@ export function isDaemonRunning(): boolean {
   try {
     const raw = fs.readFileSync(DAEMON_PID_PATH, 'utf8').trim()
     const pid = parseInt(raw, 10)
-    if (isNaN(pid)) return false
+    if (isNaN(pid)) {
+      fs.unlinkSync(DAEMON_PID_PATH)
+      return false
+    }
     process.kill(pid, 0)
     return true
-  } catch {
+  } catch (err) {
+    // Process not found — clean up stale PID file
+    if ((err as NodeJS.ErrnoException).code === 'ESRCH') {
+      try { fs.unlinkSync(DAEMON_PID_PATH) } catch { /* already gone */ }
+    }
     return false
   }
 }

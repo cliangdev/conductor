@@ -1,4 +1,4 @@
-.PHONY: dev build logs down seed e2e e2e-ui setup
+.PHONY: dev build logs down seed e2e e2e-ui setup cli-install
 
 setup:
 	git config core.hooksPath .githooks
@@ -23,6 +23,9 @@ e2e:
 e2e-ui:
 	docker compose up -d --wait || true
 	cd conductor-frontend && npx playwright test --ui
+
+cli-install:
+	cd conductor-tools && npm run build && npm link
 
 seed:
 	@echo "Seeding local development data..."

@@ -278,9 +278,9 @@ export function ensureGitignore(projectRoot: string): void {
 }
 
 export function writeSkillFile(projectRoot: string): void {
-  const skillDir = path.join(projectRoot, '.claude', 'skills')
-  fs.mkdirSync(skillDir, { recursive: true })
-  fs.writeFileSync(path.join(skillDir, 'conductor.md'), CONDUCTOR_SKILL_CONTENT, 'utf8')
+  const commandDir = path.join(projectRoot, '.claude', 'commands', 'conductor')
+  fs.mkdirSync(commandDir, { recursive: true })
+  fs.writeFileSync(path.join(commandDir, 'prd.md'), CONDUCTOR_SKILL_CONTENT, 'utf8')
 }
 
 export function readMcpJson(workingDir: string): McpJson {
@@ -387,7 +387,7 @@ export function registerInit(program: Command): void {
       console.log(chalk.green('✓ Updated .gitignore'))
 
       writeSkillFile(projectRoot)
-      console.log(chalk.green('✓ Installed /conductor:prd skill'))
+      console.log(chalk.green('✓ Installed /conductor:prd command'))
 
       const existing = readMcpJson(workingDir)
       writeMcpJson(workingDir, buildMcpJson(existing))
@@ -399,8 +399,12 @@ export function registerInit(program: Command): void {
         console.log()
         const shouldSync = await askYesNo('Start syncing now? [Y/n] ')
         if (shouldSync) {
-          await startDaemon()
-          console.log(chalk.green('✓ Sync daemon started'))
+          const ok = await startDaemon()
+          if (ok) {
+            console.log(chalk.green('✓ Sync daemon started'))
+          } else {
+            console.log(chalk.red('✗ Daemon failed to start — run `conductor start` to retry'))
+          }
         } else {
           console.log(chalk.dim('  Run `conductor start` when ready.'))
         }

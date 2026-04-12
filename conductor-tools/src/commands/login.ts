@@ -7,6 +7,18 @@ import { findAvailablePort, waitForOAuthCallback } from '../lib/oauth-server.js'
 
 const CONDUCTOR_API_URL = process.env['CONDUCTOR_API_URL'] ?? 'http://localhost:8080'
 
+const CONDUCTOR_FRONTEND_URL = process.env['CONDUCTOR_FRONTEND_URL'] ?? 'http://localhost:3000'
+
+function resolveApiUrl(): string {
+  const cfg = readConfig()
+  return cfg?.apiUrl ?? CONDUCTOR_API_URL
+}
+
+function resolveFrontendUrl(): string {
+  const cfg = readConfig()
+  return cfg?.frontendUrl ?? CONDUCTOR_FRONTEND_URL
+}
+
 function prompt(question: string, hidden = false): Promise<string> {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
@@ -88,6 +100,17 @@ async function loginLocal(apiUrl: string): Promise<void> {
   spinner.succeed(chalk.green(`Logged in as ${email} (project: ${project.name})`))
 }
 
+async function isKeyValid(apiUrl: string, apiKey: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${apiUrl}/api/v1/projects`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+    return res.status === 200
+  } catch {
+    return false
+  }
+}
+
 export function registerLogin(program: Command): void {
   program
     .command('login')
@@ -98,14 +121,19 @@ export function registerLogin(program: Command): void {
       const existing = readConfig()
 
       if (existing && !options.force) {
-        console.log(
-          `Already logged in as ${existing.email}. Use --force to re-authenticate.`
-        )
-        process.exit(0)
-        return
+        const apiUrl = resolveApiUrl()
+        const valid = await isKeyValid(apiUrl, existing.apiKey ?? '')
+        if (valid) {
+          console.log(
+            `Already logged in as ${existing.email}. Use --force to re-authenticate.`
+          )
+          process.exit(0)
+          return
+        }
+        console.log('Stored credentials are invalid — re-authenticating...')
       }
 
-      const apiUrl = CONDUCTOR_API_URL
+      const apiUrl = resolveApiUrl()
 
       if (options.local) {
         await loginLocal(apiUrl)
@@ -126,11 +154,18 @@ export function registerLogin(program: Command): void {
 
       try {
         const { default: open } = await import('open')
-        const loginUrl = `${apiUrl}/auth/cli-login?port=${port}`
+        const frontendUrl = resolveFrontendUrl()
+        const loginUrl = `${frontendUrl}/auth/cli-login?port=${port}`
         await open(loginUrl)
 
         const payload = await waitForOAuthCallback(port, spinner)
-        const config = { ...payload, apiUrl }
+        const existingConfig = readConfig()
+        const config = {
+          ...payload,
+          apiUrl,
+          frontendUrl,
+          ...(existingConfig?.localPath ? { localPath: existingConfig.localPath } : {}),
+        }
         writeConfig(config)
         spinner.succeed(
           chalk.green(`Logged in as ${config.email} (project: ${config.projectName})`)

@@ -3,7 +3,6 @@ package com.conductor.controller;
 import com.conductor.generated.api.DocumentsApi;
 import com.conductor.generated.model.CreateDocumentRequest;
 import com.conductor.generated.model.DocumentResponse;
-import com.conductor.generated.model.UpdateDocumentRequest;
 import com.conductor.generated.model.UpsertDocumentByFilenameRequest;
 import com.conductor.service.DocumentService;
 import org.springframework.http.ResponseEntity;
@@ -37,12 +36,6 @@ public class DocumentController implements DocumentsApi {
     @Override
     public ResponseEntity<DocumentResponse> getDocument(String projectId, String issueId, String docId) {
         DocumentResponse response = documentService.getDocument(projectId, issueId, docId);
-        return ResponseEntity.ok(response);
-    }
-
-    @Override
-    public ResponseEntity<DocumentResponse> updateDocument(String projectId, String issueId, String docId, UpdateDocumentRequest updateDocumentRequest) {
-        DocumentResponse response = documentService.updateDocument(projectId, issueId, docId, updateDocumentRequest);
         return ResponseEntity.ok(response);
     }
 

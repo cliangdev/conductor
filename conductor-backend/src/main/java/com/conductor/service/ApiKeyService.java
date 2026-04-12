@@ -2,6 +2,8 @@ package com.conductor.service;
 
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectApiKey;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.conductor.entity.User;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.ApiKeyResponse;
@@ -12,16 +14,14 @@ import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
 @Service
 public class ApiKeyService {
+
+    private static final Logger log = LoggerFactory.getLogger(ApiKeyService.class);
 
     private final ProjectApiKeyRepository projectApiKeyRepository;
     private final ProjectRepository projectRepository;
@@ -39,6 +39,7 @@ public class ApiKeyService {
     @Transactional
     public CreateApiKeyResponse generateApiKey(String projectId, String name, User caller) {
         if (!projectSecurityService.isProjectAdmin(projectId, caller.getId())) {
+            log.warn("generateApiKey denied: user={} is not admin of project={}", caller.getEmail(), projectId);
             throw new ForbiddenException("Caller is not a project admin");
         }
 
@@ -46,12 +47,11 @@ public class ApiKeyService {
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
 
         String rawKey = "ck_" + UUID.randomUUID().toString().replace("-", "");
-        String keyHash = sha256(rawKey);
 
         ProjectApiKey apiKey = new ProjectApiKey();
         apiKey.setProject(project);
         apiKey.setName(name);
-        apiKey.setKeyHash(keyHash);
+        apiKey.setKeyValue(rawKey);
 
         projectApiKeyRepository.save(apiKey);
 
@@ -85,16 +85,6 @@ public class ApiKeyService {
 
         apiKey.setRevokedAt(OffsetDateTime.now());
         projectApiKeyRepository.save(apiKey);
-    }
-
-    String sha256(String input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
-        }
     }
 
     private ApiKeyResponse toApiKeyResponse(ProjectApiKey apiKey) {

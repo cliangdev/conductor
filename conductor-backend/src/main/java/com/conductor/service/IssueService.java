@@ -172,6 +172,12 @@ public class IssueService {
                 });
     }
 
+    @Transactional
+    public void deleteIssue(String projectId, String issueId) {
+        Issue issue = findIssueInProject(projectId, issueId);
+        issueRepository.delete(issue);
+    }
+
     private Issue findIssueInProject(String projectId, String issueId) {
         Issue issue = issueRepository.findById(issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));

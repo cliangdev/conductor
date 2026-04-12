@@ -654,6 +654,41 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+    delete:
+      tags:
+        - issues
+      summary: Delete an issue
+      operationId: deleteIssue
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Issue deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/issues/{issueId}/reviewers:
     post:
       tags:
@@ -915,55 +950,6 @@ paths:
       responses:
         "200":
           description: Document detail
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DocumentResponse"
-        "401":
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Document not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-    put:
-      tags:
-        - documents
-      summary: Update document content
-      operationId: updateDocument
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: issueId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: docId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateDocumentRequest"
-      responses:
-        "200":
-          description: Document updated
           content:
             application/json:
               schema:
@@ -2549,8 +2535,20 @@ components:
       type: object
       required:
         - message
+        - apiKey
+        - projectId
+        - projectName
+        - email
       properties:
         message:
+          type: string
+        apiKey:
+          type: string
+        projectId:
+          type: string
+        projectName:
+          type: string
+        email:
           type: string
 
     AssignReviewerRequest:
@@ -2798,6 +2796,10 @@ components:
       properties:
         id:
           type: string
+        key:
+          type: string
+          nullable: true
+          description: "Full key value — null for keys created before this field was added"
         maskedKey:
           type: string
           description: "Key with last 4 chars visible (e.g. ****abcd)"

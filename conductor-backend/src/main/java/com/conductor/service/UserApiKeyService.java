@@ -11,11 +11,7 @@ import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
@@ -40,14 +36,12 @@ public class UserApiKeyService {
     public CreateUserApiKeyResponse createUserApiKey(CreateUserApiKeyRequest request, User caller) {
         String label = (request != null && request.getLabel() != null) ? request.getLabel() : "CLI Key";
         String rawKey = "uk_" + UUID.randomUUID().toString().replace("-", "");
-        String keyHash = sha256(rawKey);
         String keySuffix = rawKey.substring(rawKey.length() - 4);
 
         UserApiKey apiKey = new UserApiKey();
         apiKey.setUser(caller);
         apiKey.setLabel(label);
-        apiKey.setKeyHash(keyHash);
-        apiKey.setKeySuffix(keySuffix);
+        apiKey.setKeyValue(rawKey);
 
         userApiKeyRepository.save(apiKey);
 
@@ -68,18 +62,12 @@ public class UserApiKeyService {
         userApiKeyRepository.save(apiKey);
     }
 
-    String sha256(String input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
-        }
-    }
-
     private UserApiKeyResponse toUserApiKeyResponse(UserApiKey apiKey) {
-        return new UserApiKeyResponse(apiKey.getId(), "****" + apiKey.getKeySuffix(), apiKey.getCreatedAt())
-                .label(apiKey.getLabel());
+        String keySuffix = apiKey.getKeyValue() != null
+                ? apiKey.getKeyValue().substring(Math.max(0, apiKey.getKeyValue().length() - 4))
+                : "????";
+        return new UserApiKeyResponse(apiKey.getId(), "****" + keySuffix, apiKey.getCreatedAt())
+                .label(apiKey.getLabel())
+                .key(apiKey.getKeyValue());
     }
 }

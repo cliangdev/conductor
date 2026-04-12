@@ -32,22 +32,38 @@ done
 echo "▶ Fetching logs for $SERVICE ($PROJECT / $REGION)"
 echo ""
 
+LOG_FORMAT='value(timestamp, textPayload, jsonPayload.message)'
+
+since_timestamp() {
+  local since="$1"
+  local unit="${since: -1}"
+  local amount="${since%?}"
+  case "$unit" in
+    s) python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc) - timedelta(seconds=$amount)).strftime('%Y-%m-%dT%H:%M:%SZ'))" ;;
+    m) python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc) - timedelta(minutes=$amount)).strftime('%Y-%m-%dT%H:%M:%SZ'))" ;;
+    h) python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc) - timedelta(hours=$amount)).strftime('%Y-%m-%dT%H:%M:%SZ'))" ;;
+    d) python3 -c "from datetime import datetime, timezone, timedelta; print((datetime.now(timezone.utc) - timedelta(days=$amount)).strftime('%Y-%m-%dT%H:%M:%SZ'))" ;;
+    *) echo "Invalid since format: $since" >&2; exit 1 ;;
+  esac
+}
+
 if [[ "$TAIL" == true ]]; then
   gcloud --configuration=conductor beta run services logs tail "$SERVICE" \
     --project="$PROJECT" \
     --region="$REGION"
 elif [[ -n "$SINCE" ]]; then
+  TS=$(since_timestamp "$SINCE")
   gcloud --configuration=conductor logging read \
-    "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE" \
+    "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE AND timestamp>=\"$TS\"" \
     --project="$PROJECT" \
-    --freshness="$SINCE" \
-    --format="value(timestamp, textPayload)" \
+    --format="$LOG_FORMAT" \
     --order=asc
 else
   gcloud --configuration=conductor logging read \
     "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE" \
     --project="$PROJECT" \
     --limit="$LINES" \
-    --format="value(timestamp, textPayload)" \
-    --order=asc
+    --format="$LOG_FORMAT" \
+    --order=desc \
+  | tac
 fi

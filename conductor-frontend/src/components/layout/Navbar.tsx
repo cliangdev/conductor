@@ -1,6 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { MenuIcon } from 'lucide-react'
 import {
   DropdownMenu,
@@ -71,6 +72,10 @@ export function Navbar() {
                 <DropdownMenuSeparator />
               </>
             )}
+            <DropdownMenuItem asChild>
+              <Link href="/app/settings/api-keys">API Keys</Link>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={handleSignOut} className="text-destructive">
               Sign out
             </DropdownMenuItem>

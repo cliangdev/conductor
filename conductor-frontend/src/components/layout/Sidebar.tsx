@@ -145,33 +145,35 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           >
             Issues
           </SidebarNavLink>
-          <SidebarNavLink
-            href={`/app/projects/${activeProject.id}/members`}
-            icon={<UsersIcon className="h-4 w-4" />}
-            onNavigate={onNavigate}
-          >
-            Members
-          </SidebarNavLink>
-          <SidebarNavLink
-            href={`/app/projects/${activeProject.id}/setup`}
-            icon={<TerminalIcon className="h-4 w-4" />}
-            onNavigate={onNavigate}
-          >
-            Setup
-          </SidebarNavLink>
           <SidebarNavGroup
             href={`/app/projects/${activeProject.id}/settings`}
             icon={<SettingsIcon className="h-4 w-4" />}
             label="Settings"
             onNavigate={onNavigate}
             subLinks={
-              <SidebarNavLink
-                href={`/app/projects/${activeProject.id}/settings/notifications`}
-                icon={<BellIcon className="h-4 w-4" />}
-                onNavigate={onNavigate}
-              >
-                Notifications
-              </SidebarNavLink>
+              <>
+                <SidebarNavLink
+                  href={`/app/projects/${activeProject.id}/settings/members`}
+                  icon={<UsersIcon className="h-4 w-4" />}
+                  onNavigate={onNavigate}
+                >
+                  Members
+                </SidebarNavLink>
+                <SidebarNavLink
+                  href={`/app/projects/${activeProject.id}/settings/tools`}
+                  icon={<TerminalIcon className="h-4 w-4" />}
+                  onNavigate={onNavigate}
+                >
+                  Tools
+                </SidebarNavLink>
+                <SidebarNavLink
+                  href={`/app/projects/${activeProject.id}/settings/notifications`}
+                  icon={<BellIcon className="h-4 w-4" />}
+                  onNavigate={onNavigate}
+                >
+                  Notifications
+                </SidebarNavLink>
+              </>
             }
           />
         </nav>

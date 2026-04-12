@@ -1,6 +1,8 @@
 package com.conductor.exception;
 
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.AccessDeniedException;
@@ -17,6 +19,17 @@ import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(ClassCastException.class)
+    public ProblemDetail handleClassCastException(ClassCastException e) {
+        log.error("ClassCastException in controller — likely wrong auth token type: {}", e.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.INTERNAL_SERVER_ERROR);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail("Internal authentication configuration error");
+        return problem;
+    }
 
     @ExceptionHandler(FirebaseAuthenticationException.class)
     public ProblemDetail handleFirebaseAuthException(FirebaseAuthenticationException e) {

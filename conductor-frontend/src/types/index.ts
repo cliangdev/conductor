@@ -37,3 +37,18 @@ export interface Invite {
   expiresAt: string
   token?: string
 }
+
+export interface UserApiKey {
+  id: string
+  maskedKey: string
+  label: string
+  createdAt: string
+}
+
+export interface CreateApiKeyResponse {
+  id: string
+  key: string
+  maskedKey: string
+  label: string
+  createdAt: string
+}
