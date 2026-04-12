@@ -56,17 +56,19 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         String keyHash = sha256(token);
 
         Optional<ProjectApiKey> projectApiKeyOpt = projectApiKeyRepository.findByKeyHash(keyHash);
+        String keySuffix = token.substring(Math.max(0, token.length() - 4));
+
         if (projectApiKeyOpt.isPresent()) {
             if (projectApiKeyOpt.get().isRevoked()) {
                 log.warn("Rejected revoked project API key suffix=...{} on {} {}",
-                        token.substring(Math.max(0, token.length() - 4)),
-                        request.getMethod(), request.getRequestURI());
+                        keySuffix, request.getMethod(), request.getRequestURI());
             } else {
                 ProjectApiKey apiKey = projectApiKeyOpt.get();
                 apiKey.setLastUsedAt(OffsetDateTime.now());
                 projectApiKeyRepository.save(apiKey);
-                log.debug("Authenticated via project API key suffix=...{} project={}",
-                        token.substring(Math.max(0, token.length() - 4)), apiKey.getProject().getId());
+                log.info("Authenticated via project API key suffix=...{} project={} on {} {}",
+                        keySuffix, apiKey.getProject().getId(),
+                        request.getMethod(), request.getRequestURI());
                 ApiKeyAuthenticationToken authentication = new ApiKeyAuthenticationToken(apiKey.getProject().getId());
                 SecurityContextHolder.getContext().setAuthentication(authentication);
                 filterChain.doFilter(request, response);
@@ -78,21 +80,20 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
         if (userApiKeyOpt.isPresent()) {
             if (userApiKeyOpt.get().isRevoked()) {
                 log.warn("Rejected revoked user API key suffix=...{} on {} {}",
-                        token.substring(Math.max(0, token.length() - 4)),
-                        request.getMethod(), request.getRequestURI());
+                        keySuffix, request.getMethod(), request.getRequestURI());
             } else {
                 UserApiKey userApiKey = userApiKeyOpt.get();
                 userApiKey.setLastUsedAt(OffsetDateTime.now());
                 userApiKeyRepository.save(userApiKey);
-                log.debug("Authenticated via user API key suffix=...{} user={}",
-                        token.substring(Math.max(0, token.length() - 4)), userApiKey.getUser().getEmail());
+                log.info("Authenticated via user API key suffix=...{} user={} on {} {}",
+                        keySuffix, userApiKey.getUser().getEmail(),
+                        request.getMethod(), request.getRequestURI());
                 UserApiKeyAuthenticationToken authentication = new UserApiKeyAuthenticationToken(userApiKey.getUser());
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             }
         } else if (!projectApiKeyOpt.isPresent()) {
             log.warn("Unknown API key suffix=...{} on {} {}",
-                    token.substring(Math.max(0, token.length() - 4)),
-                    request.getMethod(), request.getRequestURI());
+                    keySuffix, request.getMethod(), request.getRequestURI());
         }
 
         filterChain.doFilter(request, response);
