@@ -2,12 +2,16 @@ package com.conductor.service;
 
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectApiKey;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.conductor.entity.User;
+import com.conductor.entity.UserApiKey;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.ApiKeyResponse;
 import com.conductor.generated.model.CreateApiKeyResponse;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,22 +27,45 @@ import java.util.UUID;
 @Service
 public class ApiKeyService {
 
+    private static final Logger log = LoggerFactory.getLogger(ApiKeyService.class);
+
     private final ProjectApiKeyRepository projectApiKeyRepository;
+    private final UserApiKeyRepository userApiKeyRepository;
     private final ProjectRepository projectRepository;
     private final ProjectSecurityService projectSecurityService;
 
     public ApiKeyService(
             ProjectApiKeyRepository projectApiKeyRepository,
+            UserApiKeyRepository userApiKeyRepository,
             ProjectRepository projectRepository,
             ProjectSecurityService projectSecurityService) {
         this.projectApiKeyRepository = projectApiKeyRepository;
+        this.userApiKeyRepository = userApiKeyRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
     }
 
     @Transactional
+    public CreateApiKeyResponse generateUserApiKey(String label, User caller) {
+        String rawKey = "ck_" + UUID.randomUUID().toString().replace("-", "");
+        String keyHash = sha256(rawKey);
+        String keySuffix = rawKey.substring(rawKey.length() - 4);
+
+        UserApiKey apiKey = new UserApiKey();
+        apiKey.setUser(caller);
+        apiKey.setLabel(label);
+        apiKey.setKeyHash(keyHash);
+        apiKey.setKeySuffix(keySuffix);
+
+        userApiKeyRepository.save(apiKey);
+
+        return new CreateApiKeyResponse(apiKey.getId(), apiKey.getLabel(), rawKey, apiKey.getCreatedAt());
+    }
+
+    @Transactional
     public CreateApiKeyResponse generateApiKey(String projectId, String name, User caller) {
         if (!projectSecurityService.isProjectAdmin(projectId, caller.getId())) {
+            log.warn("generateApiKey denied: user={} is not admin of project={}", caller.getEmail(), projectId);
             throw new ForbiddenException("Caller is not a project admin");
         }
 

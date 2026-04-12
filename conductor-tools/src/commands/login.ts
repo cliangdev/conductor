@@ -143,7 +143,13 @@ export function registerLogin(program: Command): void {
         await open(loginUrl)
 
         const payload = await waitForOAuthCallback(port, spinner)
-        const config = { ...payload, apiUrl }
+        const existingConfig = readConfig()
+        const config = {
+          ...payload,
+          apiUrl,
+          frontendUrl,
+          ...(existingConfig?.localPath ? { localPath: existingConfig.localPath } : {}),
+        }
         writeConfig(config)
         spinner.succeed(
           chalk.green(`Logged in as ${config.email} (project: ${config.projectName})`)

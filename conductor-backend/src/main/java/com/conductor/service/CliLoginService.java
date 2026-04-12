@@ -6,12 +6,16 @@ import com.conductor.generated.model.CliCallbackResponse;
 import com.conductor.generated.model.CreateApiKeyResponse;
 import com.conductor.repository.ProjectRepository;
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 
 @Service
 public class CliLoginService {
+
+    private static final Logger log = LoggerFactory.getLogger(CliLoginService.class);
 
     private final ApiKeyService apiKeyService;
     private final ProjectRepository projectRepository;
@@ -28,7 +32,9 @@ public class CliLoginService {
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
 
         String keyName = "CLI - " + caller.getEmail() + " - " + Instant.now().toEpochMilli();
-        CreateApiKeyResponse apiKeyResponse = apiKeyService.generateApiKey(projectId, keyName, caller);
+        log.info("Generating CLI API key for user={} project={}", caller.getEmail(), projectId);
+        CreateApiKeyResponse apiKeyResponse = apiKeyService.generateUserApiKey(keyName, caller);
+        log.info("CLI API key created id={} user={} project={}", apiKeyResponse.getId(), caller.getEmail(), projectId);
 
         return new CliCallbackResponse(
                 "API key generated",
