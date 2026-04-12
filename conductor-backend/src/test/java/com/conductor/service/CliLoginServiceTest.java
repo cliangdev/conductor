@@ -2,7 +2,6 @@ package com.conductor.service;
 
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
-import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.CliCallbackResponse;
 import com.conductor.generated.model.CreateApiKeyResponse;
 import com.conductor.repository.ProjectRepository;
@@ -17,9 +16,9 @@ import java.time.OffsetDateTime;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -54,7 +53,7 @@ class CliLoginServiceTest {
     @Test
     void generateCredentialsReturnsCorrectPayload() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(apiKeyService.generateApiKey(eq("proj-1"), anyString(), eq(adminUser))).thenReturn(apiKeyResponse);
+        when(apiKeyService.generateUserApiKey(anyString(), eq(adminUser))).thenReturn(apiKeyResponse);
 
         CliCallbackResponse result = cliLoginService.generateCredentials(3131, "proj-1", adminUser);
 
@@ -62,15 +61,6 @@ class CliLoginServiceTest {
         assertThat(result.getProjectId()).isEqualTo("proj-1");
         assertThat(result.getProjectName()).isEqualTo("My Project");
         assertThat(result.getEmail()).isEqualTo("admin@example.com");
-    }
-
-    @Test
-    void generateCredentialsThrows403WhenCallerNotAdmin() {
-        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(apiKeyService.generateApiKey(eq("proj-1"), anyString(), eq(adminUser)))
-                .thenThrow(new ForbiddenException("Caller is not a project admin"));
-
-        assertThatThrownBy(() -> cliLoginService.generateCredentials(3131, "proj-1", adminUser))
-                .isInstanceOf(ForbiddenException.class);
+        verify(apiKeyService).generateUserApiKey(anyString(), eq(adminUser));
     }
 }
