@@ -12,5 +12,7 @@ public interface UserApiKeyRepository extends JpaRepository<UserApiKey, String> 
 
     List<UserApiKey> findByUserIdAndRevokedAtIsNull(String userId);
 
+    List<UserApiKey> findByUserIdAndRevokedAtIsNullAndLabelStartingWith(String userId, String labelPrefix);
+
     Optional<UserApiKey> findByKeyHash(String keyHash);
 }

@@ -68,8 +68,9 @@ async function callApi(
   method: string,
   apiPath: string,
   body: Record<string, unknown> | undefined,
-  config: Config
+  getConfig: () => Config
 ): Promise<void> {
+  const config = getConfig()
   const url = `${config.apiUrl}${apiPath}`
   const response = await fetch(url, {
     method,
@@ -85,7 +86,7 @@ async function callApi(
   }
 }
 
-export async function syncFile(filePath: string, config: Config): Promise<void> {
+export async function syncFile(filePath: string, getConfig: () => Config): Promise<void> {
   const parsed = parseFilePath(filePath)
   if (!parsed) return
 
@@ -100,11 +101,12 @@ export async function syncFile(filePath: string, config: Config): Promise<void> 
     return
   }
 
+  const config = getConfig()
   const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
   const body = { content, contentType: 'text/markdown' }
 
   try {
-    await callApi('PUT', apiPath, body, config)
+    await callApi('PUT', apiPath, body, getConfig)
     console.log(`Synced: ${filePath}`)
   } catch (err) {
     console.error(`Sync failed, queuing: ${filePath} — ${(err as Error).message}`)
@@ -112,16 +114,17 @@ export async function syncFile(filePath: string, config: Config): Promise<void> 
   }
 }
 
-export async function deleteFile(filePath: string, config: Config): Promise<void> {
+export async function deleteFile(filePath: string, getConfig: () => Config): Promise<void> {
   const parsed = parseFilePath(filePath)
   if (!parsed) return
 
   if (parsed.filename === 'issue.md') return
 
+  const config = getConfig()
   const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
 
   try {
-    await callApi('DELETE', apiPath, undefined, config)
+    await callApi('DELETE', apiPath, undefined, getConfig)
     console.log(`Deleted: ${filePath}`)
   } catch (err) {
     console.error(`Delete failed, queuing: ${filePath} — ${(err as Error).message}`)
@@ -140,7 +143,7 @@ function parseFrontmatter(content: string): { title?: string; status?: string; b
   return { title, status, body }
 }
 
-export async function syncIssueMd(filePath: string, config: Config): Promise<void> {
+export async function syncIssueMd(filePath: string, getConfig: () => Config): Promise<void> {
   const parsed = parseFilePath(filePath)
   if (!parsed) return
 
@@ -160,10 +163,11 @@ export async function syncIssueMd(filePath: string, config: Config): Promise<voi
 
   if (Object.keys(patchBody).length === 0) return
 
+  const config = getConfig()
   const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}`
 
   try {
-    await callApi('PATCH', apiPath, patchBody, config)
+    await callApi('PATCH', apiPath, patchBody, getConfig)
     console.log(`Synced issue.md: ${filePath}`)
   } catch (err) {
     console.error(`Issue sync failed, queuing: ${filePath} — ${(err as Error).message}`)
@@ -171,7 +175,7 @@ export async function syncIssueMd(filePath: string, config: Config): Promise<voi
   }
 }
 
-export async function replayQueue(config: Config): Promise<void> {
+export async function replayQueue(getConfig: () => Config): Promise<void> {
   const entries = readQueue()
   if (entries.length === 0) return
 
@@ -180,7 +184,7 @@ export async function replayQueue(config: Config): Promise<void> {
 
   for (const entry of entries) {
     try {
-      await callApi(entry.method, entry.path, entry.body, config)
+      await callApi(entry.method, entry.path, entry.body, getConfig)
       console.log(`Replayed: ${entry.method} ${entry.path}`)
     } catch (err) {
       console.error(`Replay failed for ${entry.method} ${entry.path}: ${(err as Error).message}`)
@@ -196,7 +200,8 @@ export async function replayQueue(config: Config): Promise<void> {
   }
 }
 
-function startWatcher(config: Config): void {
+export function startWatcher(getConfig: () => Config): void {
+  const config = getConfig()
   if (!config.localPath) {
     console.error('localPath not set in config — run conductor init first')
     process.exit(1)
@@ -210,21 +215,21 @@ function startWatcher(config: Config): void {
   watcher
     .on('add', (filePath) => debounce(filePath, () => {
       if (path.basename(filePath) === 'issue.md') {
-        syncIssueMd(filePath, config).catch(console.error)
+        syncIssueMd(filePath, getConfig).catch(console.error)
       } else {
-        syncFile(filePath, config).catch(console.error)
+        syncFile(filePath, getConfig).catch(console.error)
       }
     }))
     .on('change', (filePath) => debounce(filePath, () => {
       if (path.basename(filePath) === 'issue.md') {
-        syncIssueMd(filePath, config).catch(console.error)
+        syncIssueMd(filePath, getConfig).catch(console.error)
       } else {
-        syncFile(filePath, config).catch(console.error)
+        syncFile(filePath, getConfig).catch(console.error)
       }
     }))
     .on('unlink', (filePath) => debounce(filePath, () => {
       if (path.basename(filePath) !== 'issue.md') {
-        deleteFile(filePath, config).catch(console.error)
+        deleteFile(filePath, getConfig).catch(console.error)
       }
       // issue.md delete is ignored
     }))
@@ -240,12 +245,18 @@ function startWatcher(config: Config): void {
 // Only run as daemon entrypoint when this file is executed directly
 const __filename = fileURLToPath(import.meta.url)
 if (process.argv[1] === __filename) {
-  const config = readConfig()
-  if (!config) {
-    console.error('Not authenticated — run conductor login')
-    process.exit(1)
+  const getConfig = (): Config => {
+    const cfg = readConfig()
+    if (!cfg) {
+      console.error('Not authenticated — run conductor login')
+      process.exit(1)
+    }
+    return cfg
   }
 
-  replayQueue(config).catch(console.error)
-  startWatcher(config)
+  // Validate config is present at startup
+  getConfig()
+
+  replayQueue(getConfig).catch(console.error)
+  startWatcher(getConfig)
 }

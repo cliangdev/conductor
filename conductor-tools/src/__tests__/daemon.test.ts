@@ -322,7 +322,7 @@ describe('syncFile', () => {
 
     const { syncFile } = await import('../daemon/watcher.js')
     const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
-    await syncFile(filePath, mockConfig)
+    await syncFile(filePath, () => mockConfig)
 
     expect(mockFetch).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
@@ -337,7 +337,7 @@ describe('syncFile', () => {
 
     const { syncFile } = await import('../daemon/watcher.js')
     const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'prd.md')
-    await syncFile(filePath, mockConfig)
+    await syncFile(filePath, () => mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
       'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md',
@@ -365,7 +365,7 @@ describe('syncFile', () => {
     const { syncFile } = await import('../daemon/watcher.js')
 
     const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'spec.md')
-    await syncFile(filePath, mockConfig)
+    await syncFile(filePath, () => mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
       'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
@@ -396,7 +396,7 @@ describe('syncIssueMd', () => {
 
     const { syncIssueMd } = await import('../daemon/watcher.js')
     const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
-    await syncIssueMd(filePath, mockConfig)
+    await syncIssueMd(filePath, () => mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
       'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc',
@@ -435,7 +435,7 @@ describe('syncIssueMd', () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const { syncIssueMd } = await import('../daemon/watcher.js')
     const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
-    await syncIssueMd(filePath, mockConfig)
+    await syncIssueMd(filePath, () => mockConfig)
 
     expect(mockFs.writeFileSync).toHaveBeenCalledWith(
       path.join(os.homedir(), '.conductor', 'sync-queue.json'),
@@ -455,7 +455,7 @@ describe('syncIssueMd', () => {
 
     const { syncIssueMd } = await import('../daemon/watcher.js')
     const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
-    await syncIssueMd(filePath, mockConfig)
+    await syncIssueMd(filePath, () => mockConfig)
 
     expect(mockFetch).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
@@ -476,7 +476,7 @@ describe('deleteFile', () => {
 
     const { deleteFile } = await import('../daemon/watcher.js')
     const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'spec.md')
-    await deleteFile(filePath, mockConfig)
+    await deleteFile(filePath, () => mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
       'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
@@ -491,7 +491,7 @@ describe('deleteFile', () => {
 
     const { deleteFile } = await import('../daemon/watcher.js')
     const filePath = path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'issue.md')
-    await deleteFile(filePath, mockConfig)
+    await deleteFile(filePath, () => mockConfig)
 
     expect(mockFetch).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
@@ -532,7 +532,7 @@ describe('queueChange and replayQueue', () => {
       .mockReturnValueOnce('# content')
       .mockReturnValueOnce('[]')
 
-    await syncFile(filePath, mockConfig)
+    await syncFile(filePath, () => mockConfig)
 
     expect(mockFs.writeFileSync).toHaveBeenCalledWith(
       path.join(os.homedir(), '.conductor', 'sync-queue.json'),
@@ -563,7 +563,7 @@ describe('queueChange and replayQueue', () => {
     vi.stubGlobal('fetch', mockFetch)
 
     const { replayQueue } = await import('../daemon/watcher.js')
-    await replayQueue(mockConfig)
+    await replayQueue(() => mockConfig)
 
     // Successful replay → queue file deleted (unlinkSync called)
     expect(mockFs.unlinkSync).toHaveBeenCalledWith(
@@ -600,7 +600,7 @@ describe('queueChange and replayQueue', () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
     const { replayQueue } = await import('../daemon/watcher.js')
-    await replayQueue(mockConfig)
+    await replayQueue(() => mockConfig)
 
     // Failed replay → queue file rewritten with remaining entries
     expect(mockFs.writeFileSync).toHaveBeenCalledWith(
@@ -622,7 +622,7 @@ describe('queueChange and replayQueue', () => {
     vi.stubGlobal('fetch', mockFetch)
 
     const { replayQueue } = await import('../daemon/watcher.js')
-    await replayQueue(mockConfig)
+    await replayQueue(() => mockConfig)
 
     expect(mockFetch).not.toHaveBeenCalled()
 

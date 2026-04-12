@@ -2,9 +2,11 @@ package com.conductor.service;
 
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
+import com.conductor.entity.UserApiKey;
 import com.conductor.generated.model.CliCallbackResponse;
 import com.conductor.generated.model.CreateApiKeyResponse;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.repository.UserApiKeyRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,9 +15,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -29,6 +33,9 @@ class CliLoginServiceTest {
 
     @Mock
     private ProjectRepository projectRepository;
+
+    @Mock
+    private UserApiKeyRepository userApiKeyRepository;
 
     @InjectMocks
     private CliLoginService cliLoginService;
@@ -53,6 +60,8 @@ class CliLoginServiceTest {
     @Test
     void generateCredentialsReturnsCorrectPayload() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(userApiKeyRepository.findByUserIdAndRevokedAtIsNullAndLabelStartingWith(anyString(), anyString()))
+                .thenReturn(List.of());
         when(apiKeyService.generateUserApiKey(anyString(), eq(adminUser))).thenReturn(apiKeyResponse);
 
         CliCallbackResponse result = cliLoginService.generateCredentials(3131, "proj-1", adminUser);

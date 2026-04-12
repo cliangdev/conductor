@@ -100,6 +100,17 @@ async function loginLocal(apiUrl: string): Promise<void> {
   spinner.succeed(chalk.green(`Logged in as ${email} (project: ${project.name})`))
 }
 
+async function isKeyValid(apiUrl: string, apiKey: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${apiUrl}/api/v1/projects`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+    return res.status === 200
+  } catch {
+    return false
+  }
+}
+
 export function registerLogin(program: Command): void {
   program
     .command('login')
@@ -110,11 +121,16 @@ export function registerLogin(program: Command): void {
       const existing = readConfig()
 
       if (existing && !options.force) {
-        console.log(
-          `Already logged in as ${existing.email}. Use --force to re-authenticate.`
-        )
-        process.exit(0)
-        return
+        const apiUrl = resolveApiUrl()
+        const valid = await isKeyValid(apiUrl, existing.apiKey ?? '')
+        if (valid) {
+          console.log(
+            `Already logged in as ${existing.email}. Use --force to re-authenticate.`
+          )
+          process.exit(0)
+          return
+        }
+        console.log('Stored credentials are invalid — re-authenticating...')
       }
 
       const apiUrl = resolveApiUrl()
