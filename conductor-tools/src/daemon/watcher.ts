@@ -207,10 +207,10 @@ export function startWatcher(getConfig: () => Config): void {
     process.exit(1)
   }
 
-  const watchPath = path.join(config.localPath, '.conductor', 'issues', '**', '*')
+  const watchPath = path.join(config.localPath, '.conductor', 'issues')
   console.log(`Watching: ${watchPath}`)
 
-  const watcher = chokidar.watch(watchPath, { ignoreInitial: true, persistent: true })
+  const watcher = chokidar.watch(watchPath, { ignoreInitial: true, persistent: true, depth: 2 })
 
   watcher
     .on('add', (filePath) => debounce(filePath, () => {
