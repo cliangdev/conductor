@@ -47,6 +47,8 @@ describe('conductor start', () => {
   })
 
   it('creates daemon.pid file with spawned process PID', async () => {
+    vi.useFakeTimers()
+
     mockFs.existsSync.mockReturnValue(false)
     mockFs.mkdirSync.mockReturnValue(undefined)
     mockFs.openSync.mockReturnValue(3 as unknown as number)
@@ -58,19 +60,25 @@ describe('conductor start', () => {
     }
     mockChildProcess.spawn.mockReturnValue(fakeDaemon as ReturnType<typeof import('child_process').spawn>)
 
+    // Simulate process staying alive after the startup wait
+    const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true)
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
 
     const { registerStart } = await import('../commands/start.js')
     const program = makeProgram()
     registerStart(program)
 
-    await program.parseAsync(['node', 'conductor', 'start'])
+    const parsePromise = program.parseAsync(['node', 'conductor', 'start'])
+    await vi.runAllTimersAsync()
+    await parsePromise
 
     expect(mockFs.writeFileSync).toHaveBeenCalledWith(PID_FILE, '12345', 'utf8')
     expect(fakeDaemon.unref).toHaveBeenCalled()
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('12345'))
 
+    killSpy.mockRestore()
     consoleSpy.mockRestore()
+    vi.useRealTimers()
   })
 
   it('exits 1 when not authenticated', async () => {

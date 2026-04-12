@@ -79,5 +79,5 @@ export function registerStart(program: Command): void {
   program
     .command('start')
     .description('Start the file watcher daemon')
-    .action(() => { startDaemon().catch(console.error) })
+    .action(async () => { await startDaemon() })
 }
