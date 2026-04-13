@@ -220,20 +220,24 @@ export default function WorkflowDiagram({ yaml, jobStatuses }: WorkflowDiagramPr
 
   return (
     <ReactFlowProvider>
-      <div className="relative h-full w-full overflow-hidden rounded-md">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.3 }}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable={false}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background color="#e5e7eb" gap={16} />
-        </ReactFlow>
+      <div className="relative h-full w-full rounded-md">
+        {/* ReactFlow gets its own overflow-hidden so it clips internally */}
+        <div className="absolute inset-0 overflow-hidden rounded-md">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            fitView
+            fitViewOptions={{ padding: 0.3 }}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            elementsSelectable={false}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background color="#e5e7eb" gap={16} />
+          </ReactFlow>
+        </div>
+        {/* Controls sit outside the overflow-hidden layer — never clipped */}
         <ZoomControls />
       </div>
     </ReactFlowProvider>
