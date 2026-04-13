@@ -20,9 +20,10 @@ vi.mock('@xyflow/react', () => ({
     </div>
   ),
   Background: () => null,
-  Controls: () => null,
+  Panel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   Handle: () => null,
   Position: { Top: 'top', Bottom: 'bottom' },
+  useReactFlow: () => ({ zoomIn: vi.fn(), zoomOut: vi.fn() }),
 }))
 
 // Mock dagre — stub layout so it doesn't crash in jsdom

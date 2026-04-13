@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { ReactFlow, Background, Controls, Handle, Position, type Node, type Edge } from '@xyflow/react';
+import { ReactFlow, Background, Panel, useReactFlow, Handle, Position, type Node, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 
@@ -45,6 +45,31 @@ function JobNode({ data }: { data: { label: string; stepInfo: string; status?: J
       )}
       <Handle type="source" position={Position.Bottom} className="!bg-gray-400" />
     </div>
+  );
+}
+
+// ── Zoom controls ──────────────────────────────────────────────────────────────
+function ZoomControls() {
+  const { zoomIn, zoomOut } = useReactFlow();
+  return (
+    <Panel position="bottom-right">
+      <div className="mb-6 mr-4 flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-white shadow-md">
+        <button
+          onClick={() => zoomIn()}
+          className="flex h-9 w-9 items-center justify-center border-b border-gray-300 text-lg font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200"
+          aria-label="Zoom in"
+        >
+          +
+        </button>
+        <button
+          onClick={() => zoomOut()}
+          className="flex h-9 w-9 items-center justify-center text-lg font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200"
+          aria-label="Zoom out"
+        >
+          −
+        </button>
+      </div>
+    </Panel>
   );
 }
 
@@ -207,11 +232,7 @@ export default function WorkflowDiagram({ yaml, jobStatuses }: WorkflowDiagramPr
         proOptions={{ hideAttribution: true }}
       >
         <Background color="#e5e7eb" gap={16} />
-        <Controls
-          showInteractive={false}
-          position="bottom-right"
-          style={{ bottom: 16, right: 16 }}
-        />
+        <ZoomControls />
       </ReactFlow>
     </div>
   );
