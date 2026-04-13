@@ -194,7 +194,7 @@ export default function WorkflowDiagram({ yaml, jobStatuses }: WorkflowDiagramPr
   }
 
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full overflow-hidden rounded-md">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -207,7 +207,11 @@ export default function WorkflowDiagram({ yaml, jobStatuses }: WorkflowDiagramPr
         proOptions={{ hideAttribution: true }}
       >
         <Background color="#e5e7eb" gap={16} />
-        <Controls showInteractive={false} />
+        <Controls
+          showInteractive={false}
+          position="bottom-right"
+          style={{ bottom: 16, right: 16 }}
+        />
       </ReactFlow>
     </div>
   );
