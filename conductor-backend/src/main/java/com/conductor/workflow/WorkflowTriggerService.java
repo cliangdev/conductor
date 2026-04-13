@@ -124,7 +124,8 @@ public class WorkflowTriggerService {
             org.yaml.snakeyaml.Yaml snakeYaml = new org.yaml.snakeyaml.Yaml();
             @SuppressWarnings("unchecked")
             java.util.Map<String, Object> parsed = snakeYaml.load(yaml);
-            Object onBlock = parsed.get("on");
+            // SnakeYAML 1.1 parses bare 'on' as Boolean.TRUE
+            Object onBlock = parsed.containsKey("on") ? parsed.get("on") : parsed.get(Boolean.TRUE);
             if (!(onBlock instanceof java.util.Map)) return true;
             @SuppressWarnings("unchecked")
             java.util.Map<String, Object> triggers = (java.util.Map<String, Object>) onBlock;

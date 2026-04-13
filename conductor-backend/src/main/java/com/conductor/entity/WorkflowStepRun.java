@@ -45,6 +45,7 @@ public class WorkflowStepRun {
     private String log;
 
     @Column(name = "output_json", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
     private String outputJson;
 
     @Column(name = "error_reason", columnDefinition = "TEXT")

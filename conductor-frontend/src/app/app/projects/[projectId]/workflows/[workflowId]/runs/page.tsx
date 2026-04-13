@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
-import { WorkflowRunDto } from '@/types/workflow';
+import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -31,9 +31,17 @@ export default function RunListPage() {
   const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>();
   const { accessToken } = useAuth();
   const router = useRouter();
+  const [workflow, setWorkflow] = useState<WorkflowDefinitionDto | null>(null);
   const [runs, setRuns] = useState<WorkflowRunDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    apiGet<WorkflowDefinitionDto>(`/api/v1/projects/${projectId}/workflows/${workflowId}`, accessToken)
+      .then(setWorkflow)
+      .catch(() => {});
+  }, [projectId, workflowId, accessToken]);
 
   const fetchRuns = useCallback(() => {
     if (!accessToken) return;
@@ -64,12 +72,25 @@ export default function RunListPage() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <button
-            className="text-sm text-muted-foreground hover:underline"
-            onClick={() => router.push(`/app/projects/${projectId}/workflows`)}
-          >
-            ← Workflows
-          </button>
+          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+            <button
+              className="hover:underline"
+              onClick={() => router.push(`/app/projects/${projectId}/workflows`)}
+            >
+              ← Workflows
+            </button>
+            {workflow && (
+              <>
+                <span>/</span>
+                <button
+                  className="hover:underline"
+                  onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}`)}
+                >
+                  {workflow.name}
+                </button>
+              </>
+            )}
+          </div>
           <h1 className="text-2xl font-semibold mt-1">Run History</h1>
         </div>
         <Button onClick={handleRunAgain}>Run Now</Button>

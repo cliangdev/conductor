@@ -41,6 +41,7 @@ public class WorkflowExecutionEngine {
 
     /** Poll every 500ms for queued jobs */
     @Scheduled(fixedDelay = 500)
+    @Transactional
     public void pollQueue() {
         try {
             Optional<WorkflowJobQueue> entry = queueRepository.claimNextJob();

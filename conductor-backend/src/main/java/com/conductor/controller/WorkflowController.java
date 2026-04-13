@@ -175,7 +175,8 @@ public class WorkflowController implements WorkflowsApi {
             org.yaml.snakeyaml.Yaml snakeYaml = new org.yaml.snakeyaml.Yaml();
             @SuppressWarnings("unchecked")
             Map<String, Object> parsed = snakeYaml.load(yaml);
-            Object onBlock = parsed.get("on");
+            // SnakeYAML 1.1 parses bare 'on' as Boolean.TRUE
+            Object onBlock = parsed.containsKey("on") ? parsed.get("on") : parsed.get(Boolean.TRUE);
             if (!(onBlock instanceof Map)) return null;
             @SuppressWarnings("unchecked")
             Map<String, Object> triggers = (Map<String, Object>) onBlock;
@@ -227,7 +228,7 @@ public class WorkflowController implements WorkflowsApi {
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new EntityNotFoundException("Project not found");
         }
-        WorkflowRun run = runRepository.findById(runId)
+        WorkflowRun run = runRepository.findByIdWithWorkflow(runId)
                 .orElseThrow(() -> new EntityNotFoundException("Run not found: " + runId));
         List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(runId);
         List<WorkflowJobRunDto> jobDtos = jobRuns.stream()

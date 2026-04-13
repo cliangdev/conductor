@@ -31,6 +31,7 @@ public class WorkflowRun {
     private String triggerType;
 
     @Column(name = "event_payload", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
     private String eventPayload;
 
     @Enumerated(EnumType.STRING)

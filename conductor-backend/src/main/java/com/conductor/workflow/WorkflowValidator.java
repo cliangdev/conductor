@@ -36,7 +36,9 @@ public class WorkflowValidator {
         }
 
         // Required fields (name is passed separately in the API request, not required in YAML)
-        if (!parsed.containsKey("on")) errors.add("Missing required field: on");
+        // Note: SnakeYAML 1.1 parses bare 'on' as Boolean.TRUE, so check both
+        boolean hasOn = parsed.containsKey("on") || parsed.containsKey(Boolean.TRUE);
+        if (!hasOn) errors.add("Missing required field: on");
         if (!parsed.containsKey("jobs")) errors.add("Missing required field: jobs");
 
         if (!errors.isEmpty()) return new WorkflowValidationResult(errors, warnings);
