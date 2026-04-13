@@ -1,18 +1,14 @@
-name: Backend CI
+name: Backend CD
 
 on:
   push:
     branches: [main]
     paths:
       - 'conductor-backend/**'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'conductor-backend/**'
   workflow_dispatch:
 
 jobs:
-  test:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,9 +23,8 @@ jobs:
           WORKFLOW_SECRETS_KEY: dGVzdC1rZXktZm9yLWNpLW9ubHktMzItYnl0ZXMhIXg=
         run: mvn test
 
-  deploy:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    needs: test
+  deploy-backend:
+    needs: build-and-test
     permissions:
       contents: read
       id-token: write

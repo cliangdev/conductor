@@ -1,4 +1,4 @@
-name: Deploy on label
+name: PR Deploy Preview
 
 on:
   pull_request:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   deploy-backend:
-    if: github.event.label.name == 'deploy_backend'
+    if: github.event.label.name == 'deploy-backend'
     permissions:
       contents: read
       id-token: write
@@ -29,7 +29,7 @@ jobs:
     secrets: inherit
 
   deploy-frontend:
-    if: github.event.label.name == 'deploy_ui'
+    if: github.event.label.name == 'deploy-frontend'
     permissions:
       contents: read
       id-token: write

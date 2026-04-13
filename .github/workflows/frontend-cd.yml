@@ -1,18 +1,14 @@
-name: Frontend CI
+name: Frontend CD
 
 on:
   push:
     branches: [main]
     paths:
       - 'conductor-frontend/**'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'conductor-frontend/**'
   workflow_dispatch:
 
 jobs:
-  test:
+  build-and-test:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -28,9 +24,8 @@ jobs:
       - run: npm run lint
       - run: npm run test
 
-  deploy:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    needs: test
+  deploy-frontend:
+    needs: build-and-test
     permissions:
       contents: read
       id-token: write
