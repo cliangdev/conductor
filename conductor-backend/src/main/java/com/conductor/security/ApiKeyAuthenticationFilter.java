@@ -43,6 +43,12 @@ public class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
 
         String token = authHeader.substring(7);
 
+        // JWTs always start with eyJ (base64url for '{"') — skip to JwtAuthenticationFilter
+        if (token.startsWith("eyJ")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         if (SecurityContextHolder.getContext().getAuthentication() != null
                 && SecurityContextHolder.getContext().getAuthentication().isAuthenticated()) {
             filterChain.doFilter(request, response);

@@ -35,8 +35,7 @@ public class WorkflowValidator {
             return new WorkflowValidationResult(errors, warnings);
         }
 
-        // Required fields
-        if (!parsed.containsKey("name")) errors.add("Missing required field: name");
+        // Required fields (name is passed separately in the API request, not required in YAML)
         if (!parsed.containsKey("on")) errors.add("Missing required field: on");
         if (!parsed.containsKey("jobs")) errors.add("Missing required field: jobs");
 
