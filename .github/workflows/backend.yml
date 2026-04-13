@@ -23,6 +23,8 @@ jobs:
           cache: maven
       - name: Run tests
         working-directory: conductor-backend
+        env:
+          WORKFLOW_SECRETS_KEY: dGVzdC1rZXktZm9yLWNpLW9ubHktMzItYnl0ZXMhIXg=
         run: mvn test
 
   deploy:
