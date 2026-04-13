@@ -121,3 +121,7 @@ cd conductor-tools && npx vitest
 
 See the [CLI README](conductor-tools/README.md).
 
+## Workflows
+
+See the [Workflows guide](docs/workflows.md) for how to automate work with triggers, jobs, steps, loops, conditions, and self-hosted execution.
+
