@@ -2,8 +2,11 @@ package com.conductor.notification;
 
 import com.conductor.entity.NotificationGroupConfig;
 import com.conductor.repository.NotificationGroupConfigRepository;
+import com.conductor.workflow.WorkflowTriggerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -16,6 +19,10 @@ public class NotificationDispatcher {
     private final NotificationGroupConfigRepository groupConfigRepository;
     private final DiscordProvider discordProvider;
 
+    @Lazy
+    @Autowired
+    private WorkflowTriggerService workflowTriggerService;
+
     public NotificationDispatcher(NotificationGroupConfigRepository groupConfigRepository,
                                   DiscordProvider discordProvider) {
         this.groupConfigRepository = groupConfigRepository;
@@ -23,6 +30,16 @@ public class NotificationDispatcher {
     }
 
     public void dispatch(NotificationEvent event) {
+        sendNotification(event);
+
+        try {
+            workflowTriggerService.onConductorEvent(event);
+        } catch (Exception e) {
+            log.warn("Workflow trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
+        }
+    }
+
+    private void sendNotification(NotificationEvent event) {
         Optional<ChannelGroup> groupOpt = ChannelGroup.forEventType(event.getEventType());
         if (groupOpt.isEmpty()) {
             log.debug("No channel group defined for event type: {}", event.getEventType());

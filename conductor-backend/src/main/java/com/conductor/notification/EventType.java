@@ -9,7 +9,8 @@ public enum EventType {
     COMMENT_ADDED("Comment added to a PRD"),
     COMMENT_REPLY("Reply added to a comment"),
     MEMBER_JOINED("New member joined the project"),
-    MEMBER_ROLE_CHANGED("Member role changed");
+    MEMBER_ROLE_CHANGED("Member role changed"),
+    ISSUE_STATUS_CHANGED("Issue status changed");
 
     private final String description;
 
