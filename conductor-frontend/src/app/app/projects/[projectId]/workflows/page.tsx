@@ -17,7 +17,7 @@ export default function WorkflowsPage() {
 
   useEffect(() => {
     if (!accessToken) return;
-    apiGet<WorkflowDefinitionDto[]>(`/projects/${projectId}/workflows`, accessToken)
+    apiGet<WorkflowDefinitionDto[]>(`/api/v1/projects/${projectId}/workflows`, accessToken)
       .then(setWorkflows)
       .finally(() => setLoading(false));
   }, [projectId, accessToken]);
@@ -25,7 +25,7 @@ export default function WorkflowsPage() {
   const handleToggleEnabled = async (workflow: WorkflowDefinitionDto) => {
     if (!accessToken) return;
     const updated = await apiPatch<WorkflowDefinitionDto>(
-      `/projects/${projectId}/workflows/${workflow.id}/enabled`,
+      `/api/v1/projects/${projectId}/workflows/${workflow.id}/enabled`,
       { enabled: !workflow.enabled },
       accessToken
     );
@@ -34,7 +34,7 @@ export default function WorkflowsPage() {
 
   const handleDispatch = async (workflow: WorkflowDefinitionDto) => {
     if (!accessToken) return;
-    await apiPost(`/projects/${projectId}/workflows/${workflow.id}/dispatch`, {}, accessToken);
+    await apiPost(`/api/v1/projects/${projectId}/workflows/${workflow.id}/dispatch`, {}, accessToken);
     router.push(`/app/projects/${projectId}/workflows/${workflow.id}/runs`);
   };
 

@@ -17,7 +17,7 @@ export default function EditWorkflowPage() {
 
   useEffect(() => {
     if (!accessToken) return;
-    apiGet<WorkflowDefinitionDto>(`/projects/${projectId}/workflows/${workflowId}`, accessToken)
+    apiGet<WorkflowDefinitionDto>(`/api/v1/projects/${projectId}/workflows/${workflowId}`, accessToken)
       .then(setWorkflow);
   }, [projectId, workflowId, accessToken]);
 
@@ -26,7 +26,7 @@ export default function EditWorkflowPage() {
     setSaving(true);
     setError(null);
     try {
-      await apiPut(`/projects/${projectId}/workflows/${workflowId}`, { name, yaml }, accessToken);
+      await apiPut(`/api/v1/projects/${projectId}/workflows/${workflowId}`, { name, yaml }, accessToken);
       router.push(`/app/projects/${projectId}/workflows`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to save workflow');

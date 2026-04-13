@@ -49,7 +49,7 @@ export default function RunDetailPage() {
   const fetchRun = useCallback(() => {
     if (!accessToken) return;
     apiGet<WorkflowRunDetailDto>(
-      `/projects/${projectId}/workflows/${workflowId}/runs/${runId}`,
+      `/api/v1/projects/${projectId}/workflows/${workflowId}/runs/${runId}`,
       accessToken
     ).then(setRun);
   }, [projectId, workflowId, runId, accessToken]);
@@ -65,7 +65,7 @@ export default function RunDetailPage() {
   const handleRunAgain = async () => {
     if (!accessToken) return;
     const newRun = await apiPost<{ id: string }>(
-      `/projects/${projectId}/workflows/${workflowId}/dispatch`, {}, accessToken!
+      `/api/v1/projects/${projectId}/workflows/${workflowId}/dispatch`, {}, accessToken!
     );
     router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs/${newRun.id}`);
   };

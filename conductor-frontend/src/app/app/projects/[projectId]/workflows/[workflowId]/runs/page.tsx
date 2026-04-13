@@ -38,7 +38,7 @@ export default function RunListPage() {
   const fetchRuns = useCallback(() => {
     if (!accessToken) return;
     apiGet<WorkflowRunDto[]>(
-      `/projects/${projectId}/workflows/${workflowId}/runs?page=${page}&size=50`,
+      `/api/v1/projects/${projectId}/workflows/${workflowId}/runs?page=${page}&size=50`,
       accessToken
     ).then(setRuns).finally(() => setLoading(false));
   }, [projectId, workflowId, accessToken, page]);
@@ -55,7 +55,7 @@ export default function RunListPage() {
   const handleRunAgain = async () => {
     if (!accessToken) return;
     const run = await apiPost<WorkflowRunDto>(
-      `/projects/${projectId}/workflows/${workflowId}/dispatch`, {}, accessToken
+      `/api/v1/projects/${projectId}/workflows/${workflowId}/dispatch`, {}, accessToken
     );
     router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs/${run.id}`);
   };

@@ -31,7 +31,7 @@ export default function NewWorkflowPage() {
     setSaving(true);
     setError(null);
     try {
-      await apiPost(`/projects/${projectId}/workflows`, { name, yaml }, accessToken);
+      await apiPost(`/api/v1/projects/${projectId}/workflows`, { name, yaml }, accessToken);
       router.push(`/app/projects/${projectId}/workflows`);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to save workflow');
