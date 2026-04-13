@@ -24,6 +24,7 @@ services:
       DATABASE_USERNAME: ${POSTGRES_USER:-conductor}
       DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-conductor}
       JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret-change-in-production}
+      WORKFLOW_SECRETS_KEY: ${WORKFLOW_SECRETS_KEY:-local-dev-workflow-secrets-key-32x}
       LOCAL_STORAGE_PATH: /app/local-uploads
       LOCAL_DEV_PASSWORD: ${LOCAL_DEV_PASSWORD:-conductor}
       SERVER_BASE_URL: ${SERVER_BASE_URL:-http://localhost:8080}
