@@ -1,7 +1,6 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { MenuIcon } from 'lucide-react'
 import {
   DropdownMenu,
@@ -37,7 +36,6 @@ export function Navbar() {
 
   return (
     <nav className="flex items-center justify-between h-14 px-4 border-b border-border bg-background sticky top-0 z-30">
-      {/* Left: hamburger (mobile) + logo */}
       <div className="flex items-center gap-3">
         <Button
           variant="ghost"
@@ -50,7 +48,6 @@ export function Navbar() {
         </Button>
       </div>
 
-      {/* Right: theme toggle + user menu */}
       <div className="flex items-center gap-1">
         <ThemeToggle />
         <DropdownMenu>
@@ -72,10 +69,6 @@ export function Navbar() {
                 <DropdownMenuSeparator />
               </>
             )}
-            <DropdownMenuItem asChild>
-              <Link href="/app/settings/api-keys">API Keys</Link>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={handleSignOut} className="text-destructive">
               Sign out
             </DropdownMenuItem>

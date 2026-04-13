@@ -38,11 +38,11 @@ describe('Sidebar', () => {
     expect(membersLink).toHaveAttribute('href', '/app/projects/proj-1/settings/members')
   })
 
-  it('renders Tools link under Settings pointing to settings/tools', () => {
+  it('renders API Keys link under Settings pointing to /app/settings/api-keys', () => {
     render(<Sidebar />)
-    const toolsLink = screen.getByRole('link', { name: /tools/i })
-    expect(toolsLink).toBeInTheDocument()
-    expect(toolsLink).toHaveAttribute('href', '/app/projects/proj-1/settings/tools')
+    const apiKeysLink = screen.getByRole('link', { name: /api keys/i })
+    expect(apiKeysLink).toBeInTheDocument()
+    expect(apiKeysLink).toHaveAttribute('href', '/app/settings/api-keys')
   })
 
   it('renders Notifications link under Settings pointing to settings/notifications', () => {
@@ -52,15 +52,15 @@ describe('Sidebar', () => {
     expect(notificationsLink).toHaveAttribute('href', '/app/projects/proj-1/settings/notifications')
   })
 
-  it('renders Settings sub-links in order: Members, Tools, Notifications', () => {
+  it('renders Settings sub-links in order: Members, API Keys, Notifications', () => {
     render(<Sidebar />)
     const links = screen.getAllByRole('link')
     const linkTexts = links.map((l) => l.textContent?.trim())
     const membersIndex = linkTexts.findIndex((t) => t === 'Members')
-    const toolsIndex = linkTexts.findIndex((t) => t === 'Tools')
+    const apiKeysIndex = linkTexts.findIndex((t) => t === 'API Keys')
     const notificationsIndex = linkTexts.findIndex((t) => t === 'Notifications')
     expect(membersIndex).toBeGreaterThanOrEqual(0)
-    expect(toolsIndex).toBeGreaterThan(membersIndex)
-    expect(notificationsIndex).toBeGreaterThan(toolsIndex)
+    expect(apiKeysIndex).toBeGreaterThan(membersIndex)
+    expect(notificationsIndex).toBeGreaterThan(apiKeysIndex)
   })
 })
