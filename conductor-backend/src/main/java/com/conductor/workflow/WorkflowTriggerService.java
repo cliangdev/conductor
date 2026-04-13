@@ -3,17 +3,22 @@ package com.conductor.workflow;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
+import com.conductor.entity.WorkflowSchedule;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowRunRepository;
+import com.conductor.repository.WorkflowScheduleRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.ZonedDateTime;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,15 +31,18 @@ public class WorkflowTriggerService {
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowRunRepository workflowRunRepository;
     private final WorkflowExecutionEngine executionEngine;
+    private final WorkflowScheduleRepository scheduleRepository;
     private final ObjectMapper objectMapper;
 
     public WorkflowTriggerService(WorkflowDefinitionRepository workflowRepository,
                                    WorkflowRunRepository workflowRunRepository,
                                    @Lazy WorkflowExecutionEngine executionEngine,
+                                   WorkflowScheduleRepository scheduleRepository,
                                    ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.executionEngine = executionEngine;
+        this.scheduleRepository = scheduleRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -78,6 +86,77 @@ public class WorkflowTriggerService {
         );
         String payloadJson = toJson(payload);
         return createRun(workflow, "workflow_dispatch", payloadJson);
+    }
+
+    /**
+     * Creates a run for a schedule trigger. Called from WorkflowScheduler.
+     */
+    @Transactional
+    public WorkflowRun fireTrigger(String workflowId, String triggerType, String payloadJson) {
+        WorkflowDefinition workflow = workflowRepository.findById(workflowId)
+                .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException("Workflow not found: " + workflowId));
+        return createRun(workflow, triggerType, payloadJson);
+    }
+
+    /**
+     * Upserts the schedule row when a workflow YAML contains a schedule trigger.
+     * Deletes the schedule row if the workflow no longer has a schedule trigger.
+     * Should be called after workflow create or update.
+     */
+    @Transactional
+    public void upsertSchedule(WorkflowDefinition workflow) {
+        String cronExpression = extractScheduleCron(workflow.getYaml());
+        List<WorkflowSchedule> existing = scheduleRepository.findByWorkflowId(workflow.getId());
+
+        if (cronExpression == null) {
+            if (!existing.isEmpty()) {
+                scheduleRepository.deleteAll(existing);
+                log.info("Deleted schedule for workflow {} (no schedule trigger)", workflow.getId());
+            }
+            return;
+        }
+
+        WorkflowSchedule schedule = existing.isEmpty() ? new WorkflowSchedule() : existing.get(0);
+        schedule.setWorkflow(workflow);
+        schedule.setCronExpression(cronExpression);
+        schedule.setEnabled(true);
+        if (schedule.getNextRunAt() == null || !schedule.getCronExpression().equals(cronExpression)) {
+            schedule.setNextRunAt(computeNextRun(cronExpression, ZonedDateTime.now(ZoneOffset.UTC)));
+        }
+        scheduleRepository.save(schedule);
+        log.info("Upserted schedule for workflow {} with cron '{}'", workflow.getId(), cronExpression);
+    }
+
+    public java.time.OffsetDateTime computeNextRun(String cronExpression, ZonedDateTime from) {
+        try {
+            CronExpression expr = CronExpression.parse(cronExpression);
+            ZonedDateTime next = expr.next(from);
+            return next != null ? next.toOffsetDateTime() : null;
+        } catch (Exception e) {
+            log.warn("Failed to compute next run for cron '{}': {}", cronExpression, e.getMessage());
+            return null;
+        }
+    }
+
+    private String extractScheduleCron(String yaml) {
+        try {
+            org.yaml.snakeyaml.Yaml snakeYaml = new org.yaml.snakeyaml.Yaml();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = snakeYaml.load(yaml);
+            Object onBlock = parsed.containsKey("on") ? parsed.get("on") : parsed.get(Boolean.TRUE);
+            if (!(onBlock instanceof Map)) return null;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> triggers = (Map<String, Object>) onBlock;
+            Object scheduleTrigger = triggers.get("schedule");
+            if (!(scheduleTrigger instanceof Map)) return null;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> scheduleConfig = (Map<String, Object>) scheduleTrigger;
+            Object cronVal = scheduleConfig.get("cron");
+            return cronVal != null ? cronVal.toString().trim() : null;
+        } catch (Exception e) {
+            log.warn("Failed to parse schedule trigger from YAML: {}", e.getMessage());
+            return null;
+        }
     }
 
     private WorkflowRun createRun(WorkflowDefinition workflow, String triggerType, String eventPayloadJson) {

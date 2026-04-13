@@ -22,6 +22,8 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String
 
     List<WorkflowRun> findByStatusIn(Collection<WorkflowRunStatus> statuses);
 
+    List<WorkflowRun> findByWorkflowIdAndStatusIn(String workflowId, Collection<WorkflowRunStatus> statuses);
+
     @Query("SELECT r FROM WorkflowRun r JOIN FETCH r.workflow WHERE r.id = :id")
     Optional<WorkflowRun> findByIdWithWorkflow(@Param("id") String id);
 }

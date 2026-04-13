@@ -10,7 +10,7 @@ import java.util.*;
 @Component
 public class WorkflowValidator {
 
-    private static final Set<String> ALLOWED_STEP_TYPES = Set.of("http", "docker", "kestra");
+    private static final Set<String> ALLOWED_STEP_TYPES = Set.of("http", "docker", "kestra", "condition");
     private static final Set<String> VALID_RUNS_ON_SCALARS = Set.of("conductor", "self-hosted");
     private static final java.util.regex.Pattern CRON_PATTERN =
             java.util.regex.Pattern.compile("^\\S+ \\S+ \\S+ \\S+ \\S+$");
@@ -55,8 +55,10 @@ public class WorkflowValidator {
         @SuppressWarnings("unchecked")
         Map<String, Object> jobs = (Map<String, Object>) jobsObj;
 
-        // Cycle detection
+        // Cycle detection and condition target tracking
         Map<String, List<String>> needs = new HashMap<>();
+        Set<String> conditionTargets = new HashSet<>();
+
         for (Map.Entry<String, Object> entry : jobs.entrySet()) {
             String jobId = entry.getKey();
             if (!(entry.getValue() instanceof Map)) continue;
@@ -85,10 +87,29 @@ public class WorkflowValidator {
                 }
             }
 
-            // Validate step types
+            // Validate loop block
+            Object loopObj = job.get("loop");
+            if (loopObj instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> loopDef = (Map<String, Object>) loopObj;
+                Object maxIter = loopDef.get("max_iterations");
+                if (maxIter == null) {
+                    errors.add("loop.max_iterations must be a positive integer");
+                } else if (!(maxIter instanceof Number) || ((Number) maxIter).intValue() <= 0) {
+                    errors.add("loop.max_iterations must be a positive integer");
+                }
+                Object until = loopDef.get("until");
+                if (until == null || until.toString().isBlank()) {
+                    errors.add("loop.until is required");
+                }
+            }
+
+            // Validate step types and collect condition targets
             Object stepsObj = job.get("steps");
             if (stepsObj instanceof List) {
-                for (Object stepObj : (List<?>) stepsObj) {
+                List<?> stepsList = (List<?>) stepsObj;
+                for (int i = 0; i < stepsList.size(); i++) {
+                    Object stepObj = stepsList.get(i);
                     if (!(stepObj instanceof Map)) continue;
                     @SuppressWarnings("unchecked")
                     Map<String, Object> step = (Map<String, Object>) stepObj;
@@ -111,8 +132,28 @@ public class WorkflowValidator {
                             errors.add("Unknown step type: " + typeVal);
                         } else if ("kestra".equals(type)) {
                             validateKestraStep(step, errors);
+                        } else if ("condition".equals(type)) {
+                            // Condition step must be last
+                            if (i != stepsList.size() - 1) {
+                                errors.add("condition step must be the last step in job " + jobId);
+                            }
+                            validateConditionStep(step, jobId, jobs, errors, conditionTargets);
                         }
                     }
+                }
+            }
+        }
+
+        // Validate condition targets not in regular needs
+        for (Map.Entry<String, Object> entry : jobs.entrySet()) {
+            String jobId = entry.getKey();
+            if (!(entry.getValue() instanceof Map)) continue;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> job = (Map<String, Object>) entry.getValue();
+            List<String> jobNeeds = needs.getOrDefault(jobId, List.of());
+            for (String need : jobNeeds) {
+                if (conditionTargets.contains(need)) {
+                    errors.add("job " + need + " is a condition target and cannot appear in needs of job " + jobId);
                 }
             }
         }
