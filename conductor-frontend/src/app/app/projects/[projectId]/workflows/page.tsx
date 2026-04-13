@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPatch, apiPost } from '@/lib/api';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { TriggerBadges } from '@/components/workflow/TriggerBadges';
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: 'bg-green-100 text-green-800',
@@ -31,20 +31,6 @@ function timeAgo(dateStr: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
-}
-
-function TriggerBadges({ yaml }: { yaml: string }) {
-  const triggers: string[] = [];
-  if (yaml.includes('conductor.issue.status_changed')) triggers.push('issue');
-  if (yaml.includes('webhook:')) triggers.push('webhook');
-  if (yaml.includes('workflow_dispatch')) triggers.push('manual');
-  return (
-    <div className="flex gap-1 flex-wrap">
-      {triggers.map(t => (
-        <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
-      ))}
-    </div>
-  );
 }
 
 function KebabMenu({

@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import { WorkflowStepRunDto } from '@/types/workflow';
+import { WorkflowLogStream } from './WorkflowLogStream';
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: 'text-green-600',
-  FAILED: 'text-red-600',
+  FAILED:  'text-red-600',
   RUNNING: 'text-yellow-600',
   SKIPPED: 'text-gray-400',
   PENDING: 'text-gray-400',
@@ -13,19 +14,76 @@ const STATUS_COLORS: Record<string, string> = {
 
 const MAX_LOG_DISPLAY = 10_000;
 
-export function StepRow({ step }: { step: WorkflowStepRunDto }) {
+interface ConditionOutput {
+  expression?: string;
+  result?: boolean;
+  branch?: string;
+}
+
+function ConditionDetail({ step }: { step: WorkflowStepRunDto }) {
+  let conditionData: ConditionOutput = {};
+  try {
+    if (step.outputJson) conditionData = JSON.parse(step.outputJson) as ConditionOutput;
+  } catch {}
+
+  const expression = conditionData.expression ?? step.log ?? '—';
+  const result = conditionData.result;
+  const branch = conditionData.branch;
+
+  return (
+    <div className="mt-3 p-3 rounded bg-muted/30 text-xs space-y-1">
+      <div>
+        <span className="font-medium text-muted-foreground">Expression: </span>
+        <code className="font-mono">{expression}</code>
+      </div>
+      {result !== undefined && (
+        <div>
+          <span className="font-medium text-muted-foreground">Result: </span>
+          <span className={result ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+            {result ? 'true' : 'false'}
+          </span>
+        </div>
+      )}
+      {branch && (
+        <div>
+          <span className="font-medium text-muted-foreground">Branch activated: </span>
+          <span className="font-semibold">{branch}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface StepRowProps {
+  step: WorkflowStepRunDto;
+  runId?: string;
+}
+
+export function StepRow({ step, runId }: StepRowProps) {
   const [expanded, setExpanded] = useState(false);
 
   const log = step.log ?? '';
   const isTruncated = log.length > MAX_LOG_DISPLAY;
   const displayLog = isTruncated ? log.slice(-MAX_LOG_DISPLAY) : log;
 
+  const isDockerStep = step.stepType === 'docker';
+  const isRunningDockerStep = isDockerStep && step.status === 'RUNNING';
+
+  // Append container exit annotation for completed docker steps
+  let finalLog = displayLog;
+  if (isDockerStep && step.status === 'SUCCESS' && log) {
+    finalLog = displayLog + '\n--- container exited 0 ---';
+  }
+
+  const isConditionStep = step.stepType === 'condition';
+
   let outputs: Record<string, string> = {};
   try {
-    if (step.outputJson) outputs = JSON.parse(step.outputJson);
+    if (step.outputJson && !isConditionStep) outputs = JSON.parse(step.outputJson);
   } catch {}
 
   const hasOutputs = Object.keys(outputs).length > 0;
+  const hasExpandableContent = log || hasOutputs || isRunningDockerStep || isConditionStep;
 
   return (
     <div className="px-4 py-3">
@@ -38,7 +96,7 @@ export function StepRow({ step }: { step: WorkflowStepRunDto }) {
         </span>
         <span className="text-sm flex-1">{step.stepName}</span>
         <span className="text-xs text-muted-foreground">{step.stepType}</span>
-        {(log || hasOutputs) && (
+        {hasExpandableContent && (
           <span className="text-xs text-muted-foreground">{expanded ? '▲' : '▼'}</span>
         )}
       </button>
@@ -49,17 +107,25 @@ export function StepRow({ step }: { step: WorkflowStepRunDto }) {
 
       {expanded && (
         <div className="mt-3 space-y-3">
-          {log && (
-            <div>
-              {isTruncated && (
-                <p className="text-xs text-amber-600 mb-1">
-                  [truncated — showing last 10,000 characters]
-                </p>
-              )}
-              <pre className="text-xs bg-black/90 text-green-300 p-3 rounded overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap">
-                {displayLog}
-              </pre>
-            </div>
+          {isConditionStep && (
+            <ConditionDetail step={step} />
+          )}
+
+          {isRunningDockerStep && runId ? (
+            <WorkflowLogStream runId={runId} isRunning={true} />
+          ) : (
+            finalLog && (
+              <div>
+                {isTruncated && (
+                  <p className="text-xs text-amber-600 mb-1">
+                    [truncated — showing last 10,000 characters]
+                  </p>
+                )}
+                <pre className="text-xs bg-black/90 text-green-300 p-3 rounded overflow-x-auto max-h-96 overflow-y-auto whitespace-pre-wrap">
+                  {finalLog}
+                </pre>
+              </div>
+            )
           )}
 
           {hasOutputs && (
