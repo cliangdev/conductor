@@ -32,7 +32,7 @@ on:
         default: ''
 
 jobs:
-  deploy:
+  deploy-to-cloud-run:
     runs-on: ubuntu-latest
     permissions:
       contents: read
