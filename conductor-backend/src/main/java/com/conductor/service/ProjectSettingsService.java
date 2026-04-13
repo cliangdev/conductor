@@ -42,13 +42,17 @@ public class ProjectSettingsService {
     }
 
     @Transactional
-    public ProjectSettingsResponse updateSettings(String projectId, String discordWebhookUrl, User caller) {
+    public ProjectSettingsResponse updateSettings(String projectId, String discordWebhookUrl, Integer runTokenTtlHours, User caller) {
         verifyAdmin(projectId, caller.getId());
 
         if (discordWebhookUrl != null && !discordWebhookUrl.isBlank()) {
             if (!discordWebhookUrl.startsWith(DISCORD_WEBHOOK_PREFIX)) {
                 throw new BusinessException("Invalid Discord webhook URL");
             }
+        }
+
+        if (runTokenTtlHours != null && (runTokenTtlHours < 1 || runTokenTtlHours > 168)) {
+            throw new BusinessException("runTokenTtlHours must be between 1 and 168");
         }
 
         ProjectSettings settings = projectSettingsRepository.findByProjectId(projectId)
@@ -59,6 +63,9 @@ public class ProjectSettingsService {
                 });
 
         settings.setDiscordWebhookUrl(discordWebhookUrl);
+        if (runTokenTtlHours != null) {
+            settings.setRunTokenTtlHours(runTokenTtlHours);
+        }
         projectSettingsRepository.save(settings);
 
         return toResponse(settings);
@@ -120,6 +127,7 @@ public class ProjectSettingsService {
     private ProjectSettingsResponse toResponse(ProjectSettings settings) {
         ProjectSettingsResponse response = new ProjectSettingsResponse();
         response.setDiscordWebhookUrl(maskWebhookUrl(settings.getDiscordWebhookUrl()));
+        response.setRunTokenTtlHours(settings.getRunTokenTtlHours());
         return response;
     }
 

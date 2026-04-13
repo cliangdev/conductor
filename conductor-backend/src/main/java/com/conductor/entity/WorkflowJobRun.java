@@ -35,6 +35,9 @@ public class WorkflowJobRun {
     @ColumnTransformer(write = "?::workflow_job_status")
     private WorkflowJobStatus status;
 
+    @Column(name = "iteration", nullable = false)
+    private int iteration = 0;
+
     @Column(name = "started_at")
     private OffsetDateTime startedAt;
 
@@ -62,6 +65,9 @@ public class WorkflowJobRun {
 
     public WorkflowJobStatus getStatus() { return status; }
     public void setStatus(WorkflowJobStatus status) { this.status = status; }
+
+    public int getIteration() { return iteration; }
+    public void setIteration(int iteration) { this.iteration = iteration; }
 
     public OffsetDateTime getStartedAt() { return startedAt; }
     public void setStartedAt(OffsetDateTime startedAt) { this.startedAt = startedAt; }

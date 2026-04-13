@@ -3190,6 +3190,11 @@ components:
         discordWebhookUrl:
           type: string
           nullable: true
+        runTokenTtlHours:
+          type: integer
+          minimum: 1
+          maximum: 168
+          nullable: true
 
     ProjectSettingsResponse:
       type: object
@@ -3197,6 +3202,8 @@ components:
         discordWebhookUrl:
           type: string
           nullable: true
+        runTokenTtlHours:
+          type: integer
 
     DiscordTestResponse:
       type: object
