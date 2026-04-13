@@ -60,6 +60,8 @@ class WorkflowExecutionE2ETest {
         registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.PostgreSQLDialect");
         registry.add("spring.flyway.enabled", () -> "true");
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+        // AES-256 key: 32 bytes, base64-encoded, required by WorkflowSecretsEncryptionService
+        registry.add("workflow.secrets.key", () -> "dGVzdC13b3JrZmxvdy1zZWNyZXRzLWtleS0zMmJ5dGU=");
     }
 
     @LocalServerPort

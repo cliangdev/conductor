@@ -4,6 +4,8 @@ import com.conductor.entity.*;
 import com.conductor.repository.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +29,12 @@ public class WorkflowExecutionEngine {
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowJobOrchestrator orchestrator;
 
+    // Self-reference injected lazily to ensure processJob() is called through the Spring proxy,
+    // enabling @Transactional to work when invoked from within pollQueue() (self-invocation workaround).
+    @Lazy
+    @Autowired
+    private WorkflowExecutionEngine self;
+
     public WorkflowExecutionEngine(WorkflowJobQueueRepository queueRepository,
                                    WorkflowRunRepository runRepository,
                                    WorkflowJobRunRepository jobRunRepository,
@@ -48,14 +56,19 @@ public class WorkflowExecutionEngine {
         try {
             List<WorkflowJobQueue> entries = queueRepository.claimAllReadyJobs();
             if (entries.isEmpty()) return;
+            log.info("Claimed {} job(s) from queue", entries.size());
             List<String> ids = entries.stream().map(WorkflowJobQueue::getId).collect(Collectors.toList());
             queueRepository.markAllClaimed(ids);
             for (WorkflowJobQueue queued : entries) {
                 String runId = queued.getRun().getId();
                 String jobId = queued.getJobId();
+                log.info("Dispatching job {} for run {}", jobId, runId);
                 CompletableFuture.runAsync(() -> {
                     try {
-                        processJob(runId, jobId);
+                        self.processJob(runId, jobId);
+                        // After processJob transaction commits, check completion in a fresh transaction
+                        // so all concurrent job results are visible.
+                        self.checkRunCompletionAfterCommit(runId);
                     } catch (Exception e) {
                         log.error("Error processing job {}: {}", jobId, e.getMessage(), e);
                     }
@@ -107,6 +120,7 @@ public class WorkflowExecutionEngine {
 
     @Transactional
     public void processJob(String runId, String jobId) {
+        log.info("processJob started: runId={}, jobId={}", runId, jobId);
         WorkflowRun run = runRepository.findById(runId).orElse(null);
         if (run == null) {
             log.warn("Run {} not found, skipping job {}", runId, jobId);
@@ -114,13 +128,25 @@ public class WorkflowExecutionEngine {
         }
 
         orchestrator.executeJob(run, jobId);
+        log.info("processJob finished: runId={}, jobId={}", runId, jobId);
+    }
 
+    /**
+     * Called after processJob's transaction commits, in a fresh transaction.
+     * This ensures all completed job runs from concurrent workers are visible
+     * when determining if the overall run is complete.
+     */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void checkRunCompletionAfterCommit(String runId) {
+        WorkflowRun run = runRepository.findById(runId).orElse(null);
+        if (run == null) return;
         checkRunCompletion(run);
     }
 
     @Transactional
     public void checkRunCompletion(WorkflowRun run) {
         List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(run.getId());
+        log.info("checkRunCompletion: runId={}, jobRuns={}", run.getId(), jobRuns.stream().map(j -> j.getJobId() + "=" + j.getStatus()).toList());
         WorkflowDefinition workflow = run.getWorkflow();
         Map<String, Object> parsedWorkflow = parseYaml(workflow.getYaml());
         if (parsedWorkflow == null) return;
@@ -130,13 +156,23 @@ public class WorkflowExecutionEngine {
         if (jobs == null) return;
 
         int totalJobs = jobs.size();
-        int terminalJobs = (int) jobRuns.stream()
+
+        // For loop jobs, there may be multiple WorkflowJobRun rows per jobId.
+        // Only consider the LATEST iteration (highest iteration number) for each jobId
+        // to determine completion — a new PENDING iteration means the job is still in progress.
+        Map<String, WorkflowJobRun> latestByJobId = new java.util.HashMap<>();
+        for (WorkflowJobRun jr : jobRuns) {
+            latestByJobId.merge(jr.getJobId(), jr, (existing, incoming) ->
+                    incoming.getIteration() > existing.getIteration() ? incoming : existing);
+        }
+
+        int terminalJobs = (int) latestByJobId.values().stream()
                 .filter(j -> isTerminal(j.getStatus()))
                 .count();
 
         if (terminalJobs < totalJobs) return;
 
-        boolean anyFailed = jobRuns.stream()
+        boolean anyFailed = latestByJobId.values().stream()
                 .anyMatch(j -> j.getStatus() == WorkflowJobStatus.FAILED
                         || j.getStatus() == WorkflowJobStatus.LOOP_EXHAUSTED);
         run.setStatus(anyFailed ? WorkflowRunStatus.FAILED : WorkflowRunStatus.SUCCESS);

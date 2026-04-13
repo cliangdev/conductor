@@ -8,6 +8,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -32,6 +33,9 @@ class WorkflowExecutionEngineParallelTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator);
+        // In unit tests there is no Spring context to inject @Lazy @Autowired self,
+        // so we wire it manually to avoid NPE in the async CompletableFuture dispatch.
+        ReflectionTestUtils.setField(engine, "self", engine);
     }
 
     private WorkflowJobQueue makeQueueEntry(String runId, String jobId) {

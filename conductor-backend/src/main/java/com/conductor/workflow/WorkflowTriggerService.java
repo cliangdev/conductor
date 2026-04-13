@@ -179,9 +179,15 @@ public class WorkflowTriggerService {
             if (!(jobsObj instanceof Map)) return;
             @SuppressWarnings("unchecked")
             Map<String, Object> jobs = (Map<String, Object>) jobsObj;
+
+            // Collect condition step targets — these jobs should NOT be enqueued upfront;
+            // they are enqueued at runtime when the condition step evaluates.
+            java.util.Set<String> conditionTargets = collectConditionTargets(jobs);
+
             for (Map.Entry<String, Object> entry : jobs.entrySet()) {
                 String jobId = entry.getKey();
                 if (!(entry.getValue() instanceof Map)) continue;
+                if (conditionTargets.contains(jobId)) continue;
                 @SuppressWarnings("unchecked")
                 Map<String, Object> job = (Map<String, Object>) entry.getValue();
                 Object needs = job.get("needs");
@@ -192,6 +198,32 @@ public class WorkflowTriggerService {
         } catch (Exception e) {
             log.warn("Failed to enqueue initial jobs for run {}: {}", run.getId(), e.getMessage());
         }
+    }
+
+    /**
+     * Returns the set of job IDs that are targets of a condition step (then/else).
+     * These jobs must not be auto-enqueued at workflow start — they are triggered
+     * only when the condition step evaluates and routes to them.
+     */
+    @SuppressWarnings("unchecked")
+    private java.util.Set<String> collectConditionTargets(Map<String, Object> jobs) {
+        java.util.Set<String> targets = new java.util.HashSet<>();
+        for (Map.Entry<String, Object> entry : jobs.entrySet()) {
+            if (!(entry.getValue() instanceof Map)) continue;
+            Map<String, Object> job = (Map<String, Object>) entry.getValue();
+            Object stepsObj = job.get("steps");
+            if (!(stepsObj instanceof java.util.List)) continue;
+            for (Object stepObj : (java.util.List<?>) stepsObj) {
+                if (!(stepObj instanceof Map)) continue;
+                Map<String, Object> step = (Map<String, Object>) stepObj;
+                if (!"condition".equals(step.get("type"))) continue;
+                Object then = step.get("then");
+                Object else_ = step.get("else");
+                if (then instanceof String) targets.add((String) then);
+                if (else_ instanceof String) targets.add((String) else_);
+            }
+        }
+        return targets;
     }
 
     private boolean hasConductorIssueTrigger(String yaml) {

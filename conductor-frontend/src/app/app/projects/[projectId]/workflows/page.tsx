@@ -168,15 +168,12 @@ export default function WorkflowsPage() {
               {workflows.map(workflow => {
                 const lastRun = lastRuns[workflow.id];
                 return (
-                  <tr key={workflow.id} className="border-t hover:bg-muted/25">
-                    <td className="p-3">
-                      <button
-                        className="font-medium hover:underline text-left"
-                        onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}`)}
-                      >
-                        {workflow.name}
-                      </button>
-                    </td>
+                  <tr
+                    key={workflow.id}
+                    className="border-t hover:bg-muted/25 cursor-pointer"
+                    onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}`)}
+                  >
+                    <td className="p-3 font-medium">{workflow.name}</td>
                     <td className="p-3">
                       {lastRun ? (
                         <div className="flex items-center gap-1.5">
@@ -192,7 +189,7 @@ export default function WorkflowsPage() {
                     <td className="p-3">
                       <TriggerBadges yaml={workflow.yaml} />
                     </td>
-                    <td className="p-3">
+                    <td className="p-3" onClick={e => e.stopPropagation()}>
                       <button
                         onClick={() => handleToggleEnabled(workflow)}
                         className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
@@ -204,7 +201,7 @@ export default function WorkflowsPage() {
                         }`} />
                       </button>
                     </td>
-                    <td className="p-3 text-right">
+                    <td className="p-3 text-right" onClick={e => e.stopPropagation()}>
                       <KebabMenu
                         workflow={workflow}
                         onEdit={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/edit`)}

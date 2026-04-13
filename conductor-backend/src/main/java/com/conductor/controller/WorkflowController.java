@@ -216,7 +216,15 @@ public class WorkflowController implements WorkflowsApi {
         }
     }
 
+    // This endpoint is handled by WorkflowLogStreamingController which returns an SseEmitter.
+    // The @RequestMapping below overrides the generated interface mapping to avoid ambiguous mapping
+    // conflict between this controller and WorkflowLogStreamingController.
     @Override
+    @org.springframework.web.bind.annotation.RequestMapping(
+        method = org.springframework.web.bind.annotation.RequestMethod.GET,
+        value = "/_internal/workflow-runs/{runId}/logs/stream-stub",
+        produces = "text/event-stream"
+    )
     public ResponseEntity<String> streamWorkflowRunLogs(String runId) {
         return ResponseEntity.status(501).build();
     }
