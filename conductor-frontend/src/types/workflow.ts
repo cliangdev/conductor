@@ -39,7 +39,8 @@ export interface WorkflowStepRunDto {
 export interface WorkflowJobRunDto {
   id: string;
   jobId: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED';
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'LOOP_EXHAUSTED';
+  iteration?: number;
   startedAt?: string;
   completedAt?: string;
   steps: WorkflowStepRunDto[];

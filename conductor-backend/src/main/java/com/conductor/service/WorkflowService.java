@@ -9,9 +9,11 @@ import com.conductor.generated.model.WorkflowUpdateRequest;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowSecretRepository;
+import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.conductor.workflow.WorkflowValidator;
 import jakarta.persistence.EntityNotFoundException;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,17 +31,20 @@ public class WorkflowService {
     private final ProjectSecurityService projectSecurityService;
     private final WorkflowValidator validator;
     private final WorkflowSecretRepository secretRepository;
+    private final WorkflowTriggerService workflowTriggerService;
 
     public WorkflowService(WorkflowDefinitionRepository workflowRepository,
                            ProjectRepository projectRepository,
                            ProjectSecurityService projectSecurityService,
                            WorkflowValidator validator,
-                           WorkflowSecretRepository secretRepository) {
+                           WorkflowSecretRepository secretRepository,
+                           @Lazy WorkflowTriggerService workflowTriggerService) {
         this.workflowRepository = workflowRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
         this.validator = validator;
         this.secretRepository = secretRepository;
+        this.workflowTriggerService = workflowTriggerService;
     }
 
     @Transactional
@@ -71,7 +76,9 @@ public class WorkflowService {
         if (request.getYaml().contains("webhook:")) {
             def.setWebhookToken(java.util.UUID.randomUUID().toString().replace("-", ""));
         }
-        return workflowRepository.save(def);
+        WorkflowDefinition saved = workflowRepository.save(def);
+        workflowTriggerService.upsertSchedule(saved);
+        return saved;
     }
 
     @Transactional
@@ -93,7 +100,9 @@ public class WorkflowService {
 
         def.setName(request.getName());
         def.setYaml(request.getYaml());
-        return workflowRepository.save(def);
+        WorkflowDefinition updated = workflowRepository.save(def);
+        workflowTriggerService.upsertSchedule(updated);
+        return updated;
     }
 
     @Transactional

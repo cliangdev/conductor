@@ -82,6 +82,58 @@ jobs:
         message: "Deployed!"
 `
 
+const LOOP_YAML = `
+on:
+  workflow_dispatch:
+
+jobs:
+  poll:
+    loop:
+      max_iterations: 5
+      until: \${{ steps.check.outputs.done == 'true' }}
+    steps:
+      - type: http
+        id: check
+        url: https://api.example.com/status
+`
+
+const CONDITION_YAML = `
+on:
+  workflow_dispatch:
+
+jobs:
+  check_status:
+    steps:
+      - type: http
+        id: fetch
+        url: https://api.example.com/status
+      - type: condition
+        expression: \${{ steps.fetch.outputs.status == 'ready' }}
+        then: deploy
+        else: notify_fail
+  deploy:
+    needs: [check_status]
+    steps:
+      - type: http
+        url: https://deploy.example.com
+  notify_fail:
+    needs: [check_status]
+    steps:
+      - type: discord
+        message: "Not ready"
+`
+
+const DOCKER_YAML = `
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    steps:
+      - uses: docker://node:18
+        run: npm ci
+`
+
 describe('WorkflowDiagram', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -163,5 +215,76 @@ describe('WorkflowDiagram', () => {
     render(<WorkflowDiagram yaml={DAG_YAML} />)
     // deploy has `needs: [build]` so should NOT have trigger→deploy edge
     expect(screen.queryByTestId('edge-__trigger__->deploy')).not.toBeInTheDocument()
+  })
+
+  // ── LOOP_EXHAUSTED status ────────────────────────────────────────────────────
+
+  it('renders LOOP_EXHAUSTED status on job node', () => {
+    render(
+      <WorkflowDiagram
+        yaml={LOOP_YAML}
+        jobStatuses={{ poll: 'LOOP_EXHAUSTED' }}
+      />
+    )
+    expect(screen.getByTestId('node-status-poll')).toHaveTextContent('LOOP_EXHAUSTED')
+  })
+
+  // ── Loop self-edge ───────────────────────────────────────────────────────────
+
+  it('renders self-loop edge for loop jobs', () => {
+    render(<WorkflowDiagram yaml={LOOP_YAML} />)
+    expect(screen.getByTestId('edge-poll->self-loop')).toBeInTheDocument()
+    expect(screen.getByTestId('edge-label-poll->self-loop')).toHaveTextContent('↺ loop')
+  })
+
+  // ── ConditionNode ────────────────────────────────────────────────────────────
+
+  it('renders condition job as condition node type', () => {
+    render(<WorkflowDiagram yaml={CONDITION_YAML} />)
+    const condNode = screen.getByTestId('node-check_status')
+    expect(condNode).toBeInTheDocument()
+    expect(condNode).toHaveAttribute('data-type', 'condition')
+  })
+
+  it('renders true edge from condition job', () => {
+    render(<WorkflowDiagram yaml={CONDITION_YAML} />)
+    expect(screen.getByTestId('edge-check_status->then-deploy')).toBeInTheDocument()
+    expect(screen.getByTestId('edge-label-check_status->then-deploy')).toHaveTextContent('true')
+  })
+
+  it('renders false edge from condition job', () => {
+    render(<WorkflowDiagram yaml={CONDITION_YAML} />)
+    expect(screen.getByTestId('edge-check_status->else-notify_fail')).toBeInTheDocument()
+    expect(screen.getByTestId('edge-label-check_status->else-notify_fail')).toHaveTextContent('false')
+  })
+
+  // ── Docker label ─────────────────────────────────────────────────────────────
+
+  it('appends [docker] to stepInfo for docker steps', () => {
+    render(<WorkflowDiagram yaml={DOCKER_YAML} />)
+    expect(screen.getByTestId('node-stepinfo-build')).toHaveTextContent('[docker]')
+  })
+
+  // ── jobRunData / iteration annotation ────────────────────────────────────────
+
+  it('shows iteration annotation on loop node when jobRunData provided', () => {
+    render(
+      <WorkflowDiagram
+        yaml={LOOP_YAML}
+        jobRunData={{ poll: { status: 'RUNNING', iteration: 2, maxIterations: 5 } }}
+      />
+    )
+    expect(screen.getByTestId('node-label-poll')).toHaveTextContent('poll · 2/5')
+  })
+
+  it('uses jobRunData status over jobStatuses when both provided', () => {
+    render(
+      <WorkflowDiagram
+        yaml={LOOP_YAML}
+        jobStatuses={{ poll: 'PENDING' }}
+        jobRunData={{ poll: { status: 'LOOP_EXHAUSTED' } }}
+      />
+    )
+    expect(screen.getByTestId('node-status-poll')).toHaveTextContent('LOOP_EXHAUSTED')
   })
 })

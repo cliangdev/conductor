@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPatch, apiPost } from '@/lib/api';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { TriggerBadges } from '@/components/workflow/TriggerBadges';
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: 'bg-green-100 text-green-800',
@@ -31,20 +31,6 @@ function timeAgo(dateStr: string): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
-}
-
-function TriggerBadges({ yaml }: { yaml: string }) {
-  const triggers: string[] = [];
-  if (yaml.includes('conductor.issue.status_changed')) triggers.push('issue');
-  if (yaml.includes('webhook:')) triggers.push('webhook');
-  if (yaml.includes('workflow_dispatch')) triggers.push('manual');
-  return (
-    <div className="flex gap-1 flex-wrap">
-      {triggers.map(t => (
-        <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
-      ))}
-    </div>
-  );
 }
 
 function KebabMenu({
@@ -182,15 +168,12 @@ export default function WorkflowsPage() {
               {workflows.map(workflow => {
                 const lastRun = lastRuns[workflow.id];
                 return (
-                  <tr key={workflow.id} className="border-t hover:bg-muted/25">
-                    <td className="p-3">
-                      <button
-                        className="font-medium hover:underline text-left"
-                        onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}`)}
-                      >
-                        {workflow.name}
-                      </button>
-                    </td>
+                  <tr
+                    key={workflow.id}
+                    className="border-t hover:bg-muted/25 cursor-pointer"
+                    onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}`)}
+                  >
+                    <td className="p-3 font-medium">{workflow.name}</td>
                     <td className="p-3">
                       {lastRun ? (
                         <div className="flex items-center gap-1.5">
@@ -206,7 +189,7 @@ export default function WorkflowsPage() {
                     <td className="p-3">
                       <TriggerBadges yaml={workflow.yaml} />
                     </td>
-                    <td className="p-3">
+                    <td className="p-3" onClick={e => e.stopPropagation()}>
                       <button
                         onClick={() => handleToggleEnabled(workflow)}
                         className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
@@ -218,7 +201,7 @@ export default function WorkflowsPage() {
                         }`} />
                       </button>
                     </td>
-                    <td className="p-3 text-right">
+                    <td className="p-3 text-right" onClick={e => e.stopPropagation()}>
                       <KebabMenu
                         workflow={workflow}
                         onEdit={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/edit`)}

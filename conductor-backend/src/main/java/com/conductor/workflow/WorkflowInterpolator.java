@@ -38,7 +38,13 @@ public class WorkflowInterpolator {
      */
     public String resolve(String expr, RuntimeContext context) {
         try {
-            if (expr.startsWith("event.")) {
+            if (expr.startsWith("loop.")) {
+                String key = expr.substring("loop.".length());
+                if ("iteration".equals(key)) {
+                    return String.valueOf(context.getLoopIteration());
+                }
+                return "";
+            } else if (expr.startsWith("event.")) {
                 String key = expr.substring("event.".length());
                 Object val = context.getEventPayload().get(key);
                 return val != null ? val.toString() : "";

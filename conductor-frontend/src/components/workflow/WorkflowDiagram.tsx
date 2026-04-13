@@ -10,16 +10,19 @@ const TRIGGER_W = 160;
 const TRIGGER_H = 44;
 const JOB_W = 200;
 const JOB_H = 64;
+const CONDITION_W = 120;
+const CONDITION_H = 60;
 
 // ── Status colours ─────────────────────────────────────────────────────────────
-type JobStatus = 'SUCCESS' | 'FAILED' | 'RUNNING' | 'SKIPPED' | 'PENDING';
+type JobStatus = 'SUCCESS' | 'FAILED' | 'RUNNING' | 'SKIPPED' | 'PENDING' | 'LOOP_EXHAUSTED';
 
 const statusStyles: Record<JobStatus, string> = {
-  SUCCESS: 'bg-green-500 text-white border-green-600',
-  FAILED:  'bg-red-500 text-white border-red-600',
-  RUNNING: 'bg-yellow-400 text-gray-900 border-yellow-500',
-  SKIPPED: 'bg-gray-300 text-gray-600 border-gray-400',
-  PENDING: 'bg-gray-100 text-gray-500 border-gray-300',
+  SUCCESS:       'bg-green-500 text-white border-green-600',
+  FAILED:        'bg-red-500 text-white border-red-600',
+  RUNNING:       'bg-yellow-400 text-gray-900 border-yellow-500',
+  SKIPPED:       'bg-gray-300 text-gray-600 border-gray-400',
+  PENDING:       'bg-gray-100 text-gray-500 border-gray-300',
+  LOOP_EXHAUSTED:'bg-orange-400 text-white border-orange-500',
 };
 
 // ── Custom node: Trigger ───────────────────────────────────────────────────────
@@ -44,6 +47,26 @@ function JobNode({ data }: { data: { label: string; stepInfo: string; status?: J
         <span className="opacity-75 truncate">{data.stepInfo}</span>
       )}
       <Handle type="source" position={Position.Bottom} className="!bg-gray-400" />
+    </div>
+  );
+}
+
+// ── Custom node: Condition (diamond shape) ─────────────────────────────────────
+function ConditionNode({ data }: { data: { label: string; status?: JobStatus } }) {
+  const style = statusStyles[data.status ?? 'PENDING'];
+  return (
+    <div className="relative flex items-center justify-center" style={{ width: CONDITION_W, height: CONDITION_H }}>
+      <div
+        className={`absolute inset-0 rounded border-2 ${style}`}
+        style={{ transform: 'rotate(45deg)', transformOrigin: 'center' }}
+      />
+      <span className="relative z-10 text-xs font-semibold text-center px-1 truncate max-w-full"
+            style={{ fontSize: 10 }}>
+        {data.label}
+      </span>
+      <Handle type="target" position={Position.Top} className="!bg-gray-400" />
+      <Handle type="source" position={Position.Bottom} id="true" className="!bg-green-400" style={{ left: '25%' }} />
+      <Handle type="source" position={Position.Bottom} id="false" className="!bg-red-400" style={{ left: '75%' }} />
     </div>
   );
 }
@@ -73,7 +96,7 @@ function ZoomControls() {
   );
 }
 
-const nodeTypes = { trigger: TriggerNode, job: JobNode } as const;
+const nodeTypes = { trigger: TriggerNode, job: JobNode, condition: ConditionNode } as const;
 
 // ── Dagre layout ───────────────────────────────────────────────────────────────
 function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
@@ -82,25 +105,40 @@ function applyDagreLayout(nodes: Node[], edges: Edge[]): Node[] {
   g.setGraph({ rankdir: 'TB', nodesep: 60, ranksep: 70 });
 
   nodes.forEach(n => {
-    const w = n.type === 'trigger' ? TRIGGER_W : JOB_W;
-    const h = n.type === 'trigger' ? TRIGGER_H : JOB_H;
+    let w: number, h: number;
+    if (n.type === 'trigger') { w = TRIGGER_W; h = TRIGGER_H; }
+    else if (n.type === 'condition') { w = CONDITION_W; h = CONDITION_H; }
+    else { w = JOB_W; h = JOB_H; }
     g.setNode(n.id, { width: w, height: h });
   });
-  edges.forEach(e => g.setEdge(e.source, e.target));
+  // Only set non-self edges for layout
+  edges.forEach(e => {
+    if (e.source !== e.target) g.setEdge(e.source, e.target);
+  });
   dagre.layout(g);
 
   return nodes.map(n => {
     const { x, y } = g.node(n.id);
-    const w = n.type === 'trigger' ? TRIGGER_W : JOB_W;
-    const h = n.type === 'trigger' ? TRIGGER_H : JOB_H;
+    let w: number, h: number;
+    if (n.type === 'trigger') { w = TRIGGER_W; h = TRIGGER_H; }
+    else if (n.type === 'condition') { w = CONDITION_W; h = CONDITION_H; }
+    else { w = JOB_W; h = JOB_H; }
     return { ...n, position: { x: x - w / 2, y: y - h / 2 } };
   });
+}
+
+// ── Richer job run data for run detail page ────────────────────────────────────
+interface JobRunStatus {
+  status: JobStatus;
+  iteration?: number;
+  maxIterations?: number;
 }
 
 // ── Graph builder ──────────────────────────────────────────────────────────────
 function buildFlowGraph(
   yamlText: string,
-  jobStatuses?: Record<string, JobStatus>
+  jobStatuses?: Record<string, JobStatus>,
+  jobRunData?: Record<string, JobRunStatus>
 ): { nodes: Node[]; edges: Edge[] } {
   const empty = { nodes: [], edges: [] };
   if (!yamlText.trim()) return empty;
@@ -135,26 +173,68 @@ function buildFlowGraph(
       const job = jobs[jobId] as Record<string, unknown>;
       const steps = (job['steps'] as unknown[]) ?? [];
       const stepCount = steps.length;
+      const typedSteps = steps.filter((s): s is Record<string, unknown> => typeof s === 'object' && s !== null);
+
       const stepTypes = [...new Set(
-        steps
-          .filter((s): s is Record<string, unknown> => typeof s === 'object' && s !== null)
-          .map(s => s['type'] as string)
-          .filter(Boolean)
+        typedSteps.map(s => s['type'] as string).filter(Boolean)
       )];
-      const stepInfo = stepCount
+
+      // Detect docker steps (uses: docker://...)
+      const hasDockerStep = typedSteps.some(s => {
+        const uses = s['uses'] as string | undefined;
+        return uses && uses.startsWith('docker://');
+      });
+
+      let stepInfo = stepCount
         ? `${stepCount} step${stepCount !== 1 ? 's' : ''}${stepTypes.length ? ' · ' + stepTypes.join(', ') : ''}`
         : '';
+      if (hasDockerStep) stepInfo += ' [docker]';
+
+      // Detect if this is a condition job (last step has type: condition)
+      const lastStep = typedSteps[typedSteps.length - 1];
+      const isConditionJob = lastStep?.['type'] === 'condition';
+
+      // Detect loop job
+      const loopBlock = job['loop'] as Record<string, unknown> | undefined;
+      const isLoopJob = !!loopBlock;
+      const maxIterations = loopBlock ? Number(loopBlock['max_iterations']) : undefined;
+
+      // Determine status
+      const runData = jobRunData?.[jobId];
+      const status = runData?.status ?? jobStatuses?.[jobId];
+
+      // Build node label — show iteration annotation for loop jobs with run data
+      let nodeLabel = jobId;
+      if (isLoopJob && runData?.iteration !== undefined) {
+        const iterDisplay = (runData.iteration ?? 0);
+        const maxDisplay = runData.maxIterations ?? maxIterations;
+        nodeLabel = maxDisplay !== undefined
+          ? `${jobId} · ${iterDisplay}/${maxDisplay}`
+          : `${jobId} · ${iterDisplay}`;
+      }
 
       nodes.push({
         id: jobId,
-        type: 'job',
+        type: isConditionJob ? 'condition' : 'job',
         position: { x: 0, y: 0 },
         data: {
-          label: jobId,
+          label: nodeLabel,
           stepInfo,
-          status: jobStatuses?.[jobId],
+          status,
         },
       });
+
+      // Self-loop edge for loop jobs
+      if (isLoopJob) {
+        edges.push({
+          id: `${jobId}->self-loop`,
+          source: jobId,
+          target: jobId,
+          label: '↺ loop',
+          type: 'default',
+          style: { strokeDasharray: '4 2' },
+        });
+      }
 
       const needs = job['needs'];
       const needsList: string[] = needs
@@ -178,6 +258,32 @@ function buildFlowGraph(
           });
         }
       }
+
+      // Condition edges: then/else
+      if (isConditionJob) {
+        const thenJob = lastStep['then'] as string | undefined;
+        const elseJob = lastStep['else'] as string | undefined;
+        if (thenJob) {
+          edges.push({
+            id: `${jobId}->then-${thenJob}`,
+            source: jobId,
+            target: thenJob,
+            sourceHandle: 'true',
+            label: 'true',
+            labelStyle: { fontSize: 10 },
+          });
+        }
+        if (elseJob) {
+          edges.push({
+            id: `${jobId}->else-${elseJob}`,
+            source: jobId,
+            target: elseJob,
+            sourceHandle: 'false',
+            label: 'false',
+            labelStyle: { fontSize: 10 },
+          });
+        }
+      }
     }
   }
 
@@ -189,16 +295,17 @@ function buildFlowGraph(
 interface WorkflowDiagramProps {
   yaml: string;
   jobStatuses?: Record<string, JobStatus>;
+  jobRunData?: Record<string, JobRunStatus>;
 }
 
-export default function WorkflowDiagram({ yaml, jobStatuses }: WorkflowDiagramProps) {
+export default function WorkflowDiagram({ yaml, jobStatuses, jobRunData }: WorkflowDiagramProps) {
   const result = useMemo(() => {
     try {
-      return { ...buildFlowGraph(yaml, jobStatuses), error: null };
+      return { ...buildFlowGraph(yaml, jobStatuses, jobRunData), error: null };
     } catch (e) {
       return { nodes: [] as Node[], edges: [] as Edge[], error: e instanceof Error ? e.message : 'Failed to render diagram' };
     }
-  }, [yaml, jobStatuses]);
+  }, [yaml, jobStatuses, jobRunData]);
 
   if (result.error) {
     return (

@@ -24,6 +24,9 @@ public class ProjectSettings {
     @Column(name = "discord_webhook_url", length = 512)
     private String discordWebhookUrl;
 
+    @Column(name = "run_token_ttl_hours", nullable = false)
+    private int runTokenTtlHours = 24;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -48,6 +51,9 @@ public class ProjectSettings {
 
     public String getDiscordWebhookUrl() { return discordWebhookUrl; }
     public void setDiscordWebhookUrl(String discordWebhookUrl) { this.discordWebhookUrl = discordWebhookUrl; }
+
+    public int getRunTokenTtlHours() { return runTokenTtlHours; }
+    public void setRunTokenTtlHours(int runTokenTtlHours) { this.runTokenTtlHours = runTokenTtlHours; }
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }

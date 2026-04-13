@@ -4,6 +4,8 @@ import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
+import com.conductor.entity.WorkflowSchedule;
+import com.conductor.entity.WorkflowScheduleSkip;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.WorkflowsApi;
@@ -14,12 +16,15 @@ import com.conductor.generated.model.WorkflowDefinitionDto;
 import com.conductor.generated.model.WorkflowJobRunDto;
 import com.conductor.generated.model.WorkflowRunDetailDto;
 import com.conductor.generated.model.WorkflowRunDto;
+import com.conductor.generated.model.WorkflowScheduleSkipDto;
 import com.conductor.generated.model.WorkflowStepRunDto;
 import com.conductor.generated.model.WorkflowUpdateRequest;
 import com.conductor.generated.model.WorkflowValidationWarning;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
+import com.conductor.repository.WorkflowScheduleRepository;
+import com.conductor.repository.WorkflowScheduleSkipRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.WorkflowService;
@@ -60,6 +65,8 @@ public class WorkflowController implements WorkflowsApi {
     private final WorkflowRunRepository runRepository;
     private final WorkflowJobRunRepository jobRunRepository;
     private final WorkflowStepRunRepository stepRunRepository;
+    private final WorkflowScheduleRepository scheduleRepository;
+    private final WorkflowScheduleSkipRepository scheduleSkipRepository;
     private final ObjectMapper objectMapper;
 
     public WorkflowController(WorkflowService workflowService,
@@ -69,6 +76,8 @@ public class WorkflowController implements WorkflowsApi {
                                WorkflowRunRepository runRepository,
                                WorkflowJobRunRepository jobRunRepository,
                                WorkflowStepRunRepository stepRunRepository,
+                               WorkflowScheduleRepository scheduleRepository,
+                               WorkflowScheduleSkipRepository scheduleSkipRepository,
                                ObjectMapper objectMapper) {
         this.workflowService = workflowService;
         this.workflowTriggerService = workflowTriggerService;
@@ -77,6 +86,8 @@ public class WorkflowController implements WorkflowsApi {
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
+        this.scheduleRepository = scheduleRepository;
+        this.scheduleSkipRepository = scheduleSkipRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -205,6 +216,37 @@ public class WorkflowController implements WorkflowsApi {
         }
     }
 
+    // This endpoint is handled by WorkflowLogStreamingController which returns an SseEmitter.
+    // The @RequestMapping below overrides the generated interface mapping to avoid ambiguous mapping
+    // conflict between this controller and WorkflowLogStreamingController.
+    @Override
+    @org.springframework.web.bind.annotation.RequestMapping(
+        method = org.springframework.web.bind.annotation.RequestMethod.GET,
+        value = "/_internal/workflow-runs/{runId}/logs/stream-stub",
+        produces = "text/event-stream"
+    )
+    public ResponseEntity<String> streamWorkflowRunLogs(String runId) {
+        return ResponseEntity.status(501).build();
+    }
+
+    @Override
+    public ResponseEntity<List<WorkflowScheduleSkipDto>> listScheduleSkips(String projectId, String workflowId,
+                                                                             Integer limit) {
+        String userId = currentUserId();
+        if (!projectSecurityService.isProjectMember(projectId, userId)) {
+            throw new EntityNotFoundException("Project not found");
+        }
+        int maxResults = limit != null ? limit : 20;
+        List<WorkflowSchedule> schedules = scheduleRepository.findByWorkflowId(workflowId);
+        List<WorkflowScheduleSkipDto> dtos = schedules.stream()
+                .flatMap(s -> scheduleSkipRepository.findByScheduleIdOrderBySkippedAtDesc(s.getId()).stream())
+                .sorted(java.util.Comparator.comparing(WorkflowScheduleSkip::getSkippedAt).reversed())
+                .limit(maxResults)
+                .map(this::toSkipDto)
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(dtos);
+    }
+
     @Override
     public ResponseEntity<List<WorkflowRunDto>> listWorkflowRuns(String projectId, String workflowId,
                                                                   Integer page, Integer size) {
@@ -296,6 +338,16 @@ public class WorkflowController implements WorkflowsApi {
         dto.setWebhookToken(def.getWebhookToken());
         dto.setCreatedAt(def.getCreatedAt());
         dto.setUpdatedAt(def.getUpdatedAt());
+        return dto;
+    }
+
+    private WorkflowScheduleSkipDto toSkipDto(WorkflowScheduleSkip skip) {
+        WorkflowScheduleSkipDto dto = new WorkflowScheduleSkipDto();
+        dto.setId(skip.getId());
+        dto.setScheduleId(skip.getSchedule().getId());
+        dto.setSkippedAt(skip.getSkippedAt());
+        dto.setReason(skip.getReason());
+        dto.setRunId(skip.getRunId());
         return dto;
     }
 

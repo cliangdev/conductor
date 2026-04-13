@@ -51,6 +51,12 @@ public class WorkflowStepRun {
     @Column(name = "error_reason", columnDefinition = "TEXT")
     private String errorReason;
 
+    @Column(name = "image", length = 512)
+    private String image;
+
+    @Column(name = "worker_job_id", length = 255)
+    private String workerJobId;
+
     @Column(name = "started_at")
     private OffsetDateTime startedAt;
 
@@ -93,6 +99,12 @@ public class WorkflowStepRun {
 
     public String getErrorReason() { return errorReason; }
     public void setErrorReason(String errorReason) { this.errorReason = errorReason; }
+
+    public String getImage() { return image; }
+    public void setImage(String image) { this.image = image; }
+
+    public String getWorkerJobId() { return workerJobId; }
+    public void setWorkerJobId(String workerJobId) { this.workerJobId = workerJobId; }
 
     public OffsetDateTime getStartedAt() { return startedAt; }
     public void setStartedAt(OffsetDateTime startedAt) { this.startedAt = startedAt; }
