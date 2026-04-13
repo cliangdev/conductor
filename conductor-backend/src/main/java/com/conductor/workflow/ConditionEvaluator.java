@@ -23,7 +23,8 @@ public class ConditionEvaluator {
     public boolean evaluate(String expression) {
         if (expression == null || expression.isBlank()) return false;
         String expr = expression.trim();
-        if (expr.startsWith("${{") && expr.endsWith("}}")) {
+        if (expr.startsWith("${{")) {
+            if (!expr.endsWith("}}")) return false; // malformed delimiter
             expr = expr.substring(3, expr.length() - 2).trim();
         }
         try {
