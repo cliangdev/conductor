@@ -73,6 +73,7 @@ class WorkflowScheduleRepositoryTest {
 
         Project project = new Project();
         project.setName("Test Project");
+        project.setKey("TEST");
         project.setCreatedBy(user);
         projectRepository.save(project);
 

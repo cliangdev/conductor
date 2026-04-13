@@ -60,6 +60,7 @@ class ProjectServiceTest {
         testProject = new Project();
         testProject.setId("proj-1");
         testProject.setName("Test Project");
+        testProject.setKey("TEST");
         testProject.setDescription("A description");
         testProject.setCreatedBy(creator);
         testProject.setCreatedAt(OffsetDateTime.now());
@@ -75,6 +76,7 @@ class ProjectServiceTest {
 
     @Test
     void createProjectSavesProjectAndAdminMemberAtomically() {
+        when(projectRepository.existsByKey(any())).thenReturn(false);
         when(projectRepository.save(any(Project.class))).thenAnswer(invocation -> {
             Project p = invocation.getArgument(0);
             p.setId("proj-new");

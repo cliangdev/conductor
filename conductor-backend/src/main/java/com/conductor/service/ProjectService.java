@@ -18,7 +18,9 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class ProjectService {
@@ -42,6 +44,7 @@ public class ProjectService {
         project.setName(request.getName());
         project.setDescription(request.getDescription());
         project.setCreatedBy(creator);
+        project.setKey(resolveUniqueKey(request.getName()));
         projectRepository.save(project);
 
         ProjectMember adminMember = new ProjectMember();
@@ -144,10 +147,39 @@ public class ProjectService {
         }
     }
 
+    String deriveKey(String name) {
+        String cleaned = name.replaceAll("[^A-Za-z0-9\\s]", "").trim();
+        String[] words = cleaned.split("\\s+");
+        String candidate;
+        if (words.length > 1) {
+            candidate = Arrays.stream(words)
+                .filter(w -> !w.isEmpty())
+                .map(w -> String.valueOf(w.charAt(0)).toUpperCase())
+                .collect(Collectors.joining());
+            if (candidate.length() > 6) candidate = candidate.substring(0, 6);
+        } else {
+            String word = cleaned.toUpperCase().replaceAll("\\s", "");
+            candidate = word.length() > 4 ? word.substring(0, 4) : word;
+        }
+        if (candidate.length() < 2) candidate = (candidate + "XX").substring(0, 2);
+        return candidate;
+    }
+
+    String resolveUniqueKey(String name) {
+        String base = deriveKey(name);
+        if (!projectRepository.existsByKey(base)) return base;
+        for (int i = 1; i <= 99; i++) {
+            String variant = base + i;
+            if (!projectRepository.existsByKey(variant)) return variant;
+        }
+        throw new BusinessException("Cannot derive unique key for project: " + name);
+    }
+
     private ProjectResponse toProjectResponse(Project project) {
         return new ProjectResponse(
                 project.getId(),
                 project.getName(),
+                project.getKey(),
                 project.getCreatedBy().getId(),
                 project.getCreatedAt())
                 .description(project.getDescription());
@@ -157,6 +189,7 @@ public class ProjectService {
         return new ProjectSummary(
                 project.getId(),
                 project.getName(),
+                project.getKey(),
                 role.name(),
                 memberCount,
                 project.getCreatedAt())
@@ -167,6 +200,7 @@ public class ProjectService {
         return new ProjectDetail(
                 project.getId(),
                 project.getName(),
+                project.getKey(),
                 project.getCreatedBy().getId(),
                 memberCount,
                 project.getCreatedAt())

@@ -73,6 +73,7 @@ class IssueServiceTest {
         project = new Project();
         project.setId("proj-1");
         project.setName("Test Project");
+        project.setKey("TEST");
         project.setCreatedBy(caller);
         project.setCreatedAt(OffsetDateTime.now());
         project.setUpdatedAt(OffsetDateTime.now());
@@ -83,6 +84,7 @@ class IssueServiceTest {
         testIssue.setType(IssueType.PRD);
         testIssue.setTitle("Test Issue");
         testIssue.setStatus(IssueStatus.DRAFT);
+        testIssue.setSequenceNumber(1);
         testIssue.setCreatedBy(caller);
         testIssue.setCreatedAt(OffsetDateTime.now());
         testIssue.setUpdatedAt(OffsetDateTime.now());
@@ -92,11 +94,13 @@ class IssueServiceTest {
     void createIssueSetsDraftStatus() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(issueRepository.findMaxSequenceNumberByProjectId("proj-1")).thenReturn(0);
         when(issueRepository.save(any(Issue.class))).thenAnswer(invocation -> {
             Issue i = invocation.getArgument(0);
             if (i.getId() == null) i.setId("new-issue-id");
             if (i.getCreatedAt() == null) i.setCreatedAt(OffsetDateTime.now());
             if (i.getUpdatedAt() == null) i.setUpdatedAt(OffsetDateTime.now());
+            if (i.getSequenceNumber() == null) i.setSequenceNumber(1);
             return i;
         });
 

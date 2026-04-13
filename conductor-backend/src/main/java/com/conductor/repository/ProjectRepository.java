@@ -13,4 +13,6 @@ public interface ProjectRepository extends JpaRepository<Project, String> {
 
     @Query("SELECT p FROM Project p WHERE EXISTS (SELECT pm FROM ProjectMember pm WHERE pm.project = p AND pm.user.id = :userId)")
     List<Project> findProjectsByMemberUserId(@Param("userId") String userId);
+
+    boolean existsByKey(String key);
 }

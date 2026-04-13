@@ -74,7 +74,7 @@ class ProjectControllerTest {
     @Test
     void createProjectReturns201WithProjectDto() throws Exception {
         OffsetDateTime now = OffsetDateTime.now();
-        ProjectResponse response = new ProjectResponse("proj-1", "My Project", "user-id-123", now)
+        ProjectResponse response = new ProjectResponse("proj-1", "My Project", "MYPR", "user-id-123", now)
                 .description("A test project");
 
         when(projectService.createProject(any(), eq(testUser))).thenReturn(response);
@@ -115,8 +115,8 @@ class ProjectControllerTest {
     void listProjectsReturnsOnlyCallerProjects() throws Exception {
         OffsetDateTime now = OffsetDateTime.now();
         List<ProjectSummary> summaries = List.of(
-                new ProjectSummary("proj-1", "Project One", "ADMIN", 2, now),
-                new ProjectSummary("proj-2", "Project Two", "CREATOR", 3, now)
+                new ProjectSummary("proj-1", "Project One", "PONE", "ADMIN", 2, now),
+                new ProjectSummary("proj-2", "Project Two", "PTWO", "CREATOR", 3, now)
         );
 
         when(projectService.listProjects(testUser)).thenReturn(summaries);
@@ -140,7 +140,7 @@ class ProjectControllerTest {
     @Test
     void getProjectReturnsDetailForMember() throws Exception {
         OffsetDateTime now = OffsetDateTime.now();
-        ProjectDetail detail = new ProjectDetail("proj-1", "My Project", "user-id-123", 3, now)
+        ProjectDetail detail = new ProjectDetail("proj-1", "My Project", "MYPR", "user-id-123", 3, now)
                 .description("desc");
 
         when(projectService.getProject("proj-1", testUser)).thenReturn(detail);

@@ -44,6 +44,9 @@ public class Issue {
     @ColumnTransformer(write = "?::issue_status")
     private IssueStatus status;
 
+    @Column(name = "sequence_number", nullable = false, updatable = false)
+    private Integer sequenceNumber;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by", nullable = false)
     private User createdBy;
@@ -88,6 +91,9 @@ public class Issue {
 
     public IssueStatus getStatus() { return status; }
     public void setStatus(IssueStatus status) { this.status = status; }
+
+    public Integer getSequenceNumber() { return sequenceNumber; }
+    public void setSequenceNumber(Integer sequenceNumber) { this.sequenceNumber = sequenceNumber; }
 
     public User getCreatedBy() { return createdBy; }
     public void setCreatedBy(User createdBy) { this.createdBy = createdBy; }
