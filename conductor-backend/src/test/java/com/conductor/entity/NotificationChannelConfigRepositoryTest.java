@@ -77,7 +77,7 @@ class NotificationChannelConfigRepositoryTest {
     private String createProject(User owner, String name) {
         Project project = new Project();
         project.setName(name);
-        project.setKey(name.replaceAll("[^A-Za-z0-9]", "").toUpperCase().substring(0, Math.min(4, name.replaceAll("[^A-Za-z0-9]", "").length())));
+        project.setKey(UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase());
         project.setCreatedBy(owner);
         return projectRepository.save(project).getId();
     }
