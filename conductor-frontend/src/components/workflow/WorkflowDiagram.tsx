@@ -54,7 +54,7 @@ function JobNode({ data }: { data: { label: string; stepInfo: string; status?: J
 function ZoomControls() {
   const { zoomIn, zoomOut } = useReactFlow();
   return (
-    <div className="absolute bottom-4 right-4 z-10 flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-white shadow-md">
+    <div className="absolute top-4 right-4 z-10 flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-white shadow-md">
       <button
         onClick={() => zoomIn()}
         className="flex h-9 w-9 items-center justify-center border-b border-gray-300 text-lg font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200"
