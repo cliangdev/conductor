@@ -7,6 +7,7 @@ import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowRunRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Lazy;
@@ -25,13 +26,16 @@ public class WorkflowTriggerService {
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowRunRepository workflowRunRepository;
     private final WorkflowExecutionEngine executionEngine;
+    private final ObjectMapper objectMapper;
 
     public WorkflowTriggerService(WorkflowDefinitionRepository workflowRepository,
                                    WorkflowRunRepository workflowRunRepository,
-                                   @Lazy WorkflowExecutionEngine executionEngine) {
+                                   @Lazy WorkflowExecutionEngine executionEngine,
+                                   ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.executionEngine = executionEngine;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -150,7 +154,7 @@ public class WorkflowTriggerService {
 
     private String toJson(Object obj) {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(obj);
+            return objectMapper.writeValueAsString(obj);
         } catch (Exception e) {
             return "{}";
         }
