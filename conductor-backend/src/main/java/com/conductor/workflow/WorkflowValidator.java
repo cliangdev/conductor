@@ -6,6 +6,7 @@ import org.yaml.snakeyaml.error.YAMLException;
 import org.yaml.snakeyaml.error.MarkedYAMLException;
 
 import java.util.*;
+import java.util.Queue;
 
 @Component
 public class WorkflowValidator {
@@ -192,6 +193,78 @@ public class WorkflowValidator {
         }
 
         return new WorkflowValidationResult(errors, warnings);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void validateConditionStep(Map<String, Object> step, String jobId,
+                                       Map<String, Object> jobs, List<String> errors,
+                                       Set<String> conditionTargets) {
+        Object expression = step.get("expression");
+        if (expression == null || expression.toString().isBlank()) {
+            errors.add("condition step missing required field: expression");
+        }
+
+        Object thenJob = step.get("then");
+        Object elseJob = step.get("else");
+
+        if (thenJob == null || thenJob.toString().isBlank()) {
+            errors.add("condition step missing required field: then");
+        } else {
+            String thenJobId = thenJob.toString();
+            conditionTargets.add(thenJobId);
+            if (!jobs.containsKey(thenJobId)) {
+                errors.add("condition step 'then' references unknown job: " + thenJobId);
+            } else {
+                // Check cycle: thenJob cannot be an ancestor of jobId in the static needs graph
+                if (isAncestor(thenJobId, jobId, jobs)) {
+                    errors.add("condition step creates a cycle: job " + jobId + " cannot route to ancestor " + thenJobId);
+                }
+            }
+        }
+
+        if (elseJob == null || elseJob.toString().isBlank()) {
+            errors.add("condition step missing required field: else");
+        } else {
+            String elseJobId = elseJob.toString();
+            conditionTargets.add(elseJobId);
+            if (!jobs.containsKey(elseJobId)) {
+                errors.add("condition step 'else' references unknown job: " + elseJobId);
+            } else {
+                if (isAncestor(elseJobId, jobId, jobs)) {
+                    errors.add("condition step creates a cycle: job " + jobId + " cannot route to ancestor " + elseJobId);
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns true if potentialAncestor is an ancestor of targetJobId in the static needs graph.
+     */
+    @SuppressWarnings("unchecked")
+    private boolean isAncestor(String potentialAncestor, String targetJobId, Map<String, Object> jobs) {
+        // Walk up from targetJobId via needs — if we find potentialAncestor, it's an ancestor
+        Set<String> visited = new HashSet<>();
+        Queue<String> queue = new java.util.LinkedList<>();
+        queue.add(targetJobId);
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            if (visited.contains(current)) continue;
+            visited.add(current);
+            if (!(jobs.get(current) instanceof Map)) continue;
+            Map<String, Object> jobDef = (Map<String, Object>) jobs.get(current);
+            Object needsVal = jobDef.get("needs");
+            List<String> needsList = new ArrayList<>();
+            if (needsVal instanceof List) {
+                for (Object n : (List<?>) needsVal) needsList.add(n.toString());
+            } else if (needsVal instanceof String) {
+                needsList.add(needsVal.toString());
+            }
+            for (String need : needsList) {
+                if (need.equals(potentialAncestor)) return true;
+                queue.add(need);
+            }
+        }
+        return false;
     }
 
     private void validateKestraStep(Map<String, Object> step, List<String> errors) {

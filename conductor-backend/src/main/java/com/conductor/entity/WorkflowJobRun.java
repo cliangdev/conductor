@@ -38,6 +38,9 @@ public class WorkflowJobRun {
     @Column(name = "iteration", nullable = false)
     private int iteration = 0;
 
+    @Column(name = "skip_reason", length = 500)
+    private String skipReason;
+
     @Column(name = "started_at")
     private OffsetDateTime startedAt;
 
@@ -68,6 +71,9 @@ public class WorkflowJobRun {
 
     public int getIteration() { return iteration; }
     public void setIteration(int iteration) { this.iteration = iteration; }
+
+    public String getSkipReason() { return skipReason; }
+    public void setSkipReason(String skipReason) { this.skipReason = skipReason; }
 
     public OffsetDateTime getStartedAt() { return startedAt; }
     public void setStartedAt(OffsetDateTime startedAt) { this.startedAt = startedAt; }

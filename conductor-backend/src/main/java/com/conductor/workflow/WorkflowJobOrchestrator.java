@@ -69,14 +69,8 @@ public class WorkflowJobOrchestrator {
         @SuppressWarnings("unchecked")
         Map<String, Object> jobDef = (Map<String, Object>) jobs.get(jobId);
 
-        WorkflowJobRun jobRun = jobRunRepository.findByRunIdAndJobId(run.getId(), jobId)
-                .orElseGet(() -> {
-                    WorkflowJobRun jr = new WorkflowJobRun();
-                    jr.setRun(run);
-                    jr.setJobId(jobId);
-                    jr.setStatus(WorkflowJobStatus.PENDING);
-                    return jobRunRepository.save(jr);
-                });
+        // For loop jobs, find the latest iteration run; otherwise find or create
+        WorkflowJobRun jobRun = findOrCreateLatestJobRun(run, jobId);
 
         jobRun.setStatus(WorkflowJobStatus.RUNNING);
         jobRun.setStartedAt(OffsetDateTime.now());
@@ -84,12 +78,15 @@ public class WorkflowJobOrchestrator {
 
         String projectId = workflow.getProject().getId();
 
+        // 1-based loop iteration for context
+        int loopIteration = jobRun.getIteration() + 1;
+
         // Evaluate job-level if condition
         String ifCondition = (String) jobDef.get("if");
         if (ifCondition != null) {
             Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
             Map<String, String> secrets = contextBuilder.loadSecrets(projectId);
-            RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs);
+            RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
             String interpolated = interpolator.interpolate(ifCondition, ctx);
             if (!conditionEvaluator.evaluate(interpolated)) {
                 jobRun.setStatus(WorkflowJobStatus.SKIPPED);
@@ -108,24 +105,149 @@ public class WorkflowJobOrchestrator {
         Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
 
         boolean jobFailed = false;
-        for (Map<String, Object> stepDef : steps) {
+        // Skip condition steps during normal step execution — handled after steps complete
+        List<Map<String, Object>> executableSteps = steps.stream()
+                .filter(s -> !"condition".equals(s.get("type")))
+                .collect(java.util.stream.Collectors.toList());
+
+        for (Map<String, Object> stepDef : executableSteps) {
             if (jobFailed) break;
-            RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs);
+            RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
             StepResult result = executeStep(run, jobRun, stepDef, ctx, projectId);
             if (result.getStatus() == WorkflowStepStatus.FAILED) {
                 jobFailed = true;
             }
         }
 
-        jobRun.setStatus(jobFailed ? WorkflowJobStatus.FAILED : WorkflowJobStatus.SUCCESS);
+        if (jobFailed) {
+            jobRun.setStatus(WorkflowJobStatus.FAILED);
+            jobRun.setCompletedAt(OffsetDateTime.now());
+            jobRunRepository.save(jobRun);
+            propagateFailureToDependents(run, jobId, jobs);
+            return;
+        }
+
+        // Check for condition step (must be last step)
+        @SuppressWarnings("unchecked")
+        Map<String, Object> lastStep = steps.isEmpty() ? null : steps.get(steps.size() - 1);
+        if (lastStep != null && "condition".equals(lastStep.get("type"))) {
+            handleConditionStep(run, jobRun, lastStep, secrets, upstreamOutputs, loopIteration, jobId, jobs);
+            return;
+        }
+
+        // Check for loop block
+        @SuppressWarnings("unchecked")
+        Map<String, Object> loopDef = (Map<String, Object>) jobDef.get("loop");
+        if (loopDef != null) {
+            handleLoop(run, jobRun, jobDef, loopDef, jobId, jobs, secrets, upstreamOutputs, loopIteration);
+            return;
+        }
+
+        jobRun.setStatus(WorkflowJobStatus.SUCCESS);
         jobRun.setCompletedAt(OffsetDateTime.now());
         jobRunRepository.save(jobRun);
+        enqueueReadyDependents(run, jobId, jobs);
+    }
 
-        if (jobFailed) {
-            propagateFailureToDependents(run, jobId, jobs);
-        } else {
-            enqueueReadyDependents(run, jobId, jobs);
+    private WorkflowJobRun findOrCreateLatestJobRun(WorkflowRun run, String jobId) {
+        List<WorkflowJobRun> existing = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(run.getId(), jobId);
+        if (!existing.isEmpty()) {
+            WorkflowJobRun latest = existing.get(0);
+            // Only reuse if it's PENDING (newly created for a loop re-enqueue)
+            if (latest.getStatus() == WorkflowJobStatus.PENDING) {
+                return latest;
+            }
         }
+        // Create new job run
+        WorkflowJobRun jr = new WorkflowJobRun();
+        jr.setRun(run);
+        jr.setJobId(jobId);
+        jr.setStatus(WorkflowJobStatus.PENDING);
+        return jobRunRepository.save(jr);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void handleLoop(WorkflowRun run, WorkflowJobRun jobRun,
+                            Map<String, Object> jobDef,
+                            Map<String, Object> loopDef,
+                            String jobId, Map<String, Object> jobs,
+                            Map<String, String> secrets,
+                            Map<String, Map<String, String>> upstreamOutputs,
+                            int loopIteration) {
+        int maxIterations = ((Number) loopDef.get("max_iterations")).intValue();
+        String untilExpr = (String) loopDef.get("until");
+        boolean failOnExhausted = !Boolean.FALSE.equals(loopDef.get("fail_on_exhausted"));
+
+        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
+        String interpolated = interpolator.interpolate(untilExpr, ctx);
+        boolean isDone = conditionEvaluator.evaluate(interpolated);
+
+        if (isDone) {
+            jobRun.setStatus(WorkflowJobStatus.SUCCESS);
+            jobRun.setCompletedAt(OffsetDateTime.now());
+            jobRunRepository.save(jobRun);
+            enqueueReadyDependents(run, jobId, jobs);
+        } else if (jobRun.getIteration() < maxIterations - 1) {
+            // Mark current iteration run as done (steps completed, not terminal failure)
+            jobRun.setStatus(WorkflowJobStatus.SUCCESS);
+            jobRun.setCompletedAt(OffsetDateTime.now());
+            jobRunRepository.save(jobRun);
+
+            // Create new iteration run
+            WorkflowJobRun nextRun = new WorkflowJobRun();
+            nextRun.setRun(run);
+            nextRun.setJobId(jobId);
+            nextRun.setIteration(jobRun.getIteration() + 1);
+            nextRun.setStatus(WorkflowJobStatus.PENDING);
+            jobRunRepository.save(nextRun);
+            engine.enqueueJob(run.getId(), jobId);
+        } else {
+            WorkflowJobStatus exhaustedStatus = failOnExhausted
+                    ? WorkflowJobStatus.LOOP_EXHAUSTED
+                    : WorkflowJobStatus.SUCCESS;
+            jobRun.setStatus(exhaustedStatus);
+            jobRun.setCompletedAt(OffsetDateTime.now());
+            jobRunRepository.save(jobRun);
+
+            if (failOnExhausted) {
+                propagateFailureToDependents(run, jobId, jobs);
+            } else {
+                enqueueReadyDependents(run, jobId, jobs);
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void handleConditionStep(WorkflowRun run, WorkflowJobRun jobRun,
+                                     Map<String, Object> conditionStep,
+                                     Map<String, String> secrets,
+                                     Map<String, Map<String, String>> upstreamOutputs,
+                                     int loopIteration,
+                                     String jobId, Map<String, Object> jobs) {
+        String expression = (String) conditionStep.get("expression");
+        String thenJobId = (String) conditionStep.get("then");
+        String elseJobId = (String) conditionStep.get("else");
+
+        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
+        String interpolated = interpolator.interpolate(expression, ctx);
+        boolean result = conditionEvaluator.evaluate(interpolated);
+
+        String activeJobId = result ? thenJobId : elseJobId;
+        String skippedJobId = result ? elseJobId : thenJobId;
+        String branchName = result ? "then" : "else";
+
+        if (skippedJobId != null) {
+            skipJobWithReason(run, skippedJobId, "Condition routed to " + branchName + " branch");
+            propagateSkipToDependents(run, skippedJobId, jobs);
+        }
+        if (activeJobId != null) {
+            engine.enqueueJob(run.getId(), activeJobId);
+        }
+
+        jobRun.setStatus(WorkflowJobStatus.SUCCESS);
+        jobRun.setCompletedAt(OffsetDateTime.now());
+        jobRunRepository.save(jobRun);
+        engine.checkRunCompletion(run);
     }
 
     private StepResult executeStep(WorkflowRun run, WorkflowJobRun jobRun,
@@ -232,6 +354,10 @@ public class WorkflowJobOrchestrator {
     }
 
     private void skipJob(WorkflowRun run, String jobId) {
+        skipJobWithReason(run, jobId, null);
+    }
+
+    private void skipJobWithReason(WorkflowRun run, String jobId, String reason) {
         WorkflowJobRun jobRun = jobRunRepository.findByRunIdAndJobId(run.getId(), jobId)
                 .orElseGet(() -> {
                     WorkflowJobRun jr = new WorkflowJobRun();
@@ -241,6 +367,9 @@ public class WorkflowJobOrchestrator {
                 });
         jobRun.setStatus(WorkflowJobStatus.SKIPPED);
         jobRun.setCompletedAt(OffsetDateTime.now());
+        if (reason != null) {
+            jobRun.setSkipReason(reason);
+        }
         jobRunRepository.save(jobRun);
     }
 
@@ -253,9 +382,10 @@ public class WorkflowJobOrchestrator {
         List<String> needs = getNeedsList(currentJob);
 
         for (String depJobId : needs) {
-            Optional<WorkflowJobRun> depJobRunOpt = jobRunRepository.findByRunIdAndJobId(run.getId(), depJobId);
-            if (depJobRunOpt.isEmpty()) continue;
-            String depJobRunId = depJobRunOpt.get().getId();
+            // For loop jobs, use the latest (highest iteration) run to collect outputs
+            List<WorkflowJobRun> depJobRuns = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(run.getId(), depJobId);
+            if (depJobRuns.isEmpty()) continue;
+            String depJobRunId = depJobRuns.get(0).getId();
 
             List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(depJobRunId);
             Map<String, String> jobOutputs = new HashMap<>();

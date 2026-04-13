@@ -12,6 +12,8 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 @Service
 public class WorkflowExecutionEngine {
@@ -39,16 +41,26 @@ public class WorkflowExecutionEngine {
         this.orchestrator = orchestrator;
     }
 
-    /** Poll every 500ms for queued jobs */
+    /** Poll every 500ms — claim ALL ready jobs and dispatch each asynchronously */
     @Scheduled(fixedDelay = 500)
     @Transactional
     public void pollQueue() {
         try {
-            Optional<WorkflowJobQueue> entry = queueRepository.claimNextJob();
-            if (entry.isEmpty()) return;
-            WorkflowJobQueue queued = entry.get();
-            queueRepository.markClaimed(queued.getId());
-            processJob(queued.getRun().getId(), queued.getJobId());
+            List<WorkflowJobQueue> entries = queueRepository.claimAllReadyJobs();
+            if (entries.isEmpty()) return;
+            List<String> ids = entries.stream().map(WorkflowJobQueue::getId).collect(Collectors.toList());
+            queueRepository.markAllClaimed(ids);
+            for (WorkflowJobQueue queued : entries) {
+                String runId = queued.getRun().getId();
+                String jobId = queued.getJobId();
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        processJob(runId, jobId);
+                    } catch (Exception e) {
+                        log.error("Error processing job {}: {}", jobId, e.getMessage(), e);
+                    }
+                });
+            }
         } catch (Exception e) {
             log.error("Error polling workflow job queue: {}", e.getMessage(), e);
         }
@@ -106,7 +118,8 @@ public class WorkflowExecutionEngine {
         checkRunCompletion(run);
     }
 
-    private void checkRunCompletion(WorkflowRun run) {
+    @Transactional
+    public void checkRunCompletion(WorkflowRun run) {
         List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(run.getId());
         WorkflowDefinition workflow = run.getWorkflow();
         Map<String, Object> parsedWorkflow = parseYaml(workflow.getYaml());
@@ -124,7 +137,8 @@ public class WorkflowExecutionEngine {
         if (terminalJobs < totalJobs) return;
 
         boolean anyFailed = jobRuns.stream()
-                .anyMatch(j -> j.getStatus() == WorkflowJobStatus.FAILED);
+                .anyMatch(j -> j.getStatus() == WorkflowJobStatus.FAILED
+                        || j.getStatus() == WorkflowJobStatus.LOOP_EXHAUSTED);
         run.setStatus(anyFailed ? WorkflowRunStatus.FAILED : WorkflowRunStatus.SUCCESS);
         run.setCompletedAt(OffsetDateTime.now());
         runRepository.save(run);
@@ -134,7 +148,8 @@ public class WorkflowExecutionEngine {
     private boolean isTerminal(WorkflowJobStatus status) {
         return status == WorkflowJobStatus.SUCCESS
                 || status == WorkflowJobStatus.FAILED
-                || status == WorkflowJobStatus.SKIPPED;
+                || status == WorkflowJobStatus.SKIPPED
+                || status == WorkflowJobStatus.LOOP_EXHAUSTED;
     }
 
     private Map<String, Object> parseYaml(String yaml) {

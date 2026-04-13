@@ -47,6 +47,16 @@ public class RuntimeContextBuilder {
     public RuntimeContext build(WorkflowRun run, WorkflowJobRun jobRun,
                                 Map<String, String> secrets,
                                 Map<String, Map<String, String>> upstreamJobOutputs) {
+        return build(run, jobRun, secrets, upstreamJobOutputs, 0);
+    }
+
+    /**
+     * Build context for a step with loop iteration (1-based).
+     */
+    public RuntimeContext build(WorkflowRun run, WorkflowJobRun jobRun,
+                                Map<String, String> secrets,
+                                Map<String, Map<String, String>> upstreamJobOutputs,
+                                int loopIteration) {
         Map<String, Object> eventPayload = parseEventPayload(run.getEventPayload());
 
         Map<String, Map<String, String>> stepOutputs = new HashMap<>();
@@ -58,7 +68,7 @@ public class RuntimeContextBuilder {
             }
         }
 
-        return new RuntimeContext(eventPayload, secrets, stepOutputs, upstreamJobOutputs);
+        return new RuntimeContext(eventPayload, secrets, stepOutputs, upstreamJobOutputs, loopIteration);
     }
 
     /** Load secrets once for the project — call this once per job, not per step */
