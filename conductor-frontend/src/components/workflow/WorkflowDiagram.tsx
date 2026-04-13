@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { ReactFlow, Background, Panel, useReactFlow, Handle, Position, type Node, type Edge } from '@xyflow/react';
+import { ReactFlow, ReactFlowProvider, Background, useReactFlow, Handle, Position, type Node, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 
@@ -49,27 +49,27 @@ function JobNode({ data }: { data: { label: string; stepInfo: string; status?: J
 }
 
 // ── Zoom controls ──────────────────────────────────────────────────────────────
+// Rendered as an absolute sibling of <ReactFlow> (not inside Panel) so the
+// container's overflow-hidden never clips the buttons.
 function ZoomControls() {
   const { zoomIn, zoomOut } = useReactFlow();
   return (
-    <Panel position="bottom-right">
-      <div className="mb-6 mr-4 flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-white shadow-md">
-        <button
-          onClick={() => zoomIn()}
-          className="flex h-9 w-9 items-center justify-center border-b border-gray-300 text-lg font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200"
-          aria-label="Zoom in"
-        >
-          +
-        </button>
-        <button
-          onClick={() => zoomOut()}
-          className="flex h-9 w-9 items-center justify-center text-lg font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200"
-          aria-label="Zoom out"
-        >
-          −
-        </button>
-      </div>
-    </Panel>
+    <div className="absolute bottom-4 right-4 z-10 flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-white shadow-md">
+      <button
+        onClick={() => zoomIn()}
+        className="flex h-9 w-9 items-center justify-center border-b border-gray-300 text-lg font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200"
+        aria-label="Zoom in"
+      >
+        +
+      </button>
+      <button
+        onClick={() => zoomOut()}
+        className="flex h-9 w-9 items-center justify-center text-lg font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200"
+        aria-label="Zoom out"
+      >
+        −
+      </button>
+    </div>
   );
 }
 
@@ -219,21 +219,23 @@ export default function WorkflowDiagram({ yaml, jobStatuses }: WorkflowDiagramPr
   }
 
   return (
-    <div className="h-full w-full overflow-hidden rounded-md">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.3 }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background color="#e5e7eb" gap={16} />
+    <ReactFlowProvider>
+      <div className="relative h-full w-full overflow-hidden rounded-md">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.3 }}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={false}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background color="#e5e7eb" gap={16} />
+        </ReactFlow>
         <ZoomControls />
-      </ReactFlow>
-    </div>
+      </div>
+    </ReactFlowProvider>
   );
 }

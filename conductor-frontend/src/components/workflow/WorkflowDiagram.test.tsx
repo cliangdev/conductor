@@ -20,7 +20,7 @@ vi.mock('@xyflow/react', () => ({
     </div>
   ),
   Background: () => null,
-  Panel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ReactFlowProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   Handle: () => null,
   Position: { Top: 'top', Bottom: 'bottom' },
   useReactFlow: () => ({ zoomIn: vi.fn(), zoomOut: vi.fn() }),
