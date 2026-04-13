@@ -10,7 +10,10 @@ import java.util.*;
 @Component
 public class WorkflowValidator {
 
-    private static final Set<String> ALLOWED_STEP_TYPES = Set.of("http");
+    private static final Set<String> ALLOWED_STEP_TYPES = Set.of("http", "docker", "kestra");
+    private static final Set<String> VALID_RUNS_ON_SCALARS = Set.of("conductor", "self-hosted");
+    private static final java.util.regex.Pattern CRON_PATTERN =
+            java.util.regex.Pattern.compile("^\\S+ \\S+ \\S+ \\S+ \\S+$");
 
     public WorkflowValidationResult validate(String yaml, Set<String> existingSecretKeys) {
         List<String> errors = new ArrayList<>();
@@ -68,6 +71,20 @@ public class WorkflowValidator {
             }
             needs.put(jobId, deps);
 
+            // Validate runs-on
+            Object runsOnVal = job.get("runs-on");
+            if (runsOnVal != null) {
+                if (runsOnVal instanceof List) {
+                    // List of strings — allowed
+                } else if (runsOnVal instanceof String runsOnStr) {
+                    if (!VALID_RUNS_ON_SCALARS.contains(runsOnStr)) {
+                        errors.add("Invalid runs-on value: " + runsOnStr);
+                    }
+                } else {
+                    errors.add("Invalid runs-on value: " + runsOnVal);
+                }
+            }
+
             // Validate step types
             Object stepsObj = job.get("steps");
             if (stepsObj instanceof List) {
@@ -76,8 +93,46 @@ public class WorkflowValidator {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> step = (Map<String, Object>) stepObj;
                     Object typeVal = step.get("type");
-                    if (typeVal != null && !ALLOWED_STEP_TYPES.contains(typeVal.toString())) {
-                        errors.add("Unknown step type: " + typeVal);
+                    Object usesVal = step.get("uses");
+
+                    if (typeVal != null && usesVal != null) {
+                        errors.add("Step cannot have both 'type' and 'uses' fields");
+                        continue;
+                    }
+
+                    if (usesVal instanceof String uses && uses.startsWith("docker://")) {
+                        // Valid docker uses syntax — treated as docker step type
+                        continue;
+                    }
+
+                    if (typeVal != null) {
+                        String type = typeVal.toString();
+                        if (!ALLOWED_STEP_TYPES.contains(type)) {
+                            errors.add("Unknown step type: " + typeVal);
+                        } else if ("kestra".equals(type)) {
+                            validateKestraStep(step, errors);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Validate schedule trigger
+        Object onBlock = parsed.containsKey("on") ? parsed.get("on") : parsed.get(Boolean.TRUE);
+        if (onBlock instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> triggers = (Map<String, Object>) onBlock;
+            Object scheduleTrigger = triggers.get("schedule");
+            if (scheduleTrigger instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> scheduleConfig = (Map<String, Object>) scheduleTrigger;
+                Object cronVal = scheduleConfig.get("cron");
+                if (cronVal == null) {
+                    errors.add("schedule trigger missing required field: cron");
+                } else {
+                    String cron = cronVal.toString().trim();
+                    if (!CRON_PATTERN.matcher(cron).matches()) {
+                        errors.add("Invalid cron expression: " + cron);
                     }
                 }
             }
@@ -96,6 +151,17 @@ public class WorkflowValidator {
         }
 
         return new WorkflowValidationResult(errors, warnings);
+    }
+
+    private void validateKestraStep(Map<String, Object> step, List<String> errors) {
+        Object namespace = step.get("namespace");
+        if (namespace == null || namespace.toString().isBlank()) {
+            errors.add("kestra step missing required field: namespace");
+        }
+        Object flowId = step.get("flow_id");
+        if (flowId == null || flowId.toString().isBlank()) {
+            errors.add("kestra step missing required field: flow_id");
+        }
     }
 
     private boolean detectCycle(Map<String, List<String>> graph) {

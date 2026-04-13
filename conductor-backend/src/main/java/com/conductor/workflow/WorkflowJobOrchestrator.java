@@ -132,7 +132,7 @@ public class WorkflowJobOrchestrator {
                                    Map<String, Object> stepDef, RuntimeContext ctx, String projectId) {
         String stepId = (String) stepDef.get("id");
         String stepName = (String) stepDef.getOrDefault("name", "unnamed");
-        String stepType = (String) stepDef.getOrDefault("type", "http");
+        String stepType = resolveStepType(stepDef);
 
         String ifCond = (String) stepDef.get("if");
         if (ifCond != null) {
@@ -280,6 +280,19 @@ public class WorkflowJobOrchestrator {
         if (needs instanceof List) return (List<String>) needs;
         if (needs instanceof String) return List.of((String) needs);
         return List.of();
+    }
+
+    /**
+     * Resolves the effective step type:
+     * - If "uses" starts with "docker://", returns "docker"
+     * - Otherwise returns "type" field (defaulting to "http")
+     */
+    private String resolveStepType(Map<String, Object> stepDef) {
+        Object usesVal = stepDef.get("uses");
+        if (usesVal instanceof String uses && uses.startsWith("docker://")) {
+            return "docker";
+        }
+        return (String) stepDef.getOrDefault("type", "http");
     }
 
     private Map<String, Object> parseYaml(String yaml) {
