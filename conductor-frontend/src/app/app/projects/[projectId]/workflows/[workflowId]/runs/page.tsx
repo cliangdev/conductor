@@ -29,19 +29,19 @@ function formatDate(dateStr: string): string {
 
 export default function RunListPage() {
   const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>();
-  const { token } = useAuth();
+  const { accessToken } = useAuth();
   const router = useRouter();
   const [runs, setRuns] = useState<WorkflowRunDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
 
   const fetchRuns = useCallback(() => {
-    if (!token) return;
+    if (!accessToken) return;
     apiGet<WorkflowRunDto[]>(
       `/projects/${projectId}/workflows/${workflowId}/runs?page=${page}&size=50`,
-      token
+      accessToken
     ).then(setRuns).finally(() => setLoading(false));
-  }, [projectId, workflowId, token, page]);
+  }, [projectId, workflowId, accessToken, page]);
 
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
@@ -53,9 +53,9 @@ export default function RunListPage() {
   }, [runs, fetchRuns]);
 
   const handleRunAgain = async () => {
-    if (!token) return;
+    if (!accessToken) return;
     const run = await apiPost<WorkflowRunDto>(
-      `/projects/${projectId}/workflows/${workflowId}/dispatch`, {}, token
+      `/projects/${projectId}/workflows/${workflowId}/dispatch`, {}, accessToken
     );
     router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs/${run.id}`);
   };

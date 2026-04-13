@@ -41,18 +41,18 @@ export default function RunDetailPage() {
   const { projectId, workflowId, runId } = useParams<{
     projectId: string; workflowId: string; runId: string;
   }>();
-  const { token } = useAuth();
+  const { accessToken } = useAuth();
   const router = useRouter();
   const [run, setRun] = useState<WorkflowRunDetailDto | null>(null);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
 
   const fetchRun = useCallback(() => {
-    if (!token) return;
+    if (!accessToken) return;
     apiGet<WorkflowRunDetailDto>(
       `/projects/${projectId}/workflows/${workflowId}/runs/${runId}`,
-      token
+      accessToken
     ).then(setRun);
-  }, [projectId, workflowId, runId, token]);
+  }, [projectId, workflowId, runId, accessToken]);
 
   useEffect(() => { fetchRun(); }, [fetchRun]);
 
@@ -63,9 +63,9 @@ export default function RunDetailPage() {
   }, [run, fetchRun]);
 
   const handleRunAgain = async () => {
-    if (!token) return;
+    if (!accessToken) return;
     const newRun = await apiPost<{ id: string }>(
-      `/projects/${projectId}/workflows/${workflowId}/dispatch`, {}, token
+      `/projects/${projectId}/workflows/${workflowId}/dispatch`, {}, accessToken!
     );
     router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs/${newRun.id}`);
   };
