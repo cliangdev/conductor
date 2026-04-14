@@ -16,6 +16,7 @@ interface Props {
   onCommentAdded: () => void
   token: string
   currentUserId: string
+  onDocumentNavigate?: (filename: string) => void
 }
 
 interface SelectionState {
@@ -58,6 +59,7 @@ export function CommentableDocument({
   onCommentAdded,
   token,
   currentUserId,
+  onDocumentNavigate,
 }: Props) {
   const contentRef = useRef<HTMLDivElement>(null)
   const skipNextMouseUpRef = useRef(false)
@@ -185,7 +187,7 @@ export function CommentableDocument({
         {/* Document content */}
         <div className="flex-1 relative min-w-0">
           <div ref={contentRef} className="relative" onMouseUp={handleMouseUp}>
-            <MarkdownRenderer content={content} />
+            <MarkdownRenderer content={content} onDocumentNavigate={onDocumentNavigate} />
           </div>
 
           {/* Floating "Add comment" button — desktop only */}
