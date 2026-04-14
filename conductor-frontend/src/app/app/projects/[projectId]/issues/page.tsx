@@ -1,12 +1,20 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import type { MemberRole } from '@/types'
 
@@ -138,18 +146,7 @@ function AssigneeCell({
   token: string
   onChanged: (assignee: IssueAssignee | null) => void
 }) {
-  const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [open])
 
   async function handleSelect(member: Member | null) {
     setSaving(true)
@@ -164,54 +161,55 @@ function AssigneeCell({
       // silently ignore
     } finally {
       setSaving(false)
-      setOpen(false)
     }
   }
 
   return (
-    <div ref={ref} className="relative inline-block">
-      <button
-        disabled={saving}
-        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-        className="flex items-center gap-1.5 hover:opacity-80 transition-opacity focus:outline-none disabled:opacity-50"
-      >
-        {assignee ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button disabled={saving} className="focus:outline-none">
+          <Badge variant="outline" className="cursor-pointer hover:opacity-80 transition-opacity gap-1.5 font-normal">
+            {assignee ? (
+              <>
+                <UserAvatar name={assignee.name} avatarUrl={assignee.avatarUrl} size={4} />
+                <span className="max-w-[72px] truncate">{assignee.name}</span>
+              </>
+            ) : (
+              <span className="text-muted-foreground">Unassigned</span>
+            )}
+            <span className="text-xs opacity-60">▼</span>
+          </Badge>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-52">
+        {assignee && (
           <>
-            <UserAvatar name={assignee.name} avatarUrl={assignee.avatarUrl} size={5} />
-            <span className="text-xs text-foreground max-w-[80px] truncate hidden lg:block">{assignee.name}</span>
-          </>
-        ) : (
-          <span className="text-xs text-muted-foreground">—</span>
-        )}
-      </button>
-      {open && (
-        <div className="absolute z-50 top-full left-0 mt-1 w-48 bg-popover border border-border rounded-md shadow-lg py-1">
-          {assignee && (
-            <button
-              onClick={(e) => { e.stopPropagation(); handleSelect(null) }}
-              className="w-full text-left px-3 py-1.5 text-xs text-destructive hover:bg-muted transition-colors"
+            <DropdownMenuItem
+              onClick={() => handleSelect(null)}
+              className="cursor-pointer text-destructive focus:text-destructive"
             >
               Unassign
-            </button>
-          )}
-          {members.map((m) => (
-            <button
-              key={m.userId}
-              onClick={(e) => { e.stopPropagation(); handleSelect(m) }}
-              className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-muted transition-colors ${assignee?.userId === m.userId ? 'font-semibold text-primary' : 'text-foreground'}`}
-            >
-              <UserAvatar name={m.name} avatarUrl={m.avatarUrl} size={4} />
-              <span className="truncate">{m.name}</span>
-              {m.role === 'REVIEWER' && <span className="text-muted-foreground ml-auto shrink-0">reviewer</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        {members.map((m) => (
+          <DropdownMenuItem
+            key={m.userId}
+            onClick={() => handleSelect(m)}
+            className="cursor-pointer gap-2"
+          >
+            <UserAvatar name={m.name} avatarUrl={m.avatarUrl} size={5} />
+            <span className="truncate flex-1">{m.name}</span>
+            {assignee?.userId === m.userId && <span className="text-primary text-xs">✓</span>}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
-// Popover for managing issue reviewers inline
+// Dropdown for managing issue reviewers inline
 function ReviewerCell({
   issueId,
   projectId,
@@ -227,21 +225,10 @@ function ReviewerCell({
   token: string
   onChanged: (reviewers: IssueReviewer[]) => void
 }) {
-  const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState<string | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
 
   const reviewerMembers = members.filter((m) => m.role === 'REVIEWER')
   const assignedIds = new Set(reviewers.map((r) => r.userId))
-
-  useEffect(() => {
-    if (!open) return
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [open])
 
   async function toggleReviewer(member: Member) {
     setSaving(member.userId)
@@ -267,51 +254,54 @@ function ReviewerCell({
     }
   }
 
+  const triggerLabel = reviewers.length === 0 ? (
+    <span className="text-muted-foreground">No reviewers</span>
+  ) : (
+    <span className="flex items-center gap-0.5">
+      {reviewers.map((r) => (
+        <span key={r.userId} className="flex items-center gap-0.5">
+          <UserAvatar name={r.name} avatarUrl={r.avatarUrl} size={4} />
+          <span className="text-xs">{verdictIcon(r.reviewVerdict)}</span>
+        </span>
+      ))}
+    </span>
+  )
+
   return (
-    <div ref={ref} className="relative inline-block">
-      <button
-        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
-        className="flex items-center gap-1 hover:opacity-80 transition-opacity focus:outline-none"
-      >
-        {reviewers.length === 0 ? (
-          <span className="text-xs text-muted-foreground">—</span>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="focus:outline-none">
+          <Badge variant="outline" className="cursor-pointer hover:opacity-80 transition-opacity gap-1 font-normal">
+            {triggerLabel}
+            <span className="text-xs opacity-60">▼</span>
+          </Badge>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-52">
+        <DropdownMenuLabel className="text-xs text-muted-foreground font-medium">Reviewers</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {reviewerMembers.length === 0 ? (
+          <DropdownMenuItem disabled>No reviewer-role members</DropdownMenuItem>
         ) : (
-          <div className="flex items-center gap-0.5">
-            {reviewers.map((r) => (
-              <div key={r.userId} className="flex items-center gap-0.5">
-                <UserAvatar name={r.name} avatarUrl={r.avatarUrl} size={5} />
-                <span className="text-xs">{verdictIcon(r.reviewVerdict)}</span>
-              </div>
-            ))}
-          </div>
+          reviewerMembers.map((m) => {
+            const assigned = assignedIds.has(m.userId)
+            const isSaving = saving === m.userId
+            return (
+              <DropdownMenuItem
+                key={m.userId}
+                disabled={isSaving}
+                onClick={() => toggleReviewer(m)}
+                className="cursor-pointer gap-2"
+              >
+                <span className="text-sm w-4 shrink-0">{assigned ? '✓' : ''}</span>
+                <UserAvatar name={m.name} avatarUrl={m.avatarUrl} size={5} />
+                <span className="truncate flex-1">{m.name}</span>
+              </DropdownMenuItem>
+            )
+          })
         )}
-      </button>
-      {open && (
-        <div className="absolute z-50 top-full left-0 mt-1 w-52 bg-popover border border-border rounded-md shadow-lg py-1">
-          <p className="px-3 py-1 text-xs text-muted-foreground font-medium border-b border-border mb-1">Reviewers</p>
-          {reviewerMembers.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">No reviewer-role members</p>
-          ) : (
-            reviewerMembers.map((m) => {
-              const assigned = assignedIds.has(m.userId)
-              const isSaving = saving === m.userId
-              return (
-                <button
-                  key={m.userId}
-                  disabled={isSaving}
-                  onClick={(e) => { e.stopPropagation(); toggleReviewer(m) }}
-                  className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-muted transition-colors disabled:opacity-50"
-                >
-                  <span className="text-base leading-none">{assigned ? '☑' : '☐'}</span>
-                  <UserAvatar name={m.name} avatarUrl={m.avatarUrl} size={4} />
-                  <span className="truncate text-foreground">{m.name}</span>
-                </button>
-              )
-            })
-          )}
-        </div>
-      )}
-    </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
