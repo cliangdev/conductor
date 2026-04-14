@@ -12,7 +12,15 @@ interface Props {
   onDocumentNavigate?: (filename: string) => void
 }
 
+function stripFrontmatter(content: string): string {
+  if (!content.startsWith('---')) return content
+  const end = content.indexOf('\n---', 3)
+  if (end === -1) return content
+  return content.slice(end + 4).trimStart()
+}
+
 export function MarkdownRenderer({ content, className, onDocumentNavigate }: Props) {
+  const stripped = stripFrontmatter(content)
   return (
     <div className={`prose prose-sm dark:prose-invert max-w-none ${className ?? ''}`}>
       <ReactMarkdown
@@ -47,7 +55,7 @@ export function MarkdownRenderer({ content, className, onDocumentNavigate }: Pro
           },
         }}
       >
-        {content}
+        {stripped}
       </ReactMarkdown>
     </div>
   )
