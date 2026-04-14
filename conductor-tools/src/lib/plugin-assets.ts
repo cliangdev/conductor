@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url'
 
 const PLUGIN_FILES = [
   'commands/conductor/prd.md',
+  'commands/conductor/implement.md',
   'agents/researcher.md',
   'skills/ux-ui-design/SKILL.md',
   'skills/ux-ui-design/references/design-tokens.md',

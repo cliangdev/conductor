@@ -403,11 +403,12 @@ describe('installPluginAssets', () => {
     realFs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('returns installed and creates all four plugin files on first run', async () => {
+  it('returns installed and creates all plugin files on first run', async () => {
     const { installPluginAssets } = await import('../lib/plugin-assets.js')
     const status = installPluginAssets(tmpDir, assetSrcDir)
     expect(status).toBe('installed')
     expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'prd.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'implement.md'))).toBe(true)
     expect(realFs.existsSync(path.join(tmpDir, 'agents', 'researcher.md'))).toBe(true)
     expect(realFs.existsSync(path.join(tmpDir, 'skills', 'ux-ui-design', 'SKILL.md'))).toBe(true)
     expect(realFs.existsSync(path.join(tmpDir, 'skills', 'ux-ui-design', 'references', 'design-tokens.md'))).toBe(true)
