@@ -11,10 +11,11 @@ export function MermaidDiagram({ chart }: Props) {
 
   useEffect(() => {
     const id = 'mermaid-' + Math.random().toString(36).slice(2)
+    const isDark = document.documentElement.classList.contains('dark')
     import('mermaid').then((m) => {
       m.default.initialize({
         startOnLoad: false,
-        theme: 'neutral',
+        theme: isDark ? 'dark' : 'neutral',
         securityLevel: 'loose',
       })
       m.default
