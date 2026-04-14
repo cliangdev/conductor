@@ -9,6 +9,7 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.CreateIssueRequest;
+import com.conductor.generated.model.IssueAssignee;
 import com.conductor.generated.model.IssueResponse;
 import com.conductor.generated.model.PatchIssueRequest;
 import com.conductor.notification.EventType;
@@ -18,6 +19,7 @@ import com.conductor.repository.CommentRepository;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +49,7 @@ public class IssueService {
     private final ProjectMemberRepository projectMemberRepository;
     private final NotificationDispatcher notificationDispatcher;
     private final CommentRepository commentRepository;
+    private final UserRepository userRepository;
 
     public IssueService(
             IssueRepository issueRepository,
@@ -54,13 +57,15 @@ public class IssueService {
             ProjectSecurityService projectSecurityService,
             ProjectMemberRepository projectMemberRepository,
             NotificationDispatcher notificationDispatcher,
-            CommentRepository commentRepository) {
+            CommentRepository commentRepository,
+            UserRepository userRepository) {
         this.issueRepository = issueRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
         this.notificationDispatcher = notificationDispatcher;
         this.commentRepository = commentRepository;
+        this.userRepository = userRepository;
     }
 
     @Transactional
@@ -138,6 +143,19 @@ public class IssueService {
         }
         if (request.getDescription() != null) {
             issue.setDescription(request.getDescription());
+        }
+        if (request.getAssigneeId() != null) {
+            String assigneeId = request.getAssigneeId();
+            if (assigneeId.isBlank()) {
+                issue.setAssignee(null);
+            } else {
+                User assignee = userRepository.findById(assigneeId)
+                        .orElseThrow(() -> new BusinessException("Assignee user not found"));
+                if (!projectSecurityService.isProjectMember(projectId, assigneeId)) {
+                    throw new BusinessException("Assignee must be a project member");
+                }
+                issue.setAssignee(assignee);
+            }
         }
         IssueStatus previousStatus = issue.getStatus();
         if (request.getStatus() != null) {
@@ -234,6 +252,11 @@ public class IssueService {
 
     private IssueResponse toIssueResponse(Issue issue) {
         String displayId = issue.getProject().getKey() + "-" + issue.getSequenceNumber();
+        IssueAssignee assignee = null;
+        if (issue.getAssignee() != null) {
+            User a = issue.getAssignee();
+            assignee = new IssueAssignee(a.getId(), a.getName()).avatarUrl(a.getAvatarUrl());
+        }
         return new IssueResponse(
                 issue.getId(),
                 issue.getProject().getId(),
@@ -245,6 +268,7 @@ public class IssueService {
                 issue.getUpdatedAt(),
                 issue.getSequenceNumber(),
                 displayId)
-                .description(issue.getDescription());
+                .description(issue.getDescription())
+                .assignee(assignee);
     }
 }

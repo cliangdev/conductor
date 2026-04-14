@@ -17,6 +17,7 @@ import com.conductor.repository.CommentRepository;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,6 +57,9 @@ class IssueServiceTest {
 
     @Mock
     private CommentRepository commentRepository;
+
+    @Mock
+    private UserRepository userRepository;
 
     @InjectMocks
     private IssueService issueService;
