@@ -116,23 +116,41 @@ class StatusTransitionE2ETest {
         assertThat(toInReview.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(toInReview.getBody().get("status")).isEqualTo("IN_REVIEW");
 
-        // IN_REVIEW → APPROVED
-        var toApproved = rest.exchange(
+        // IN_REVIEW → READY_FOR_DEVELOPMENT
+        var toReady = rest.exchange(
                 url("/api/v1/projects/" + projectId + "/issues/" + issueId),
                 HttpMethod.PATCH,
-                new HttpEntity<>(Map.of("status", "APPROVED"), adminHeaders),
+                new HttpEntity<>(Map.of("status", "READY_FOR_DEVELOPMENT"), adminHeaders),
                 Map.class);
-        assertThat(toApproved.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(toApproved.getBody().get("status")).isEqualTo("APPROVED");
+        assertThat(toReady.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(toReady.getBody().get("status")).isEqualTo("READY_FOR_DEVELOPMENT");
 
-        // APPROVED → ARCHIVED
-        var toArchived = rest.exchange(
+        // READY_FOR_DEVELOPMENT → IN_PROGRESS
+        var toInProgress = rest.exchange(
                 url("/api/v1/projects/" + projectId + "/issues/" + issueId),
                 HttpMethod.PATCH,
-                new HttpEntity<>(Map.of("status", "ARCHIVED"), adminHeaders),
+                new HttpEntity<>(Map.of("status", "IN_PROGRESS"), adminHeaders),
                 Map.class);
-        assertThat(toArchived.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(toArchived.getBody().get("status")).isEqualTo("ARCHIVED");
+        assertThat(toInProgress.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(toInProgress.getBody().get("status")).isEqualTo("IN_PROGRESS");
+
+        // IN_PROGRESS → CODE_REVIEW
+        var toCodeReview = rest.exchange(
+                url("/api/v1/projects/" + projectId + "/issues/" + issueId),
+                HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("status", "CODE_REVIEW"), adminHeaders),
+                Map.class);
+        assertThat(toCodeReview.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(toCodeReview.getBody().get("status")).isEqualTo("CODE_REVIEW");
+
+        // CODE_REVIEW → DONE
+        var toDone = rest.exchange(
+                url("/api/v1/projects/" + projectId + "/issues/" + issueId),
+                HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("status", "DONE"), adminHeaders),
+                Map.class);
+        assertThat(toDone.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(toDone.getBody().get("status")).isEqualTo("DONE");
     }
 
     @Test
@@ -146,11 +164,11 @@ class StatusTransitionE2ETest {
         assertThat(issueResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         String issueId = (String) issueResp.getBody().get("id");
 
-        // Try DRAFT → APPROVED directly (skipping IN_REVIEW) → 400
+        // Try DRAFT → READY_FOR_DEVELOPMENT directly (skipping IN_REVIEW) → 400
         var invalidTransition = rest.exchange(
                 url("/api/v1/projects/" + projectId + "/issues/" + issueId),
                 HttpMethod.PATCH,
-                new HttpEntity<>(Map.of("status", "APPROVED"), adminHeaders),
+                new HttpEntity<>(Map.of("status", "READY_FOR_DEVELOPMENT"), adminHeaders),
                 Map.class);
         assertThat(invalidTransition.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
