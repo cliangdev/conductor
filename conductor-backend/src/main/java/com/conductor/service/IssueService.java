@@ -177,6 +177,14 @@ public class IssueService {
                 notificationDispatcher.dispatch(NotificationEvent.of(
                         EventType.ISSUE_APPROVED, projectId,
                         Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+            } else if (newStatus == IssueStatus.IN_PROGRESS) {
+                notificationDispatcher.dispatch(NotificationEvent.of(
+                        EventType.ISSUE_IN_PROGRESS, projectId,
+                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+            } else if (newStatus == IssueStatus.CODE_REVIEW) {
+                notificationDispatcher.dispatch(NotificationEvent.of(
+                        EventType.ISSUE_IN_CODE_REVIEW, projectId,
+                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
             } else if (newStatus == IssueStatus.DONE) {
                 notificationDispatcher.dispatch(NotificationEvent.of(
                         EventType.ISSUE_COMPLETED, projectId,

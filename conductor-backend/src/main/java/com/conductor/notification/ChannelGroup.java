@@ -9,7 +9,10 @@ public enum ChannelGroup {
     ISSUES("Issues", List.of(
             EventType.ISSUE_SUBMITTED,
             EventType.ISSUE_APPROVED,
+            EventType.ISSUE_IN_PROGRESS,
+            EventType.ISSUE_IN_CODE_REVIEW,
             EventType.ISSUE_COMPLETED,
+            EventType.ISSUE_STATUS_CHANGED,
             EventType.REVIEWER_ASSIGNED,
             EventType.REVIEW_SUBMITTED,
             EventType.COMMENT_ADDED,
