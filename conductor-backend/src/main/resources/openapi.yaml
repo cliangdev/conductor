@@ -2672,6 +2672,7 @@ components:
       required:
         - id
         - name
+        - key
         - createdBy
         - createdAt
       properties:
@@ -2679,6 +2680,9 @@ components:
           type: string
         name:
           type: string
+        key:
+          type: string
+          description: Short uppercase project identifier (e.g. "COND")
         description:
           type: string
         createdBy:
@@ -2693,6 +2697,7 @@ components:
       required:
         - id
         - name
+        - key
         - role
         - memberCount
         - createdAt
@@ -2701,6 +2706,9 @@ components:
           type: string
         name:
           type: string
+        key:
+          type: string
+          description: Short uppercase project identifier (e.g. "COND")
         description:
           type: string
         role:
@@ -2717,6 +2725,7 @@ components:
       required:
         - id
         - name
+        - key
         - createdBy
         - memberCount
         - createdAt
@@ -2725,6 +2734,9 @@ components:
           type: string
         name:
           type: string
+        key:
+          type: string
+          description: Short uppercase project identifier (e.g. "COND")
         description:
           type: string
         createdBy:
@@ -2844,6 +2856,8 @@ components:
         - createdBy
         - createdAt
         - updatedAt
+        - sequenceNumber
+        - displayId
       properties:
         id:
           type: string
@@ -2865,6 +2879,11 @@ components:
         updatedAt:
           type: string
           format: date-time
+        sequenceNumber:
+          type: integer
+        displayId:
+          type: string
+          description: Human-readable ID (e.g. "COND-42")
         unresolvedCommentCount:
           type: integer
 

@@ -73,7 +73,7 @@ class IssueControllerTest {
 
     private IssueResponse buildIssueResponse(String id, IssueType type, IssueStatus status) {
         return new IssueResponse(id, "proj-1", type, "Test Issue", status, "user-id-123",
-                OffsetDateTime.now(), OffsetDateTime.now());
+                OffsetDateTime.now(), OffsetDateTime.now(), 1, "PROJ-1");
     }
 
     @Test

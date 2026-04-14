@@ -24,6 +24,9 @@ public class Project {
     @Column(name = "name", length = 100, nullable = false)
     private String name;
 
+    @Column(name = "key", length = 10, nullable = false, updatable = false)
+    private String key;
+
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
 
@@ -56,6 +59,9 @@ public class Project {
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+
+    public String getKey() { return key; }
+    public void setKey(String key) { this.key = key; }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }

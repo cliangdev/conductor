@@ -17,6 +17,8 @@ interface Issue {
   status: string
   updatedAt: string
   unresolvedCommentCount?: number
+  displayId?: string
+  sequenceNumber?: number
 }
 
 interface IssueReviewer {
@@ -191,7 +193,12 @@ export default function IssuesListPage() {
                 className="block bg-card border border-border rounded-lg p-4 hover:border-border-strong transition-colors"
               >
                 <div className="flex items-start justify-between gap-2 mb-2">
-                  <span className="font-medium text-foreground text-sm leading-snug">{issue.title}</span>
+                  <div className="flex flex-col gap-0.5">
+                    {issue.displayId && (
+                      <span className="font-mono text-xs text-muted-foreground">{issue.displayId}</span>
+                    )}
+                    <span className="font-medium text-foreground text-sm leading-snug">{issue.title}</span>
+                  </div>
                   <Badge variant={STATUS_VARIANTS[issue.status] ?? 'status-draft'} className="shrink-0">
                     {issue.status.replace('_', ' ')}
                   </Badge>
@@ -217,6 +224,7 @@ export default function IssuesListPage() {
             <table className="w-full text-sm">
               <thead className="bg-muted border-b border-border">
                 <tr>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">ID</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Title</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Type</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
@@ -228,6 +236,11 @@ export default function IssuesListPage() {
               <tbody className="divide-y divide-border">
                 {filteredIssues.map((issue) => (
                   <tr key={issue.id} className="hover:bg-muted/50 transition-colors">
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {issue.displayId && (
+                        <span className="font-mono text-xs text-muted-foreground">{issue.displayId}</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <Link
                         href={`/app/projects/${projectId}/issues/${issue.id}`}

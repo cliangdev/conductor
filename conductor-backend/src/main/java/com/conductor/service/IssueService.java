@@ -76,6 +76,9 @@ public class IssueService {
         issue.setCreatedBy(caller);
         issue.setStatus(IssueStatus.DRAFT);
 
+        Integer nextSeq = issueRepository.findMaxSequenceNumberByProjectId(projectId) + 1;
+        issue.setSequenceNumber(nextSeq);
+
         issueRepository.save(issue);
         return toIssueResponse(issue);
     }
@@ -220,6 +223,7 @@ public class IssueService {
     }
 
     private IssueResponse toIssueResponse(Issue issue) {
+        String displayId = issue.getProject().getKey() + "-" + issue.getSequenceNumber();
         return new IssueResponse(
                 issue.getId(),
                 issue.getProject().getId(),
@@ -228,7 +232,9 @@ public class IssueService {
                 toApiIssueStatus(issue.getStatus()),
                 issue.getCreatedBy().getId(),
                 issue.getCreatedAt(),
-                issue.getUpdatedAt())
+                issue.getUpdatedAt(),
+                issue.getSequenceNumber(),
+                displayId)
                 .description(issue.getDescription());
     }
 }
