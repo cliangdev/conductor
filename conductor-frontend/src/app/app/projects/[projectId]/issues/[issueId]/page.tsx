@@ -332,6 +332,13 @@ export default function IssueDetailPage() {
           onCommentAdded={fetchComments}
           token={accessToken!}
           currentUserId={user?.id ?? ''}
+          onDocumentNavigate={(filename) => {
+            const target = documents.find((d) => d.filename === filename)
+            if (target) {
+              setSelectedDocId(target.id)
+              setActiveTab('content')
+            }
+          }}
         />
       ) : selectedDoc && isMarkdown(selectedDoc) && !selectedDoc.content ? (
         <div className="text-muted-foreground text-sm">Document content is empty.</div>

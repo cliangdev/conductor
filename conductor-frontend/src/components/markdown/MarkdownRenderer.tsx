@@ -9,9 +9,10 @@ import { MermaidDiagram } from './MermaidDiagram'
 interface Props {
   content: string
   className?: string
+  onDocumentNavigate?: (filename: string) => void
 }
 
-export function MarkdownRenderer({ content, className }: Props) {
+export function MarkdownRenderer({ content, className, onDocumentNavigate }: Props) {
   return (
     <div className={`prose prose-sm dark:prose-invert max-w-none ${className ?? ''}`}>
       <ReactMarkdown
@@ -25,6 +26,24 @@ export function MarkdownRenderer({ content, className }: Props) {
               return <MermaidDiagram chart={String(children).trim()} />
             }
             return <code className={cls} {...props}>{children}</code>
+          },
+          a: ({ href, children, ...props }) => {
+            if (href?.startsWith('./') && onDocumentNavigate) {
+              const filename = href.slice(2)
+              return (
+                <a
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    onDocumentNavigate(filename)
+                  }}
+                  {...props}
+                >
+                  {children}
+                </a>
+              )
+            }
+            return <a href={href} {...props}>{children}</a>
           },
         }}
       >
