@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
+import { useTheme } from 'next-themes'
 
 interface Props {
   chart: string
@@ -8,14 +9,14 @@ interface Props {
 export function MermaidDiagram({ chart }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
+  const { resolvedTheme } = useTheme()
 
   useEffect(() => {
     const id = 'mermaid-' + Math.random().toString(36).slice(2)
-    const isDark = document.documentElement.classList.contains('dark')
     import('mermaid').then((m) => {
       m.default.initialize({
         startOnLoad: false,
-        theme: isDark ? 'dark' : 'neutral',
+        theme: resolvedTheme === 'dark' ? 'dark' : 'neutral',
         securityLevel: 'loose',
       })
       m.default
@@ -25,7 +26,7 @@ export function MermaidDiagram({ chart }: Props) {
         })
         .catch((e: unknown) => setError(String(e)))
     })
-  }, [chart])
+  }, [chart, resolvedTheme])
 
   if (error) {
     return (
