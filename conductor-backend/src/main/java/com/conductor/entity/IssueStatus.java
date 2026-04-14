@@ -3,7 +3,9 @@ package com.conductor.entity;
 public enum IssueStatus {
     DRAFT,
     IN_REVIEW,
-    APPROVED,
-    CHANGES_REQUESTED,
-    ARCHIVED
+    READY_FOR_DEVELOPMENT,
+    IN_PROGRESS,
+    CODE_REVIEW,
+    DONE,
+    CLOSED
 }

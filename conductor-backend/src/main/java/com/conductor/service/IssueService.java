@@ -32,11 +32,13 @@ import java.util.Set;
 public class IssueService {
 
     private static final Map<IssueStatus, Set<IssueStatus>> VALID_TRANSITIONS = Map.of(
-        IssueStatus.DRAFT, EnumSet.of(IssueStatus.IN_REVIEW),
-        IssueStatus.IN_REVIEW, EnumSet.of(IssueStatus.APPROVED, IssueStatus.CHANGES_REQUESTED, IssueStatus.DRAFT),
-        IssueStatus.APPROVED, EnumSet.of(IssueStatus.ARCHIVED),
-        IssueStatus.CHANGES_REQUESTED, EnumSet.of(IssueStatus.IN_REVIEW, IssueStatus.DRAFT),
-        IssueStatus.ARCHIVED, EnumSet.noneOf(IssueStatus.class)
+        IssueStatus.DRAFT, EnumSet.of(IssueStatus.IN_REVIEW, IssueStatus.CLOSED),
+        IssueStatus.IN_REVIEW, EnumSet.of(IssueStatus.READY_FOR_DEVELOPMENT, IssueStatus.DRAFT, IssueStatus.CLOSED),
+        IssueStatus.READY_FOR_DEVELOPMENT, EnumSet.of(IssueStatus.IN_PROGRESS, IssueStatus.CLOSED),
+        IssueStatus.IN_PROGRESS, EnumSet.of(IssueStatus.CODE_REVIEW, IssueStatus.CLOSED),
+        IssueStatus.CODE_REVIEW, EnumSet.of(IssueStatus.DONE, IssueStatus.CLOSED),
+        IssueStatus.DONE, EnumSet.noneOf(IssueStatus.class),
+        IssueStatus.CLOSED, EnumSet.noneOf(IssueStatus.class)
     );
 
     private final IssueRepository issueRepository;
@@ -149,9 +151,17 @@ public class IssueService {
 
         if (request.getStatus() != null) {
             IssueStatus newStatus = issue.getStatus();
-            if (previousStatus != IssueStatus.IN_REVIEW && newStatus == IssueStatus.IN_REVIEW) {
+            if (newStatus == IssueStatus.IN_REVIEW && previousStatus != IssueStatus.IN_REVIEW) {
                 notificationDispatcher.dispatch(NotificationEvent.of(
                         EventType.ISSUE_SUBMITTED, projectId,
+                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+            } else if (newStatus == IssueStatus.READY_FOR_DEVELOPMENT) {
+                notificationDispatcher.dispatch(NotificationEvent.of(
+                        EventType.ISSUE_APPROVED, projectId,
+                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+            } else if (newStatus == IssueStatus.DONE) {
+                notificationDispatcher.dispatch(NotificationEvent.of(
+                        EventType.ISSUE_COMPLETED, projectId,
                         Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
             }
             notificationDispatcher.dispatch(NotificationEvent.of(

@@ -32,17 +32,46 @@ interface IssueWithReviewers extends Issue {
   reviewers?: IssueReviewer[]
 }
 
-type StatusVariant = 'status-draft' | 'status-review' | 'status-approved' | 'status-closed'
+type StatusVariant =
+  | 'status-draft'
+  | 'status-review'
+  | 'status-approved'
+  | 'status-progress'
+  | 'status-code-review'
+  | 'status-done'
+  | 'status-closed'
 
 const STATUS_VARIANTS: Record<string, StatusVariant> = {
   DRAFT: 'status-draft',
   IN_REVIEW: 'status-review',
-  APPROVED: 'status-approved',
+  READY_FOR_DEVELOPMENT: 'status-approved',
+  IN_PROGRESS: 'status-progress',
+  CODE_REVIEW: 'status-code-review',
+  DONE: 'status-done',
   CLOSED: 'status-closed',
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'Draft',
+  IN_REVIEW: 'In Review',
+  READY_FOR_DEVELOPMENT: 'Ready for Development',
+  IN_PROGRESS: 'In Progress',
+  CODE_REVIEW: 'Code Review',
+  DONE: 'Done',
+  CLOSED: 'Closed',
+}
+
 const TYPE_OPTIONS = ['All', 'PRD', 'RFC', 'BUG', 'TASK'] as const
-const STATUS_OPTIONS = ['All', 'DRAFT', 'IN_REVIEW', 'APPROVED', 'CLOSED'] as const
+const STATUS_OPTIONS = [
+  'All',
+  'DRAFT',
+  'IN_REVIEW',
+  'READY_FOR_DEVELOPMENT',
+  'IN_PROGRESS',
+  'CODE_REVIEW',
+  'DONE',
+  'CLOSED',
+] as const
 
 const VERDICT_ICONS: Record<string, string> = {
   APPROVED: '✅',
@@ -172,7 +201,7 @@ export default function IssuesListPage() {
             className="border border-border bg-background text-foreground rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
             {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>{s.replace('_', ' ')}</option>
+              <option key={s} value={s}>{s === 'All' ? 'All' : (STATUS_LABELS[s] ?? s.replace(/_/g, ' '))}</option>
             ))}
           </select>
         </div>
@@ -200,7 +229,7 @@ export default function IssuesListPage() {
                     <span className="font-medium text-foreground text-sm leading-snug">{issue.title}</span>
                   </div>
                   <Badge variant={STATUS_VARIANTS[issue.status] ?? 'status-draft'} className="shrink-0">
-                    {issue.status.replace('_', ' ')}
+                    {STATUS_LABELS[issue.status] ?? issue.status.replace(/_/g, ' ')}
                   </Badge>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -254,7 +283,7 @@ export default function IssuesListPage() {
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={STATUS_VARIANTS[issue.status] ?? 'status-draft'}>
-                        {issue.status.replace('_', ' ')}
+                        {STATUS_LABELS[issue.status] ?? issue.status.replace(/_/g, ' ')}
                       </Badge>
                     </td>
                     <td className="px-4 py-3">

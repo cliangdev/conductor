@@ -38,6 +38,9 @@
     --status-draft: 240 5% 55%;
     --status-review: 213 94% 52%;
     --status-approved: 142 71% 40%;
+    --status-progress: 262 83% 58%;
+    --status-code-review: 38 92% 50%;
+    --status-done: 174 62% 38%;
     --status-closed: 0 0% 45%;
     --sidebar-bg: 240 6% 97%;
     --sidebar-border: 240 6% 91%;
@@ -74,6 +77,9 @@
     --status-draft: 240 5% 45%;
     --status-review: 213 94% 62%;
     --status-approved: 142 71% 55%;
+    --status-progress: 262 83% 68%;
+    --status-code-review: 38 92% 60%;
+    --status-done: 174 62% 52%;
     --status-closed: 0 0% 40%;
     --sidebar-bg: 240 6% 11%;
     --sidebar-border: 240 5% 18%;

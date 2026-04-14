@@ -10,7 +10,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { apiPatch } from '@/lib/api'
 
-type Status = 'DRAFT' | 'IN_REVIEW' | 'APPROVED' | 'CLOSED'
+type Status =
+  | 'DRAFT'
+  | 'IN_REVIEW'
+  | 'READY_FOR_DEVELOPMENT'
+  | 'IN_PROGRESS'
+  | 'CODE_REVIEW'
+  | 'DONE'
+  | 'CLOSED'
 type UserRole = 'ADMIN' | 'CREATOR' | 'REVIEWER'
 
 interface StatusDropdownProps {
@@ -22,20 +29,43 @@ interface StatusDropdownProps {
   onStatusChanged: (newStatus: string) => void
 }
 
-type StatusVariant = 'status-draft' | 'status-review' | 'status-approved' | 'status-closed'
+type StatusVariant =
+  | 'status-draft'
+  | 'status-review'
+  | 'status-approved'
+  | 'status-progress'
+  | 'status-code-review'
+  | 'status-done'
+  | 'status-closed'
 
 const STATUS_VARIANTS: Record<string, StatusVariant> = {
   DRAFT: 'status-draft',
   IN_REVIEW: 'status-review',
-  APPROVED: 'status-approved',
+  READY_FOR_DEVELOPMENT: 'status-approved',
+  IN_PROGRESS: 'status-progress',
+  CODE_REVIEW: 'status-code-review',
+  DONE: 'status-done',
   CLOSED: 'status-closed',
 }
 
 const VALID_TRANSITIONS: Record<string, Status[]> = {
-  DRAFT: ['IN_REVIEW'],
-  IN_REVIEW: ['DRAFT', 'APPROVED', 'CLOSED'],
-  APPROVED: ['CLOSED', 'IN_REVIEW'],
+  DRAFT: ['IN_REVIEW', 'CLOSED'],
+  IN_REVIEW: ['READY_FOR_DEVELOPMENT', 'DRAFT', 'CLOSED'],
+  READY_FOR_DEVELOPMENT: ['IN_PROGRESS', 'CLOSED'],
+  IN_PROGRESS: ['CODE_REVIEW', 'CLOSED'],
+  CODE_REVIEW: ['DONE', 'CLOSED'],
+  DONE: [],
   CLOSED: [],
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'Draft',
+  IN_REVIEW: 'In Review',
+  READY_FOR_DEVELOPMENT: 'Ready for Development',
+  IN_PROGRESS: 'In Progress',
+  CODE_REVIEW: 'Code Review',
+  DONE: 'Done',
+  CLOSED: 'Closed',
 }
 
 export function StatusDropdown({
@@ -49,7 +79,7 @@ export function StatusDropdown({
   const [loading, setLoading] = useState(false)
 
   const currentVariant = STATUS_VARIANTS[currentStatus] ?? 'status-draft'
-  const displayLabel = currentStatus.replace('_', ' ')
+  const displayLabel = STATUS_LABELS[currentStatus] ?? currentStatus.replace(/_/g, ' ')
 
   if (userRole === 'REVIEWER') {
     return (
@@ -99,7 +129,7 @@ export function StatusDropdown({
             className="cursor-pointer"
           >
             <Badge variant={STATUS_VARIANTS[status] ?? 'status-draft'} className="mr-2">
-              {status.replace('_', ' ')}
+              {STATUS_LABELS[status] ?? status.replace(/_/g, ' ')}
             </Badge>
           </DropdownMenuItem>
         ))}
