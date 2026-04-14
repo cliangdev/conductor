@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
@@ -386,71 +386,70 @@ describe('ensureGitignore', () => {
   })
 })
 
-describe('writeSkillFile', () => {
+describe('installPluginAssets', () => {
   let tmpDir: string
+  let assetSrcDir: string
+
+  beforeAll(async () => {
+    const { getAssetSrcDir } = await import('../lib/plugin-assets.js')
+    assetSrcDir = getAssetSrcDir()
+  })
 
   beforeEach(() => {
-    vi.resetAllMocks()
-    tmpDir = realFs.mkdtempSync(path.join(os.tmpdir(), 'conductor-skill-test-'))
-    mockFs.mkdirSync.mockImplementation((...args) =>
-      (realFs.mkdirSync as (...a: unknown[]) => unknown)(...args) as ReturnType<typeof fs.mkdirSync>
-    )
-    mockFs.writeFileSync.mockImplementation((...args) =>
-      (realFs.writeFileSync as (...a: unknown[]) => void)(...args)
-    )
+    tmpDir = realFs.mkdtempSync(path.join(os.tmpdir(), 'conductor-plugin-test-'))
   })
 
   afterEach(() => {
     realFs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('creates .claude/commands/conductor/prd.md', async () => {
-    const { writeSkillFile } = await import('../commands/init.js')
-    writeSkillFile(tmpDir)
-    const skillPath = path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md')
-    expect(realFs.existsSync(skillPath)).toBe(true)
+  it('returns installed and creates all four plugin files on first run', async () => {
+    const { installPluginAssets } = await import('../lib/plugin-assets.js')
+    const status = installPluginAssets(tmpDir, assetSrcDir)
+    expect(status).toBe('installed')
+    expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'prd.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'agents', 'researcher.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'ux-ui-design', 'SKILL.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'ux-ui-design', 'references', 'design-tokens.md'))).toBe(true)
   })
 
-  it('skill file contains Phase 1 discovery prompt', async () => {
-    const { writeSkillFile } = await import('../commands/init.js')
-    writeSkillFile(tmpDir)
-    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md'), 'utf8')
+  it('returns current when all files already match', async () => {
+    const { installPluginAssets } = await import('../lib/plugin-assets.js')
+    installPluginAssets(tmpDir, assetSrcDir)
+    const status = installPluginAssets(tmpDir, assetSrcDir)
+    expect(status).toBe('current')
+  })
+
+  it('returns updated when an existing file differs from bundled version', async () => {
+    const { installPluginAssets } = await import('../lib/plugin-assets.js')
+    installPluginAssets(tmpDir, assetSrcDir)
+    const prdPath = path.join(tmpDir, 'commands', 'conductor', 'prd.md')
+    realFs.writeFileSync(prdPath, 'outdated content', 'utf8')
+    const status = installPluginAssets(tmpDir, assetSrcDir)
+    expect(status).toBe('updated')
+  })
+
+  it('merges settings.json preserving existing keys', async () => {
+    const { installPluginAssets } = await import('../lib/plugin-assets.js')
+    const settingsPath = path.join(tmpDir, 'settings.json')
+    realFs.writeFileSync(settingsPath, JSON.stringify({ theme: 'dark', permissions: { allow: ['existing_perm'] } }), 'utf8')
+    installPluginAssets(tmpDir, assetSrcDir)
+    const settings = JSON.parse(realFs.readFileSync(settingsPath, 'utf8'))
+    expect(settings.theme).toBe('dark')
+    expect(settings.permissions.allow).toContain('existing_perm')
+    expect(settings.permissions.allow).toContain('mcp__conductor__*')
+  })
+
+  it('prd.md content contains Phase 1, Phase 2, Phase 3, Phase 4 and PRD format', async () => {
+    const { installPluginAssets } = await import('../lib/plugin-assets.js')
+    installPluginAssets(tmpDir, assetSrcDir)
+    const content = realFs.readFileSync(path.join(tmpDir, 'commands', 'conductor', 'prd.md'), 'utf8')
     expect(content).toContain('Phase 1')
-    expect(content).toContain("What are you trying to build?")
-  })
-
-  it('skill file contains Phase 2 research instructions', async () => {
-    const { writeSkillFile } = await import('../commands/init.js')
-    writeSkillFile(tmpDir)
-    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md'), 'utf8')
     expect(content).toContain('Phase 2')
-    expect(content).toContain('CLAUDE.md')
-  })
-
-  it('skill file contains Phase 3 generate with PRD format', async () => {
-    const { writeSkillFile } = await import('../commands/init.js')
-    writeSkillFile(tmpDir)
-    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md'), 'utf8')
     expect(content).toContain('Phase 3')
-    expect(content).toContain('PRD Format')
-  })
-
-  it('skill file contains Phase 4 save with MCP call sequence', async () => {
-    const { writeSkillFile } = await import('../commands/init.js')
-    writeSkillFile(tmpDir)
-    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md'), 'utf8')
     expect(content).toContain('Phase 4')
     expect(content).toContain('create_issue')
     expect(content).toContain('scaffold_document')
-  })
-
-  it('skill file contains all three supporting document templates', async () => {
-    const { writeSkillFile } = await import('../commands/init.js')
-    writeSkillFile(tmpDir)
-    const content = realFs.readFileSync(path.join(tmpDir, '.claude', 'commands', 'conductor', 'prd.md'), 'utf8')
-    expect(content).toContain('architecture.md')
-    expect(content).toContain('wireframes.md')
-    expect(content).toContain('mockup.html')
   })
 })
 

@@ -1,9 +1,11 @@
 import * as fs from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 import { Command } from 'commander'
 import chalk from 'chalk'
 import { readConfig, CONFIG_PATH } from '../lib/config.js'
 import { getIssuesDir } from './init.js'
+import { getAssetSrcDir, getPluginInstallStatus } from '../lib/plugin-assets.js'
 
 export async function checkApiHealth(apiUrl: string): Promise<boolean> {
   try {
@@ -55,6 +57,22 @@ export function registerDoctor(program: Command): void {
         console.log(`${issuesMark} Local issues directory ${issuesDirExists ? 'exists' : 'not found'}`)
       } else {
         console.log(`${chalk.red('✗')} Local issues directory (no config — skipped)`)
+      }
+
+      const globalClaudeDir = path.join(os.homedir(), '.claude')
+      const localClaudeDir = path.join(process.cwd(), '.claude')
+      const { location, outdated } = getPluginInstallStatus(getAssetSrcDir(), globalClaudeDir, localClaudeDir)
+
+      if (location === 'global') {
+        console.log(`${chalk.green('✓')} Claude plugin: global`)
+      } else if (location === 'local') {
+        console.log(`${chalk.green('✓')} Claude plugin: local`)
+      } else {
+        console.log(`${chalk.red('✗')} Claude plugin: not installed — run conductor init`)
+      }
+
+      if (location !== 'none' && outdated) {
+        console.log(`${chalk.yellow('⚠')} Claude plugin outdated — re-run conductor init to update`)
       }
     })
 }
