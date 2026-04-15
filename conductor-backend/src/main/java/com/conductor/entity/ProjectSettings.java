@@ -27,6 +27,12 @@ public class ProjectSettings {
     @Column(name = "run_token_ttl_hours", nullable = false)
     private int runTokenTtlHours = 24;
 
+    @Column(name = "github_webhook_secret", length = 512)
+    private String githubWebhookSecret;
+
+    @Column(name = "github_repo_url", length = 512)
+    private String githubRepoUrl;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -54,6 +60,12 @@ public class ProjectSettings {
 
     public int getRunTokenTtlHours() { return runTokenTtlHours; }
     public void setRunTokenTtlHours(int runTokenTtlHours) { this.runTokenTtlHours = runTokenTtlHours; }
+
+    public String getGithubWebhookSecret() { return githubWebhookSecret; }
+    public void setGithubWebhookSecret(String githubWebhookSecret) { this.githubWebhookSecret = githubWebhookSecret; }
+
+    public String getGithubRepoUrl() { return githubRepoUrl; }
+    public void setGithubRepoUrl(String githubRepoUrl) { this.githubRepoUrl = githubRepoUrl; }
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }

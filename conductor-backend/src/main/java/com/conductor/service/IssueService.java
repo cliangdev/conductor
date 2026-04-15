@@ -277,6 +277,7 @@ public class IssueService {
                 issue.getSequenceNumber(),
                 displayId)
                 .description(issue.getDescription())
-                .assignee(assignee);
+                .assignee(assignee)
+                .githubPrUrl(issue.getGithubPrUrl());
     }
 }
