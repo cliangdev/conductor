@@ -3286,6 +3286,10 @@ components:
           type: string
         lineNumber:
           type: integer
+        quotedText:
+          type: string
+        lineStale:
+          type: boolean
         resolvedAt:
           type: string
           format: date-time

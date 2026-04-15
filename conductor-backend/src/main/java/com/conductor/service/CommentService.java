@@ -207,6 +207,8 @@ public class CommentService {
                 comment.getCreatedAt());
 
         response.setLineNumber(comment.getLineNumber());
+        response.setQuotedText(comment.getQuotedText());
+        response.setLineStale(comment.isLineStale());
         response.setResolvedAt(comment.getResolvedAt());
 
         return response;
