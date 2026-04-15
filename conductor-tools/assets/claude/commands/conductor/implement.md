@@ -77,6 +77,13 @@ set_issue_status(issueId, "IN_PROGRESS")
 
 This transitions the issue from `READY_FOR_DEVELOPMENT` → `IN_PROGRESS`, signalling that implementation has started.
 
+**Check the response**: if it contains a `warning` field, surface it immediately and pause:
+
+> ⚠️ Status update to IN_PROGRESS failed (queued): {warning}
+> Run `conductor start` to drain the sync queue, or verify the status manually in the UI before continuing.
+
+Use AskUserQuestion with options: **Continue anyway** / **Abort**.
+
 ---
 
 ## Step 3 — Task Breakdown
@@ -317,7 +324,7 @@ Show the PR URL to the user.
 
 ---
 
-## Step 7 — Issue Status Update (P1)
+## Step 7 — Issue Status Update
 
 After the PR is created successfully, call:
 
@@ -326,6 +333,11 @@ set_issue_status(issueId, "CODE_REVIEW")
 ```
 
 This transitions the Conductor issue from `IN_PROGRESS` → `CODE_REVIEW`, reflecting that the PR is open and awaiting review.
+
+**Check the response**: if it contains a `warning` field, surface it to the user:
+
+> ⚠️ Status update to CODE_REVIEW failed (queued): {warning}
+> Run `conductor start` to drain the sync queue, or update the status manually in the UI.
 
 ---
 
