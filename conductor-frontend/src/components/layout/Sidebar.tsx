@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { BellIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, GitBranchIcon, KeyIcon, PlusIcon, SettingsIcon, UsersIcon } from 'lucide-react'
+import { BellIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, GitBranchIcon, GitForkIcon, KeyIcon, PlusIcon, SettingsIcon, UsersIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import {
   DropdownMenu,
@@ -179,6 +179,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                   onNavigate={onNavigate}
                 >
                   Notifications
+                </SidebarNavLink>
+                <SidebarNavLink
+                  href={`/app/projects/${activeProject.id}/settings/github`}
+                  icon={<GitForkIcon className="h-4 w-4" />}
+                  onNavigate={onNavigate}
+                >
+                  GitHub
                 </SidebarNavLink>
               </>
             }
