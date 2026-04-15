@@ -69,7 +69,7 @@ describe('CommentableDocument', () => {
     expect(screen.queryByTestId('new-comment-form')).not.toBeInTheDocument()
   })
 
-  it('shows comment thread emoji when line has comments', () => {
+  it('shows comment thread button when line has comments', () => {
     const comments: Comment[] = [
       {
         id: 'c1',
@@ -85,20 +85,25 @@ describe('CommentableDocument', () => {
     render(<CommentableDocument {...baseProps} comments={comments} />)
     const gutter = screen.getByLabelText('comment gutter')
     const buttons = gutter.querySelectorAll('button')
-    expect(buttons[1]).toHaveTextContent('💬')
+    // Line 2 button (index 1) should have the "comment(s) on line" title
+    expect(buttons[1]).toHaveAttribute('title', expect.stringContaining('comment(s) on line 2'))
   })
 
-  it('does not show selection form on mouseup when skipNextMouseUpRef is set', () => {
-    // Simulate the "Add comment" button mousedown setting skipNextMouseUpRef,
-    // then a mouseup firing — the selection tooltip should not reappear.
+  it('sends lineNumber in POST when submitting a line comment', async () => {
+    const { apiPost } = await import('@/lib/api')
     render(<CommentableDocument {...baseProps} />)
-    const contentDiv = screen.getByTestId('markdown').parentElement!
+    const gutter = screen.getByLabelText('comment gutter')
+    fireEvent.click(gutter.querySelectorAll('button')[0])
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }))
+    expect(apiPost).toHaveBeenCalledWith(
+      expect.stringContaining('/comments'),
+      expect.objectContaining({ lineNumber: 1 }),
+      'test-token'
+    )
+  })
 
-    // No selection bubble should be visible initially
-    expect(screen.queryByText('+ Comment')).not.toBeInTheDocument()
-
-    // Firing mouseup on the content area with no selection — nothing happens
-    fireEvent.mouseUp(contentDiv)
+  it('does not render selection form', () => {
+    render(<CommentableDocument {...baseProps} />)
     expect(screen.queryByText('+ Comment')).not.toBeInTheDocument()
   })
 })
