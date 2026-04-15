@@ -111,6 +111,19 @@ class GitHubWebhookProcessorTest {
                 """.formatted(ISSUE_ID);
     }
 
+    private String openedPrPayload(String action, String prBody, String prUrl) {
+        return """
+                {
+                  "action": "%s",
+                  "pull_request": {
+                    "merged": false,
+                    "body": "%s",
+                    "html_url": "%s"
+                  }
+                }
+                """.formatted(action, escapeJson(prBody), escapeJson(prUrl));
+    }
+
     private String escapeJson(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
@@ -166,34 +179,42 @@ class GitHubWebhookProcessorTest {
     }
 
     @Test
-    void issueAlreadyDoneMarksEventProcessedWithNoChange() {
+    void issueAlreadyDoneSetsUrlButDoesNotChangeStatus() {
         String prUrl = "https://github.com/org/repo/pull/10";
         String payload = mergedPrPayload("Closes conductor/" + ISSUE_ID, prUrl);
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         Issue issue = buildIssue(IssueStatus.DONE);
 
         when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 
         processor.processEvent(event);
 
-        verify(issueRepository, never()).save(any(Issue.class));
+        ArgumentCaptor<Issue> issueCaptor = ArgumentCaptor.forClass(Issue.class);
+        verify(issueRepository).save(issueCaptor.capture());
+        assertThat(issueCaptor.getValue().getStatus()).isEqualTo(IssueStatus.DONE);
+        assertThat(issueCaptor.getValue().getGithubPrUrl()).isEqualTo(prUrl);
         assertThat(event.getStatus()).isEqualTo(WebhookEventStatus.PROCESSED);
     }
 
     @Test
-    void issueAlreadyClosedMarksEventProcessedWithNoChange() {
+    void issueAlreadyClosedSetsUrlButDoesNotChangeStatus() {
         String prUrl = "https://github.com/org/repo/pull/11";
         String payload = mergedPrPayload("Closes conductor/" + ISSUE_ID, prUrl);
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         Issue issue = buildIssue(IssueStatus.CLOSED);
 
         when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 
         processor.processEvent(event);
 
-        verify(issueRepository, never()).save(any(Issue.class));
+        ArgumentCaptor<Issue> issueCaptor = ArgumentCaptor.forClass(Issue.class);
+        verify(issueRepository).save(issueCaptor.capture());
+        assertThat(issueCaptor.getValue().getStatus()).isEqualTo(IssueStatus.CLOSED);
+        assertThat(issueCaptor.getValue().getGithubPrUrl()).isEqualTo(prUrl);
         assertThat(event.getStatus()).isEqualTo(WebhookEventStatus.PROCESSED);
     }
 
@@ -213,6 +234,66 @@ class GitHubWebhookProcessorTest {
         ArgumentCaptor<Issue> issueCaptor = ArgumentCaptor.forClass(Issue.class);
         verify(issueRepository).save(issueCaptor.capture());
         assertThat(issueCaptor.getValue().getGithubPrUrl()).isEqualTo(prUrl);
+    }
+
+    @Test
+    void openedPrSetsPrUrlWithoutTransitioningStatus() {
+        String prUrl = "https://github.com/org/repo/pull/20";
+        String payload = openedPrPayload("opened", "Closes conductor/" + ISSUE_ID, prUrl);
+        GitHubWebhookEvent event = buildEvent("pull_request", payload);
+        Issue issue = buildIssue(IssueStatus.IN_PROGRESS);
+
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        processor.processEvent(event);
+
+        ArgumentCaptor<Issue> issueCaptor = ArgumentCaptor.forClass(Issue.class);
+        verify(issueRepository).save(issueCaptor.capture());
+        assertThat(issueCaptor.getValue().getGithubPrUrl()).isEqualTo(prUrl);
+        assertThat(issueCaptor.getValue().getStatus()).isEqualTo(IssueStatus.IN_PROGRESS);
+        assertThat(event.getStatus()).isEqualTo(WebhookEventStatus.PROCESSED);
+    }
+
+    @Test
+    void reopenedPrSetsPrUrlWithoutTransitioningStatus() {
+        String prUrl = "https://github.com/org/repo/pull/21";
+        String payload = openedPrPayload("reopened", "Closes conductor/" + ISSUE_ID, prUrl);
+        GitHubWebhookEvent event = buildEvent("pull_request", payload);
+        Issue issue = buildIssue(IssueStatus.CODE_REVIEW);
+
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        processor.processEvent(event);
+
+        ArgumentCaptor<Issue> issueCaptor = ArgumentCaptor.forClass(Issue.class);
+        verify(issueRepository).save(issueCaptor.capture());
+        assertThat(issueCaptor.getValue().getGithubPrUrl()).isEqualTo(prUrl);
+        assertThat(issueCaptor.getValue().getStatus()).isEqualTo(IssueStatus.CODE_REVIEW);
+        assertThat(event.getStatus()).isEqualTo(WebhookEventStatus.PROCESSED);
+    }
+
+    @Test
+    void synchronizePrSetsPrUrlWithoutTransitioningStatus() {
+        String prUrl = "https://github.com/org/repo/pull/22";
+        String payload = openedPrPayload("synchronize", "Closes conductor/" + ISSUE_ID, prUrl);
+        GitHubWebhookEvent event = buildEvent("pull_request", payload);
+        Issue issue = buildIssue(IssueStatus.IN_PROGRESS);
+
+        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        processor.processEvent(event);
+
+        ArgumentCaptor<Issue> issueCaptor = ArgumentCaptor.forClass(Issue.class);
+        verify(issueRepository).save(issueCaptor.capture());
+        assertThat(issueCaptor.getValue().getGithubPrUrl()).isEqualTo(prUrl);
+        assertThat(issueCaptor.getValue().getStatus()).isEqualTo(IssueStatus.IN_PROGRESS);
+        assertThat(event.getStatus()).isEqualTo(WebhookEventStatus.PROCESSED);
     }
 
     @Test

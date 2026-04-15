@@ -64,7 +64,10 @@ public class GitHubWebhookProcessor {
 
         String action = root.path("action").asText("");
         boolean merged = root.path("pull_request").path("merged").asBoolean(false);
-        if (!"closed".equals(action) || !merged) return;
+
+        boolean isOpenEvent = "opened".equals(action) || "reopened".equals(action) || "synchronize".equals(action);
+        boolean isMergeEvent = "closed".equals(action) && merged;
+        if (!isOpenEvent && !isMergeEvent) return;
 
         String prBody = root.path("pull_request").path("body").asText("");
         String prUrl = root.path("pull_request").path("html_url").asText("");
@@ -76,10 +79,12 @@ public class GitHubWebhookProcessor {
         Issue issue = issueRepository.findById(issueId).orElse(null);
         if (issue == null || !issue.getProject().getId().equals(event.getProjectId())) return;
 
-        if (issue.getStatus() == IssueStatus.DONE || issue.getStatus() == IssueStatus.CLOSED) return;
-
-        issue.setStatus(IssueStatus.DONE);
         issue.setGithubPrUrl(prUrl.isBlank() ? null : prUrl);
+
+        if (isMergeEvent && issue.getStatus() != IssueStatus.DONE && issue.getStatus() != IssueStatus.CLOSED) {
+            issue.setStatus(IssueStatus.DONE);
+        }
+
         issueRepository.save(issue);
     }
 }
