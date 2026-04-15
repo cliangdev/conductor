@@ -87,7 +87,7 @@ public class GitHubWebhookController {
         event.setStatus(WebhookEventStatus.PENDING);
         GitHubWebhookEvent saved = webhookEventRepository.save(event);
 
-        webhookProcessor.processEventAsync(saved);
+        webhookProcessor.processEvent(saved);
 
         return ResponseEntity.ok().build();
     }
