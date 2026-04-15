@@ -1,6 +1,6 @@
 ---
 name: conductor:implement
-description: Take a Conductor PRD issue from READY_FOR_DEVELOPMENT to a green PR — resolves the issue, sets it IN_PROGRESS, writes tasks.yaml breakdown, sets up a git branch, spawns parallel coding subagents, creates a PR, marks it CODE_REVIEW, and monitors CI (two checks max).
+description: Take a Conductor PRD issue from READY_FOR_DEVELOPMENT to a green PR — resolves the issue, sets it IN_PROGRESS, writes tasks.json breakdown, sets up a git branch, spawns parallel coding subagents, creates a PR, marks it CODE_REVIEW, and monitors CI (two checks max).
 allowed-tools: mcp__conductor__*, AskUserQuestion, Agent, Read, Write, Glob, Grep, Bash, ScheduleWakeup, TaskCreate, TaskUpdate
 ---
 
@@ -18,8 +18,19 @@ This skill runs when the user invokes `/conductor:implement [issueId]`.
 
 Determine which Conductor issue to implement.
 
-**If an explicit argument was provided** (e.g. `/conductor:implement cdbc04d1-...` or `/conductor:implement 42`):
-- Use that ID directly.
+**If an explicit argument was provided**, resolve it based on its format:
+
+- **Display ID** (matches `/^[A-Z]+-\d+$/`, e.g. `COND-42`):
+  - Call `list_issues` and find the issue where `displayId === argument`
+  - Store both `issueId` (UUID) and `displayId` (e.g. `COND-42`)
+
+- **Bare number** (matches `/^\d+$/`, e.g. `42`):
+  - Call `list_issues` and find the issue where `sequenceNumber == argument`
+  - Store both `issueId` (UUID) and `displayId`
+
+- **UUID** (fallback, e.g. `cdbc04d1-...`):
+  - Use directly as `issueId`
+  - Set `displayId` to the `displayId` field returned from `get_issue`
 
 **If no argument was provided**:
 - Check if a Conductor issue was already discussed in the current conversation (issue ID mentioned, PRD content shown, etc.). If yes, use that issue ID.
@@ -29,13 +40,13 @@ Determine which Conductor issue to implement.
     "questions": [{
       "question": "Which issue would you like to implement?",
       "header": "Select Issue",
-      "options": [{"label": "{title}", "description": "{issueId} — {status}"}],
+      "options": [{"label": "{title}", "description": "{displayId} — {status}"}],
       "multiSelect": false
     }]
   }
   ```
 
-Store `issueId` for use throughout the rest of the skill.
+Store both `issueId` (UUID) and `displayId` (e.g. `COND-42`) for use throughout the rest of the skill.
 
 ---
 
@@ -68,15 +79,15 @@ This transitions the issue from `READY_FOR_DEVELOPMENT` → `IN_PROGRESS`, signa
 
 ---
 
-## Step 3 — YAML Task Breakdown
+## Step 3 — Task Breakdown
 
-Check if `.conductor/issues/{issueId}/tasks.yaml` already exists.
+Check if `.conductor/issues/{issueId}/tasks.json` already exists.
 
 **If it exists**: use AskUserQuestion:
 ```json
 {
   "questions": [{
-    "question": "tasks.yaml already exists for this issue. What would you like to do?",
+    "question": "tasks.json already exists for this issue. What would you like to do?",
     "header": "Resume or Regenerate",
     "options": [
       {"label": "Resume", "description": "Skip completed tasks, continue from the first PENDING task"},
@@ -127,41 +138,52 @@ Creating 4 epics in dependency order:
 - E3: REST API (depends on E2)
 - E4: Frontend (depends on E3)
 
-Writing tasks.yaml...
+Writing tasks.json...
 ```
 
 When uncertain, ask for confirmation before writing.
 
-### Writing tasks.yaml
+### Writing tasks.json
 
-1. Call `scaffold_document` with `issueId` and `filename: "tasks.yaml"` — use the returned `localPath`.
-2. Write the file using the Write tool with this schema:
+Write the file directly using the Write tool to `.conductor/issues/{issueId}/tasks.json` with this schema:
 
-```yaml
-issue_id: "{issueId}"
-issue_title: "{issue title from PRD}"
-created_at: "{ISO timestamp}"
-status: PENDING   # PENDING | IN_PROGRESS | COMPLETED
-
-epics:
-  - id: E1
-    title: "Epic Title"
-    goal: "One-sentence goal"
-    depends_on: []          # list of epic ids this depends on
-    status: PENDING         # PENDING | IN_PROGRESS | COMPLETED | BLOCKED
-    tasks:
-      - id: T1.1
-        title: "Task title"
-        description: "What to implement and how"
-        priority: HIGH      # HIGH | MEDIUM | LOW
-        complexity: small   # small | medium | large
-        depends_on: []      # list of task ids within this epic
-        status: PENDING     # PENDING | IN_PROGRESS | COMPLETED | BLOCKED
-        criteria:
-          - text: "Specific verifiable outcome"
-            type: auto      # auto | manual
-            met: false
+```json
+{
+  "issue_id": "{issueId}",
+  "issue_title": "{issue title from PRD}",
+  "created_at": "{ISO timestamp}",
+  "status": "PENDING",
+  "epics": [
+    {
+      "id": "E1",
+      "title": "Epic Title",
+      "goal": "One-sentence goal",
+      "depends_on": [],
+      "status": "PENDING",
+      "tasks": [
+        {
+          "id": "T1.1",
+          "title": "Task title",
+          "description": "What to implement and how",
+          "priority": "HIGH",
+          "complexity": "small",
+          "depends_on": [],
+          "status": "PENDING",
+          "criteria": [
+            {
+              "text": "Specific verifiable outcome",
+              "type": "auto",
+              "met": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
 ```
+
+Valid values: `status` — `PENDING | IN_PROGRESS | COMPLETED | BLOCKED`; `priority` — `HIGH | MEDIUM | LOW`; `complexity` — `small | medium | large`; `type` — `auto | manual`.
 
 ---
 
@@ -196,7 +218,7 @@ Before any implementation begins, set up the feature branch.
 
 ## Step 5 — Implementation Orchestration
 
-Read `tasks.yaml` (or use the in-memory breakdown from Step 3).
+Read `tasks.json` (or use the in-memory breakdown from Step 3).
 
 ### Work Queue
 
@@ -205,7 +227,7 @@ Build an ordered list of tasks:
 2. Within each epic, sort tasks by dependency order, then by priority (HIGH → MEDIUM → LOW)
 3. Mark tasks with unresolved dependencies as BLOCKED
 
-**Resume mode** (if tasks.yaml had completed tasks): skip all COMPLETED tasks and print:
+**Resume mode** (if tasks.json had completed tasks): skip all COMPLETED tasks and print:
 > Resuming — {N} tasks already completed, starting from {task.id}
 
 ### Batch Execution
@@ -254,7 +276,7 @@ For each batch, spawn `flux-coder` subagents in parallel using the Agent tool. P
 
 ### After Each Batch
 
-Update `tasks.yaml` using the Edit tool:
+Update `tasks.json` using the Edit tool:
 - Set `status: COMPLETED` or `status: BLOCKED` on each task
 - Set `met: true` on criteria that passed
 - Update epic `status` based on its tasks' statuses
