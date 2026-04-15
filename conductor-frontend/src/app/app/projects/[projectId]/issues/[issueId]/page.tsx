@@ -101,7 +101,7 @@ export default function IssueDetailPage() {
       `/api/v1/projects/${projectId}/issues/${issueId}/documents`,
       accessToken
     )
-    setDocuments(docs)
+    setDocuments(docs.filter((d) => d.filename !== 'tasks.json'))
     setSelectedDocId((prev) => {
       if (prev) return prev
       const firstMd = docs.find(isMarkdown)

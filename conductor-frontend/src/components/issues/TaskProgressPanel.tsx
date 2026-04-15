@@ -70,15 +70,14 @@ export function TaskProgressPanel({ issueId, projectId }: TaskProgressPanelProps
         }
         setLoaded(true)
       })
-      .catch((err: unknown) => {
-        // Render nothing on 404 or any error
+      .catch(() => {
         setLoaded(true)
       })
   }, [accessToken, projectId, issueId])
 
-  if (!loaded || !tasksData) return null
+  if (!loaded) return null
 
-  const allTasks = tasksData.epics.flatMap((e) => e.tasks)
+  const allTasks = tasksData ? tasksData.epics.flatMap((e) => e.tasks) : []
   const totalTasks = allTasks.length
   const completedTasks = countCompleted(allTasks)
   const percentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
@@ -101,13 +100,19 @@ export function TaskProgressPanel({ issueId, projectId }: TaskProgressPanelProps
           )}
         </button>
 
-        {!expanded && (
+        {!expanded && tasksData && (
           <div className="mt-2">
             <ProgressBar percentage={percentage} />
           </div>
         )}
 
-        {expanded && (
+        {!tasksData && expanded && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            No implementation plan yet. Run <code className="font-mono">/conductor:implement</code> to generate one.
+          </p>
+        )}
+
+        {expanded && tasksData && (
           <div className="mt-2 space-y-3">
             <div>
               <p className="text-xs text-muted-foreground mb-1.5">
