@@ -17,6 +17,7 @@ import com.conductor.repository.CommentRepository;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,6 +57,9 @@ class IssueServiceTest {
 
     @Mock
     private CommentRepository commentRepository;
+
+    @Mock
+    private UserRepository userRepository;
 
     @InjectMocks
     private IssueService issueService;
@@ -190,21 +194,21 @@ class IssueServiceTest {
     }
 
     @Test
-    void patchIssueInvalidTransitionDraftToApprovedThrows400() {
+    void patchIssueInvalidTransitionDraftToReadyForDevelopmentThrows400() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
 
         PatchIssueRequest request = new PatchIssueRequest()
-                .status(com.conductor.generated.model.IssueStatus.APPROVED);
+                .status(com.conductor.generated.model.IssueStatus.READY_FOR_DEVELOPMENT);
 
         assertThatThrownBy(() -> issueService.patchIssue("proj-1", "issue-1", request, caller))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("Invalid status transition from DRAFT to APPROVED");
+                .hasMessageContaining("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT");
     }
 
     @Test
-    void patchIssueInvalidTransitionApprovedToDraftThrows400() {
-        testIssue.setStatus(IssueStatus.APPROVED);
+    void patchIssueInvalidTransitionReadyForDevelopmentToDraftThrows400() {
+        testIssue.setStatus(IssueStatus.READY_FOR_DEVELOPMENT);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
 
@@ -213,22 +217,22 @@ class IssueServiceTest {
 
         assertThatThrownBy(() -> issueService.patchIssue("proj-1", "issue-1", request, caller))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("Invalid status transition from APPROVED to DRAFT");
+                .hasMessageContaining("Invalid status transition from READY_FOR_DEVELOPMENT to DRAFT");
     }
 
     @Test
-    void patchIssueValidTransitionChangesRequestedToInReview() {
-        testIssue.setStatus(IssueStatus.CHANGES_REQUESTED);
+    void patchIssueValidTransitionInReviewToReadyForDevelopment() {
+        testIssue.setStatus(IssueStatus.IN_REVIEW);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
 
         PatchIssueRequest request = new PatchIssueRequest()
-                .status(com.conductor.generated.model.IssueStatus.IN_REVIEW);
+                .status(com.conductor.generated.model.IssueStatus.READY_FOR_DEVELOPMENT);
 
         issueService.patchIssue("proj-1", "issue-1", request, caller);
 
-        assertThat(testIssue.getStatus()).isEqualTo(IssueStatus.IN_REVIEW);
+        assertThat(testIssue.getStatus()).isEqualTo(IssueStatus.READY_FOR_DEVELOPMENT);
     }
 
     @Test

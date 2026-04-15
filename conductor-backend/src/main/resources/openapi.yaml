@@ -2841,9 +2841,11 @@ components:
       enum:
         - DRAFT
         - IN_REVIEW
-        - APPROVED
-        - CHANGES_REQUESTED
-        - ARCHIVED
+        - READY_FOR_DEVELOPMENT
+        - IN_PROGRESS
+        - CODE_REVIEW
+        - DONE
+        - CLOSED
 
     IssueResponse:
       type: object
@@ -2886,6 +2888,22 @@ components:
           description: Human-readable ID (e.g. "COND-42")
         unresolvedCommentCount:
           type: integer
+        assignee:
+          $ref: "#/components/schemas/IssueAssignee"
+
+    IssueAssignee:
+      type: object
+      required:
+        - userId
+        - name
+      properties:
+        userId:
+          type: string
+        name:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
 
     CreateIssueRequest:
       type: object
@@ -2911,6 +2929,10 @@ components:
           type: string
         status:
           $ref: "#/components/schemas/IssueStatus"
+        assigneeId:
+          type: string
+          nullable: true
+          description: User ID to assign to this issue, or null to unassign
 
     DocumentResponse:
       type: object

@@ -1,14 +1,30 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
-import { apiGet } from '@/lib/api'
+import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu'
+import { StatusDropdown } from '@/components/issues/StatusDropdown'
+import type { MemberRole } from '@/types'
 
 export const dynamic = 'force-dynamic'
+
+interface IssueAssignee {
+  userId: string
+  name: string
+  avatarUrl?: string | null
+}
 
 interface Issue {
   id: string
@@ -19,6 +35,7 @@ interface Issue {
   unresolvedCommentCount?: number
   displayId?: string
   sequenceNumber?: number
+  assignee?: IssueAssignee | null
 }
 
 interface IssueReviewer {
@@ -32,17 +49,54 @@ interface IssueWithReviewers extends Issue {
   reviewers?: IssueReviewer[]
 }
 
-type StatusVariant = 'status-draft' | 'status-review' | 'status-approved' | 'status-closed'
+interface Member {
+  userId: string
+  name: string
+  email: string
+  avatarUrl?: string | null
+  role: MemberRole
+}
+
+type StatusVariant =
+  | 'status-draft'
+  | 'status-review'
+  | 'status-approved'
+  | 'status-progress'
+  | 'status-code-review'
+  | 'status-done'
+  | 'status-closed'
 
 const STATUS_VARIANTS: Record<string, StatusVariant> = {
   DRAFT: 'status-draft',
   IN_REVIEW: 'status-review',
-  APPROVED: 'status-approved',
+  READY_FOR_DEVELOPMENT: 'status-approved',
+  IN_PROGRESS: 'status-progress',
+  CODE_REVIEW: 'status-code-review',
+  DONE: 'status-done',
   CLOSED: 'status-closed',
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'Draft',
+  IN_REVIEW: 'In Review',
+  READY_FOR_DEVELOPMENT: 'Ready for Development',
+  IN_PROGRESS: 'In Progress',
+  CODE_REVIEW: 'Code Review',
+  DONE: 'Done',
+  CLOSED: 'Closed',
+}
+
 const TYPE_OPTIONS = ['All', 'PRD', 'RFC', 'BUG', 'TASK'] as const
-const STATUS_OPTIONS = ['All', 'DRAFT', 'IN_REVIEW', 'APPROVED', 'CLOSED'] as const
+const STATUS_OPTIONS = [
+  'All',
+  'DRAFT',
+  'IN_REVIEW',
+  'READY_FOR_DEVELOPMENT',
+  'IN_PROGRESS',
+  'CODE_REVIEW',
+  'DONE',
+  'CLOSED',
+] as const
 
 const VERDICT_ICONS: Record<string, string> = {
   APPROVED: '✅',
@@ -63,11 +117,200 @@ function formatDate(dateStr: string): string {
   })
 }
 
+function UserAvatar({ name, avatarUrl, size = 6 }: { name: string; avatarUrl?: string | null; size?: number }) {
+  const cls = `w-${size} h-${size} rounded-full`
+  if (avatarUrl) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={avatarUrl} alt={name} className={`${cls} border border-border object-cover`} title={name} />
+  }
+  return (
+    <div className={`${cls} bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground border border-border`} title={name}>
+      {name.charAt(0).toUpperCase()}
+    </div>
+  )
+}
+
+// Dropdown for assigning a member to an issue
+function AssigneeCell({
+  issueId,
+  projectId,
+  assignee,
+  members,
+  token,
+  onChanged,
+}: {
+  issueId: string
+  projectId: string
+  assignee?: IssueAssignee | null
+  members: Member[]
+  token: string
+  onChanged: (assignee: IssueAssignee | null) => void
+}) {
+  const [saving, setSaving] = useState(false)
+
+  async function handleSelect(member: Member | null) {
+    setSaving(true)
+    try {
+      await apiPatch(
+        `/api/v1/projects/${projectId}/issues/${issueId}`,
+        { assigneeId: member ? member.userId : '' },
+        token
+      )
+      onChanged(member ? { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl } : null)
+    } catch {
+      // silently ignore
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button disabled={saving} className="focus:outline-none">
+          <Badge variant="outline" className="cursor-pointer hover:opacity-80 transition-opacity gap-1.5 font-normal">
+            {assignee ? (
+              <>
+                <UserAvatar name={assignee.name} avatarUrl={assignee.avatarUrl} size={4} />
+                <span className="max-w-[72px] truncate">{assignee.name}</span>
+              </>
+            ) : (
+              <span className="text-muted-foreground">Unassigned</span>
+            )}
+            <span className="text-xs opacity-60">▼</span>
+          </Badge>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-52">
+        {assignee && (
+          <>
+            <DropdownMenuItem
+              onClick={() => handleSelect(null)}
+              className="cursor-pointer text-destructive focus:text-destructive"
+            >
+              Unassign
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+          </>
+        )}
+        {members.map((m) => (
+          <DropdownMenuItem
+            key={m.userId}
+            onClick={() => handleSelect(m)}
+            className="cursor-pointer gap-2"
+          >
+            <UserAvatar name={m.name} avatarUrl={m.avatarUrl} size={5} />
+            <span className="truncate flex-1">{m.name}</span>
+            {assignee?.userId === m.userId && <span className="text-primary text-xs">✓</span>}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+// Dropdown for managing issue reviewers inline
+function ReviewerCell({
+  issueId,
+  projectId,
+  reviewers,
+  members,
+  token,
+  onChanged,
+}: {
+  issueId: string
+  projectId: string
+  reviewers: IssueReviewer[]
+  members: Member[]
+  token: string
+  onChanged: (reviewers: IssueReviewer[]) => void
+}) {
+  const [saving, setSaving] = useState<string | null>(null)
+
+  const reviewerMembers = members.filter((m) => m.role === 'REVIEWER')
+  const assignedIds = new Set(reviewers.map((r) => r.userId))
+
+  async function toggleReviewer(member: Member) {
+    setSaving(member.userId)
+    try {
+      if (assignedIds.has(member.userId)) {
+        await apiDelete(
+          `/api/v1/projects/${projectId}/issues/${issueId}/reviewers/${member.userId}`,
+          token
+        )
+        onChanged(reviewers.filter((r) => r.userId !== member.userId))
+      } else {
+        await apiPost(
+          `/api/v1/projects/${projectId}/issues/${issueId}/reviewers`,
+          { userId: member.userId },
+          token
+        )
+        onChanged([...reviewers, { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl ?? undefined }])
+      }
+    } catch {
+      // silently ignore
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const triggerLabel = reviewers.length === 0 ? (
+    <span className="text-muted-foreground">No reviewers</span>
+  ) : (
+    <span className="flex items-center gap-0.5">
+      {reviewers.map((r) => (
+        <span key={r.userId} className="flex items-center gap-0.5">
+          <UserAvatar name={r.name} avatarUrl={r.avatarUrl} size={4} />
+          <span className="text-xs">{verdictIcon(r.reviewVerdict)}</span>
+        </span>
+      ))}
+    </span>
+  )
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="focus:outline-none">
+          <Badge variant="outline" className="cursor-pointer hover:opacity-80 transition-opacity gap-1 font-normal">
+            {triggerLabel}
+            <span className="text-xs opacity-60">▼</span>
+          </Badge>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-52">
+        <DropdownMenuLabel className="text-xs text-muted-foreground font-medium">Reviewers</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {reviewerMembers.length === 0 ? (
+          <DropdownMenuItem disabled>No reviewer-role members</DropdownMenuItem>
+        ) : (
+          reviewerMembers.map((m) => {
+            const assigned = assignedIds.has(m.userId)
+            const isSaving = saving === m.userId
+            return (
+              <DropdownMenuItem
+                key={m.userId}
+                disabled={isSaving}
+                onClick={() => toggleReviewer(m)}
+                className="cursor-pointer gap-2"
+              >
+                <span className="text-sm w-4 shrink-0">{assigned ? '✓' : ''}</span>
+                <UserAvatar name={m.name} avatarUrl={m.avatarUrl} size={5} />
+                <span className="truncate flex-1">{m.name}</span>
+              </DropdownMenuItem>
+            )
+          })
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
 export default function IssuesListPage() {
   const params = useParams<{ projectId: string }>()
   const { projectId } = params
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
   const { projects, setActiveProject } = useProject()
+  const router = useRouter()
 
   useEffect(() => {
     const project = projects.find((p) => p.id === projectId)
@@ -75,6 +318,8 @@ export default function IssuesListPage() {
   }, [projectId, projects])
 
   const [issues, setIssues] = useState<IssueWithReviewers[]>([])
+  const [members, setMembers] = useState<Member[]>([])
+  const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<string>('All')
@@ -83,13 +328,30 @@ export default function IssuesListPage() {
   useEffect(() => {
     if (!accessToken) return
 
-    async function fetchIssues() {
+    async function fetchAll() {
       try {
-        const data = await apiGet<IssueWithReviewers[]>(
-          `/api/v1/projects/${projectId}/issues`,
-          accessToken!
+        const [issueData, memberData] = await Promise.all([
+          apiGet<IssueWithReviewers[]>(`/api/v1/projects/${projectId}/issues`, accessToken!),
+          apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken!),
+        ])
+        setIssues(issueData)
+        setMembers(memberData)
+        const currentMember = memberData.find((m) => m.userId === user?.id)
+        if (currentMember) setUserRole(currentMember.role)
+
+        // Fetch reviewers for all issues in parallel
+        const reviewerResults = await Promise.allSettled(
+          issueData.map((issue) =>
+            apiGet<IssueReviewer[]>(
+              `/api/v1/projects/${projectId}/issues/${issue.id}/reviewers`,
+              accessToken!
+            )
+          )
         )
-        setIssues(data)
+        setIssues(issueData.map((issue, i) => ({
+          ...issue,
+          reviewers: reviewerResults[i].status === 'fulfilled' ? reviewerResults[i].value : [],
+        })))
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load issues')
       } finally {
@@ -97,8 +359,20 @@ export default function IssuesListPage() {
       }
     }
 
-    fetchIssues()
-  }, [accessToken, projectId])
+    fetchAll()
+  }, [accessToken, projectId, user?.id])
+
+  function updateIssueStatus(issueId: string, newStatus: string) {
+    setIssues((prev) => prev.map((i) => i.id === issueId ? { ...i, status: newStatus } : i))
+  }
+
+  function updateIssueAssignee(issueId: string, assignee: IssueAssignee | null) {
+    setIssues((prev) => prev.map((i) => i.id === issueId ? { ...i, assignee } : i))
+  }
+
+  function updateIssueReviewers(issueId: string, reviewers: IssueReviewer[]) {
+    setIssues((prev) => prev.map((i) => i.id === issueId ? { ...i, reviewers } : i))
+  }
 
   const filteredIssues = issues.filter((issue) => {
     if (typeFilter !== 'All' && issue.type !== typeFilter) return false
@@ -120,28 +394,7 @@ export default function IssuesListPage() {
     )
   }
 
-  const ReviewerAvatars = ({ reviewers }: { reviewers?: IssueReviewer[] }) => {
-    if (!reviewers || reviewers.length === 0) {
-      return <span className="text-foreground-subtle text-xs">—</span>
-    }
-    return (
-      <div className="flex items-center gap-1 flex-wrap">
-        {reviewers.map((r) => (
-          <div key={r.userId} className="flex items-center gap-0.5" title={r.name}>
-            {r.avatarUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={r.avatarUrl} alt={r.name} className="w-5 h-5 rounded-full border border-border" />
-            ) : (
-              <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">
-                {r.name.charAt(0).toUpperCase()}
-              </div>
-            )}
-            <span className="text-xs">{verdictIcon(r.reviewVerdict)}</span>
-          </div>
-        ))}
-      </div>
-    )
-  }
+  const canEdit = userRole !== 'REVIEWER'
 
   return (
     <div className="p-4 sm:p-6">
@@ -172,7 +425,7 @@ export default function IssuesListPage() {
             className="border border-border bg-background text-foreground rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
             {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>{s.replace('_', ' ')}</option>
+              <option key={s} value={s}>{s === 'All' ? 'All' : (STATUS_LABELS[s] ?? s.replace(/_/g, ' '))}</option>
             ))}
           </select>
         </div>
@@ -200,13 +453,24 @@ export default function IssuesListPage() {
                     <span className="font-medium text-foreground text-sm leading-snug">{issue.title}</span>
                   </div>
                   <Badge variant={STATUS_VARIANTS[issue.status] ?? 'status-draft'} className="shrink-0">
-                    {issue.status.replace('_', ' ')}
+                    {STATUS_LABELS[issue.status] ?? issue.status.replace(/_/g, ' ')}
                   </Badge>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant="outline" className="text-xs">{issue.type}</Badge>
+                  {issue.assignee && (
+                    <div className="flex items-center gap-1">
+                      <UserAvatar name={issue.assignee.name} avatarUrl={issue.assignee.avatarUrl} size={4} />
+                      <span className="text-xs text-muted-foreground">{issue.assignee.name}</span>
+                    </div>
+                  )}
                   <div className="flex items-center gap-1 ml-auto">
-                    <ReviewerAvatars reviewers={issue.reviewers} />
+                    {(issue.reviewers ?? []).map((r) => (
+                      <div key={r.userId} className="flex items-center gap-0.5">
+                        <UserAvatar name={r.name} avatarUrl={r.avatarUrl} size={4} />
+                        <span className="text-xs">{verdictIcon(r.reviewVerdict)}</span>
+                      </div>
+                    ))}
                     {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 && (
                       <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
                         💬 {issue.unresolvedCommentCount}
@@ -228,6 +492,7 @@ export default function IssuesListPage() {
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Title</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Type</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Assignee</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Reviewers</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Comments</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Last Updated</th>
@@ -235,30 +500,64 @@ export default function IssuesListPage() {
               </thead>
               <tbody className="divide-y divide-border">
                 {filteredIssues.map((issue) => (
-                  <tr key={issue.id} className="hover:bg-muted/50 transition-colors">
+                  <tr
+                    key={issue.id}
+                    onClick={() => router.push(`/app/projects/${projectId}/issues/${issue.id}`)}
+                    className="hover:bg-muted/50 transition-colors cursor-pointer"
+                  >
                     <td className="px-4 py-3 whitespace-nowrap">
                       {issue.displayId && (
                         <span className="font-mono text-xs text-muted-foreground">{issue.displayId}</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
-                      <Link
-                        href={`/app/projects/${projectId}/issues/${issue.id}`}
-                        className="text-primary hover:underline font-medium"
-                      >
-                        {issue.title}
-                      </Link>
+                    <td className="px-4 py-3 font-medium text-foreground max-w-xs">
+                      <span className="line-clamp-2">{issue.title}</span>
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant="outline">{issue.type}</Badge>
                     </td>
-                    <td className="px-4 py-3">
-                      <Badge variant={STATUS_VARIANTS[issue.status] ?? 'status-draft'}>
-                        {issue.status.replace('_', ' ')}
-                      </Badge>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      {accessToken && (
+                        <StatusDropdown
+                          projectId={projectId}
+                          issueId={issue.id}
+                          currentStatus={issue.status}
+                          userRole={userRole}
+                          token={accessToken}
+                          onStatusChanged={(s) => updateIssueStatus(issue.id, s)}
+                        />
+                      )}
                     </td>
-                    <td className="px-4 py-3">
-                      <ReviewerAvatars reviewers={issue.reviewers} />
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      {canEdit && accessToken ? (
+                        <AssigneeCell
+                          issueId={issue.id}
+                          projectId={projectId}
+                          assignee={issue.assignee}
+                          members={members}
+                          token={accessToken}
+                          onChanged={(a) => updateIssueAssignee(issue.id, a)}
+                        />
+                      ) : issue.assignee ? (
+                        <div className="flex items-center gap-1.5">
+                          <UserAvatar name={issue.assignee.name} avatarUrl={issue.assignee.avatarUrl} size={5} />
+                          <span className="text-xs text-foreground hidden lg:block">{issue.assignee.name}</span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      {accessToken && (
+                        <ReviewerCell
+                          issueId={issue.id}
+                          projectId={projectId}
+                          reviewers={issue.reviewers ?? []}
+                          members={members}
+                          token={accessToken}
+                          onChanged={(r) => updateIssueReviewers(issue.id, r)}
+                        />
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 ? (
@@ -269,7 +568,7 @@ export default function IssuesListPage() {
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">{formatDate(issue.updatedAt)}</td>
+                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{formatDate(issue.updatedAt)}</td>
                   </tr>
                 ))}
               </tbody>

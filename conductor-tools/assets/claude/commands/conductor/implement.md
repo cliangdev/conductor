@@ -1,12 +1,12 @@
 ---
 name: conductor:implement
-description: Take a Conductor PRD issue from approved to a green PR — resolves the issue, writes tasks.yaml breakdown, sets up a git branch, spawns parallel coding subagents, creates a PR, and monitors CI (two checks max).
+description: Take a Conductor PRD issue from READY_FOR_DEVELOPMENT to a green PR — resolves the issue, sets it IN_PROGRESS, writes tasks.yaml breakdown, sets up a git branch, spawns parallel coding subagents, creates a PR, marks it CODE_REVIEW, and monitors CI (two checks max).
 allowed-tools: mcp__conductor__*, AskUserQuestion, Agent, Read, Write, Glob, Grep, Bash, ScheduleWakeup, TaskCreate, TaskUpdate
 ---
 
 # /conductor:implement
 
-You are the Conductor implementation orchestrator. Your job is to take a PRD issue from approved to a merged-ready PR with minimal friction.
+You are the Conductor implementation orchestrator. Your job is to take a PRD issue from `READY_FOR_DEVELOPMENT` to a merged-ready PR with minimal friction.
 
 ## Trigger
 
@@ -49,10 +49,22 @@ Load the PRD if not already in context.
    - Call `get_issue` with the resolved `issueId`
    - Read the local file: `.conductor/issues/{issueId}/prd.md`
 
-3. **Status check**: If the issue status is not `APPROVED` or `IN_REVIEW`, warn the user:
-   > ⚠️ Issue is in `{status}` status (expected APPROVED or IN_REVIEW). Continue anyway?
+3. **Status check**: If the issue status is not `READY_FOR_DEVELOPMENT`, warn the user:
+   > ⚠️ Issue is in `{status}` status (expected READY_FOR_DEVELOPMENT). Continue anyway?
 
    Use AskUserQuestion with options: **Continue** / **Abort**.
+
+---
+
+## Step 2b — Mark IN_PROGRESS
+
+Once the issue is confirmed and before any implementation work begins, call:
+
+```
+set_issue_status(issueId, "IN_PROGRESS")
+```
+
+This transitions the issue from `READY_FOR_DEVELOPMENT` → `IN_PROGRESS`, signalling that implementation has started.
 
 ---
 
@@ -295,10 +307,10 @@ Show the PR URL to the user.
 After the PR is created successfully, call:
 
 ```
-set_issue_status(issueId, "IN_REVIEW")
+set_issue_status(issueId, "CODE_REVIEW")
 ```
 
-This transitions the Conductor issue from `APPROVED` → `IN_REVIEW`.
+This transitions the Conductor issue from `IN_PROGRESS` → `CODE_REVIEW`, reflecting that the PR is open and awaiting review.
 
 ---
 

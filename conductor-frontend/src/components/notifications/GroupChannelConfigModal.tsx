@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import {
   CHANNEL_GROUPS,
   EVENT_TYPE_DESCRIPTIONS,
+  EVENT_TYPE_SUBTITLES,
   type NotificationGroupRequest,
   type NotificationGroupResponse,
 } from '@/hooks/useNotifications'
@@ -181,15 +182,22 @@ export function GroupChannelConfigModal({
             </div>
             <div className="rounded-md border border-border p-3 grid grid-cols-1 gap-2">
               {groupEventTypes.map((type) => (
-                <label key={type} className="flex items-center gap-2.5 cursor-pointer">
+                <label key={type} className="flex items-start gap-2.5 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={enabledEventTypes.includes(type)}
                     onChange={() => toggleEventType(type)}
-                    className="rounded border-border"
+                    className="mt-0.5 rounded border-border"
                   />
-                  <span className="text-sm text-foreground">
-                    {EVENT_TYPE_DESCRIPTIONS[type] ?? type}
+                  <span className="flex flex-col">
+                    <span className="text-sm text-foreground">
+                      {EVENT_TYPE_DESCRIPTIONS[type] ?? type}
+                    </span>
+                    {EVENT_TYPE_SUBTITLES[type] && (
+                      <span className="text-xs text-muted-foreground">
+                        {EVENT_TYPE_SUBTITLES[type]}
+                      </span>
+                    )}
                   </span>
                 </label>
               ))}

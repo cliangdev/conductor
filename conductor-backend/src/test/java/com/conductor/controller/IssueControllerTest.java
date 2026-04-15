@@ -134,14 +134,14 @@ class IssueControllerTest {
     @Test
     void patchIssueInvalidTransitionReturns400() throws Exception {
         when(issueService.patchIssue(eq("proj-1"), eq("issue-1"), any(), eq(testUser)))
-                .thenThrow(new BusinessException("Invalid status transition from DRAFT to APPROVED"));
+                .thenThrow(new BusinessException("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT"));
 
         mockMvc.perform(patch("/api/v1/projects/proj-1/issues/issue-1")
                         .header("Authorization", "Bearer valid-token")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\": \"APPROVED\"}"))
+                        .content("{\"status\": \"READY_FOR_DEVELOPMENT\"}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.detail").value("Invalid status transition from DRAFT to APPROVED"));
+                .andExpect(jsonPath("$.detail").value("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT"));
     }
 
     @Test

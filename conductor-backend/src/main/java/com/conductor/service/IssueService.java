@@ -9,6 +9,7 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.CreateIssueRequest;
+import com.conductor.generated.model.IssueAssignee;
 import com.conductor.generated.model.IssueResponse;
 import com.conductor.generated.model.PatchIssueRequest;
 import com.conductor.notification.EventType;
@@ -18,6 +19,7 @@ import com.conductor.repository.CommentRepository;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,11 +34,13 @@ import java.util.Set;
 public class IssueService {
 
     private static final Map<IssueStatus, Set<IssueStatus>> VALID_TRANSITIONS = Map.of(
-        IssueStatus.DRAFT, EnumSet.of(IssueStatus.IN_REVIEW),
-        IssueStatus.IN_REVIEW, EnumSet.of(IssueStatus.APPROVED, IssueStatus.CHANGES_REQUESTED, IssueStatus.DRAFT),
-        IssueStatus.APPROVED, EnumSet.of(IssueStatus.ARCHIVED),
-        IssueStatus.CHANGES_REQUESTED, EnumSet.of(IssueStatus.IN_REVIEW, IssueStatus.DRAFT),
-        IssueStatus.ARCHIVED, EnumSet.noneOf(IssueStatus.class)
+        IssueStatus.DRAFT, EnumSet.of(IssueStatus.IN_REVIEW, IssueStatus.CLOSED),
+        IssueStatus.IN_REVIEW, EnumSet.of(IssueStatus.READY_FOR_DEVELOPMENT, IssueStatus.DRAFT, IssueStatus.CLOSED),
+        IssueStatus.READY_FOR_DEVELOPMENT, EnumSet.of(IssueStatus.IN_PROGRESS, IssueStatus.CLOSED),
+        IssueStatus.IN_PROGRESS, EnumSet.of(IssueStatus.CODE_REVIEW, IssueStatus.CLOSED),
+        IssueStatus.CODE_REVIEW, EnumSet.of(IssueStatus.DONE, IssueStatus.CLOSED),
+        IssueStatus.DONE, EnumSet.noneOf(IssueStatus.class),
+        IssueStatus.CLOSED, EnumSet.noneOf(IssueStatus.class)
     );
 
     private final IssueRepository issueRepository;
@@ -45,6 +49,7 @@ public class IssueService {
     private final ProjectMemberRepository projectMemberRepository;
     private final NotificationDispatcher notificationDispatcher;
     private final CommentRepository commentRepository;
+    private final UserRepository userRepository;
 
     public IssueService(
             IssueRepository issueRepository,
@@ -52,13 +57,15 @@ public class IssueService {
             ProjectSecurityService projectSecurityService,
             ProjectMemberRepository projectMemberRepository,
             NotificationDispatcher notificationDispatcher,
-            CommentRepository commentRepository) {
+            CommentRepository commentRepository,
+            UserRepository userRepository) {
         this.issueRepository = issueRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
         this.notificationDispatcher = notificationDispatcher;
         this.commentRepository = commentRepository;
+        this.userRepository = userRepository;
     }
 
     @Transactional
@@ -137,6 +144,19 @@ public class IssueService {
         if (request.getDescription() != null) {
             issue.setDescription(request.getDescription());
         }
+        if (request.getAssigneeId() != null) {
+            String assigneeId = request.getAssigneeId();
+            if (assigneeId.isBlank()) {
+                issue.setAssignee(null);
+            } else {
+                User assignee = userRepository.findById(assigneeId)
+                        .orElseThrow(() -> new BusinessException("Assignee user not found"));
+                if (!projectSecurityService.isProjectMember(projectId, assigneeId)) {
+                    throw new BusinessException("Assignee must be a project member");
+                }
+                issue.setAssignee(assignee);
+            }
+        }
         IssueStatus previousStatus = issue.getStatus();
         if (request.getStatus() != null) {
             verifyCallerCanChangeStatus(projectId, caller.getId());
@@ -149,9 +169,25 @@ public class IssueService {
 
         if (request.getStatus() != null) {
             IssueStatus newStatus = issue.getStatus();
-            if (previousStatus != IssueStatus.IN_REVIEW && newStatus == IssueStatus.IN_REVIEW) {
+            if (newStatus == IssueStatus.IN_REVIEW && previousStatus != IssueStatus.IN_REVIEW) {
                 notificationDispatcher.dispatch(NotificationEvent.of(
                         EventType.ISSUE_SUBMITTED, projectId,
+                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+            } else if (newStatus == IssueStatus.READY_FOR_DEVELOPMENT) {
+                notificationDispatcher.dispatch(NotificationEvent.of(
+                        EventType.ISSUE_APPROVED, projectId,
+                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+            } else if (newStatus == IssueStatus.IN_PROGRESS) {
+                notificationDispatcher.dispatch(NotificationEvent.of(
+                        EventType.ISSUE_IN_PROGRESS, projectId,
+                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+            } else if (newStatus == IssueStatus.CODE_REVIEW) {
+                notificationDispatcher.dispatch(NotificationEvent.of(
+                        EventType.ISSUE_IN_CODE_REVIEW, projectId,
+                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+            } else if (newStatus == IssueStatus.DONE) {
+                notificationDispatcher.dispatch(NotificationEvent.of(
+                        EventType.ISSUE_COMPLETED, projectId,
                         Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
             }
             notificationDispatcher.dispatch(NotificationEvent.of(
@@ -224,6 +260,11 @@ public class IssueService {
 
     private IssueResponse toIssueResponse(Issue issue) {
         String displayId = issue.getProject().getKey() + "-" + issue.getSequenceNumber();
+        IssueAssignee assignee = null;
+        if (issue.getAssignee() != null) {
+            User a = issue.getAssignee();
+            assignee = new IssueAssignee(a.getId(), a.getName()).avatarUrl(a.getAvatarUrl());
+        }
         return new IssueResponse(
                 issue.getId(),
                 issue.getProject().getId(),
@@ -235,6 +276,7 @@ public class IssueService {
                 issue.getUpdatedAt(),
                 issue.getSequenceNumber(),
                 displayId)
-                .description(issue.getDescription());
+                .description(issue.getDescription())
+                .assignee(assignee);
     }
 }
