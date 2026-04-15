@@ -350,6 +350,78 @@ class CommentServiceTest {
         verify(commentRepository).delete(comment);
     }
 
+    // --- listComments resolved filter tests ---
+
+    @Test
+    void listCommentsNullResolvedReturnsAll() {
+        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
+        when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
+
+        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", null, author);
+
+        verify(commentRepository).findAllByIssueId("issue-1");
+        assertThat(results).hasSize(1);
+    }
+
+    @Test
+    void listCommentsResolvedTrueReturnsOnlyResolvedComments() {
+        Comment resolvedComment = new Comment();
+        resolvedComment.setId("comment-resolved");
+        resolvedComment.setIssue(issue);
+        resolvedComment.setDocument(document);
+        resolvedComment.setAuthor(author);
+        resolvedComment.setContent("Resolved comment");
+        resolvedComment.setLineNumber(10);
+        resolvedComment.setResolvedAt(OffsetDateTime.now());
+        resolvedComment.setCreatedAt(OffsetDateTime.now());
+        resolvedComment.setUpdatedAt(OffsetDateTime.now());
+
+        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        when(commentRepository.findAllByIssueIdAndResolvedAtIsNotNull("issue-1"))
+                .thenReturn(List.of(resolvedComment));
+        when(commentReplyRepository.findAllByCommentId("comment-resolved")).thenReturn(List.of());
+
+        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", true, author);
+
+        verify(commentRepository).findAllByIssueIdAndResolvedAtIsNotNull("issue-1");
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).getResolvedAt()).isNotNull();
+    }
+
+    @Test
+    void listCommentsResolvedFalseReturnsOnlyUnresolvedComments() {
+        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        when(commentRepository.findAllByIssueIdAndResolvedAtIsNull("issue-1")).thenReturn(List.of(comment));
+        when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
+
+        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", false, author);
+
+        verify(commentRepository).findAllByIssueIdAndResolvedAtIsNull("issue-1");
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).getResolvedAt()).isNull();
+    }
+
+    @Test
+    void listCommentsResponseIncludesNewFields() {
+        comment.setLineNumber(7);
+        comment.setQuotedText("The quoted line text");
+        comment.setLineStale(true);
+
+        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
+        when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
+
+        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", null, author);
+
+        assertThat(results).hasSize(1);
+        CommentWithRepliesResponse response = results.get(0);
+        assertThat(response.getLineNumber()).isEqualTo(7);
+        assertThat(response.getQuotedText()).isEqualTo("The quoted line text");
+        assertThat(response.getLineStale()).isTrue();
+        assertThat(response.getDocumentName()).isEqualTo("spec.md");
+    }
+
     // --- extractLineFromDocument unit tests (package-private helper) ---
 
     @Test
