@@ -1464,7 +1464,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/CommentResponse"
         "400":
-          description: Invalid anchor (neither lineNumber nor selection provided)
+          description: Invalid request (lineNumber is required)
           content:
             application/json:
               schema:
@@ -1500,6 +1500,11 @@ paths:
           required: true
           schema:
             type: string
+        - name: resolved
+          in: query
+          required: false
+          schema:
+            type: boolean
       responses:
         "200":
           description: List of comments with nested replies
@@ -3253,16 +3258,13 @@ components:
       required:
         - documentId
         - content
+        - lineNumber
       properties:
         documentId:
           type: string
         content:
           type: string
         lineNumber:
-          type: integer
-        selectionStart:
-          type: integer
-        selectionLength:
           type: integer
 
     CommentResponse:
@@ -3283,10 +3285,6 @@ components:
         content:
           type: string
         lineNumber:
-          type: integer
-        selectionStart:
-          type: integer
-        selectionLength:
           type: integer
         resolvedAt:
           type: string
@@ -3340,10 +3338,12 @@ components:
           type: string
         lineNumber:
           type: integer
-        selectionStart:
-          type: integer
-        selectionLength:
-          type: integer
+        quotedText:
+          type: string
+        lineStale:
+          type: boolean
+        documentName:
+          type: string
         resolvedAt:
           type: string
           format: date-time

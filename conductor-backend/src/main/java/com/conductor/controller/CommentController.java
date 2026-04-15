@@ -33,9 +33,9 @@ public class CommentController implements CommentsApi {
     }
 
     @Override
-    public ResponseEntity<List<CommentWithRepliesResponse>> listComments(String projectId, String issueId) {
+    public ResponseEntity<List<CommentWithRepliesResponse>> listComments(String projectId, String issueId, Boolean resolved) {
         User caller = currentUser();
-        List<CommentWithRepliesResponse> comments = commentService.listComments(projectId, issueId, caller);
+        List<CommentWithRepliesResponse> comments = commentService.listComments(projectId, issueId, resolved, caller);
         return ResponseEntity.ok(comments);
     }
 

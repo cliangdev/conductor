@@ -7,7 +7,6 @@ import com.conductor.entity.Issue;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
-import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.AddCommentReplyRequest;
 import com.conductor.generated.model.CommentReplyResponse;
@@ -50,8 +49,6 @@ public class CommentService {
 
     @Transactional
     public CommentResponse createComment(String projectId, String issueId, CreateCommentRequest request, User caller) {
-        validateAnchor(request.getLineNumber(), request.getSelectionStart(), request.getSelectionLength());
-
         Issue issue = findIssueInProject(projectId, issueId);
 
         Document document = documentRepository.findByIdAndIssueId(request.getDocumentId(), issueId)
@@ -63,18 +60,23 @@ public class CommentService {
         comment.setAuthor(caller);
         comment.setContent(request.getContent());
         comment.setLineNumber(request.getLineNumber());
-        comment.setSelectionStart(request.getSelectionStart());
-        comment.setSelectionLength(request.getSelectionLength());
 
         commentRepository.save(comment);
         return toCommentResponse(comment);
     }
 
     @Transactional(readOnly = true)
-    public List<CommentWithRepliesResponse> listComments(String projectId, String issueId, User caller) {
+    public List<CommentWithRepliesResponse> listComments(String projectId, String issueId, Boolean resolved, User caller) {
         verifyMembership(projectId, caller.getId());
 
-        List<Comment> comments = commentRepository.findAllByIssueId(issueId);
+        List<Comment> comments;
+        if (resolved == null) {
+            comments = commentRepository.findAllByIssueId(issueId);
+        } else if (resolved) {
+            comments = commentRepository.findAllByIssueIdAndResolvedAtIsNotNull(issueId);
+        } else {
+            comments = commentRepository.findAllByIssueIdAndResolvedAtIsNull(issueId);
+        }
 
         return comments.stream()
                 .map(comment -> {
@@ -93,8 +95,9 @@ public class CommentService {
 
                     response.setAuthorName(comment.getAuthor().getName());
                     response.setLineNumber(comment.getLineNumber());
-                    response.setSelectionStart(comment.getSelectionStart());
-                    response.setSelectionLength(comment.getSelectionLength());
+                    response.setQuotedText(comment.getQuotedText());
+                    response.setLineStale(comment.isLineStale());
+                    response.setDocumentName(comment.getDocument().getFilename());
                     response.setResolvedAt(comment.getResolvedAt());
 
                     return response;
@@ -145,14 +148,6 @@ public class CommentService {
         commentRepository.delete(comment);
     }
 
-    private void validateAnchor(Integer lineNumber, Integer selectionStart, Integer selectionLength) {
-        boolean hasLineNumber = lineNumber != null;
-        boolean hasSelection = selectionStart != null && selectionLength != null;
-        if (!hasLineNumber && !hasSelection) {
-            throw new BusinessException("Comment must have either a lineNumber or selectionStart+selectionLength anchor");
-        }
-    }
-
     private void verifyMembership(String projectId, String userId) {
         if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, userId)) {
             throw new EntityNotFoundException("Project not found");
@@ -186,8 +181,6 @@ public class CommentService {
                 comment.getCreatedAt());
 
         response.setLineNumber(comment.getLineNumber());
-        response.setSelectionStart(comment.getSelectionStart());
-        response.setSelectionLength(comment.getSelectionLength());
         response.setResolvedAt(comment.getResolvedAt());
 
         return response;
