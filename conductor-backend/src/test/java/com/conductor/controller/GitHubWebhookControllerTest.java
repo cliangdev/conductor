@@ -198,8 +198,9 @@ class GitHubWebhookControllerTest {
         GitHubWebhookController controller = new GitHubWebhookController(
                 projectSettingsRepository, webhookEventRepository, webhookProcessor);
 
+        byte[] payloadBytes = PAYLOAD.getBytes(StandardCharsets.UTF_8);
         String signature = computeSignature(PAYLOAD, SECRET);
-        assertThat(controller.isValidSignature(PAYLOAD, SECRET, signature)).isTrue();
+        assertThat(controller.isValidSignature(payloadBytes, SECRET, signature)).isTrue();
     }
 
     @Test
@@ -207,8 +208,9 @@ class GitHubWebhookControllerTest {
         GitHubWebhookController controller = new GitHubWebhookController(
                 projectSettingsRepository, webhookEventRepository, webhookProcessor);
 
+        byte[] payloadBytes = PAYLOAD.getBytes(StandardCharsets.UTF_8);
         String signature = computeSignature(PAYLOAD, "wrong-secret");
-        assertThat(controller.isValidSignature(PAYLOAD, SECRET, signature)).isFalse();
+        assertThat(controller.isValidSignature(payloadBytes, SECRET, signature)).isFalse();
     }
 
     @Test
@@ -216,7 +218,7 @@ class GitHubWebhookControllerTest {
         GitHubWebhookController controller = new GitHubWebhookController(
                 projectSettingsRepository, webhookEventRepository, webhookProcessor);
 
-        assertThat(controller.isValidSignature(PAYLOAD, SECRET, "abc123")).isFalse();
+        assertThat(controller.isValidSignature(PAYLOAD.getBytes(StandardCharsets.UTF_8), SECRET, "abc123")).isFalse();
     }
 
     @Test
@@ -224,6 +226,6 @@ class GitHubWebhookControllerTest {
         GitHubWebhookController controller = new GitHubWebhookController(
                 projectSettingsRepository, webhookEventRepository, webhookProcessor);
 
-        assertThat(controller.isValidSignature(PAYLOAD, SECRET, null)).isFalse();
+        assertThat(controller.isValidSignature(PAYLOAD.getBytes(StandardCharsets.UTF_8), SECRET, null)).isFalse();
     }
 }
