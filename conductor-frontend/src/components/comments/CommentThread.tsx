@@ -91,6 +91,27 @@ export function CommentThread({
   return (
     <div className="bg-card border border-border rounded shadow-sm text-sm w-72">
       <div className="p-3 border-b border-border">
+        {/* Quoted text blockquote */}
+        {comment.quotedText && (
+          <blockquote className="border-l-4 border-muted pl-3 mb-2">
+            {comment.lineStale && (
+              <span className="inline-block text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 rounded px-1.5 py-0.5 mb-1 font-medium">
+                Line no longer exists
+              </span>
+            )}
+            <p className="text-xs text-muted-foreground italic leading-relaxed line-clamp-3">
+              {comment.quotedText}
+            </p>
+          </blockquote>
+        )}
+        {/* Stale indicator when there's no quotedText */}
+        {comment.lineStale && !comment.quotedText && (
+          <div className="mb-2">
+            <span className="inline-block text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 rounded px-1.5 py-0.5 font-medium">
+              Line no longer exists
+            </span>
+          </div>
+        )}
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1">
             <div className="flex items-center gap-1.5 mb-1 flex-wrap">
