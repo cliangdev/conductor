@@ -8,6 +8,7 @@ import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.conductor.generated.model.CreateIssueRequest;
 import com.conductor.generated.model.IssueAssignee;
 import com.conductor.generated.model.IssueResponse;
@@ -203,6 +204,25 @@ public class IssueService {
 
         long count = commentRepository.countUnresolvedByIssueId(issue.getId());
         return toIssueResponse(issue).unresolvedCommentCount((int) count);
+    }
+
+    @Transactional
+    public void saveIssueTasks(String issueId, JsonNode tasks) {
+        Issue issue = issueRepository.findById(issueId)
+                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
+        issue.setIssueTasks(tasks);
+        issueRepository.save(issue);
+    }
+
+    @Transactional(readOnly = true)
+    public JsonNode getIssueTasks(String issueId) {
+        Issue issue = issueRepository.findById(issueId)
+                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
+        JsonNode tasks = issue.getIssueTasks();
+        if (tasks == null) {
+            throw new EntityNotFoundException("No tasks found for issue " + issueId);
+        }
+        return tasks;
     }
 
     private void verifyMembership(String projectId, String userId) {

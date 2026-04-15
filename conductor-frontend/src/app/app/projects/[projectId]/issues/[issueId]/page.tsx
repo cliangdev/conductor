@@ -10,6 +10,7 @@ import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { ReviewSubmissionForm } from '@/components/reviews/ReviewSubmissionForm'
 import { ReviewersSummaryPanel } from '@/components/reviews/ReviewersSummaryPanel'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
+import { TaskProgressPanel } from '@/components/issues/TaskProgressPanel'
 import type { Comment } from '@/components/comments/types'
 import type { MemberRole } from '@/types'
 
@@ -100,7 +101,7 @@ export default function IssueDetailPage() {
       `/api/v1/projects/${projectId}/issues/${issueId}/documents`,
       accessToken
     )
-    setDocuments(docs)
+    setDocuments(docs.filter((d) => d.filename !== 'tasks.json'))
     setSelectedDocId((prev) => {
       if (prev) return prev
       const firstMd = docs.find(isMarkdown)
@@ -299,6 +300,8 @@ export default function IssueDetailPage() {
           ))}
         </ul>
       )}
+
+      <TaskProgressPanel issueId={issueId} projectId={projectId} />
 
       {(isAssignedReviewer || userRole === 'REVIEWER') && (
         <div className="mt-auto border-t border-border p-4">

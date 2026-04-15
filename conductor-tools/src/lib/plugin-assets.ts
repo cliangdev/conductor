@@ -8,6 +8,7 @@ const PLUGIN_FILES = [
   'agents/researcher.md',
   'skills/ux-ui-design/SKILL.md',
   'skills/ux-ui-design/references/design-tokens.md',
+  'skills/conductor-coder/SKILL.md',
 ]
 
 const CONDUCTOR_PERMISSIONS = ['mcp__conductor__*']

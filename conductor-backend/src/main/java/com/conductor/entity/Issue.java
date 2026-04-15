@@ -12,9 +12,12 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.ColumnTransformer;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import com.fasterxml.jackson.databind.JsonNode;
 
 @Entity
 @Table(name = "issues")
@@ -63,6 +66,11 @@ public class Issue {
 
     @Column(name = "github_pr_url", length = 512)
     private String githubPrUrl;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "issue_tasks", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
+    private JsonNode issueTasks;
 
     @PrePersist
     protected void onCreate() {
@@ -116,4 +124,7 @@ public class Issue {
 
     public String getGithubPrUrl() { return githubPrUrl; }
     public void setGithubPrUrl(String githubPrUrl) { this.githubPrUrl = githubPrUrl; }
+
+    public JsonNode getIssueTasks() { return issueTasks; }
+    public void setIssueTasks(JsonNode issueTasks) { this.issueTasks = issueTasks; }
 }
