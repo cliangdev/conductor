@@ -109,7 +109,7 @@ class GitHubWebhookControllerTest {
         assertThat(persisted.getEventType()).isEqualTo("pull_request");
         assertThat(persisted.getGithubDeliveryId()).isEqualTo(DELIVERY_ID);
 
-        verify(webhookProcessor).processEventAsync(savedEvent);
+        verify(webhookProcessor).processEvent(savedEvent);
     }
 
     @Test
@@ -190,7 +190,7 @@ class GitHubWebhookControllerTest {
                 .andExpect(status().isOk());
 
         verify(webhookEventRepository, never()).save(any());
-        verify(webhookProcessor, never()).processEventAsync(any());
+        verify(webhookProcessor, never()).processEvent(any());
     }
 
     @Test
