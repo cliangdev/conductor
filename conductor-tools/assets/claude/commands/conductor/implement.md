@@ -315,7 +315,7 @@ gh pr create --title "feat({displayId}): {issue title trimmed to 72 chars}" --bo
 - {task.id}: {blocker reason}
 {end if}
 
-Closes conductor/{issueId}
+Closes conductor/{displayId}
 EOF
 )"
 ```
