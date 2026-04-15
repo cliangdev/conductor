@@ -41,6 +41,9 @@ class GitHubWebhookProcessorTest {
 
     private static final String PROJECT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     private static final String ISSUE_ID = "11111111-2222-3333-4444-555555555555";
+    private static final String PROJECT_KEY = "TEST";
+    private static final int SEQUENCE_NUMBER = 1;
+    private static final String DISPLAY_ID = PROJECT_KEY + "-" + SEQUENCE_NUMBER;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -67,7 +70,7 @@ class GitHubWebhookProcessorTest {
         Project project = new Project();
         project.setId(PROJECT_ID);
         project.setName("Test Project");
-        project.setKey("TEST");
+        project.setKey(PROJECT_KEY);
         project.setCreatedBy(creator);
         project.setCreatedAt(OffsetDateTime.now());
         project.setUpdatedAt(OffsetDateTime.now());
@@ -78,7 +81,7 @@ class GitHubWebhookProcessorTest {
         issue.setType(IssueType.PRD);
         issue.setTitle("Test Issue");
         issue.setStatus(status);
-        issue.setSequenceNumber(1);
+        issue.setSequenceNumber(SEQUENCE_NUMBER);
         issue.setCreatedBy(creator);
         issue.setCreatedAt(OffsetDateTime.now());
         issue.setUpdatedAt(OffsetDateTime.now());
@@ -108,7 +111,7 @@ class GitHubWebhookProcessorTest {
                     "html_url": "https://github.com/org/repo/pull/1"
                   }
                 }
-                """.formatted(ISSUE_ID);
+                """.formatted(DISPLAY_ID);
     }
 
     private String openedPrPayload(String action, String prBody, String prUrl) {
@@ -131,11 +134,11 @@ class GitHubWebhookProcessorTest {
     @Test
     void mergedPrWithValidIssueIdTransitionsIssueToDone() {
         String prUrl = "https://github.com/org/repo/pull/42";
-        String payload = mergedPrPayload("Closes conductor/" + ISSUE_ID, prUrl);
+        String payload = mergedPrPayload("Closes conductor/" + DISPLAY_ID, prUrl);
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         Issue issue = buildIssue(IssueStatus.IN_PROGRESS);
 
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.findByProjectKeyAndSequenceNumber(PROJECT_KEY, SEQUENCE_NUMBER)).thenReturn(Optional.of(issue));
         when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -159,7 +162,7 @@ class GitHubWebhookProcessorTest {
 
         processor.processEvent(event);
 
-        verify(issueRepository, never()).findById(any());
+        verify(issueRepository, never()).findByProjectKeyAndSequenceNumber(any(), any());
         verify(issueRepository, never()).save(any());
         assertThat(event.getStatus()).isEqualTo(WebhookEventStatus.PROCESSED);
     }
@@ -173,7 +176,7 @@ class GitHubWebhookProcessorTest {
 
         processor.processEvent(event);
 
-        verify(issueRepository, never()).findById(any());
+        verify(issueRepository, never()).findByProjectKeyAndSequenceNumber(any(), any());
         verify(issueRepository, never()).save(any());
         assertThat(event.getStatus()).isEqualTo(WebhookEventStatus.PROCESSED);
     }
@@ -181,11 +184,11 @@ class GitHubWebhookProcessorTest {
     @Test
     void issueAlreadyDoneSetsUrlButDoesNotChangeStatus() {
         String prUrl = "https://github.com/org/repo/pull/10";
-        String payload = mergedPrPayload("Closes conductor/" + ISSUE_ID, prUrl);
+        String payload = mergedPrPayload("Closes conductor/" + DISPLAY_ID, prUrl);
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         Issue issue = buildIssue(IssueStatus.DONE);
 
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.findByProjectKeyAndSequenceNumber(PROJECT_KEY, SEQUENCE_NUMBER)).thenReturn(Optional.of(issue));
         when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -201,11 +204,11 @@ class GitHubWebhookProcessorTest {
     @Test
     void issueAlreadyClosedSetsUrlButDoesNotChangeStatus() {
         String prUrl = "https://github.com/org/repo/pull/11";
-        String payload = mergedPrPayload("Closes conductor/" + ISSUE_ID, prUrl);
+        String payload = mergedPrPayload("Closes conductor/" + DISPLAY_ID, prUrl);
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         Issue issue = buildIssue(IssueStatus.CLOSED);
 
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.findByProjectKeyAndSequenceNumber(PROJECT_KEY, SEQUENCE_NUMBER)).thenReturn(Optional.of(issue));
         when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -221,11 +224,11 @@ class GitHubWebhookProcessorTest {
     @Test
     void githubPrUrlIsSetOnIssueAfterSuccessfulProcessing() {
         String prUrl = "https://github.com/org/repo/pull/55";
-        String payload = mergedPrPayload("fixes stuff\\nCloses conductor/" + ISSUE_ID + "\\nmore text", prUrl);
+        String payload = mergedPrPayload("fixes stuff\\nCloses conductor/" + DISPLAY_ID + "\\nmore text", prUrl);
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         Issue issue = buildIssue(IssueStatus.CODE_REVIEW);
 
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.findByProjectKeyAndSequenceNumber(PROJECT_KEY, SEQUENCE_NUMBER)).thenReturn(Optional.of(issue));
         when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -239,11 +242,11 @@ class GitHubWebhookProcessorTest {
     @Test
     void openedPrSetsPrUrlWithoutTransitioningStatus() {
         String prUrl = "https://github.com/org/repo/pull/20";
-        String payload = openedPrPayload("opened", "Closes conductor/" + ISSUE_ID, prUrl);
+        String payload = openedPrPayload("opened", "Closes conductor/" + DISPLAY_ID, prUrl);
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         Issue issue = buildIssue(IssueStatus.IN_PROGRESS);
 
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.findByProjectKeyAndSequenceNumber(PROJECT_KEY, SEQUENCE_NUMBER)).thenReturn(Optional.of(issue));
         when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -259,11 +262,11 @@ class GitHubWebhookProcessorTest {
     @Test
     void reopenedPrSetsPrUrlWithoutTransitioningStatus() {
         String prUrl = "https://github.com/org/repo/pull/21";
-        String payload = openedPrPayload("reopened", "Closes conductor/" + ISSUE_ID, prUrl);
+        String payload = openedPrPayload("reopened", "Closes conductor/" + DISPLAY_ID, prUrl);
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         Issue issue = buildIssue(IssueStatus.CODE_REVIEW);
 
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.findByProjectKeyAndSequenceNumber(PROJECT_KEY, SEQUENCE_NUMBER)).thenReturn(Optional.of(issue));
         when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -279,11 +282,11 @@ class GitHubWebhookProcessorTest {
     @Test
     void synchronizePrSetsPrUrlWithoutTransitioningStatus() {
         String prUrl = "https://github.com/org/repo/pull/22";
-        String payload = openedPrPayload("synchronize", "Closes conductor/" + ISSUE_ID, prUrl);
+        String payload = openedPrPayload("synchronize", "Closes conductor/" + DISPLAY_ID, prUrl);
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         Issue issue = buildIssue(IssueStatus.IN_PROGRESS);
 
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.findByProjectKeyAndSequenceNumber(PROJECT_KEY, SEQUENCE_NUMBER)).thenReturn(Optional.of(issue));
         when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -305,7 +308,7 @@ class GitHubWebhookProcessorTest {
 
         processor.processEvent(event);
 
-        verify(issueRepository, never()).findById(any());
+        verify(issueRepository, never()).findByProjectKeyAndSequenceNumber(any(), any());
         assertThat(event.getStatus()).isEqualTo(WebhookEventStatus.PROCESSED);
     }
 
@@ -313,14 +316,14 @@ class GitHubWebhookProcessorTest {
     void issueFromDifferentProjectIsIgnored() {
         String otherProjectId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
         String prUrl = "https://github.com/org/repo/pull/77";
-        String payload = mergedPrPayload("Closes conductor/" + ISSUE_ID, prUrl);
+        String payload = mergedPrPayload("Closes conductor/" + DISPLAY_ID, prUrl);
 
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         event.setProjectId(otherProjectId);
 
         Issue issue = buildIssue(IssueStatus.IN_PROGRESS);
 
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.findByProjectKeyAndSequenceNumber(PROJECT_KEY, SEQUENCE_NUMBER)).thenReturn(Optional.of(issue));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 
         processor.processEvent(event);
@@ -331,12 +334,12 @@ class GitHubWebhookProcessorTest {
 
     @Test
     void attemptsAndLastAttemptedAtAreUpdated() {
-        String payload = mergedPrPayload("Closes conductor/" + ISSUE_ID, "https://github.com/org/repo/pull/1");
+        String payload = mergedPrPayload("Closes conductor/" + DISPLAY_ID, "https://github.com/org/repo/pull/1");
         GitHubWebhookEvent event = buildEvent("pull_request", payload);
         event.setAttempts(2);
         Issue issue = buildIssue(IssueStatus.IN_PROGRESS);
 
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(issueRepository.findByProjectKeyAndSequenceNumber(PROJECT_KEY, SEQUENCE_NUMBER)).thenReturn(Optional.of(issue));
         when(issueRepository.save(any(Issue.class))).thenAnswer(inv -> inv.getArgument(0));
         when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenAnswer(inv -> inv.getArgument(0));
 

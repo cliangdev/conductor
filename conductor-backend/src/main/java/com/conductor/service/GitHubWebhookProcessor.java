@@ -23,7 +23,7 @@ public class GitHubWebhookProcessor {
     private static final Logger log = LoggerFactory.getLogger(GitHubWebhookProcessor.class);
 
     private static final Pattern CLOSES_PATTERN =
-            Pattern.compile("closes\\s+conductor/([a-f0-9\\-]{36})", Pattern.CASE_INSENSITIVE);
+            Pattern.compile("closes\\s+conductor/([A-Z]+-\\d+)", Pattern.CASE_INSENSITIVE);
 
     private final GitHubWebhookEventRepository webhookEventRepository;
     private final IssueRepository issueRepository;
@@ -74,9 +74,12 @@ public class GitHubWebhookProcessor {
 
         Matcher matcher = CLOSES_PATTERN.matcher(prBody);
         if (!matcher.find()) return;
-        String issueId = matcher.group(1);
+        String displayId = matcher.group(1).toUpperCase();
+        String[] parts = displayId.split("-");
+        String projectKey = parts[0];
+        int sequenceNumber = Integer.parseInt(parts[1]);
 
-        Issue issue = issueRepository.findById(issueId).orElse(null);
+        Issue issue = issueRepository.findByProjectKeyAndSequenceNumber(projectKey, sequenceNumber).orElse(null);
         if (issue == null || !issue.getProject().getId().equals(event.getProjectId())) return;
 
         issue.setGithubPrUrl(prUrl.isBlank() ? null : prUrl);
