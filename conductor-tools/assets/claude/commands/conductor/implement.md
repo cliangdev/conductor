@@ -293,7 +293,7 @@ gh pr create --title "feat: {issue title trimmed to 72 chars}" --body "$(cat <<'
 - {task.id}: {blocker reason}
 {end if}
 
-Closes #{issueId}
+Closes conductor/{issueId}
 EOF
 )"
 ```
