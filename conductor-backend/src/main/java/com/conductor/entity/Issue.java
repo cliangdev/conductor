@@ -61,6 +61,9 @@ public class Issue {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    @Column(name = "github_pr_url", length = 512)
+    private String githubPrUrl;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -110,4 +113,7 @@ public class Issue {
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getGithubPrUrl() { return githubPrUrl; }
+    public void setGithubPrUrl(String githubPrUrl) { this.githubPrUrl = githubPrUrl; }
 }

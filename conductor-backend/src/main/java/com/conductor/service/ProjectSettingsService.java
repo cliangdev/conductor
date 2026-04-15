@@ -42,7 +42,7 @@ public class ProjectSettingsService {
     }
 
     @Transactional
-    public ProjectSettingsResponse updateSettings(String projectId, String discordWebhookUrl, Integer runTokenTtlHours, User caller) {
+    public ProjectSettingsResponse updateSettings(String projectId, String discordWebhookUrl, Integer runTokenTtlHours, String githubWebhookSecret, String githubRepoUrl, User caller) {
         verifyAdmin(projectId, caller.getId());
 
         if (discordWebhookUrl != null && !discordWebhookUrl.isBlank()) {
@@ -65,6 +65,12 @@ public class ProjectSettingsService {
         settings.setDiscordWebhookUrl(discordWebhookUrl);
         if (runTokenTtlHours != null) {
             settings.setRunTokenTtlHours(runTokenTtlHours);
+        }
+        if (githubWebhookSecret != null) {
+            settings.setGithubWebhookSecret(githubWebhookSecret);
+        }
+        if (githubRepoUrl != null) {
+            settings.setGithubRepoUrl(githubRepoUrl);
         }
         projectSettingsRepository.save(settings);
 
@@ -128,6 +134,8 @@ public class ProjectSettingsService {
         ProjectSettingsResponse response = new ProjectSettingsResponse();
         response.setDiscordWebhookUrl(maskWebhookUrl(settings.getDiscordWebhookUrl()));
         response.setRunTokenTtlHours(settings.getRunTokenTtlHours());
+        response.setGithubWebhookConfigured(settings.getGithubWebhookSecret() != null && !settings.getGithubWebhookSecret().isBlank());
+        response.setGithubRepoUrl(settings.getGithubRepoUrl());
         return response;
     }
 

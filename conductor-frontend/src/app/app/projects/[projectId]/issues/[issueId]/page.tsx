@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiDelete } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
+import { ExternalLink } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { ReviewSubmissionForm } from '@/components/reviews/ReviewSubmissionForm'
 import { ReviewersSummaryPanel } from '@/components/reviews/ReviewersSummaryPanel'
@@ -21,6 +22,7 @@ interface Issue {
   status: string
   description?: string
   displayId?: string
+  githubPrUrl?: string | null
 }
 
 interface Document {
@@ -373,6 +375,17 @@ export default function IssueDetailPage() {
               token={accessToken!}
               onStatusChanged={(s) => setIssue((prev) => prev ? { ...prev, status: s } : prev)}
             />
+            {issue.githubPrUrl && (
+              <a
+                href={issue.githubPrUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                View PR
+              </a>
+            )}
           </div>
         </div>
         <div className="flex items-start gap-3 flex-wrap">

@@ -38,6 +38,8 @@ tags:
     description: Workflow management endpoints
   - name: workflow-secrets
     description: Workflow secret management endpoints
+  - name: github
+    description: GitHub integration endpoints
 
 paths:
   /health:
@@ -1779,6 +1781,46 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/github/webhook:
+    post:
+      tags:
+        - github
+      summary: GitHub webhook receiver
+      operationId: receiveGitHubWebhook
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: X-Hub-Signature-256
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: X-GitHub-Event
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: X-GitHub-Delivery
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Webhook accepted
+        "401":
+          description: Invalid or missing signature
+      security: []
+
   /projects/{projectId}/notifications/channels:
     get:
       tags:
@@ -2890,6 +2932,9 @@ components:
           type: integer
         assignee:
           $ref: "#/components/schemas/IssueAssignee"
+        githubPrUrl:
+          type: string
+          nullable: true
 
     IssueAssignee:
       type: object
@@ -3296,6 +3341,13 @@ components:
           minimum: 1
           maximum: 168
           nullable: true
+        githubWebhookSecret:
+          type: string
+          nullable: true
+          writeOnly: true
+        githubRepoUrl:
+          type: string
+          nullable: true
 
     ProjectSettingsResponse:
       type: object
@@ -3305,6 +3357,11 @@ components:
           nullable: true
         runTokenTtlHours:
           type: integer
+        githubWebhookConfigured:
+          type: boolean
+        githubRepoUrl:
+          type: string
+          nullable: true
 
     DiscordTestResponse:
       type: object

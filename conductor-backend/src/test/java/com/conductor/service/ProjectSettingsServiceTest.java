@@ -82,7 +82,7 @@ class ProjectSettingsServiceTest {
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
         ProjectSettingsResponse response = projectSettingsService.updateSettings(
-                PROJECT_ID, VALID_WEBHOOK, null, adminUser);
+                PROJECT_ID, VALID_WEBHOOK, null, null, null, adminUser);
 
         ArgumentCaptor<ProjectSettings> captor = ArgumentCaptor.forClass(ProjectSettings.class);
         verify(projectSettingsRepository).save(captor.capture());
@@ -112,7 +112,7 @@ class ProjectSettingsServiceTest {
                 .thenReturn(Optional.of(adminMember));
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, "https://example.com/webhook", null, adminUser))
+                PROJECT_ID, "https://example.com/webhook", null, null, null, adminUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid Discord webhook URL");
     }
@@ -123,7 +123,7 @@ class ProjectSettingsServiceTest {
                 .thenReturn(Optional.of(reviewerMember));
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, VALID_WEBHOOK, null, reviewerUser))
+                PROJECT_ID, VALID_WEBHOOK, null, null, null, reviewerUser))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("Only ADMIN can manage project settings");
     }
@@ -134,12 +134,12 @@ class ProjectSettingsServiceTest {
                 .thenReturn(Optional.of(adminMember));
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, null, 0, adminUser))
+                PROJECT_ID, null, 0, null, null, adminUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("runTokenTtlHours must be between 1 and 168");
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, null, 169, adminUser))
+                PROJECT_ID, null, 169, null, null, adminUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("runTokenTtlHours must be between 1 and 168");
     }
@@ -151,7 +151,7 @@ class ProjectSettingsServiceTest {
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        projectSettingsService.updateSettings(PROJECT_ID, null, 48, adminUser);
+        projectSettingsService.updateSettings(PROJECT_ID, null, 48, null, null, adminUser);
 
         ArgumentCaptor<ProjectSettings> captor = ArgumentCaptor.forClass(ProjectSettings.class);
         verify(projectSettingsRepository).save(captor.capture());
