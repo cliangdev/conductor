@@ -12,6 +12,8 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.ColumnTransformer;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -65,6 +67,7 @@ public class Issue {
     @Column(name = "github_pr_url", length = 512)
     private String githubPrUrl;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "issue_tasks", columnDefinition = "JSONB")
     @ColumnTransformer(write = "?::jsonb")
     private JsonNode issueTasks;
