@@ -7,6 +7,7 @@ import com.conductor.entity.Issue;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
+import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.AddCommentReplyRequest;
 import com.conductor.generated.model.CommentReplyResponse;
@@ -22,6 +23,7 @@ import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -33,26 +35,35 @@ public class CommentService {
     private final IssueRepository issueRepository;
     private final DocumentRepository documentRepository;
     private final ProjectMemberRepository projectMemberRepository;
+    private final StorageService storageService;
 
     public CommentService(
             CommentRepository commentRepository,
             CommentReplyRepository commentReplyRepository,
             IssueRepository issueRepository,
             DocumentRepository documentRepository,
-            ProjectMemberRepository projectMemberRepository) {
+            ProjectMemberRepository projectMemberRepository,
+            StorageService storageService) {
         this.commentRepository = commentRepository;
         this.commentReplyRepository = commentReplyRepository;
         this.issueRepository = issueRepository;
         this.documentRepository = documentRepository;
         this.projectMemberRepository = projectMemberRepository;
+        this.storageService = storageService;
     }
 
     @Transactional
     public CommentResponse createComment(String projectId, String issueId, CreateCommentRequest request, User caller) {
+        if (request.getLineNumber() == null) {
+            throw new BusinessException("lineNumber is required");
+        }
+
         Issue issue = findIssueInProject(projectId, issueId);
 
         Document document = documentRepository.findByIdAndIssueId(request.getDocumentId(), issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found in issue"));
+
+        String quotedText = extractLineFromDocument(document, request.getLineNumber());
 
         Comment comment = new Comment();
         comment.setIssue(issue);
@@ -60,9 +71,24 @@ public class CommentService {
         comment.setAuthor(caller);
         comment.setContent(request.getContent());
         comment.setLineNumber(request.getLineNumber());
+        comment.setQuotedText(quotedText);
 
         commentRepository.save(comment);
         return toCommentResponse(comment);
+    }
+
+    String extractLineFromDocument(Document document, int lineNumber) {
+        if (document.getStoragePath() == null) {
+            return "";
+        }
+        byte[] bytes = storageService.download(document.getStoragePath());
+        String content = new String(bytes, StandardCharsets.UTF_8);
+        String[] lines = content.split("\n", -1);
+        int index = lineNumber - 1;
+        if (index < 0 || index >= lines.length) {
+            return "";
+        }
+        return lines[index];
     }
 
     @Transactional(readOnly = true)

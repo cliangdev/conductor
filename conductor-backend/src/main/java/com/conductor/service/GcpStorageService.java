@@ -56,6 +56,14 @@ public class GcpStorageService implements StorageService {
         throw new StorageUploadException("Upload failed after " + maxAttempts + " attempts", lastEx);
     }
 
+    public byte[] download(String gcsPath) {
+        byte[] content = storage.readAllBytes(BlobId.of(bucketName, gcsPath));
+        if (content == null) {
+            throw new jakarta.persistence.EntityNotFoundException("Storage object not found: " + gcsPath);
+        }
+        return content;
+    }
+
     public boolean isHealthy() {
         try {
             storage.get(bucketName, Storage.BucketGetOption.fields(Storage.BucketField.NAME));

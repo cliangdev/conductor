@@ -31,6 +31,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -58,6 +59,9 @@ class CommentServiceTest {
 
     @Mock
     private ProjectMemberRepository projectMemberRepository;
+
+    @Mock
+    private StorageService storageService;
 
     @InjectMocks
     private CommentService commentService;
@@ -103,6 +107,7 @@ class CommentServiceTest {
         document.setIssue(issue);
         document.setFilename("spec.md");
         document.setContentType("text/markdown");
+        document.setStoragePath("proj-1/issues/issue-1/doc-1/spec.md");
         document.setCreatedAt(OffsetDateTime.now());
         document.setUpdatedAt(OffsetDateTime.now());
 
@@ -119,8 +124,11 @@ class CommentServiceTest {
 
     @Test
     void createCommentWithLineNumberSucceeds() {
+        String docContent = "line one\nline two\nline three";
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
         when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(storageService.download(document.getStoragePath()))
+                .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
             Comment c = inv.getArgument(0);
             if (c.getId() == null) c.setId("new-comment-id");
@@ -129,18 +137,90 @@ class CommentServiceTest {
             return c;
         });
 
-        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Looks good");
-        request.setLineNumber(10);
+        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Looks good", 2);
 
         CommentResponse response = commentService.createComment("proj-1", "issue-1", request, author);
 
-        assertThat(response.getLineNumber()).isEqualTo(10);
+        assertThat(response.getLineNumber()).isEqualTo(2);
         assertThat(response.getContent()).isEqualTo("Looks good");
         assertThat(response.getAuthorId()).isEqualTo("user-1");
     }
 
     @Test
-    void createCommentWithSelectionAnchorSucceeds() {
+    void createCommentPersistsQuotedTextFromDocumentLine() {
+        String docContent = "# Introduction\nThis is the summary\nMore details here";
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(storageService.download(document.getStoragePath()))
+                .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
+        when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
+            Comment c = inv.getArgument(0);
+            if (c.getId() == null) c.setId("new-comment-id");
+            if (c.getCreatedAt() == null) c.setCreatedAt(OffsetDateTime.now());
+            if (c.getUpdatedAt() == null) c.setUpdatedAt(OffsetDateTime.now());
+            return c;
+        });
+
+        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Needs clarification", 2);
+
+        commentService.createComment("proj-1", "issue-1", request, author);
+
+        ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
+        verify(commentRepository).save(captor.capture());
+        assertThat(captor.getValue().getQuotedText()).isEqualTo("This is the summary");
+    }
+
+    @Test
+    void createCommentQuotedTextFirstLine() {
+        String docContent = "First line\nSecond line";
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(storageService.download(document.getStoragePath()))
+                .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
+        when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
+            Comment c = inv.getArgument(0);
+            if (c.getId() == null) c.setId("new-comment-id");
+            if (c.getCreatedAt() == null) c.setCreatedAt(OffsetDateTime.now());
+            if (c.getUpdatedAt() == null) c.setUpdatedAt(OffsetDateTime.now());
+            return c;
+        });
+
+        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Comment on first line", 1);
+
+        commentService.createComment("proj-1", "issue-1", request, author);
+
+        ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
+        verify(commentRepository).save(captor.capture());
+        assertThat(captor.getValue().getQuotedText()).isEqualTo("First line");
+    }
+
+    @Test
+    void createCommentQuotedTextOutOfBoundsReturnsEmpty() {
+        String docContent = "Only one line";
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(storageService.download(document.getStoragePath()))
+                .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
+        when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
+            Comment c = inv.getArgument(0);
+            if (c.getId() == null) c.setId("new-comment-id");
+            if (c.getCreatedAt() == null) c.setCreatedAt(OffsetDateTime.now());
+            if (c.getUpdatedAt() == null) c.setUpdatedAt(OffsetDateTime.now());
+            return c;
+        });
+
+        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Comment on line 99", 99);
+
+        commentService.createComment("proj-1", "issue-1", request, author);
+
+        ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
+        verify(commentRepository).save(captor.capture());
+        assertThat(captor.getValue().getQuotedText()).isEqualTo("");
+    }
+
+    @Test
+    void createCommentDocumentWithNoStoragePathReturnsEmptyQuotedText() {
+        document.setStoragePath(null);
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
         when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
@@ -151,33 +231,25 @@ class CommentServiceTest {
             return c;
         });
 
-        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Selection comment");
-        request.setSelectionStart(100);
-        request.setSelectionLength(50);
+        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Comment", 1);
 
-        CommentResponse response = commentService.createComment("proj-1", "issue-1", request, author);
+        commentService.createComment("proj-1", "issue-1", request, author);
 
-        assertThat(response.getSelectionStart()).isEqualTo(100);
-        assertThat(response.getSelectionLength()).isEqualTo(50);
-        assertThat(response.getLineNumber()).isNull();
+        ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
+        verify(commentRepository).save(captor.capture());
+        assertThat(captor.getValue().getQuotedText()).isEqualTo("");
     }
 
     @Test
-    void createCommentWithNoAnchorThrowsBusinessException() {
-        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Missing anchor");
+    void createCommentMissingLineNumberThrowsBusinessException() {
+        CreateCommentRequest request = new CreateCommentRequest();
+        request.setDocumentId("doc-1");
+        request.setContent("Missing lineNumber");
+        // lineNumber is null
 
         assertThatThrownBy(() -> commentService.createComment("proj-1", "issue-1", request, author))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("anchor");
-    }
-
-    @Test
-    void createCommentWithPartialSelectionAnchorThrowsBusinessException() {
-        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Partial anchor");
-        request.setSelectionStart(100);
-
-        assertThatThrownBy(() -> commentService.createComment("proj-1", "issue-1", request, author))
-                .isInstanceOf(BusinessException.class);
+                .hasMessageContaining("lineNumber");
     }
 
     @Test
@@ -194,7 +266,7 @@ class CommentServiceTest {
 
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of(reply));
 
-        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", author);
+        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", null, author);
 
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getId()).isEqualTo("comment-1");
@@ -276,5 +348,51 @@ class CommentServiceTest {
         commentService.deleteComment("proj-1", "issue-1", "comment-1", otherUser);
 
         verify(commentRepository).delete(comment);
+    }
+
+    // --- extractLineFromDocument unit tests (package-private helper) ---
+
+    @Test
+    void extractLineFromDocumentReturnsCorrectLine() {
+        Document doc = new Document();
+        doc.setStoragePath("some/path.md");
+        String content = "alpha\nbeta\ngamma";
+        when(storageService.download("some/path.md"))
+                .thenReturn(content.getBytes(StandardCharsets.UTF_8));
+
+        assertThat(commentService.extractLineFromDocument(doc, 2)).isEqualTo("beta");
+    }
+
+    @Test
+    void extractLineFromDocumentLineNumberTooHighReturnsEmpty() {
+        Document doc = new Document();
+        doc.setStoragePath("some/path.md");
+        String content = "only one line";
+        when(storageService.download("some/path.md"))
+                .thenReturn(content.getBytes(StandardCharsets.UTF_8));
+
+        assertThat(commentService.extractLineFromDocument(doc, 5)).isEqualTo("");
+    }
+
+    @Test
+    void extractLineFromDocumentNullStoragePathReturnsEmpty() {
+        Document doc = new Document();
+        doc.setStoragePath(null);
+
+        assertThat(commentService.extractLineFromDocument(doc, 1)).isEqualTo("");
+    }
+
+    @Test
+    void extractLineFromDocumentHandlesWindowsLineEndings() {
+        Document doc = new Document();
+        doc.setStoragePath("some/path.md");
+        // Windows line endings: \r\n — split on \n leaves \r on each line
+        String content = "line one\r\nline two\r\nline three";
+        when(storageService.download("some/path.md"))
+                .thenReturn(content.getBytes(StandardCharsets.UTF_8));
+
+        // line 2 will be "line two\r" — acceptable, document is stored as-is
+        String result = commentService.extractLineFromDocument(doc, 2);
+        assertThat(result).contains("line two");
     }
 }
