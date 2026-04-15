@@ -175,6 +175,31 @@ export async function syncIssueMd(filePath: string, getConfig: () => Config): Pr
   }
 }
 
+export async function syncTasksJson(filePath: string, getConfig: () => Config): Promise<void> {
+  const parsed = parseFilePath(filePath)
+  if (!parsed) return
+
+  let content: string
+  try {
+    content = fs.readFileSync(filePath, 'utf8')
+  } catch {
+    console.error(`Failed to read file: ${filePath}`)
+    return
+  }
+
+  const tasks = JSON.parse(content)
+  const config = getConfig()
+  const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}/tasks`
+
+  try {
+    await callApi('PUT', apiPath, tasks, getConfig)
+    console.log(`Synced tasks.json: ${filePath}`)
+  } catch (err) {
+    console.error(`Tasks sync failed, queuing: ${filePath} — ${(err as Error).message}`)
+    queueChange({ method: 'PUT', path: apiPath, body: tasks })
+  }
+}
+
 export async function replayQueue(getConfig: () => Config): Promise<void> {
   const entries = readQueue()
   if (entries.length === 0) return
@@ -216,6 +241,8 @@ export function startWatcher(getConfig: () => Config): void {
     .on('add', (filePath) => debounce(filePath, () => {
       if (path.basename(filePath) === 'issue.md') {
         syncIssueMd(filePath, getConfig).catch(console.error)
+      } else if (path.basename(filePath) === 'tasks.json') {
+        syncTasksJson(filePath, getConfig).catch(console.error)
       } else {
         syncFile(filePath, getConfig).catch(console.error)
       }
@@ -223,15 +250,18 @@ export function startWatcher(getConfig: () => Config): void {
     .on('change', (filePath) => debounce(filePath, () => {
       if (path.basename(filePath) === 'issue.md') {
         syncIssueMd(filePath, getConfig).catch(console.error)
+      } else if (path.basename(filePath) === 'tasks.json') {
+        syncTasksJson(filePath, getConfig).catch(console.error)
       } else {
         syncFile(filePath, getConfig).catch(console.error)
       }
     }))
     .on('unlink', (filePath) => debounce(filePath, () => {
-      if (path.basename(filePath) !== 'issue.md') {
+      const basename = path.basename(filePath)
+      if (basename !== 'issue.md' && basename !== 'tasks.json') {
         deleteFile(filePath, getConfig).catch(console.error)
       }
-      // issue.md delete is ignored
+      // issue.md and tasks.json deletes are ignored
     }))
 
   process.on('SIGTERM', () => {
