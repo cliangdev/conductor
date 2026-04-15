@@ -12,6 +12,8 @@ import com.conductor.generated.model.CreateDocumentRequest;
 import com.conductor.generated.model.DocumentResponse;
 import com.conductor.generated.model.UpdateDocumentRequest;
 import com.conductor.generated.model.UpsertDocumentByFilenameRequest;
+import com.conductor.entity.Comment;
+import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.IssueRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -51,6 +53,9 @@ class DocumentServiceTest {
     @Mock
     private StorageService gcpStorageService;
 
+    @Mock
+    private CommentRepository commentRepository;
+
     private DocumentService documentService;
 
     private Issue testIssue;
@@ -58,7 +63,9 @@ class DocumentServiceTest {
 
     @BeforeEach
     void setUp() {
-        documentService = new DocumentService(documentRepository, issueRepository, gcpStorageService, 15);
+        documentService = new DocumentService(documentRepository, issueRepository, gcpStorageService, commentRepository, 15);
+
+        org.mockito.Mockito.lenient().when(commentRepository.findAllByDocumentId(anyString())).thenReturn(List.of());
 
         User user = new User();
         user.setId("user-1");
@@ -241,6 +248,89 @@ class DocumentServiceTest {
         documentService.updateDocument("proj-1", "issue-1", "doc-1", request);
 
         assertThat(testDocument.getContentType()).isEqualTo("text/plain");
+    }
+
+    // --- stale comment tests ---
+
+    @Test
+    void updateDocumentMarksCommentsStaleWhenLineNumberExceedsNewLineCount() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
+
+        Comment staleComment = new Comment();
+        staleComment.setLineNumber(10); // line 10 won't exist in 3-line doc
+        staleComment.setLineStale(false);
+
+        Comment validComment = new Comment();
+        validComment.setLineNumber(2); // line 2 exists in 3-line doc
+        validComment.setLineStale(false);
+
+        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(staleComment, validComment));
+
+        String threeLineContent = "line1\nline2\nline3";
+        documentService.updateDocument("proj-1", "issue-1", "doc-1", new UpdateDocumentRequest(threeLineContent));
+
+        assertThat(staleComment.isLineStale()).isTrue();
+        assertThat(validComment.isLineStale()).isFalse();
+
+        ArgumentCaptor<List<Comment>> captor = ArgumentCaptor.forClass(List.class);
+        verify(commentRepository).saveAll(captor.capture());
+        assertThat(captor.getValue()).containsExactly(staleComment);
+    }
+
+    @Test
+    void updateDocumentDoesNotSaveWhenNoCommentsAreStale() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
+
+        Comment validComment = new Comment();
+        validComment.setLineNumber(1);
+        validComment.setLineStale(false);
+
+        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(validComment));
+
+        documentService.updateDocument("proj-1", "issue-1", "doc-1", new UpdateDocumentRequest("line1\nline2\nline3"));
+
+        verify(commentRepository, never()).saveAll(any());
+        assertThat(validComment.isLineStale()).isFalse();
+    }
+
+    @Test
+    void updateDocumentSkipsAlreadyStaleComments() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
+
+        Comment alreadyStale = new Comment();
+        alreadyStale.setLineNumber(99);
+        alreadyStale.setLineStale(true); // already stale — should not be re-saved
+
+        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(alreadyStale));
+
+        documentService.updateDocument("proj-1", "issue-1", "doc-1", new UpdateDocumentRequest("only one line"));
+
+        verify(commentRepository, never()).saveAll(any());
+    }
+
+    @Test
+    void upsertByFilenameMarksCommentsStaleOnUpdate() {
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIssueIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
+
+        Comment staleComment = new Comment();
+        staleComment.setLineNumber(5);
+        staleComment.setLineStale(false);
+
+        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(staleComment));
+
+        documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md",
+                new UpsertDocumentByFilenameRequest("one line only"));
+
+        assertThat(staleComment.isLineStale()).isTrue();
+        verify(commentRepository).saveAll(any());
     }
 
     @Test

@@ -8,6 +8,7 @@ import com.conductor.generated.model.CreateDocumentRequest;
 import com.conductor.generated.model.DocumentResponse;
 import com.conductor.generated.model.UpdateDocumentRequest;
 import com.conductor.generated.model.UpsertDocumentByFilenameRequest;
+import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.IssueRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -32,15 +33,18 @@ public class DocumentService {
     private final DocumentRepository documentRepository;
     private final IssueRepository issueRepository;
     private final StorageService gcpStorageService;
+    private final CommentRepository commentRepository;
     private final int signedUrlExpiryMinutes;
 
     public DocumentService(DocumentRepository documentRepository,
                            IssueRepository issueRepository,
                            StorageService gcpStorageService,
+                           CommentRepository commentRepository,
                            @Value("${gcp.signed-url.expiry-minutes:15}") int signedUrlExpiryMinutes) {
         this.documentRepository = documentRepository;
         this.issueRepository = issueRepository;
         this.gcpStorageService = gcpStorageService;
+        this.commentRepository = commentRepository;
         this.signedUrlExpiryMinutes = signedUrlExpiryMinutes;
     }
 
@@ -111,6 +115,10 @@ public class DocumentService {
             document.setContentType(request.getContentType());
         }
 
+        if (newContent != null) {
+            markStaleComments(document.getId(), newContent);
+        }
+
         documentRepository.save(document);
         return toDocumentResponse(document);
     }
@@ -135,6 +143,9 @@ public class DocumentService {
                     }
                     existing.setContent(content);
                     existing.setContentType(contentType);
+                    if (content != null) {
+                        markStaleComments(existing.getId(), content);
+                    }
                     documentRepository.save(existing);
                     return false;
                 })
@@ -185,6 +196,18 @@ public class DocumentService {
         documentRepository.delete(document);
         if (storagePath != null) {
             gcpStorageService.delete(storagePath);
+        }
+    }
+
+    private void markStaleComments(String documentId, String newContent) {
+        int lineCount = newContent.split("\n", -1).length;
+        List<com.conductor.entity.Comment> comments = commentRepository.findAllByDocumentId(documentId);
+        List<com.conductor.entity.Comment> toUpdate = comments.stream()
+                .filter(c -> !c.isLineStale() && c.getLineNumber() > lineCount)
+                .peek(c -> c.setLineStale(true))
+                .toList();
+        if (!toUpdate.isEmpty()) {
+            commentRepository.saveAll(toUpdate);
         }
     }
 
