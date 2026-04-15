@@ -42,8 +42,22 @@ export function CommentableDocument({
   const [openThreadLine, setOpenThreadLine] = useState<number | null>(null)
   const [hoveredLine, setHoveredLine] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const gutterRef = useRef<HTMLDivElement>(null)
 
   const lines = content.split('\n')
+
+  const LINE_HEIGHT_PX = 1.625 * 16 // 26px — matches gutter cell height
+
+  const handleContainerMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!gutterRef.current) return
+      const rect = gutterRef.current.getBoundingClientRect()
+      const relativeY = e.clientY - rect.top
+      const lineIndex = Math.floor(relativeY / LINE_HEIGHT_PX)
+      setHoveredLine(Math.max(1, Math.min(lines.length, lineIndex + 1)))
+    },
+    [lines.length, LINE_HEIGHT_PX]
+  )
 
   function commentsForLine(lineNum: number): Comment[] {
     return comments.filter((c) => c.lineNumber === lineNum)
@@ -81,8 +95,6 @@ export function CommentableDocument({
     [composeState, projectId, issueId, documentId, token, onCommentAdded]
   )
 
-  const LINE_HEIGHT_REM = 1.625 // matches the gutter cell height
-
   return (
     <>
       {/* Backdrop — closes compose popover when clicking outside */}
@@ -113,9 +125,15 @@ export function CommentableDocument({
         </div>
       )}
 
-      <div className="flex gap-0" ref={containerRef}>
+      <div
+        className="flex gap-0"
+        ref={containerRef}
+        onMouseMove={handleContainerMouseMove}
+        onMouseLeave={() => setHoveredLine(null)}
+      >
         {/* Gutter — desktop only */}
         <div
+          ref={gutterRef}
           className="hidden md:block w-8 shrink-0 select-none"
           aria-label="comment gutter"
         >
@@ -131,7 +149,7 @@ export function CommentableDocument({
               <div
                 key={lineNum}
                 className="relative flex items-center justify-center"
-                style={{ height: `${LINE_HEIGHT_REM}rem` }}
+                style={{ height: `${LINE_HEIGHT_PX}px` }}
               >
                 {hasComments ? (
                   <button
@@ -161,35 +179,8 @@ export function CommentableDocument({
           })}
         </div>
 
-        {/* Document content with line hover overlay */}
-        <div className="flex-1 min-w-0 relative">
-          {/* Transparent per-line hover strips — same height as gutter rows */}
-          <div
-            className="absolute inset-0 pointer-events-none z-10"
-            aria-hidden="true"
-          >
-            {lines.map((_, idx) => {
-              const lineNum = idx + 1
-              const isHovered = hoveredLine === lineNum
-              const isActive = composeState?.lineNumber === lineNum || openThreadLine === lineNum
-              return (
-                <div
-                  key={lineNum}
-                  className={`pointer-events-auto transition-colors duration-100 ${
-                    isActive
-                      ? 'bg-primary/8 border-l-2 border-primary'
-                      : isHovered
-                        ? 'bg-muted/40 border-l-2 border-border'
-                        : ''
-                  }`}
-                  style={{ height: `${LINE_HEIGHT_REM}rem` }}
-                  onMouseEnter={() => setHoveredLine(lineNum)}
-                  onMouseLeave={() => setHoveredLine(null)}
-                />
-              )
-            })}
-          </div>
-
+        {/* Document content */}
+        <div className="flex-1 min-w-0">
           <MarkdownRenderer content={content} onDocumentNavigate={onDocumentNavigate} />
 
           {/* Inline thread panel */}
