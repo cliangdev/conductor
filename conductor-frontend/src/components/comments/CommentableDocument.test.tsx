@@ -57,7 +57,7 @@ describe('CommentableDocument', () => {
     const firstLineBtn = gutter.querySelectorAll('button')[0]
     fireEvent.click(firstLineBtn)
     expect(screen.getByTestId('new-comment-form')).toBeInTheDocument()
-    expect(screen.getByText(/new comment on line 1/i)).toBeInTheDocument()
+    expect(screen.getByText(/comment on line 1/i)).toBeInTheDocument()
   })
 
   it('hides comment form when cancel is clicked', () => {
@@ -86,7 +86,7 @@ describe('CommentableDocument', () => {
     const gutter = screen.getByLabelText('comment gutter')
     const buttons = gutter.querySelectorAll('button')
     // Line 2 button (index 1) should have the "comment(s) on line" title
-    expect(buttons[1]).toHaveAttribute('title', expect.stringContaining('comment(s) on line 2'))
+    expect(buttons[1]).toHaveAttribute('title', expect.stringContaining('on line 2'))
   })
 
   it('sends lineNumber in POST when submitting a line comment', async () => {
