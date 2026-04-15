@@ -226,6 +226,12 @@ export default function GitHubSettingsPage() {
                 A webhook secret is already configured. Enter a new value to replace it.
               </p>
             )}
+            <p className="mt-1 text-xs text-muted-foreground">
+              Tip: generate a secret with{' '}
+              <code className="font-mono bg-muted px-1 py-0.5 rounded">openssl rand -hex 32</code>{' '}
+              and paste the same value in GitHub under{' '}
+              <span className="font-medium">Repository → Settings → Webhooks → Secret</span>.
+            </p>
           </div>
 
           <div className="pt-1">
