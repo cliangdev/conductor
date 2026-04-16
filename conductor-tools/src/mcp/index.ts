@@ -5,6 +5,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprot
 import { getConfig } from './config.js'
 import { createIssue, updateIssue, setIssueStatus, listIssues, getIssue } from './tools/issues.js'
 import { deleteDocument, scaffoldDocument } from './tools/documents.js'
+import { listIssueComments } from './tools/comments.js'
 
 const TOOLS = [
   {
@@ -90,6 +91,21 @@ const TOOLS = [
         filename: { type: 'string', description: 'Document filename for local deletion' },
       },
       required: ['issueId', 'documentId', 'filename'],
+    },
+  },
+  {
+    name: 'list_issue_comments',
+    description: 'List comments on an issue, optionally filtered by resolved status',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Issue ID' },
+        resolved: {
+          type: 'boolean',
+          description: 'Filter by resolved status. true = resolved only, false = unresolved only, omit = all comments',
+        },
+      },
+      required: ['issueId'],
     },
   },
 ]
@@ -216,6 +232,16 @@ export async function runMcpServer(): Promise<void> {
               issueId: params['issueId'] as string,
               documentId: params['documentId'] as string,
               filename: params['filename'] as string,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'list_issue_comments': {
+          const result = await listIssueComments(
+            {
+              issueId: params['issueId'] as string,
+              resolved: params['resolved'] as boolean | undefined,
             },
             config
           )

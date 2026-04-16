@@ -41,6 +41,16 @@ public class LocalStorageService implements StorageService {
     }
 
     @Override
+    public byte[] download(String gcsPath) {
+        try {
+            Path target = storagePath.resolve(gcsPath);
+            return Files.readAllBytes(target);
+        } catch (IOException e) {
+            throw new jakarta.persistence.EntityNotFoundException("Local storage object not found: " + gcsPath);
+        }
+    }
+
+    @Override
     public String generateSignedUrl(String gcsPath, int expiryMinutes) {
         String encoded = UriUtils.encodePath(gcsPath, StandardCharsets.UTF_8);
         return serverBaseUrl + "/api/v1/local-files/" + encoded;

@@ -13,6 +13,8 @@ export interface Comment {
   authorName: string
   content: string
   lineNumber?: number
+  quotedText?: string | null
+  lineStale?: boolean
   selectionStart?: number
   selectionLength?: number
   resolvedAt?: string | null

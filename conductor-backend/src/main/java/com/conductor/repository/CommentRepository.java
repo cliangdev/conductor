@@ -13,7 +13,13 @@ public interface CommentRepository extends JpaRepository<Comment, String> {
 
     List<Comment> findAllByIssueId(String issueId);
 
+    List<Comment> findAllByIssueIdAndResolvedAtIsNull(String issueId);
+
+    List<Comment> findAllByIssueIdAndResolvedAtIsNotNull(String issueId);
+
     List<Comment> findAllByIssueIdAndDocumentId(String issueId, String documentId);
+
+    List<Comment> findAllByDocumentId(String documentId);
 
     @Query("SELECT c.issue.id, COUNT(c) FROM Comment c WHERE c.issue.id IN :issueIds AND c.resolvedAt IS NULL GROUP BY c.issue.id")
     List<Object[]> countUnresolvedByIssueIds(@Param("issueIds") List<String> issueIds);

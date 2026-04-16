@@ -169,24 +169,9 @@ class CommentFlowE2ETest {
     }
 
     @Test
-    void selectionCommentValidation() {
-        // 1. Post with selectionStart + selectionLength → 201
-        var selectionResp = rest.exchange(
-                url("/api/v1/projects/" + projectId + "/issues/" + issueId + "/comments"),
-                HttpMethod.POST,
-                new HttpEntity<>(Map.of(
-                        "documentId", documentId,
-                        "content", "Selection comment",
-                        "selectionStart", 5,
-                        "selectionLength", 10
-                ), adminHeaders),
-                Map.class);
-        assertThat(selectionResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(selectionResp.getBody().get("selectionStart")).isEqualTo(5);
-        assertThat(selectionResp.getBody().get("selectionLength")).isEqualTo(10);
-
-        // 2. Post with neither lineNumber nor selection → 400
-        var invalidResp = rest.exchange(
+    void lineNumberValidation() {
+        // 1. Post without lineNumber → 400
+        var missingLineResp = rest.exchange(
                 url("/api/v1/projects/" + projectId + "/issues/" + issueId + "/comments"),
                 HttpMethod.POST,
                 new HttpEntity<>(Map.of(
@@ -194,7 +179,22 @@ class CommentFlowE2ETest {
                         "content", "No anchor comment"
                 ), adminHeaders),
                 Map.class);
-        assertThat(invalidResp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(missingLineResp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+
+        // 2. Post with lineNumber → 201 and quotedText is populated server-side
+        var validResp = rest.exchange(
+                url("/api/v1/projects/" + projectId + "/issues/" + issueId + "/comments"),
+                HttpMethod.POST,
+                new HttpEntity<>(Map.of(
+                        "documentId", documentId,
+                        "content", "Line comment",
+                        "lineNumber", 3
+                ), adminHeaders),
+                Map.class);
+        assertThat(validResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(validResp.getBody().get("lineNumber")).isEqualTo(3);
+        assertThat(validResp.getBody().get("quotedText")).isNotNull();
+        assertThat(validResp.getBody().get("lineStale")).isEqualTo(false);
     }
 
     private HttpHeaders bearerHeaders(String token) {

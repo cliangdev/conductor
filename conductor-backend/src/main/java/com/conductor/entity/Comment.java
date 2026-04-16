@@ -36,14 +36,14 @@ public class Comment {
     @Column(name = "content", columnDefinition = "TEXT", nullable = false)
     private String content;
 
-    @Column(name = "line_number")
-    private Integer lineNumber;
+    @Column(name = "line_number", nullable = false)
+    private int lineNumber;
 
-    @Column(name = "selection_start")
-    private Integer selectionStart;
+    @Column(name = "quoted_text", columnDefinition = "TEXT")
+    private String quotedText;
 
-    @Column(name = "selection_length")
-    private Integer selectionLength;
+    @Column(name = "line_stale", nullable = false)
+    private boolean lineStale = false;
 
     @Column(name = "resolved_at")
     private OffsetDateTime resolvedAt;
@@ -87,14 +87,14 @@ public class Comment {
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
 
-    public Integer getLineNumber() { return lineNumber; }
-    public void setLineNumber(Integer lineNumber) { this.lineNumber = lineNumber; }
+    public int getLineNumber() { return lineNumber; }
+    public void setLineNumber(int lineNumber) { this.lineNumber = lineNumber; }
 
-    public Integer getSelectionStart() { return selectionStart; }
-    public void setSelectionStart(Integer selectionStart) { this.selectionStart = selectionStart; }
+    public String getQuotedText() { return quotedText; }
+    public void setQuotedText(String quotedText) { this.quotedText = quotedText; }
 
-    public Integer getSelectionLength() { return selectionLength; }
-    public void setSelectionLength(Integer selectionLength) { this.selectionLength = selectionLength; }
+    public boolean isLineStale() { return lineStale; }
+    public void setLineStale(boolean lineStale) { this.lineStale = lineStale; }
 
     public OffsetDateTime getResolvedAt() { return resolvedAt; }
     public void setResolvedAt(OffsetDateTime resolvedAt) { this.resolvedAt = resolvedAt; }
