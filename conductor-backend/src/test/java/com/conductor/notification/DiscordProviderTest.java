@@ -54,7 +54,7 @@ class DiscordProviderTest {
         assertThat(result).contains(ISSUE_TITLE);
         assertThat(result).contains(PROJECT_ID);
         assertThat(result).contains(ISSUE_ID);
-        assertThat(result).contains("5814783");
+        assertThat(result).contains("10181046"); // 0x9B59B6 purple for ISSUE_SUBMITTED
         assertThat(result).contains("timestamp");
     }
 
@@ -216,5 +216,84 @@ class DiscordProviderTest {
                 .thenReturn(ResponseEntity.badRequest().body("error"));
 
         assertThatNoException().isThrownBy(() -> discordProvider.send(WEBHOOK_URL, "{\"embeds\":[]}"));
+    }
+
+    // Color mapping tests
+
+    @Test
+    void colorForIssueApprovedIsGreen() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.ISSUE_APPROVED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":5763719"); // 0x57F287 green
+    }
+
+    @Test
+    void colorForIssueCompletedIsGreen() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.ISSUE_COMPLETED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":5763719"); // 0x57F287 green
+    }
+
+    @Test
+    void colorForIssueInCodeReviewIsBlue() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.ISSUE_IN_CODE_REVIEW, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":5793266"); // 0x5865F2 blue
+    }
+
+    @Test
+    void colorForIssueInProgressIsYellow() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.ISSUE_IN_PROGRESS, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":16705372"); // 0xFEE75C yellow
+    }
+
+    @Test
+    void colorForIssueSubmittedIsPurple() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.ISSUE_SUBMITTED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":10181046"); // 0x9B59B6 purple
+    }
+
+    @Test
+    void colorForReviewSubmittedIsDefaultBlue() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.REVIEW_SUBMITTED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "APPROVED"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":5814783"); // 0x58B9FF default blue
+    }
+
+    @Test
+    void colorForCommentAddedIsDefaultBlue() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.COMMENT_ADDED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "commentAuthor", "Bob"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":5814783"); // 0x58B9FF default blue
     }
 }

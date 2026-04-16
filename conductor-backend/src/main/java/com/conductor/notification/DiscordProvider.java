@@ -18,7 +18,21 @@ import java.util.Map;
 public class DiscordProvider implements NotificationProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DiscordProvider.class);
-    private static final int DISCORD_COLOR_BLUE = 5814783;
+    private static final int COLOR_GREEN  = 0x57F287; // ISSUE_APPROVED, ISSUE_COMPLETED
+    private static final int COLOR_BLUE   = 0x5865F2; // ISSUE_IN_CODE_REVIEW
+    private static final int COLOR_YELLOW = 0xFEE75C; // ISSUE_IN_PROGRESS
+    private static final int COLOR_PURPLE = 0x9B59B6; // ISSUE_SUBMITTED
+    private static final int COLOR_DEFAULT = 0x58B9FF; // all others
+
+    private static int colorFor(EventType eventType) {
+        return switch (eventType) {
+            case ISSUE_APPROVED, ISSUE_COMPLETED -> COLOR_GREEN;
+            case ISSUE_IN_CODE_REVIEW -> COLOR_BLUE;
+            case ISSUE_IN_PROGRESS -> COLOR_YELLOW;
+            case ISSUE_SUBMITTED -> COLOR_PURPLE;
+            default -> COLOR_DEFAULT;
+        };
+    }
 
     private final RestTemplate restTemplate;
     private final String frontendUrl;
@@ -97,7 +111,7 @@ public class DiscordProvider implements NotificationProvider {
             escapeJson(title),
             escapeJson(description),
             escapeJson(link),
-            DISCORD_COLOR_BLUE,
+            colorFor(event.getEventType()),
             timestamp
         );
     }
