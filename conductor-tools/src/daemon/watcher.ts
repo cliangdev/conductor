@@ -4,6 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { fileURLToPath } from 'url'
 import { readConfig, Config } from '../lib/config.js'
+import { writeDaemonState, deleteDaemonState } from './state.js'
 
 const CONDUCTOR_DIR = path.join(os.homedir(), '.conductor')
 export const SYNC_QUEUE_PATH = path.join(CONDUCTOR_DIR, 'sync-queue.json')
@@ -267,8 +268,12 @@ export function startWatcher(getConfig: () => Config): void {
   process.on('SIGTERM', () => {
     watcher.close().then(() => {
       console.log('Watcher closed.')
+      deleteDaemonState()
       process.exit(0)
-    }).catch(() => process.exit(0))
+    }).catch(() => {
+      deleteDaemonState()
+      process.exit(0)
+    })
   })
 }
 
@@ -286,6 +291,17 @@ if (process.argv[1] === __filename) {
 
   // Validate config is present at startup
   getConfig()
+
+  writeDaemonState({
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    pollMode: 'idle',
+    lastPollAt: null,
+    consecutiveErrors: 0,
+    eventsThisSession: 0,
+    activeRuns: [],
+    syncQueueSize: 0,
+  })
 
   replayQueue(getConfig).catch(console.error)
   startWatcher(getConfig)
