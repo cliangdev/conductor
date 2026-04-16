@@ -27,6 +27,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationEvent;
 
 import java.time.OffsetDateTime;
