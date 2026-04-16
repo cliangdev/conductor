@@ -4,12 +4,14 @@ import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
+import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.entity.WorkflowSchedule;
 import com.conductor.entity.WorkflowScheduleSkip;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.WorkflowsApi;
 import com.conductor.generated.model.SetWorkflowEnabledRequest;
+import com.conductor.generated.model.UpdateWorkflowRunStatusRequest;
 import com.conductor.generated.model.WorkflowCreateRequest;
 import com.conductor.generated.model.WorkflowCreateResponse;
 import com.conductor.generated.model.WorkflowDefinitionDto;
@@ -149,6 +151,19 @@ public class WorkflowController implements WorkflowsApi {
         WorkflowDefinition workflow = workflowService.getWorkflow(projectId, workflowId);
         WorkflowRun run = workflowTriggerService.triggerManual(workflow, userId);
         return ResponseEntity.status(202).body(toRunDto(run));
+    }
+
+    @Override
+    public ResponseEntity<WorkflowRunDto> updateWorkflowRunStatus(String runId, UpdateWorkflowRunStatusRequest request) {
+        WorkflowRun run = runRepository.findByIdWithWorkflow(runId)
+                .orElseThrow(() -> new EntityNotFoundException("WorkflowRun not found: " + runId));
+        WorkflowRunStatus newStatus = WorkflowRunStatus.valueOf(request.getStatus());
+        run.setStatus(newStatus);
+        if (newStatus == WorkflowRunStatus.SUCCESS || newStatus == WorkflowRunStatus.FAILED) {
+            run.setCompletedAt(java.time.OffsetDateTime.now());
+        }
+        runRepository.save(run);
+        return ResponseEntity.ok(toRunDto(run));
     }
 
     @Override
