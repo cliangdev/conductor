@@ -40,6 +40,8 @@ tags:
     description: Workflow secret management endpoints
   - name: github
     description: GitHub integration endpoints
+  - name: daemon
+    description: Daemon event polling endpoints
 
 paths:
   /health:
@@ -2663,6 +2665,34 @@ paths:
               schema:
                 $ref: "#/components/schemas/WorkflowRunDetailDto"
 
+  /projects/{projectId}/daemon/events:
+    get:
+      tags:
+        - daemon
+      summary: Poll for pending daemon events
+      operationId: getDaemonEvents
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of pending daemon events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DaemonEventsResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /workflow-runs/{runId}/logs/stream:
     get:
       tags: [workflows]
@@ -3813,3 +3843,28 @@ components:
           type: string
         runId:
           type: string
+
+    DaemonEventDto:
+      type: object
+      required:
+        - eventId
+        - type
+        - payload
+      properties:
+        eventId:
+          type: string
+        type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+
+    DaemonEventsResponse:
+      type: object
+      required:
+        - events
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/DaemonEventDto"
