@@ -16,6 +16,8 @@ public interface DaemonEventRepository extends JpaRepository<DaemonEvent, String
 
     List<DaemonEvent> findByProjectIdAndAckedAtIsNullAndExpiresAtAfter(String projectId, OffsetDateTime now);
 
+    @Modifying
+    @Transactional
     void deleteByExpiresAtBefore(OffsetDateTime cutoff);
 
     @Modifying

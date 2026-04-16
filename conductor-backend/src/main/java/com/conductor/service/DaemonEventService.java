@@ -43,7 +43,7 @@ public class DaemonEventService {
         repository.acknowledgeEvents(eventIds, projectId, OffsetDateTime.now());
     }
 
-    @Scheduled(fixedDelay = 60_000)
+    @Scheduled(fixedDelay = 3_600_000)
     public void purgeExpiredEvents() {
         try {
             repository.deleteByExpiresAtBefore(OffsetDateTime.now());
