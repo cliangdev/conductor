@@ -1,6 +1,7 @@
 package com.conductor.controller;
 
 import com.conductor.generated.api.DaemonApi;
+import com.conductor.generated.model.AckDaemonEventsRequest;
 import com.conductor.generated.model.DaemonEventDto;
 import com.conductor.generated.model.DaemonEventsResponse;
 import com.conductor.service.DaemonEventService;
@@ -26,5 +27,11 @@ public class DaemonEventsController implements DaemonApi {
         DaemonEventsResponse response = new DaemonEventsResponse();
         response.setEvents(events);
         return ResponseEntity.ok(response);
+    }
+
+    @Override
+    public ResponseEntity<Void> ackDaemonEvents(String projectId, AckDaemonEventsRequest ackDaemonEventsRequest) {
+        daemonEventService.acknowledgeEvents(projectId, ackDaemonEventsRequest.getEventIds());
+        return ResponseEntity.noContent().build();
     }
 }

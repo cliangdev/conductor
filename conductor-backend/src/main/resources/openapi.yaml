@@ -2693,6 +2693,36 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/daemon/events/ack:
+    post:
+      tags:
+        - daemon
+      summary: Acknowledge daemon events by ID
+      operationId: ackDaemonEvents
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AckDaemonEventsRequest"
+      responses:
+        "204":
+          description: Events acknowledged
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /workflow-runs/{runId}/logs/stream:
     get:
       tags: [workflows]
@@ -3868,3 +3898,14 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DaemonEventDto"
+
+    AckDaemonEventsRequest:
+      type: object
+      required:
+        - eventIds
+      properties:
+        eventIds:
+          type: array
+          items:
+            type: string
+          description: List of event IDs to acknowledge
