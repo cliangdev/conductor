@@ -72,16 +72,85 @@ class DiscordProviderTest {
     }
 
     @Test
-    void formatReviewSubmittedContainsVerdict() {
+    void formatReviewSubmittedApprovedUsesGreenColorAndTitle() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.REVIEW_SUBMITTED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "APPROVED",
+                        "reviewerName", "Alice"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Review Approved");
+        assertThat(result).contains(String.valueOf(0x57F287));
+        assertThat(result).contains(ISSUE_TITLE);
+        assertThat(result).contains("Alice");
+    }
+
+    @Test
+    void formatReviewSubmittedChangesRequestedUsesRedColorAndTitle() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.REVIEW_SUBMITTED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "CHANGES_REQUESTED",
+                        "reviewerName", "Bob"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Changes Requested");
+        assertThat(result).contains(String.valueOf(0xED4245));
+        assertThat(result).contains(ISSUE_TITLE);
+        assertThat(result).contains("Bob");
+    }
+
+    @Test
+    void formatReviewSubmittedCommentedUsesYellowColorAndTitle() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.REVIEW_SUBMITTED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "COMMENTED",
+                        "reviewerName", "Carol"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Comment Review");
+        assertThat(result).contains(String.valueOf(0xFEE75C));
+        assertThat(result).contains(ISSUE_TITLE);
+        assertThat(result).contains("Carol");
+    }
+
+    @Test
+    void formatReviewSubmittedUnknownVerdictUsesDefaultBlueAndTitle() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.REVIEW_SUBMITTED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Review Submitted");
+        assertThat(result).contains("5814783");
+        assertThat(result).contains(ISSUE_TITLE);
+    }
+
+    @Test
+    void formatReviewSubmittedReviewerNameAppearsInDescription() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.REVIEW_SUBMITTED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "APPROVED",
+                        "reviewerName", "Dave"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Dave on: " + ISSUE_TITLE);
+    }
+
+    @Test
+    void formatReviewSubmittedNoReviewerNameFallsBackToIssueTitle() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, PROJECT_ID,
                 Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "APPROVED"));
 
         String result = discordProvider.format(event);
 
-        assertThat(result).contains("Review Submitted");
-        assertThat(result).contains("APPROVED");
         assertThat(result).contains(ISSUE_TITLE);
+        assertThat(result).doesNotContain(" on: " + ISSUE_TITLE);
     }
 
     @Test
@@ -276,10 +345,10 @@ class DiscordProviderTest {
     }
 
     @Test
-    void colorForReviewSubmittedIsDefaultBlue() {
+    void colorForReviewSubmittedWithUnknownVerdictIsDefaultBlue() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "APPROVED"));
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
 
         String result = discordProvider.format(event);
 

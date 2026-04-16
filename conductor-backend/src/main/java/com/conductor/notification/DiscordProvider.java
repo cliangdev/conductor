@@ -23,6 +23,7 @@ public class DiscordProvider implements NotificationProvider {
     private static final int COLOR_YELLOW = 0xFEE75C; // ISSUE_IN_PROGRESS
     private static final int COLOR_PURPLE = 0x9B59B6; // ISSUE_SUBMITTED
     private static final int COLOR_DEFAULT = 0x58B9FF; // all others
+    private static final int COLOR_RED    = 0xED4245; // CHANGES_REQUESTED
 
     private static int colorFor(EventType eventType) {
         return switch (eventType) {
@@ -52,6 +53,7 @@ public class DiscordProvider implements NotificationProvider {
         String title;
         String description;
         String link = frontendUrl + "/app/projects/" + projectId + "/issues/" + issueId;
+        int color = colorFor(event.getEventType());
 
         switch (event.getEventType()) {
             case ISSUE_SUBMITTED -> {
@@ -73,8 +75,25 @@ public class DiscordProvider implements NotificationProvider {
             }
             case REVIEW_SUBMITTED -> {
                 String verdict = meta.getOrDefault("verdict", "");
-                title = "Review Submitted";
-                description = verdict + " on: " + issueTitle;
+                String reviewerName = meta.getOrDefault("reviewerName", "");
+                switch (verdict) {
+                    case "APPROVED" -> {
+                        title = "Review Approved";
+                        color = COLOR_GREEN;
+                    }
+                    case "CHANGES_REQUESTED" -> {
+                        title = "Changes Requested";
+                        color = COLOR_RED;
+                    }
+                    case "COMMENTED" -> {
+                        title = "Comment Review";
+                        color = COLOR_YELLOW;
+                    }
+                    default -> {
+                        title = "Review Submitted";
+                    }
+                }
+                description = reviewerName.isBlank() ? issueTitle : reviewerName + " on: " + issueTitle;
             }
             case COMMENT_ADDED -> {
                 String author = meta.getOrDefault("commentAuthor", "");
@@ -111,7 +130,7 @@ public class DiscordProvider implements NotificationProvider {
             escapeJson(title),
             escapeJson(description),
             escapeJson(link),
-            colorFor(event.getEventType()),
+            color,
             timestamp
         );
     }
