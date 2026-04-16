@@ -1,11 +1,13 @@
 package com.conductor.workflow;
 
+import com.conductor.entity.DaemonEvent;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.entity.WorkflowSchedule;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationEvent;
+import com.conductor.repository.DaemonEventRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowScheduleRepository;
@@ -17,8 +19,10 @@ import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,17 +36,20 @@ public class WorkflowTriggerService {
     private final WorkflowRunRepository workflowRunRepository;
     private final WorkflowExecutionEngine executionEngine;
     private final WorkflowScheduleRepository scheduleRepository;
+    private final DaemonEventRepository daemonEventRepository;
     private final ObjectMapper objectMapper;
 
     public WorkflowTriggerService(WorkflowDefinitionRepository workflowRepository,
                                    WorkflowRunRepository workflowRunRepository,
                                    @Lazy WorkflowExecutionEngine executionEngine,
                                    WorkflowScheduleRepository scheduleRepository,
+                                   DaemonEventRepository daemonEventRepository,
                                    ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.executionEngine = executionEngine;
         this.scheduleRepository = scheduleRepository;
+        this.daemonEventRepository = daemonEventRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -167,8 +174,135 @@ public class WorkflowTriggerService {
         run.setStatus(WorkflowRunStatus.PENDING);
         WorkflowRun saved = workflowRunRepository.save(run);
         log.info("Created WorkflowRun {} for workflow {} (trigger: {})", saved.getId(), workflow.getId(), triggerType);
-        enqueueInitialJobs(workflow, saved);
+
+        if (hasSelfHostedJob(workflow.getYaml())) {
+            saved.setStatus(WorkflowRunStatus.PENDING_LOCAL_PICKUP);
+            workflowRunRepository.save(saved);
+            log.info("WorkflowRun {} routed to daemon (self-hosted jobs detected)", saved.getId());
+            createDaemonEvent(workflow, saved, triggerType, eventPayloadJson);
+        } else {
+            enqueueInitialJobs(workflow, saved);
+        }
+
         return saved;
+    }
+
+    private void createDaemonEvent(WorkflowDefinition workflow, WorkflowRun run, String triggerType, String eventPayloadJson) {
+        try {
+            Map<String, Object> eventPayload = parseEventPayload(eventPayloadJson);
+            List<Map<String, Object>> selfHostedJobs = extractSelfHostedJobs(workflow.getYaml());
+
+            Map<String, Object> triggerBlock = new HashMap<>();
+            triggerBlock.put("type", triggerType);
+            if (eventPayload.containsKey("fromStatus")) {
+                triggerBlock.put("fromStatus", eventPayload.get("fromStatus"));
+            }
+            if (eventPayload.containsKey("toStatus")) {
+                triggerBlock.put("toStatus", eventPayload.get("toStatus"));
+            }
+
+            Map<String, Object> daemonPayload = new HashMap<>();
+            daemonPayload.put("type", "workflow.trigger");
+            daemonPayload.put("workflowRunId", run.getId());
+            daemonPayload.put("workflowId", workflow.getId());
+            daemonPayload.put("workflowName", workflow.getName());
+            daemonPayload.put("projectId", workflow.getProject().getId());
+            daemonPayload.put("trigger", triggerBlock);
+            daemonPayload.put("jobs", selfHostedJobs);
+
+            if (eventPayload.containsKey("issueId")) {
+                daemonPayload.put("issueId", eventPayload.get("issueId"));
+            }
+            if (eventPayload.containsKey("issueTitle")) {
+                daemonPayload.put("issueTitle", eventPayload.get("issueTitle"));
+            }
+
+            DaemonEvent event = new DaemonEvent();
+            event.setProjectId(workflow.getProject().getId());
+            event.setType("workflow.trigger");
+            event.setExpiresAt(OffsetDateTime.now().plusHours(24));
+
+            // Set the ID early so we can embed eventId in the payload
+            String tempId = java.util.UUID.randomUUID().toString();
+            event.setId(tempId);
+            daemonPayload.put("eventId", tempId);
+            event.setPayload(toJson(daemonPayload));
+
+            daemonEventRepository.save(event);
+            log.info("Created DaemonEvent {} for WorkflowRun {}", event.getId(), run.getId());
+        } catch (Exception e) {
+            log.error("Failed to create DaemonEvent for WorkflowRun {}: {}", run.getId(), e.getMessage(), e);
+        }
+    }
+
+    private Map<String, Object> parseEventPayload(String eventPayloadJson) {
+        if (eventPayloadJson == null || eventPayloadJson.isBlank()) {
+            return new HashMap<>();
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = objectMapper.readValue(eventPayloadJson, Map.class);
+            return parsed != null ? parsed : new HashMap<>();
+        } catch (Exception e) {
+            log.warn("Failed to parse eventPayloadJson: {}", e.getMessage());
+            return new HashMap<>();
+        }
+    }
+
+    private boolean hasSelfHostedJob(String yaml) {
+        if (yaml == null) return false;
+        try {
+            org.yaml.snakeyaml.Yaml snakeYaml = new org.yaml.snakeyaml.Yaml();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = snakeYaml.load(yaml);
+            Object jobsObj = parsed.get("jobs");
+            if (!(jobsObj instanceof Map)) return false;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> jobs = (Map<String, Object>) jobsObj;
+            for (Object jobVal : jobs.values()) {
+                if (!(jobVal instanceof Map)) continue;
+                @SuppressWarnings("unchecked")
+                Map<String, Object> job = (Map<String, Object>) jobVal;
+                Object runsOn = job.get("runs-on");
+                if ("self-hosted".equals(runsOn)) return true;
+            }
+            return false;
+        } catch (Exception e) {
+            log.warn("Failed to parse YAML for self-hosted detection: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private List<Map<String, Object>> extractSelfHostedJobs(String yaml) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        if (yaml == null) return result;
+        try {
+            org.yaml.snakeyaml.Yaml snakeYaml = new org.yaml.snakeyaml.Yaml();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = snakeYaml.load(yaml);
+            Object jobsObj = parsed.get("jobs");
+            if (!(jobsObj instanceof Map)) return result;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> jobs = (Map<String, Object>) jobsObj;
+            for (Map.Entry<String, Object> entry : jobs.entrySet()) {
+                if (!(entry.getValue() instanceof Map)) continue;
+                @SuppressWarnings("unchecked")
+                Map<String, Object> job = (Map<String, Object>) entry.getValue();
+                Object runsOn = job.get("runs-on");
+                if (!"self-hosted".equals(runsOn)) continue;
+
+                Map<String, Object> jobEntry = new HashMap<>();
+                jobEntry.put("id", entry.getKey());
+                jobEntry.put("runsOn", "self-hosted");
+                if (job.containsKey("container")) jobEntry.put("container", job.get("container"));
+                if (job.containsKey("steps")) jobEntry.put("steps", job.get("steps"));
+                if (job.containsKey("env")) jobEntry.put("env", job.get("env"));
+                result.add(jobEntry);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to extract self-hosted jobs from YAML: {}", e.getMessage());
+        }
+        return result;
     }
 
     private void enqueueInitialJobs(WorkflowDefinition workflow, WorkflowRun run) {
