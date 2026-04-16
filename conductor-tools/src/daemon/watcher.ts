@@ -5,6 +5,7 @@ import * as os from 'os'
 import { fileURLToPath } from 'url'
 import { readConfig, Config } from '../lib/config.js'
 import { writeDaemonState, deleteDaemonState } from './state.js'
+import { startPoller } from './poller.js'
 
 const CONDUCTOR_DIR = path.join(os.homedir(), '.conductor')
 export const SYNC_QUEUE_PATH = path.join(CONDUCTOR_DIR, 'sync-queue.json')
@@ -305,4 +306,9 @@ if (process.argv[1] === __filename) {
 
   replayQueue(getConfig).catch(console.error)
   startWatcher(getConfig)
+  startPoller(getConfig, async (events) => {
+    for (const event of events) {
+      console.log(`Received event: ${event.type} (${event.eventId})`)
+    }
+  })
 }
