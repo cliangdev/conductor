@@ -20,11 +20,12 @@ interface Props {
   onDocumentNavigate?: (filename: string) => void
 }
 
-interface ComposeState {
+interface PopoverState {
   lineNumber: number
   /** Viewport-relative position of the gutter button that was clicked */
   anchorTop: number
   anchorLeft: number
+  mode: 'compose' | 'thread'
 }
 
 export function CommentableDocument({
@@ -38,8 +39,7 @@ export function CommentableDocument({
   currentUserId,
   onDocumentNavigate,
 }: Props) {
-  const [composeState, setComposeState] = useState<ComposeState | null>(null)
-  const [openThreadLine, setOpenThreadLine] = useState<number | null>(null)
+  const [popover, setPopover] = useState<PopoverState | null>(null)
   const [hoveredLine, setHoveredLine] = useState<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const gutterRef = useRef<HTMLDivElement>(null)
@@ -60,68 +60,88 @@ export function CommentableDocument({
   )
 
   function commentsForLine(lineNum: number): Comment[] {
-    return comments.filter((c) => c.lineNumber === lineNum)
+    return comments.filter((c) => Number(c.lineNumber) === lineNum)
   }
 
-  const handleGutterClick = useCallback(
-    (e: React.MouseEvent<HTMLButtonElement>, lineNum: number) => {
+  const openPopover = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>, lineNum: number, mode: 'compose' | 'thread') => {
       const rect = e.currentTarget.getBoundingClientRect()
-      setComposeState({
-        lineNumber: lineNum,
-        anchorTop: rect.bottom,
-        anchorLeft: rect.left,
-      })
-      setOpenThreadLine(null)
+      setPopover((prev) =>
+        prev?.lineNumber === lineNum && prev.mode === mode
+          ? null // toggle off
+          : { lineNumber: lineNum, anchorTop: rect.bottom, anchorLeft: rect.left, mode }
+      )
     },
     []
   )
 
-  const handleThreadClick = useCallback((lineNum: number) => {
-    setOpenThreadLine((prev) => (prev === lineNum ? null : lineNum))
-    setComposeState(null)
-  }, [])
-
   const handleAddComment = useCallback(
     async (text: string) => {
-      if (!composeState) return
+      if (!popover) return
       await apiPost(
         `/api/v1/projects/${projectId}/issues/${issueId}/comments`,
-        { documentId, content: text, lineNumber: composeState.lineNumber },
+        { documentId, content: text, lineNumber: popover.lineNumber },
         token
       )
       onCommentAdded()
-      setComposeState(null)
+      setPopover(null)
     },
-    [composeState, projectId, issueId, documentId, token, onCommentAdded]
+    [popover, projectId, issueId, documentId, token, onCommentAdded]
   )
 
   return (
     <>
-      {/* Backdrop — closes compose popover when clicking outside */}
-      {composeState && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setComposeState(null)}
-        />
+      {/* Backdrop — closes popover when clicking outside */}
+      {popover && (
+        <div className="fixed inset-0 z-40" onClick={() => setPopover(null)} />
       )}
 
-      {/* Compose popover — anchored to the gutter button */}
-      {composeState && (
+      {/* Popover — anchored to the clicked gutter button */}
+      {popover && (
         <div
           className="fixed z-50 bg-card border border-border rounded-lg shadow-xl p-4 w-80"
-          style={{
-            top: composeState.anchorTop + 6,
-            left: composeState.anchorLeft,
-          }}
+          style={{ top: popover.anchorTop + 6, left: popover.anchorLeft }}
           onClick={(e) => e.stopPropagation()}
         >
-          <p className="text-xs font-medium text-muted-foreground mb-3">
-            Comment on line {composeState.lineNumber}
-          </p>
-          <NewCommentForm
-            onSubmit={handleAddComment}
-            onCancel={() => setComposeState(null)}
-          />
+          {popover.mode === 'thread' ? (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Line {popover.lineNumber} · {commentsForLine(popover.lineNumber).length} comment{commentsForLine(popover.lineNumber).length !== 1 ? 's' : ''}
+                </p>
+                <button
+                  onClick={() => setPopover(null)}
+                  className="text-muted-foreground hover:text-foreground text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="flex flex-col gap-3 max-h-96 overflow-y-auto">
+                {commentsForLine(popover.lineNumber).map((c) => (
+                  <CommentThread
+                    key={c.id}
+                    comment={c}
+                    projectId={projectId}
+                    issueId={issueId}
+                    currentUserId={currentUserId}
+                    token={token}
+                    onUpdated={() => { onCommentAdded(); setPopover(null) }}
+                    onClose={() => setPopover(null)}
+                  />
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-xs font-medium text-muted-foreground mb-3">
+                Comment on line {popover.lineNumber}
+              </p>
+              <NewCommentForm
+                onSubmit={handleAddComment}
+                onCancel={() => setPopover(null)}
+              />
+            </>
+          )}
         </div>
       )}
 
@@ -142,8 +162,7 @@ export function CommentableDocument({
             const lineComments = commentsForLine(lineNum)
             const hasComments = lineComments.length > 0
             const isHovered = hoveredLine === lineNum
-            const isComposeOpen = composeState?.lineNumber === lineNum
-            const isThreadOpen = openThreadLine === lineNum
+            const isActive = popover?.lineNumber === lineNum
 
             return (
               <div
@@ -153,9 +172,9 @@ export function CommentableDocument({
               >
                 {hasComments ? (
                   <button
-                    onClick={() => handleThreadClick(lineNum)}
-                    className={`text-primary leading-none transition-all ${
-                      isThreadOpen ? 'scale-110' : 'hover:scale-110'
+                    onClick={(e) => openPopover(e, lineNum, 'thread')}
+                    className={`leading-none transition-all ${
+                      isActive ? 'text-primary scale-110' : 'text-primary hover:scale-110'
                     }`}
                     title={`${lineComments.length} comment${lineComments.length !== 1 ? 's' : ''} on line ${lineNum} — click to view`}
                   >
@@ -163,9 +182,9 @@ export function CommentableDocument({
                   </button>
                 ) : (
                   <button
-                    onClick={(e) => handleGutterClick(e, lineNum)}
+                    onClick={(e) => openPopover(e, lineNum, 'compose')}
                     className={`leading-none transition-all duration-150 ${
-                      isHovered || isComposeOpen
+                      isHovered || isActive
                         ? 'opacity-100 text-primary scale-110'
                         : 'opacity-0 text-muted-foreground'
                     }`}
@@ -182,29 +201,6 @@ export function CommentableDocument({
         {/* Document content */}
         <div className="flex-1 min-w-0">
           <MarkdownRenderer content={content} onDocumentNavigate={onDocumentNavigate} />
-
-          {/* Inline thread panel */}
-          {openThreadLine !== null && commentsForLine(openThreadLine).length > 0 && (
-            <div className="hidden md:block mt-4 ml-2">
-              <div className="flex flex-col gap-2">
-                <p className="text-xs font-medium text-muted-foreground">
-                  Line {openThreadLine} · {commentsForLine(openThreadLine).length} comment{commentsForLine(openThreadLine).length !== 1 ? 's' : ''}
-                </p>
-                {commentsForLine(openThreadLine).map((c) => (
-                  <CommentThread
-                    key={c.id}
-                    comment={c}
-                    projectId={projectId}
-                    issueId={issueId}
-                    currentUserId={currentUserId}
-                    token={token}
-                    onUpdated={onCommentAdded}
-                    onClose={() => setOpenThreadLine(null)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* All line comments — mobile accordion */}
