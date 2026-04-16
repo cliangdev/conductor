@@ -11,6 +11,7 @@ import { registerStart } from './commands/start.js'
 import { registerStop } from './commands/stop.js'
 import { registerMcp } from './commands/mcp.js'
 import { registerConfig } from './commands/config.js'
+import { registerDashboard } from './commands/dashboard.js'
 
 const program = new Command()
 
@@ -30,5 +31,6 @@ registerStart(program)
 registerStop(program)
 registerMcp(program)
 registerConfig(program)
+registerDashboard(program)
 
 program.parse()
