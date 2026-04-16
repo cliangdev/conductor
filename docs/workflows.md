@@ -18,10 +18,10 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Self-hosted](#self-hosted)
 - [Self-hosted setup](#self-hosted-setup)
   - [Prerequisites](#prerequisites)
-  - [Running the worker](#running-the-worker)
-  - [Connecting to Conductor](#connecting-to-conductor)
+  - [Running the daemon](#running-the-daemon)
   - [Runner image](#runner-image)
-  - [Environment reference](#environment-reference)
+  - [Concurrency and capacity](#concurrency-and-capacity)
+  - [Configuration reference](#configuration-reference)
 
 ---
 
@@ -422,54 +422,27 @@ Self-hosted jobs require a running **conductor-worker** process on your VM. See 
 
 ### Prerequisites
 
-- A Linux VM (or any machine) with Docker installed and the Docker daemon running
+- A machine with Docker installed and the Docker daemon running
 - Node.js 20 or later
-- Network path from Conductor's backend to your worker (the worker must be reachable via HTTP from Conductor's servers)
+- The `conductor` CLI installed and authenticated (`conductor init`)
 
-### Running the worker
+### Running the daemon
 
-Install and start `conductor-worker`:
-
-```bash
-npm install -g @conductor/worker
-
-CONDUCTOR_WORKER_SECRET=your-secret-here \
-CONDUCTOR_BACKEND_URL=https://api.conductor.app \
-conductor-worker start
-```
-
-Or run it as a Docker container (recommended for production):
+Self-hosted workflow execution is handled by the same **conductor daemon** used for file sync. If you've already run `conductor init`, just start the daemon:
 
 ```bash
-docker run -d \
-  --name conductor-worker \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -p 3001:3001 \
-  -e CONDUCTOR_WORKER_SECRET=your-secret-here \
-  -e CONDUCTOR_BACKEND_URL=https://api.conductor.app \
-  ghcr.io/cliangdev/conductor-worker:latest
+conductor start
 ```
 
-The worker listens on port 3001 by default. Verify it's running:
+The daemon polls Conductor for pending self-hosted jobs, pulls the appropriate Docker image, runs the container, streams logs back, and reports the result. No separate worker process or HTTP server is required.
+
+Verify the daemon is running and check active workflow runs:
 
 ```bash
-curl http://localhost:3001/health
-# {"status":"ok"}
+conductor dashboard
 ```
 
-> **Docker socket access:** The worker needs access to the Docker socket (`/var/run/docker.sock`) to start containers. When running the worker itself inside Docker, mount the socket as shown above.
-
-### Connecting to Conductor
-
-Once the worker is running, configure your project in Conductor:
-
-1. Open **Project Settings** in the Conductor UI
-2. Under **Workflow**, enter:
-   - **Worker URL** — the public or private URL where your worker is reachable from Conductor (e.g. `http://10.0.1.5:3001` or `https://worker.yourcompany.internal`)
-   - **Worker secret** — the same `CONDUCTOR_WORKER_SECRET` value you set on the worker
-
-Conductor will use this URL and secret to dispatch docker jobs to your worker whenever a workflow job specifies `runs-on: self-hosted`.
+> **Docker socket access:** The daemon spawns containers via Docker. Make sure the user running `conductor start` has permission to use Docker (i.e. is in the `docker` group, or run with `sudo`).
 
 ### Runner image
 
@@ -506,33 +479,24 @@ Or use a private image from your registry (make sure the worker VM has credentia
 
 ### Concurrency and capacity
 
-The worker handles multiple jobs concurrently. The default maximum is **5 concurrent jobs**. Adjust this with the `MAX_CONCURRENT_JOBS` environment variable:
+The daemon runs **1 self-hosted job at a time** by default. To increase the limit, set `maxConcurrentRuns` in `~/.conductor/config.json`:
 
-```bash
-MAX_CONCURRENT_JOBS=10 conductor-worker start
+```json
+{
+  "maxConcurrentRuns": 3
+}
 ```
 
-When the worker is at capacity, job submissions are rejected with HTTP 503 and retried automatically by Conductor.
+When all slots are occupied, incoming jobs are queued locally and processed in order.
 
 ### Crash recovery
 
 If the worker process restarts while jobs are running, it automatically detects any orphaned containers on startup and reports them as failed back to Conductor. This prevents runs from hanging indefinitely after a worker restart.
 
-### Environment reference
+### Configuration reference
 
-#### conductor-worker environment variables
+The daemon reads from `~/.conductor/config.json`, written by `conductor init`. Self-hosted workflow settings:
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CONDUCTOR_WORKER_SECRET` | Yes | — | Shared secret used to authenticate requests from Conductor. Choose a long random string. |
-| `CONDUCTOR_BACKEND_URL` | Yes | — | Base URL of the Conductor backend (e.g. `https://api.conductor.app`). Used for log and output callbacks. |
-| `PORT` | No | `3001` | Port the worker HTTP server listens on. |
-| `MAX_CONCURRENT_JOBS` | No | `5` | Maximum number of Docker jobs to run simultaneously. |
-
-#### Project settings
-
-| Setting | Description |
-|---------|-------------|
-| **Worker URL** | The URL Conductor uses to reach your worker when dispatching `self-hosted` jobs. |
-| **Worker secret** | The `CONDUCTOR_WORKER_SECRET` value — must match what you set on the worker. |
-| **Run token TTL** | How long ephemeral tokens are valid for a single job run. Default is 24 hours; valid range is 1–168 hours. |
+| Key | Default | Description |
+|-----|---------|-------------|
+| `maxConcurrentRuns` | `1` | Maximum number of self-hosted Docker jobs to run simultaneously. |
