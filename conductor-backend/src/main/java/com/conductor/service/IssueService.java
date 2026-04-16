@@ -190,9 +190,15 @@ public class IssueService {
                 notificationDispatcher.dispatch(NotificationEvent.of(
                         EventType.ISSUE_IN_PROGRESS, projectId, inProgressMeta));
             } else if (newStatus == IssueStatus.CODE_REVIEW) {
+                Map<String, String> codeReviewMeta = new HashMap<>();
+                codeReviewMeta.put("issueId", issue.getId());
+                codeReviewMeta.put("issueTitle", issue.getTitle());
+                if (issue.getGithubPrUrl() != null) {
+                    codeReviewMeta.put("prUrl", issue.getGithubPrUrl());
+                }
                 notificationDispatcher.dispatch(NotificationEvent.of(
                         EventType.ISSUE_IN_CODE_REVIEW, projectId,
-                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+                        codeReviewMeta));
             } else if (newStatus == IssueStatus.DONE) {
                 notificationDispatcher.dispatch(NotificationEvent.of(
                         EventType.ISSUE_COMPLETED, projectId,

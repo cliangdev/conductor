@@ -257,6 +257,54 @@ class IssueServiceTest {
     }
 
     @Test
+    void patchIssueToCodeReviewWithPrUrlIncludesPrUrlInMetadata() {
+        testIssue.setStatus(IssueStatus.IN_PROGRESS);
+        testIssue.setGithubPrUrl("https://github.com/org/repo/pull/42");
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+
+        PatchIssueRequest request = new PatchIssueRequest()
+                .status(com.conductor.generated.model.IssueStatus.CODE_REVIEW);
+
+        issueService.patchIssue("proj-1", "issue-1", request, caller);
+
+        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher, org.mockito.Mockito.atLeastOnce()).dispatch(eventCaptor.capture());
+
+        NotificationEvent codeReviewEvent = eventCaptor.getAllValues().stream()
+                .filter(e -> e.getEventType() == EventType.ISSUE_IN_CODE_REVIEW)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("ISSUE_IN_CODE_REVIEW event not dispatched"));
+
+        assertThat(codeReviewEvent.getMetadata()).containsEntry("prUrl", "https://github.com/org/repo/pull/42");
+    }
+
+    @Test
+    void patchIssueToCodeReviewWithoutPrUrlOmitsPrUrlFromMetadata() {
+        testIssue.setStatus(IssueStatus.IN_PROGRESS);
+        testIssue.setGithubPrUrl(null);
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+
+        PatchIssueRequest request = new PatchIssueRequest()
+                .status(com.conductor.generated.model.IssueStatus.CODE_REVIEW);
+
+        issueService.patchIssue("proj-1", "issue-1", request, caller);
+
+        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher, org.mockito.Mockito.atLeastOnce()).dispatch(eventCaptor.capture());
+
+        NotificationEvent codeReviewEvent = eventCaptor.getAllValues().stream()
+                .filter(e -> e.getEventType() == EventType.ISSUE_IN_CODE_REVIEW)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("ISSUE_IN_CODE_REVIEW event not dispatched"));
+
+        assertThat(codeReviewEvent.getMetadata()).doesNotContainKey("prUrl");
+    }
+
+    @Test
     void patchIssueReviewerRoleAttemptingStatusChangeThrows403() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
