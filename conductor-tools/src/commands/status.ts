@@ -4,6 +4,15 @@ import * as os from 'os'
 import { Command } from 'commander'
 import chalk from 'chalk'
 import { readConfig } from '../lib/config.js'
+import { readDaemonState } from '../daemon/state.js'
+
+export function formatRelativeTime(dateStr: string): string {
+  const diffMs = Date.now() - new Date(dateStr).getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  if (diffSec < 60) return `${diffSec}s ago`
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`
+  return `${Math.floor(diffSec / 3600)}h ago`
+}
 
 const DAEMON_PID_PATH = path.join(os.homedir(), '.conductor', 'daemon.pid')
 const SYNC_QUEUE_PATH = path.join(os.homedir(), '.conductor', 'sync-queue.json')
@@ -65,5 +74,18 @@ export function registerStatus(program: Command): void {
       console.log(`Watch dir: ${watchDir}`)
       console.log(`API URL:   ${config.apiUrl}`)
       console.log(`Queue:     ${queueCount} pending changes`)
+
+      if (daemonRunning) {
+        const state = readDaemonState()
+        if (state) {
+          const pollInterval = state.pollMode === 'active' ? '5s' : '60s'
+          console.log(`Poll mode: ${state.pollMode} (${pollInterval})`)
+          const lastPoll = state.lastPollAt
+            ? formatRelativeTime(state.lastPollAt)
+            : 'never'
+          console.log(`Last poll: ${lastPoll}`)
+          console.log(`Events:    ${state.eventsThisSession} this session`)
+        }
+      }
     })
 }
