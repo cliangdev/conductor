@@ -42,6 +42,33 @@ class DiscordProviderTest {
     }
 
     @Test
+    void formatIssueInProgressWithAssigneeNameIncludesAssigneeInDescription() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.ISSUE_IN_PROGRESS, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "assigneeName", "Alice"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Issue In Progress");
+        assertThat(result).contains("Assigned to Alice");
+        assertThat(result).contains(ISSUE_TITLE);
+        assertThat(result).contains("Assigned to Alice \u2014 " + ISSUE_TITLE);
+    }
+
+    @Test
+    void formatIssueInProgressWithoutAssigneeNameUsesIssueTitle() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.ISSUE_IN_PROGRESS, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Issue In Progress");
+        assertThat(result).contains(ISSUE_TITLE);
+        assertThat(result).doesNotContain("Assigned to");
+    }
+
+    @Test
     void formatIssueSubmittedContainsCorrectTitleAndDescription() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.ISSUE_SUBMITTED, PROJECT_ID,

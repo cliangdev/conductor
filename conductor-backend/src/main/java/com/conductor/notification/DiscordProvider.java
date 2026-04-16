@@ -56,6 +56,13 @@ public class DiscordProvider implements NotificationProvider {
         int color = colorFor(event.getEventType());
 
         switch (event.getEventType()) {
+            case ISSUE_IN_PROGRESS -> {
+                String assigneeName = meta.getOrDefault("assigneeName", "");
+                title = "Issue In Progress";
+                description = (assigneeName != null && !assigneeName.isBlank())
+                        ? "Assigned to " + assigneeName + " \u2014 " + issueTitle
+                        : issueTitle;
+            }
             case ISSUE_SUBMITTED -> {
                 title = "Issue Submitted for Review";
                 description = issueTitle;
