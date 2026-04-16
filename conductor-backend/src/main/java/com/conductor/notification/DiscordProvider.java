@@ -73,6 +73,10 @@ public class DiscordProvider implements NotificationProvider {
                 title = "Reviewer Assigned";
                 description = reviewerName + " assigned to review: " + issueTitle;
             }
+            case ISSUE_IN_CODE_REVIEW -> {
+                title = "Issue In Code Review";
+                description = issueTitle;
+            }
             case REVIEW_SUBMITTED -> {
                 String verdict = meta.getOrDefault("verdict", "");
                 String reviewerName = meta.getOrDefault("reviewerName", "");
@@ -125,14 +129,26 @@ public class DiscordProvider implements NotificationProvider {
         }
 
         String timestamp = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        return String.format(
-            "{\"embeds\":[{\"title\":\"%s\",\"description\":\"%s\",\"url\":\"%s\",\"color\":%d,\"timestamp\":\"%s\"}]}",
+        String embedBase = String.format(
+            "\"title\":\"%s\",\"description\":\"%s\",\"url\":\"%s\",\"color\":%d,\"timestamp\":\"%s\"",
             escapeJson(title),
             escapeJson(description),
             escapeJson(link),
             color,
             timestamp
         );
+
+        String prUrl = meta.getOrDefault("prUrl", null);
+        boolean hasPrUrl = prUrl != null && !prUrl.isBlank();
+
+        if (event.getEventType() == EventType.ISSUE_IN_CODE_REVIEW && hasPrUrl) {
+            String fields = String.format(
+                ",\"fields\":[{\"name\":\"Pull Request\",\"value\":\"[View PR](%s)\",\"inline\":false}]",
+                escapeJson(prUrl)
+            );
+            return "{\"embeds\":[{" + embedBase + fields + "}]}";
+        }
+        return "{\"embeds\":[{" + embedBase + "}]}";
     }
 
     @Override

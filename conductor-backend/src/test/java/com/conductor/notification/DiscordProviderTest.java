@@ -255,6 +255,31 @@ class DiscordProviderTest {
     }
 
     @Test
+    void formatIssueInCodeReviewWithPrUrlContainsFieldsWithPrLink() {
+        String prUrl = "https://github.com/org/repo/pull/42";
+        NotificationEvent event = NotificationEvent.of(
+                EventType.ISSUE_IN_CODE_REVIEW, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "prUrl", prUrl));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"fields\"");
+        assertThat(result).contains("Pull Request");
+        assertThat(result).contains(prUrl);
+    }
+
+    @Test
+    void formatIssueInCodeReviewWithoutPrUrlDoesNotContainFields() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.ISSUE_IN_CODE_REVIEW, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).doesNotContain("\"fields\"");
+    }
+
+    @Test
     void sendCallsRestTemplateWithCorrectPayload() {
         when(restTemplate.postForEntity(eq(WEBHOOK_URL), any(HttpEntity.class), eq(String.class)))
                 .thenReturn(ResponseEntity.noContent().build());
