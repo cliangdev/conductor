@@ -14,6 +14,9 @@ import com.conductor.generated.model.CommentReplyResponse;
 import com.conductor.generated.model.CommentResponse;
 import com.conductor.generated.model.CommentWithRepliesResponse;
 import com.conductor.generated.model.CreateCommentRequest;
+import com.conductor.notification.EventType;
+import com.conductor.notification.NotificationDispatcher;
+import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentReplyRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
@@ -26,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class CommentService {
@@ -36,6 +40,7 @@ public class CommentService {
     private final DocumentRepository documentRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final StorageService storageService;
+    private final NotificationDispatcher notificationDispatcher;
 
     public CommentService(
             CommentRepository commentRepository,
@@ -43,13 +48,15 @@ public class CommentService {
             IssueRepository issueRepository,
             DocumentRepository documentRepository,
             ProjectMemberRepository projectMemberRepository,
-            StorageService storageService) {
+            StorageService storageService,
+            NotificationDispatcher notificationDispatcher) {
         this.commentRepository = commentRepository;
         this.commentReplyRepository = commentReplyRepository;
         this.issueRepository = issueRepository;
         this.documentRepository = documentRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.storageService = storageService;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     @Transactional
@@ -74,6 +81,19 @@ public class CommentService {
         comment.setQuotedText(quotedText);
 
         commentRepository.save(comment);
+
+        String excerpt = buildExcerpt(request.getContent());
+        String authorLabel = caller.getName() != null ? caller.getName() : caller.getEmail();
+        notificationDispatcher.dispatch(NotificationEvent.of(
+                EventType.COMMENT_ADDED,
+                issue.getProject().getId(),
+                Map.of(
+                        "issueId", issue.getId(),
+                        "issueTitle", issue.getTitle(),
+                        "commentAuthor", authorLabel,
+                        "excerpt", excerpt
+                )));
+
         return toCommentResponse(comment);
     }
 
@@ -143,6 +163,20 @@ public class CommentService {
         reply.setContent(request.getContent());
 
         commentReplyRepository.save(reply);
+
+        Issue issue = comment.getIssue();
+        String excerpt = buildExcerpt(request.getContent());
+        String authorLabel = caller.getName() != null ? caller.getName() : caller.getEmail();
+        notificationDispatcher.dispatch(NotificationEvent.of(
+                EventType.COMMENT_REPLY,
+                issue.getProject().getId(),
+                Map.of(
+                        "issueId", issue.getId(),
+                        "issueTitle", issue.getTitle(),
+                        "commentAuthor", authorLabel,
+                        "excerpt", excerpt
+                )));
+
         return toCommentReplyResponse(reply);
     }
 
@@ -172,6 +206,16 @@ public class CommentService {
         }
 
         commentRepository.delete(comment);
+    }
+
+    static String buildExcerpt(String content) {
+        if (content == null) {
+            return "";
+        }
+        if (content.length() > 100) {
+            return content.substring(0, 100) + "...";
+        }
+        return content;
     }
 
     private void verifyMembership(String projectId, String userId) {

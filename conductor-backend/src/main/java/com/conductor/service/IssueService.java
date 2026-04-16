@@ -179,13 +179,26 @@ public class IssueService {
                         EventType.ISSUE_APPROVED, projectId,
                         Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
             } else if (newStatus == IssueStatus.IN_PROGRESS) {
+                Map<String, String> inProgressMeta = new HashMap<>();
+                inProgressMeta.put("issueId", issue.getId());
+                inProgressMeta.put("issueTitle", issue.getTitle());
+                if (issue.getAssignee() != null) {
+                    User assignee = issue.getAssignee();
+                    String assigneeName = assignee.getName() != null ? assignee.getName() : assignee.getEmail();
+                    inProgressMeta.put("assigneeName", assigneeName);
+                }
                 notificationDispatcher.dispatch(NotificationEvent.of(
-                        EventType.ISSUE_IN_PROGRESS, projectId,
-                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+                        EventType.ISSUE_IN_PROGRESS, projectId, inProgressMeta));
             } else if (newStatus == IssueStatus.CODE_REVIEW) {
+                Map<String, String> codeReviewMeta = new HashMap<>();
+                codeReviewMeta.put("issueId", issue.getId());
+                codeReviewMeta.put("issueTitle", issue.getTitle());
+                if (issue.getGithubPrUrl() != null) {
+                    codeReviewMeta.put("prUrl", issue.getGithubPrUrl());
+                }
                 notificationDispatcher.dispatch(NotificationEvent.of(
                         EventType.ISSUE_IN_CODE_REVIEW, projectId,
-                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+                        codeReviewMeta));
             } else if (newStatus == IssueStatus.DONE) {
                 notificationDispatcher.dispatch(NotificationEvent.of(
                         EventType.ISSUE_COMPLETED, projectId,

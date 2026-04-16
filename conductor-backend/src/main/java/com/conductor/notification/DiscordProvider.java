@@ -18,7 +18,22 @@ import java.util.Map;
 public class DiscordProvider implements NotificationProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DiscordProvider.class);
-    private static final int DISCORD_COLOR_BLUE = 5814783;
+    private static final int COLOR_GREEN  = 0x57F287; // ISSUE_APPROVED, ISSUE_COMPLETED
+    private static final int COLOR_BLUE   = 0x5865F2; // ISSUE_IN_CODE_REVIEW
+    private static final int COLOR_YELLOW = 0xFEE75C; // ISSUE_IN_PROGRESS
+    private static final int COLOR_PURPLE = 0x9B59B6; // ISSUE_SUBMITTED
+    private static final int COLOR_DEFAULT = 0x58B9FF; // all others
+    private static final int COLOR_RED    = 0xED4245; // CHANGES_REQUESTED
+
+    private static int colorFor(EventType eventType) {
+        return switch (eventType) {
+            case ISSUE_APPROVED, ISSUE_COMPLETED -> COLOR_GREEN;
+            case ISSUE_IN_CODE_REVIEW -> COLOR_BLUE;
+            case ISSUE_IN_PROGRESS -> COLOR_YELLOW;
+            case ISSUE_SUBMITTED -> COLOR_PURPLE;
+            default -> COLOR_DEFAULT;
+        };
+    }
 
     private final RestTemplate restTemplate;
     private final String frontendUrl;
@@ -38,8 +53,16 @@ public class DiscordProvider implements NotificationProvider {
         String title;
         String description;
         String link = frontendUrl + "/app/projects/" + projectId + "/issues/" + issueId;
+        int color = colorFor(event.getEventType());
 
         switch (event.getEventType()) {
+            case ISSUE_IN_PROGRESS -> {
+                String assigneeName = meta.getOrDefault("assigneeName", "");
+                title = "Issue In Progress";
+                description = (assigneeName != null && !assigneeName.isBlank())
+                        ? "Assigned to " + assigneeName + " \u2014 " + issueTitle
+                        : issueTitle;
+            }
             case ISSUE_SUBMITTED -> {
                 title = "Issue Submitted for Review";
                 description = issueTitle;
@@ -57,20 +80,45 @@ public class DiscordProvider implements NotificationProvider {
                 title = "Reviewer Assigned";
                 description = reviewerName + " assigned to review: " + issueTitle;
             }
+            case ISSUE_IN_CODE_REVIEW -> {
+                title = "Issue In Code Review";
+                description = issueTitle;
+            }
             case REVIEW_SUBMITTED -> {
                 String verdict = meta.getOrDefault("verdict", "");
-                title = "Review Submitted";
-                description = verdict + " on: " + issueTitle;
+                String reviewerName = meta.getOrDefault("reviewerName", "");
+                switch (verdict) {
+                    case "APPROVED" -> {
+                        title = "Review Approved";
+                        color = COLOR_GREEN;
+                    }
+                    case "CHANGES_REQUESTED" -> {
+                        title = "Changes Requested";
+                        color = COLOR_RED;
+                    }
+                    case "COMMENTED" -> {
+                        title = "Comment Review";
+                        color = COLOR_YELLOW;
+                    }
+                    default -> {
+                        title = "Review Submitted";
+                    }
+                }
+                description = reviewerName.isBlank() ? issueTitle : reviewerName + " on: " + issueTitle;
             }
             case COMMENT_ADDED -> {
                 String author = meta.getOrDefault("commentAuthor", "");
+                String excerpt = meta.getOrDefault("excerpt", "");
                 title = "Comment Added";
-                description = author + " commented on: " + issueTitle;
+                description = author + " commented on: " + issueTitle
+                        + (excerpt.isBlank() ? "" : "\n> " + excerpt);
             }
             case COMMENT_REPLY -> {
                 String author = meta.getOrDefault("commentAuthor", "");
+                String excerpt = meta.getOrDefault("excerpt", "");
                 title = "Comment Reply";
-                description = author + " replied on: " + issueTitle;
+                description = author + " replied on: " + issueTitle
+                        + (excerpt.isBlank() ? "" : "\n> " + excerpt);
             }
             case MEMBER_JOINED -> {
                 String memberName = meta.getOrDefault("memberName", "");
@@ -92,14 +140,26 @@ public class DiscordProvider implements NotificationProvider {
         }
 
         String timestamp = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-        return String.format(
-            "{\"embeds\":[{\"title\":\"%s\",\"description\":\"%s\",\"url\":\"%s\",\"color\":%d,\"timestamp\":\"%s\"}]}",
+        String embedBase = String.format(
+            "\"title\":\"%s\",\"description\":\"%s\",\"url\":\"%s\",\"color\":%d,\"timestamp\":\"%s\"",
             escapeJson(title),
             escapeJson(description),
             escapeJson(link),
-            DISCORD_COLOR_BLUE,
+            color,
             timestamp
         );
+
+        String prUrl = meta.getOrDefault("prUrl", null);
+        boolean hasPrUrl = prUrl != null && !prUrl.isBlank();
+
+        if (event.getEventType() == EventType.ISSUE_IN_CODE_REVIEW && hasPrUrl) {
+            String fields = String.format(
+                ",\"fields\":[{\"name\":\"Pull Request\",\"value\":\"[View PR](%s)\",\"inline\":false}]",
+                escapeJson(prUrl)
+            );
+            return "{\"embeds\":[{" + embedBase + fields + "}]}";
+        }
+        return "{\"embeds\":[{" + embedBase + "}]}";
     }
 
     @Override

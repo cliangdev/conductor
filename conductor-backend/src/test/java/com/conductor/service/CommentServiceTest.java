@@ -17,6 +17,9 @@ import com.conductor.generated.model.CommentReplyResponse;
 import com.conductor.generated.model.CommentResponse;
 import com.conductor.generated.model.CommentWithRepliesResponse;
 import com.conductor.generated.model.CreateCommentRequest;
+import com.conductor.notification.EventType;
+import com.conductor.notification.NotificationDispatcher;
+import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentReplyRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
@@ -62,6 +65,9 @@ class CommentServiceTest {
 
     @Mock
     private StorageService storageService;
+
+    @Mock
+    private NotificationDispatcher notificationDispatcher;
 
     @InjectMocks
     private CommentService commentService;
@@ -466,5 +472,81 @@ class CommentServiceTest {
         // line 2 will be "line two\r" — acceptable, document is stored as-is
         String result = commentService.extractLineFromDocument(doc, 2);
         assertThat(result).contains("line two");
+    }
+
+    // --- excerpt helper tests ---
+
+    @Test
+    void buildExcerptTruncatesContentLongerThan100Chars() {
+        String longContent = "a".repeat(101);
+        String excerpt = CommentService.buildExcerpt(longContent);
+        assertThat(excerpt).isEqualTo("a".repeat(100) + "...");
+    }
+
+    @Test
+    void buildExcerptReturnsFullContentWhenAtMost100Chars() {
+        String shortContent = "a".repeat(100);
+        String excerpt = CommentService.buildExcerpt(shortContent);
+        assertThat(excerpt).isEqualTo(shortContent);
+    }
+
+    @Test
+    void buildExcerptReturnsFullContentForShortContent() {
+        String excerpt = CommentService.buildExcerpt("Hello world");
+        assertThat(excerpt).isEqualTo("Hello world");
+    }
+
+    @Test
+    void createCommentDispatchesCommentAddedEventWithExcerpt() {
+        String longContent = "x".repeat(150);
+        String docContent = "line one\nline two";
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(storageService.download(document.getStoragePath()))
+                .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
+        when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
+            Comment c = inv.getArgument(0);
+            if (c.getId() == null) c.setId("new-comment-id");
+            if (c.getCreatedAt() == null) c.setCreatedAt(OffsetDateTime.now());
+            if (c.getUpdatedAt() == null) c.setUpdatedAt(OffsetDateTime.now());
+            return c;
+        });
+
+        CreateCommentRequest request = new CreateCommentRequest("doc-1", longContent, 1);
+        commentService.createComment("proj-1", "issue-1", request, author);
+
+        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher).dispatch(captor.capture());
+        NotificationEvent event = captor.getValue();
+        assertThat(event.getEventType()).isEqualTo(EventType.COMMENT_ADDED);
+        assertThat(event.getMetadata().get("issueId")).isEqualTo("issue-1");
+        assertThat(event.getMetadata().get("issueTitle")).isEqualTo("Test Issue");
+        assertThat(event.getMetadata().get("commentAuthor")).isEqualTo("Author Name");
+        assertThat(event.getMetadata().get("excerpt")).isEqualTo("x".repeat(100) + "...");
+    }
+
+    @Test
+    void addReplyDispatchesCommentReplyEventWithExcerpt() {
+        String shortContent = "Short reply";
+        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
+        when(commentReplyRepository.save(any(CommentReply.class))).thenAnswer(inv -> {
+            CommentReply r = inv.getArgument(0);
+            if (r.getId() == null) r.setId("new-reply-id");
+            if (r.getCreatedAt() == null) r.setCreatedAt(OffsetDateTime.now());
+            return r;
+        });
+
+        AddCommentReplyRequest request = new AddCommentReplyRequest(shortContent);
+        commentService.addReply("proj-1", "issue-1", "comment-1", request, author);
+
+        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher).dispatch(captor.capture());
+        NotificationEvent event = captor.getValue();
+        assertThat(event.getEventType()).isEqualTo(EventType.COMMENT_REPLY);
+        assertThat(event.getMetadata().get("issueId")).isEqualTo("issue-1");
+        assertThat(event.getMetadata().get("issueTitle")).isEqualTo("Test Issue");
+        assertThat(event.getMetadata().get("commentAuthor")).isEqualTo("Author Name");
+        assertThat(event.getMetadata().get("excerpt")).isEqualTo("Short reply");
     }
 }
