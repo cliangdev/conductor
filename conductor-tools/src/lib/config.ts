@@ -10,6 +10,7 @@ export interface Config {
   apiUrl: string
   frontendUrl?: string
   localPath?: string
+  maxConcurrentRuns?: number
 }
 
 export const CONFIG_PATH = path.join(os.homedir(), '.conductor', 'config.json')
