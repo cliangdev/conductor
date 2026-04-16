@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -23,6 +24,8 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String
     List<WorkflowRun> findByStatusIn(Collection<WorkflowRunStatus> statuses);
 
     List<WorkflowRun> findByWorkflowIdAndStatusIn(String workflowId, Collection<WorkflowRunStatus> statuses);
+
+    List<WorkflowRun> findByStatusAndStartedAtBefore(WorkflowRunStatus status, OffsetDateTime cutoff);
 
     @Query("SELECT r FROM WorkflowRun r JOIN FETCH r.workflow WHERE r.id = :id")
     Optional<WorkflowRun> findByIdWithWorkflow(@Param("id") String id);
