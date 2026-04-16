@@ -204,6 +204,26 @@ export async function syncTasksJson(filePath: string, getConfig: () => Config): 
   }
 }
 
+export async function syncExistingTasksFiles(getConfig: () => Config): Promise<void> {
+  const config = getConfig()
+  if (!config.localPath) return
+  const issuesDir = path.join(config.localPath, '.conductor', 'issues')
+  let issueDirs: string[]
+  try {
+    issueDirs = fs.readdirSync(issuesDir)
+  } catch {
+    return
+  }
+  for (const issueId of issueDirs) {
+    const tasksPath = path.join(issuesDir, issueId, 'tasks.json')
+    if (fs.existsSync(tasksPath)) {
+      await syncTasksJson(tasksPath, getConfig).catch((err) => {
+        console.error(`Startup sync failed for ${tasksPath}: ${(err as Error).message}`)
+      })
+    }
+  }
+}
+
 export async function replayQueue(getConfig: () => Config): Promise<void> {
   const entries = readQueue()
   if (entries.length === 0) return
@@ -307,6 +327,7 @@ if (process.argv[1] === __filename) {
   })
 
   replayQueue(getConfig).catch(console.error)
+  syncExistingTasksFiles(getConfig).catch(console.error)
   startWatcher(getConfig)
 
   const runQueue = new RunQueue(getConfig().maxConcurrentRuns ?? 1)
