@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback } from 'react'
 import { apiPost } from '@/lib/api'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { CommentThread } from './CommentThread'
@@ -40,24 +40,10 @@ export function CommentableDocument({
   onDocumentNavigate,
 }: Props) {
   const [popover, setPopover] = useState<PopoverState | null>(null)
-  const [hoveredLine, setHoveredLine] = useState<number | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const gutterRef = useRef<HTMLDivElement>(null)
 
   const lines = content.split('\n')
 
   const LINE_HEIGHT_PX = 1.625 * 16 // 26px — matches gutter cell height
-
-  const handleContainerMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!gutterRef.current) return
-      const rect = gutterRef.current.getBoundingClientRect()
-      const relativeY = e.clientY - rect.top
-      const lineIndex = Math.floor(relativeY / LINE_HEIGHT_PX)
-      setHoveredLine(Math.max(1, Math.min(lines.length, lineIndex + 1)))
-    },
-    [lines.length, LINE_HEIGHT_PX]
-  )
 
   function commentsForLine(lineNum: number): Comment[] {
     return comments.filter((c) => Number(c.lineNumber) === lineNum)
@@ -145,36 +131,29 @@ export function CommentableDocument({
         </div>
       )}
 
-      <div
-        className="flex gap-0"
-        ref={containerRef}
-        onMouseMove={handleContainerMouseMove}
-        onMouseLeave={() => setHoveredLine(null)}
-      >
+      <div className="flex gap-0">
         {/* Gutter — desktop only */}
         <div
-          ref={gutterRef}
-          className="hidden md:block w-8 shrink-0 select-none"
+          className="hidden md:flex md:flex-col w-8 shrink-0 select-none"
           aria-label="comment gutter"
         >
           {lines.map((_, idx) => {
             const lineNum = idx + 1
             const lineComments = commentsForLine(lineNum)
             const hasComments = lineComments.length > 0
-            const isHovered = hoveredLine === lineNum
             const isActive = popover?.lineNumber === lineNum
 
             return (
               <div
                 key={lineNum}
-                className="relative flex items-center justify-center"
+                className="group/gutterrow relative flex items-center justify-center"
                 style={{ height: `${LINE_HEIGHT_PX}px` }}
               >
                 {hasComments ? (
                   <button
                     onClick={(e) => openPopover(e, lineNum, 'thread')}
-                    className={`leading-none transition-all ${
-                      isActive ? 'text-primary scale-110' : 'text-primary hover:scale-110'
+                    className={`leading-none transition-all text-primary ${
+                      isActive ? 'scale-110' : 'hover:scale-110'
                     }`}
                     title={`${lineComments.length} comment${lineComments.length !== 1 ? 's' : ''} on line ${lineNum} — click to view`}
                   >
@@ -183,10 +162,10 @@ export function CommentableDocument({
                 ) : (
                   <button
                     onClick={(e) => openPopover(e, lineNum, 'compose')}
-                    className={`leading-none transition-all duration-150 ${
-                      isHovered || isActive
-                        ? 'opacity-100 text-primary scale-110'
-                        : 'opacity-0 text-muted-foreground'
+                    className={`leading-none transition-opacity duration-150 ${
+                      isActive
+                        ? 'opacity-100 text-primary'
+                        : 'opacity-0 group-hover/gutterrow:opacity-60 hover:!opacity-100 text-muted-foreground hover:text-primary'
                     }`}
                     title="Add comment on this line"
                   >
