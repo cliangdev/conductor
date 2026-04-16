@@ -3,7 +3,6 @@ import { Command } from 'commander'
 import { registerLogin } from './commands/login.js'
 import { registerLogout } from './commands/logout.js'
 import { registerInit } from './commands/init.js'
-import { registerStatus } from './commands/status.js'
 import { registerDoctor } from './commands/doctor.js'
 import { registerIssue } from './commands/issue.js'
 import { registerDoc } from './commands/doc.js'
@@ -23,7 +22,6 @@ program
 registerLogin(program)
 registerLogout(program)
 registerInit(program)
-registerStatus(program)
 registerDoctor(program)
 registerIssue(program)
 registerDoc(program)

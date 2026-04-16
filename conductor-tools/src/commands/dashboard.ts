@@ -2,8 +2,20 @@ import { Command } from 'commander'
 import chalk from 'chalk'
 import { readDaemonState, ActiveRun } from '../daemon/state.js'
 import { isDaemonRunning, getQueueCount, formatRelativeTime } from './status.js'
+import { readConfig } from '../lib/config.js'
 
-function formatUptime(startedAt: string): string {
+const REFRESH_INTERVAL_MS = 5000
+const ANSI_RE = /\x1B\[[0-9;]*m/g
+
+export function visLen(s: string): number {
+  return s.replace(ANSI_RE, '').length
+}
+
+export function rpad(colored: string, width: number): string {
+  return colored + ' '.repeat(Math.max(0, width - visLen(colored)))
+}
+
+export function formatUptime(startedAt: string): string {
   const diffMs = Date.now() - new Date(startedAt).getTime()
   const diffSec = Math.floor(diffMs / 1000)
   if (diffSec < 3600) {
@@ -16,7 +28,7 @@ function formatUptime(startedAt: string): string {
   return `${h}h ${m}m`
 }
 
-function formatRunDuration(startedAt: string): string {
+export function formatRunDuration(startedAt: string): string {
   const diffMs = Date.now() - new Date(startedAt).getTime()
   const diffSec = Math.floor(diffMs / 1000)
   if (diffSec < 60) return `${diffSec}s`
@@ -24,124 +36,142 @@ function formatRunDuration(startedAt: string): string {
   return `${Math.floor(diffSec / 3600)}h ${Math.floor((diffSec % 3600) / 60)}m`
 }
 
-function truncate(str: string, len: number): string {
+export function truncate(str: string, len: number): string {
   if (str.length <= len) return str
   return str.slice(0, len - 1) + '…'
 }
 
-function renderDashboard(): void {
-  process.stdout.write('\x1Bc')
+// Two-column row: left is padded to COL1 visible chars, right follows
+const COL1 = 42
+function twoCol(left: string, right: string = ''): string {
+  return '  ' + rpad(left, COL1) + right
+}
 
-  const now = new Date()
-  const timeStr = now.toLocaleTimeString()
-
+export function buildLines(isLive: boolean): string[] {
+  const config = readConfig()
   const daemonRunning = isDaemonRunning()
   const queueCount = getQueueCount()
+  const state = daemonRunning ? readDaemonState() : null
+  const lines: string[] = []
 
-  // Header
-  console.log(chalk.cyan('╔══════════════════════════════════════╗'))
-  console.log(chalk.cyan('║') + chalk.bold('     CONDUCTOR DASHBOARD              ') + chalk.cyan('║'))
-  console.log(chalk.cyan('╚══════════════════════════════════════╝'))
-  console.log(`Updated: ${chalk.gray(timeStr)}`)
-  console.log()
+  // ── Header ──────────────────────────────────────────────────────────────────
+  const projectPart = config
+    ? `${chalk.bold(config.projectName)}  ·  ${chalk.gray(config.email)}`
+    : chalk.gray('not configured — run conductor init')
+  lines.push(`${chalk.bold('conductor')}  ·  ${projectPart}`)
+  lines.push('')
 
   if (!daemonRunning) {
-    console.log(chalk.yellow('Daemon not running — start with `conductor start`'))
-    console.log()
-    console.log(chalk.gray('Press Ctrl+C to exit'))
-    return
-  }
+    // ── Not running ───────────────────────────────────────────────────────────
+    lines.push('')
+    lines.push(`  ${chalk.bold('DAEMON')}`)
+    lines.push(`  ${'─'.repeat(28)}`)
+    lines.push(`  Status    ${chalk.red('○ not running')}`)
+    lines.push('')
+    lines.push(`  Run ${chalk.cyan('conductor start')} to begin syncing.`)
+    lines.push('')
+  } else {
+    // ── DAEMON + SYNC QUEUE (two-column) ─────────────────────────────────────
+    lines.push('')
+    lines.push(twoCol(chalk.bold('DAEMON'), chalk.bold('SYNC QUEUE')))
+    lines.push(twoCol('─'.repeat(28), '─'.repeat(22)))
 
-  const state = readDaemonState()
+    const statusLeft = `Status    ${chalk.green('● running')}`
+    const queueRight = `Pending   ${queueCount > 0 ? chalk.yellow(String(queueCount)) : chalk.gray('0')} items`
+    lines.push(twoCol(statusLeft, queueRight))
 
-  // DAEMON section
-  console.log(chalk.bold('DAEMON'))
-  if (state) {
-    const pollInterval = state.pollMode === 'active' ? '5s' : '60s'
-    console.log(`  PID:       ${chalk.white(state.pid)}`)
-    console.log(`  Uptime:    ${chalk.white(formatUptime(state.startedAt))}`)
-    console.log(`  Status:    ${chalk.green('Running')}`)
-    console.log()
-
-    // POLL section
-    console.log(chalk.bold('POLL'))
-    console.log(`  Mode:      ${chalk.white(`${state.pollMode} (${pollInterval})`)}`)
-    const lastPoll = state.lastPollAt ? formatRelativeTime(state.lastPollAt) : 'never'
-    console.log(`  Last poll: ${chalk.white(lastPoll)}`)
-    console.log(`  Errors:    ${chalk.white(`${state.consecutiveErrors} consecutive`)}`)
-    console.log(`  Events:    ${chalk.white(`${state.eventsThisSession} this session`)}`)
-    console.log()
-
-    // SYNC QUEUE section
-    console.log(chalk.bold('SYNC QUEUE'))
-    console.log(`  Pending:   ${chalk.white(`${queueCount} items`)}`)
-    console.log()
-
-    // WORKFLOW RUNS section
-    console.log(chalk.bold('WORKFLOW RUNS'))
-    const runs: ActiveRun[] = state.activeRuns ?? []
-    if (runs.length === 0) {
-      console.log(`  ${chalk.gray('No active runs')}`)
+    if (state) {
+      lines.push(twoCol(`PID       ${chalk.white(String(state.pid))}`))
+      lines.push(twoCol(`Uptime    ${chalk.white(formatUptime(state.startedAt))}`))
     } else {
-      // Table header
-      const idCol = 'RUN ID  '
-      const titleCol = 'ISSUE TITLE                   '
-      const jobCol = 'JOB             '
-      const statusCol = 'STATUS    '
-      const durationCol = 'DURATION'
-      console.log(
-        `  ${chalk.underline(idCol)}  ${chalk.underline(titleCol)}  ${chalk.underline(jobCol)}  ${chalk.underline(statusCol)}  ${chalk.underline(durationCol)}`
+      lines.push(twoCol(`PID       ${chalk.gray('unknown')}`))
+    }
+
+    lines.push('')
+    lines.push('')
+
+    // ── POLL ─────────────────────────────────────────────────────────────────
+    if (state) {
+      const pollInterval = state.pollMode === 'active' ? '5s' : '60s'
+      const lastPoll = state.lastPollAt ? formatRelativeTime(state.lastPollAt) : 'never'
+      lines.push(`  ${chalk.bold('POLL')}`)
+      lines.push(`  ${'─'.repeat(28)}`)
+      lines.push(`  Mode      ${chalk.white(`${state.pollMode}  (${pollInterval} interval)`)}`)
+      lines.push(`  Last      ${chalk.white(lastPoll)}`)
+      lines.push(`  Events    ${chalk.white(`${state.eventsThisSession} this session`)}`)
+      lines.push(`  Errors    ${state.consecutiveErrors > 0 ? chalk.red(`${state.consecutiveErrors} consecutive`) : chalk.gray('0 consecutive')}`)
+      lines.push('')
+      lines.push('')
+    }
+
+    // ── WORKFLOW RUNS ────────────────────────────────────────────────────────
+    lines.push(`  ${chalk.bold('WORKFLOW RUNS')}`)
+    lines.push(`  ${'─'.repeat(60)}`)
+    const runs: ActiveRun[] = state?.activeRuns ?? []
+    if (runs.length === 0) {
+      lines.push(`  ${chalk.gray('No active runs')}`)
+    } else {
+      const ID_W = 10, TITLE_W = 30, STATUS_W = 12
+      lines.push(
+        `  ${chalk.dim(rpad('RUN ID', ID_W))}  ${chalk.dim(rpad('ISSUE TITLE', TITLE_W))}  ${chalk.dim(rpad('STATUS', STATUS_W))}  ${chalk.dim('DURATION')}`
       )
       for (const run of runs) {
-        const runIdStr = run.runId.slice(0, 8).padEnd(8)
-        const titleStr = truncate(run.issueTitle, 30).padEnd(30)
-        const jobStr = truncate(run.jobName, 16).padEnd(16)
-        const statusColor =
-          run.status === 'completed'
-            ? chalk.green
-            : run.status === 'failed'
-              ? chalk.red
-              : chalk.yellow
-        const statusStr = statusColor(run.status.padEnd(10))
-        const durationStr = formatRunDuration(run.startedAt)
-        console.log(`  ${runIdStr}  ${titleStr}  ${jobStr}  ${statusStr}  ${durationStr}`)
+        const runId = rpad(run.runId.slice(0, 8), ID_W)
+        const title = rpad(truncate(run.issueTitle, TITLE_W), TITLE_W)
+        const statusStr =
+          run.status === 'completed' ? chalk.green(rpad('✓ done', STATUS_W))
+          : run.status === 'failed'  ? chalk.red(rpad('✗ failed', STATUS_W))
+          :                            chalk.yellow(rpad('● running', STATUS_W))
+        const duration = formatRunDuration(run.startedAt)
+        lines.push(`  ${runId}  ${title}  ${statusStr}  ${duration}`)
       }
     }
-    console.log()
-  } else {
-    console.log(`  PID:       ${chalk.gray('unknown')}`)
-    console.log(`  Status:    ${chalk.green('Running')}`)
-    console.log()
-    console.log(chalk.bold('SYNC QUEUE'))
-    console.log(`  Pending:   ${chalk.white(`${queueCount} items`)}`)
-    console.log()
-    console.log(chalk.bold('WORKFLOW RUNS'))
-    console.log(`  ${chalk.gray('No active runs')}`)
-    console.log()
+    lines.push('')
   }
 
-  console.log(chalk.gray('Press Ctrl+C to exit'))
+  // ── Footer ────────────────────────────────────────────────────────────────
+  if (isLive) {
+    const now = new Date().toLocaleTimeString()
+    lines.push(`${'─'.repeat(46)}  ${chalk.gray(now)}  ${chalk.dim('Ctrl+C to exit')}`)
+  }
+
+  return lines
+}
+
+let lastLineCount = 0
+
+function render(isLive: boolean): void {
+  const lines = buildLines(isLive)
+
+  if (lastLineCount > 0 && isLive) {
+    // Move cursor up to start of last render, erase to end — no flicker
+    process.stdout.write(`\x1B[${lastLineCount}A\x1B[0J`)
+  }
+
+  process.stdout.write(lines.join('\n') + '\n')
+  lastLineCount = lines.length
 }
 
 export function registerDashboard(program: Command): void {
   program
     .command('dashboard')
-    .description('Live terminal dashboard with 2s refresh')
+    .description('Show Conductor status (live in terminal, one-shot when piped)')
     .action(() => {
-      // Hide cursor
-      process.stdout.write('\x1B[?25l')
+      const isLive = Boolean(process.stdout.isTTY)
 
-      // Restore cursor on exit
-      const cleanup = () => {
-        process.stdout.write('\x1B[?25h')
-        process.exit(0)
+      if (isLive) {
+        process.stdout.write('\x1B[?25l') // hide cursor
+        const cleanup = () => {
+          process.stdout.write('\x1B[?25h') // restore cursor
+          process.exit(0)
+        }
+        process.on('SIGINT', cleanup)
       }
-      process.on('SIGINT', cleanup)
 
-      // Initial render
-      renderDashboard()
+      render(isLive)
 
-      // Refresh every 2 seconds
-      setInterval(renderDashboard, 2000)
+      if (isLive) {
+        setInterval(() => render(isLive), REFRESH_INTERVAL_MS)
+      }
     })
 }
