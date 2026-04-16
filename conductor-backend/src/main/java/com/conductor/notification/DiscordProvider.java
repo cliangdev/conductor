@@ -108,13 +108,17 @@ public class DiscordProvider implements NotificationProvider {
             }
             case COMMENT_ADDED -> {
                 String author = meta.getOrDefault("commentAuthor", "");
+                String excerpt = meta.getOrDefault("excerpt", "");
                 title = "Comment Added";
-                description = author + " commented on: " + issueTitle;
+                description = author + " commented on: " + issueTitle
+                        + (excerpt.isBlank() ? "" : "\n> " + excerpt);
             }
             case COMMENT_REPLY -> {
                 String author = meta.getOrDefault("commentAuthor", "");
+                String excerpt = meta.getOrDefault("excerpt", "");
                 title = "Comment Reply";
-                description = author + " replied on: " + issueTitle;
+                description = author + " replied on: " + issueTitle
+                        + (excerpt.isBlank() ? "" : "\n> " + excerpt);
             }
             case MEMBER_JOINED -> {
                 String memberName = meta.getOrDefault("memberName", "");

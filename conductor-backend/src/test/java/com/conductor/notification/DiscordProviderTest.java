@@ -324,6 +324,47 @@ class DiscordProviderTest {
     }
 
     @Test
+    void formatCommentAddedWithExcerptIncludesExcerptInDescription() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.COMMENT_ADDED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE,
+                        "commentAuthor", "Bob", "excerpt", "This is a selected excerpt"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Comment Added");
+        assertThat(result).contains("Bob");
+        assertThat(result).contains("> This is a selected excerpt");
+    }
+
+    @Test
+    void formatCommentAddedWithoutExcerptRendersWithoutError() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.COMMENT_ADDED, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "commentAuthor", "Bob"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Comment Added");
+        assertThat(result).contains("Bob commented on: " + ISSUE_TITLE);
+        assertThat(result).doesNotContain("> ");
+    }
+
+    @Test
+    void formatCommentReplyWithExcerptIncludesExcerptInDescription() {
+        NotificationEvent event = NotificationEvent.of(
+                EventType.COMMENT_REPLY, PROJECT_ID,
+                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE,
+                        "commentAuthor", "Carol", "excerpt", "Quoted reply text"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Comment Reply");
+        assertThat(result).contains("Carol");
+        assertThat(result).contains("> Quoted reply text");
+    }
+
+    @Test
     void sendDoesNotThrowOnRestClientException() {
         when(restTemplate.postForEntity(eq(WEBHOOK_URL), any(HttpEntity.class), eq(String.class)))
                 .thenThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST, "Bad Request"));
