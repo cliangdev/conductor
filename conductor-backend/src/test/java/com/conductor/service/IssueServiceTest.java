@@ -27,6 +27,8 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.conductor.notification.NotificationEvent;
+
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -270,5 +272,90 @@ class IssueServiceTest {
         assertThatThrownBy(() -> issueService.patchIssue("proj-1", "issue-1", request, caller))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("REVIEWER role cannot change issue status");
+    }
+
+    @Test
+    void patchIssueToInProgressWithAssigneeIncludesAssigneeNameInMetadata() {
+        testIssue.setStatus(IssueStatus.READY_FOR_DEVELOPMENT);
+
+        User assignee = new User();
+        assignee.setId("assignee-1");
+        assignee.setName("Alice Smith");
+        assignee.setEmail("alice@example.com");
+        testIssue.setAssignee(assignee);
+
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+
+        PatchIssueRequest request = new PatchIssueRequest()
+                .status(com.conductor.generated.model.IssueStatus.IN_PROGRESS);
+
+        issueService.patchIssue("proj-1", "issue-1", request, caller);
+
+        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher, org.mockito.Mockito.atLeastOnce()).dispatch(eventCaptor.capture());
+
+        NotificationEvent inProgressEvent = eventCaptor.getAllValues().stream()
+                .filter(e -> e.getEventType() == com.conductor.notification.EventType.ISSUE_IN_PROGRESS)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("ISSUE_IN_PROGRESS event not dispatched"));
+
+        assertThat(inProgressEvent.getMetadata()).containsEntry("assigneeName", "Alice Smith");
+    }
+
+    @Test
+    void patchIssueToInProgressWithAssigneeAndNoNameFallsBackToEmail() {
+        testIssue.setStatus(IssueStatus.READY_FOR_DEVELOPMENT);
+
+        User assignee = new User();
+        assignee.setId("assignee-2");
+        assignee.setName(null);
+        assignee.setEmail("bob@example.com");
+        testIssue.setAssignee(assignee);
+
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+
+        PatchIssueRequest request = new PatchIssueRequest()
+                .status(com.conductor.generated.model.IssueStatus.IN_PROGRESS);
+
+        issueService.patchIssue("proj-1", "issue-1", request, caller);
+
+        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher, org.mockito.Mockito.atLeastOnce()).dispatch(eventCaptor.capture());
+
+        NotificationEvent inProgressEvent = eventCaptor.getAllValues().stream()
+                .filter(e -> e.getEventType() == com.conductor.notification.EventType.ISSUE_IN_PROGRESS)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("ISSUE_IN_PROGRESS event not dispatched"));
+
+        assertThat(inProgressEvent.getMetadata()).containsEntry("assigneeName", "bob@example.com");
+    }
+
+    @Test
+    void patchIssueToInProgressWithoutAssigneeExcludesAssigneeNameFromMetadata() {
+        testIssue.setStatus(IssueStatus.READY_FOR_DEVELOPMENT);
+        testIssue.setAssignee(null);
+
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+
+        PatchIssueRequest request = new PatchIssueRequest()
+                .status(com.conductor.generated.model.IssueStatus.IN_PROGRESS);
+
+        issueService.patchIssue("proj-1", "issue-1", request, caller);
+
+        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher, org.mockito.Mockito.atLeastOnce()).dispatch(eventCaptor.capture());
+
+        NotificationEvent inProgressEvent = eventCaptor.getAllValues().stream()
+                .filter(e -> e.getEventType() == com.conductor.notification.EventType.ISSUE_IN_PROGRESS)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("ISSUE_IN_PROGRESS event not dispatched"));
+
+        assertThat(inProgressEvent.getMetadata()).doesNotContainKey("assigneeName");
     }
 }
