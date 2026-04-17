@@ -43,9 +43,12 @@ describe('Sidebar', () => {
 
   it('renders Members link under Settings pointing to settings/members', () => {
     render(<Sidebar />)
-    const membersLink = screen.getByRole('link', { name: /members/i })
-    expect(membersLink).toBeInTheDocument()
-    expect(membersLink).toHaveAttribute('href', '/app/projects/proj-1/settings/members')
+    const membersLinks = screen.getAllByRole('link', { name: /members/i })
+    const settingsMembersLink = membersLinks.find((l) =>
+      l.getAttribute('href')?.includes('settings/members')
+    )
+    expect(settingsMembersLink).toBeInTheDocument()
+    expect(settingsMembersLink).toHaveAttribute('href', '/app/projects/proj-1/settings/members')
   })
 
   it('renders API Keys link under Settings pointing to /app/settings/api-keys', () => {

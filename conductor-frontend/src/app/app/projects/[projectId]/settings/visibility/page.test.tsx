@@ -9,6 +9,10 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => mockAuthContext,
 }))
 
+vi.mock('@/contexts/OrgContext', () => ({
+  useOrg: () => ({ activeOrg: { id: 'org-1', name: 'Test Org', slug: 'test-org' }, orgs: [], loading: false, needsOnboarding: false, refetch: vi.fn() }),
+}))
+
 vi.mock('@/components/ui/toast', () => ({
   useToast: () => ({ showToast: mockShowToast }),
 }))
@@ -64,7 +68,8 @@ describe('VisibilitySettingsPage', () => {
     }
     vi.mocked(api.apiGet).mockImplementation((path: string) => {
       if (path.includes('/members')) return Promise.resolve([adminMember])
-      if (path.includes('/projects/proj-1') && !path.includes('/members')) return Promise.resolve(sampleProject)
+      if (path.includes('/teams')) return Promise.resolve([])
+      if (path.includes('/projects/proj-1')) return Promise.resolve(sampleProject)
       return Promise.resolve(sampleProject)
     })
   })
@@ -95,6 +100,7 @@ describe('VisibilitySettingsPage', () => {
   it('TEAM option is enabled when project has a teamId', async () => {
     vi.mocked(api.apiGet).mockImplementation((path: string) => {
       if (path.includes('/members')) return Promise.resolve([adminMember])
+      if (path.includes('/teams')) return Promise.resolve([{ id: 'team-1', name: 'Team A' }])
       return Promise.resolve(sampleProjectWithTeam)
     })
     render(<VisibilitySettingsPage />)
