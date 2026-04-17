@@ -82,9 +82,9 @@ describe('Sidebar', () => {
     expect(notificationsLink).toHaveAttribute('href', '/app/projects/proj-1/settings/notifications')
   })
 
-  it('renders Workspace section with Members and Settings links', () => {
+  it('renders org section using org name as label with Members link', () => {
     render(<Sidebar />)
-    expect(screen.getByText('Workspace')).toBeInTheDocument()
+    expect(screen.getByText('Test Org')).toBeInTheDocument()
     const allMembersLinks = screen.getAllByRole('link', { name: /members/i })
     const workspaceMembersLink = allMembersLinks.find((l) => l.getAttribute('href') === '/app/org/members')
     expect(workspaceMembersLink).toBeInTheDocument()

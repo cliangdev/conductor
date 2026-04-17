@@ -40,7 +40,7 @@ import type { Project } from '@/types'
 
 function SidebarSectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="px-3 pt-4 pb-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest select-none">
+    <p className="px-3 pt-4 pb-1 text-xs font-semibold text-muted-foreground tracking-wide select-none truncate">
       {children}
     </p>
   )
@@ -221,26 +221,12 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
               <p className="text-xs font-medium text-foreground truncate leading-tight">
                 {user?.name ?? 'Account'}
               </p>
-              {activeOrg && (
-                <p className="text-[10px] text-muted-foreground truncate leading-tight">
-                  {activeOrg.name}
-                </p>
-              )}
             </div>
             <MoreHorizontalIcon className="h-4 w-4 text-muted-foreground shrink-0 opacity-60" />
           </button>
         </DropdownMenuTrigger>
 
         <DropdownMenuContent align="start" side="top" className="w-56 mb-1">
-          {activeOrg && (
-            <>
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                {activeOrg.name}
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-            </>
-          )}
-
           {/* Org switcher — only if multiple orgs */}
           {orgs.length > 1 && (
             <div className="relative" ref={subRef}>
@@ -376,10 +362,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         )}
 
-        {/* Workspace section — only when an org exists */}
+        {/* Org section — labeled with the actual org name */}
         {activeOrg && (
           <>
-            <SidebarSectionLabel>Workspace</SidebarSectionLabel>
+            <SidebarSectionLabel>{activeOrg.name}</SidebarSectionLabel>
             <div className="space-y-0.5 px-2">
               <NavItem
                 href="/app/org/members"
