@@ -59,3 +59,13 @@ export interface Org {
   slug: string
   createdAt: string
 }
+
+export type OrgMemberRole = 'ADMIN' | 'MEMBER'
+
+export interface OrgMember {
+  userId: string
+  name: string
+  email: string
+  role: OrgMemberRole
+  joinedAt: string
+}

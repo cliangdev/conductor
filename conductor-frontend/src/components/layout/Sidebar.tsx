@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { BellIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, GitBranchIcon, GitForkIcon, KeyIcon, PlusIcon, SettingsIcon, UsersIcon } from 'lucide-react'
+import { BellIcon, BuildingIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, GitBranchIcon, GitForkIcon, KeyIcon, PlusIcon, SettingsIcon, UsersIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import {
   DropdownMenu,
@@ -112,6 +112,19 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             {activeOrg.name}
           </p>
         </div>
+      )}
+
+      {/* Org nav links */}
+      {activeOrg && (
+        <nav className="p-2 space-y-0.5 border-b border-sidebar-border">
+          <SidebarNavLink
+            href="/app/org/members"
+            icon={<BuildingIcon className="h-4 w-4" />}
+            onNavigate={onNavigate}
+          >
+            Org Members
+          </SidebarNavLink>
+        </nav>
       )}
 
       {/* Project selector header */}
