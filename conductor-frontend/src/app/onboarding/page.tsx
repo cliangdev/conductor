@@ -6,9 +6,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/AuthContext'
-import { useOrg } from '@/contexts/OrgContext'
 import { apiPost } from '@/lib/api'
-import type { Org } from '@/types'
 
 function slugify(name: string): string {
   return name
@@ -20,7 +18,6 @@ function slugify(name: string): string {
 export default function OnboardingPage() {
   const router = useRouter()
   const { accessToken } = useAuth()
-  const { refetch } = useOrg()
 
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
@@ -46,9 +43,9 @@ export default function OnboardingPage() {
     setError(null)
     setSubmitting(true)
     try {
-      await apiPost<Org>('/api/v1/orgs', { name, slug }, accessToken)
-      await refetch()
-      router.push('/app/projects')
+      await apiPost('/api/v1/orgs', { name, slug }, accessToken)
+      // Hard navigate so OrgProvider re-initializes with the new org
+      window.location.href = '/app/projects'
     } catch (err) {
       const apiErr = err as Error & { status?: number }
       if (apiErr.status === 409) {
