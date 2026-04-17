@@ -20,7 +20,8 @@ import {
   UsersIcon,
   UsersRoundIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { CreateOrgDialog } from '@/components/layout/CreateOrgDialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -196,8 +197,7 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter()
   const { user, signOut } = useAuth()
   const { orgs, activeOrg, setActiveOrg } = useOrg()
-  const [orgSubOpen, setOrgSubOpen] = useState(false)
-  const subRef = useRef<HTMLDivElement>(null)
+  const [showCreateOrg, setShowCreateOrg] = useState(false)
 
   const initials = user?.name
     ? user.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
@@ -227,44 +227,26 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
         </DropdownMenuTrigger>
 
         <DropdownMenuContent align="start" side="top" className="w-56 mb-1">
-          {/* Org switcher — only if multiple orgs */}
-          {orgs.length > 1 && (
-            <div className="relative" ref={subRef}>
-              <button
-                className="w-full flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-sidebar-hover transition-colors rounded-sm"
-                onClick={() => setOrgSubOpen((o) => !o)}
-              >
-                <UsersRoundIcon className="h-4 w-4 opacity-70" />
-                <span className="flex-1 text-left">Switch organization</span>
-                <ChevronRightIcon className="h-3 w-3 opacity-50" />
-              </button>
-              {orgSubOpen && (
-                <div className="absolute bottom-0 left-full ml-1 bg-popover border border-border rounded-md shadow-md py-1 min-w-[180px] z-50">
-                  {orgs.map((org) => (
-                    <button
-                      key={org.id}
-                      onClick={() => { setActiveOrg(org); setOrgSubOpen(false); onNavigate?.() }}
-                      className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-sidebar-hover transition-colors"
-                    >
-                      {activeOrg?.id === org.id
-                        ? <CheckIcon className="h-3.5 w-3.5 shrink-0" />
-                        : <span className="h-3.5 w-3.5 shrink-0" />
-                      }
-                      {org.name}
-                    </button>
-                  ))}
-                  <div className="border-t border-border my-1" />
-                  <button
-                    onClick={() => { router.push('/onboarding'); setOrgSubOpen(false); onNavigate?.() }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-sidebar-hover transition-colors text-muted-foreground"
-                  >
-                    <PlusIcon className="h-3.5 w-3.5" />
-                    New organization
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+            Organizations
+          </DropdownMenuLabel>
+          {orgs.map((org) => (
+            <DropdownMenuItem
+              key={org.id}
+              onSelect={() => { setActiveOrg(org); onNavigate?.() }}
+              className="flex items-center gap-2"
+            >
+              {activeOrg?.id === org.id
+                ? <CheckIcon className="h-3.5 w-3.5 shrink-0" />
+                : <span className="h-3.5 w-3.5 shrink-0" />
+              }
+              <span className="truncate">{org.name}</span>
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuItem onSelect={() => setShowCreateOrg(true)} className="flex items-center gap-2">
+            <PlusIcon className="h-3.5 w-3.5 shrink-0" />
+            Create organization
+          </DropdownMenuItem>
 
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={handleSignOut} className="text-destructive focus:text-destructive">
@@ -273,6 +255,8 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <CreateOrgDialog open={showCreateOrg} onClose={() => setShowCreateOrg(false)} />
     </div>
   )
 }
@@ -288,17 +272,25 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const projectIdFromPath = pathname.match(/\/app\/projects\/([^/]+)/)?.[1]
   const currentProject = projects.find((p) => p.id === projectIdFromPath) ?? activeProject
 
+  // Only show projects belonging to the active org
+  const orgProjects = activeOrg
+    ? projects.filter((p) => p.orgId === activeOrg.id)
+    : projects
+
+  // Only show project nav when on a project page within the active org
+  const showProjectNav = currentProject && (!activeOrg || currentProject.orgId === activeOrg.id)
+
   return (
     <div className="flex flex-col h-full">
       {/* Project switcher at top */}
       <div className="border-b border-sidebar-border">
-        <ProjectSwitcher projects={projects} currentProject={currentProject ?? null} onNavigate={onNavigate} />
+        <ProjectSwitcher projects={orgProjects} currentProject={showProjectNav ? currentProject : null} onNavigate={onNavigate} />
       </div>
 
       {/* Scrollable middle content */}
       <div className="flex-1 overflow-y-auto py-1">
-        {/* Project nav — only when on a project page */}
-        {currentProject && (
+        {/* Project nav — only when on a project page within the active org */}
+        {showProjectNav && currentProject && (
           <div className="space-y-0.5 px-2 py-1">
             <NavItem
               href={`/app/projects/${currentProject.id}/issues`}
