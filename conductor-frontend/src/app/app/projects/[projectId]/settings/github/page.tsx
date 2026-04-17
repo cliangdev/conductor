@@ -41,12 +41,14 @@ export default function GitHubSettingsPage() {
   const [addLabel, setAddLabel] = useState('')
   const [addRepoUrl, setAddRepoUrl] = useState('')
   const [addSecret, setAddSecret] = useState('')
+  const [addSecretVisible, setAddSecretVisible] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
   const [addSubmitting, setAddSubmitting] = useState(false)
 
   const [editRepo, setEditRepo] = useState<ProjectRepository | null>(null)
   const [editLabel, setEditLabel] = useState('')
   const [editSecret, setEditSecret] = useState('')
+  const [editSecretVisible, setEditSecretVisible] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
 
@@ -117,6 +119,7 @@ export default function GitHubSettingsPage() {
     setAddLabel('')
     setAddRepoUrl('')
     setAddSecret('')
+    setAddSecretVisible(false)
     setAddError(null)
     setAddOpen(true)
   }
@@ -171,6 +174,7 @@ export default function GitHubSettingsPage() {
     setEditRepo(repo)
     setEditLabel(repo.label)
     setEditSecret('')
+    setEditSecretVisible(false)
     setEditError(null)
   }
 
@@ -382,17 +386,28 @@ export default function GitHubSettingsPage() {
             <div className="flex items-center gap-2">
               <input
                 id="edit-repo-secret"
-                type="password"
+                type={editSecretVisible ? 'text' : 'password'}
                 value={editSecret}
                 onChange={(e) => setEditSecret(e.target.value)}
                 placeholder="Enter new secret to rotate"
-                className="flex-1 rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                className="flex-1 rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent font-mono"
               />
+              {editSecret && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditSecretVisible((v) => !v)}
+                  aria-label={editSecretVisible ? 'Hide secret' : 'Show secret'}
+                >
+                  {editSecretVisible ? 'Hide' : 'Show'}
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setEditSecret(generateWebhookSecret())}
+                onClick={() => { setEditSecret(generateWebhookSecret()); setEditSecretVisible(true) }}
               >
                 Generate
               </Button>
@@ -462,17 +477,28 @@ export default function GitHubSettingsPage() {
             <div className="flex items-center gap-2">
               <input
                 id="add-repo-secret"
-                type="password"
+                type={addSecretVisible ? 'text' : 'password'}
                 value={addSecret}
                 onChange={(e) => setAddSecret(e.target.value)}
                 placeholder="Enter webhook secret"
-                className="flex-1 rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+                className="flex-1 rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent font-mono"
               />
+              {addSecret && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAddSecretVisible((v) => !v)}
+                  aria-label={addSecretVisible ? 'Hide secret' : 'Show secret'}
+                >
+                  {addSecretVisible ? 'Hide' : 'Show'}
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setAddSecret(generateWebhookSecret())}
+                onClick={() => { setAddSecret(generateWebhookSecret()); setAddSecretVisible(true) }}
               >
                 Generate
               </Button>
