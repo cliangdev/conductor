@@ -73,6 +73,8 @@ public class CommentService {
             throw new BusinessException("lineNumber is required");
         }
 
+        verifyMembership(projectId, caller.getId());
+
         Issue issue = findIssueInProject(projectId, issueId);
 
         Document document = documentRepository.findByIdAndIssueId(request.getDocumentId(), issueId)
