@@ -83,7 +83,7 @@ export function ReviewersSummaryPanel({
               {canManage && onUnassign && (
                 <button
                   onClick={() => onUnassign(r.userId)}
-                  className="px-1 text-xs text-destructive hover:text-destructive/80 leading-none"
+                  className="px-1 text-xs text-destructive hover:text-destructive leading-none"
                   title={`Unassign ${r.name}`}
                   aria-label={`Unassign ${r.name}`}
                 >

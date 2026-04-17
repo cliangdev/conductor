@@ -1,9 +1,11 @@
 package com.conductor.controller;
 
 import com.conductor.entity.GitHubWebhookEvent;
+import com.conductor.entity.ProjectRepository;
 import com.conductor.entity.ProjectSettings;
 import com.conductor.entity.WebhookEventStatus;
 import com.conductor.repository.GitHubWebhookEventRepository;
+import com.conductor.repository.ProjectRepositoryRepository;
 import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.service.GitHubWebhookProcessor;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,6 +25,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 
 @RestController
@@ -34,14 +37,17 @@ public class GitHubWebhookController {
     private final ProjectSettingsRepository projectSettingsRepository;
     private final GitHubWebhookEventRepository webhookEventRepository;
     private final GitHubWebhookProcessor webhookProcessor;
+    private final ProjectRepositoryRepository projectRepositoryRepository;
 
     public GitHubWebhookController(
             ProjectSettingsRepository projectSettingsRepository,
             GitHubWebhookEventRepository webhookEventRepository,
-            @Lazy GitHubWebhookProcessor webhookProcessor) {
+            @Lazy GitHubWebhookProcessor webhookProcessor,
+            ProjectRepositoryRepository projectRepositoryRepository) {
         this.projectSettingsRepository = projectSettingsRepository;
         this.webhookEventRepository = webhookEventRepository;
         this.webhookProcessor = webhookProcessor;
+        this.projectRepositoryRepository = projectRepositoryRepository;
     }
 
     @PostMapping("/projects/{projectId}/github/webhook")
@@ -61,15 +67,36 @@ public class GitHubWebhookController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
         }
 
+        // Collect all candidate secrets: legacy project_settings secret + all repo registry secrets
         Optional<ProjectSettings> settingsOpt = projectSettingsRepository.findByProjectId(projectId);
-        String secret = settingsOpt.map(ProjectSettings::getGithubWebhookSecret).orElse(null);
-        if (secret == null || secret.isBlank()) {
-            log.warn("Received GitHub webhook for project {} but no webhook secret is configured", projectId);
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        List<ProjectRepository> repos = Optional.ofNullable(projectRepositoryRepository.findByProjectId(projectId))
+                .orElse(List.of());
+
+        boolean signatureValid = false;
+
+        String legacySecret = settingsOpt.map(ProjectSettings::getGithubWebhookSecret).orElse(null);
+        if (legacySecret != null && !legacySecret.isBlank()) {
+            if (isValidSignature(rawBody, legacySecret, xHubSignature256)) {
+                signatureValid = true;
+            }
         }
 
-        if (!isValidSignature(rawBody, secret, xHubSignature256)) {
-            log.warn("Invalid webhook signature for project {}", projectId);
+        if (!signatureValid) {
+            for (ProjectRepository repo : repos) {
+                String repoSecret = repo.getWebhookSecret();
+                if (repoSecret != null && !repoSecret.isBlank() && isValidSignature(rawBody, repoSecret, xHubSignature256)) {
+                    signatureValid = true;
+                    break;
+                }
+            }
+        }
+
+        if (!signatureValid) {
+            if ((legacySecret == null || legacySecret.isBlank()) && repos.isEmpty()) {
+                log.warn("Received GitHub webhook for project {} but no webhook secret is configured", projectId);
+            } else {
+                log.warn("Invalid webhook signature for project {}", projectId);
+            }
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 

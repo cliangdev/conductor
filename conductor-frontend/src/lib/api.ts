@@ -1,3 +1,45 @@
+export interface ProjectRepository {
+  id: string
+  label: string
+  repoUrl: string
+  repoFullName: string
+  webhookSecretConfigured: boolean
+  connectedAt: string
+}
+
+export function listProjectRepositories(projectId: string, token: string): Promise<ProjectRepository[]> {
+  return apiGet<ProjectRepository[]>(`/api/v1/projects/${projectId}/repositories`, token)
+}
+
+export function addProjectRepository(
+  projectId: string,
+  body: { label: string; repoUrl: string; webhookSecret: string },
+  token: string,
+): Promise<ProjectRepository> {
+  return apiPost<ProjectRepository>(`/api/v1/projects/${projectId}/repositories`, body, token)
+}
+
+export function updateProjectRepository(
+  projectId: string,
+  repositoryId: string,
+  body: { label?: string; webhookSecret?: string },
+  token: string,
+): Promise<ProjectRepository> {
+  return apiPatch<ProjectRepository>(
+    `/api/v1/projects/${projectId}/repositories/${repositoryId}`,
+    body,
+    token,
+  )
+}
+
+export function deleteProjectRepository(
+  projectId: string,
+  repositoryId: string,
+  token: string,
+): Promise<void> {
+  return apiDelete(`/api/v1/projects/${projectId}/repositories/${repositoryId}`, token)
+}
+
 export async function apiGet<T>(path: string, token: string): Promise<T> {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },

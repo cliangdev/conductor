@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { Button } from '@/components/ui/button'
 import { apiDelete, apiGet, apiPost } from '@/lib/api'
 import type { UserApiKey, CreateApiKeyResponse } from '@/types'
 
@@ -97,12 +98,15 @@ export function ApiKeySection({ accessToken }: { accessToken: string | null }) {
                 <span className="text-sm font-mono">{key.maskedKey}</span>
                 {key.label && <span className="text-xs text-muted-foreground ml-2">{key.label}</span>}
               </div>
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => handleDelete(key.id)}
-                className="text-xs text-destructive hover:underline ml-4"
+                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                aria-label={`Revoke API key ${key.maskedKey}`}
               >
                 Revoke
-              </button>
+              </Button>
             </div>
           ))}
           <button

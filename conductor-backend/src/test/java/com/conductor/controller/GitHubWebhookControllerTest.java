@@ -2,10 +2,12 @@ package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
 import com.conductor.entity.GitHubWebhookEvent;
+import com.conductor.entity.ProjectRepository;
 import com.conductor.entity.ProjectSettings;
 import com.conductor.entity.WebhookEventStatus;
 import com.conductor.repository.GitHubWebhookEventRepository;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.ProjectRepositoryRepository;
 import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
@@ -24,6 +26,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -66,6 +69,9 @@ class GitHubWebhookControllerTest {
 
     @MockitoBean
     private UserApiKeyRepository userApiKeyRepository;
+
+    @MockitoBean
+    private ProjectRepositoryRepository projectRepositoryRepository;
 
     private String computeSignature(String payload, String secret) throws Exception {
         Mac mac = Mac.getInstance("HmacSHA256");
@@ -196,7 +202,7 @@ class GitHubWebhookControllerTest {
     @Test
     void isValidSignatureReturnsTrueForCorrectSignature() throws Exception {
         GitHubWebhookController controller = new GitHubWebhookController(
-                projectSettingsRepository, webhookEventRepository, webhookProcessor);
+                projectSettingsRepository, webhookEventRepository, webhookProcessor, projectRepositoryRepository);
 
         byte[] payloadBytes = PAYLOAD.getBytes(StandardCharsets.UTF_8);
         String signature = computeSignature(PAYLOAD, SECRET);
@@ -206,7 +212,7 @@ class GitHubWebhookControllerTest {
     @Test
     void isValidSignatureReturnsFalseForWrongSecret() throws Exception {
         GitHubWebhookController controller = new GitHubWebhookController(
-                projectSettingsRepository, webhookEventRepository, webhookProcessor);
+                projectSettingsRepository, webhookEventRepository, webhookProcessor, projectRepositoryRepository);
 
         byte[] payloadBytes = PAYLOAD.getBytes(StandardCharsets.UTF_8);
         String signature = computeSignature(PAYLOAD, "wrong-secret");
@@ -216,7 +222,7 @@ class GitHubWebhookControllerTest {
     @Test
     void isValidSignatureReturnsFalseForMissingPrefix() {
         GitHubWebhookController controller = new GitHubWebhookController(
-                projectSettingsRepository, webhookEventRepository, webhookProcessor);
+                projectSettingsRepository, webhookEventRepository, webhookProcessor, projectRepositoryRepository);
 
         assertThat(controller.isValidSignature(PAYLOAD.getBytes(StandardCharsets.UTF_8), SECRET, "abc123")).isFalse();
     }
@@ -224,8 +230,106 @@ class GitHubWebhookControllerTest {
     @Test
     void isValidSignatureReturnsFalseForNull() {
         GitHubWebhookController controller = new GitHubWebhookController(
-                projectSettingsRepository, webhookEventRepository, webhookProcessor);
+                projectSettingsRepository, webhookEventRepository, webhookProcessor, projectRepositoryRepository);
 
         assertThat(controller.isValidSignature(PAYLOAD.getBytes(StandardCharsets.UTF_8), SECRET, null)).isFalse();
+    }
+
+    // [auto] When a webhook is signed with Repo A's secret and the project has Repo A and Repo B registered, the request is accepted (200)
+    @Test
+    void webhookSignedWithRepoASecretAcceptedWhenProjectHasRepoAAndRepoB() throws Exception {
+        String repoASecret = "repo-a-secret";
+        String repoBSecret = "repo-b-secret";
+        String signature = computeSignature(PAYLOAD, repoASecret);
+
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
+
+        ProjectRepository repoA = new ProjectRepository();
+        repoA.setProjectId(PROJECT_ID);
+        repoA.setWebhookSecret(repoASecret);
+
+        ProjectRepository repoB = new ProjectRepository();
+        repoB.setProjectId(PROJECT_ID);
+        repoB.setWebhookSecret(repoBSecret);
+
+        when(projectRepositoryRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(repoA, repoB));
+        when(webhookEventRepository.findByGithubDeliveryId(DELIVERY_ID)).thenReturn(Optional.empty());
+
+        GitHubWebhookEvent savedEvent = new GitHubWebhookEvent();
+        savedEvent.setProjectId(PROJECT_ID);
+        savedEvent.setStatus(WebhookEventStatus.PENDING);
+        when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenReturn(savedEvent);
+
+        mockMvc.perform(post("/api/v1/projects/{projectId}/github/webhook", PROJECT_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Hub-Signature-256", signature)
+                        .header("X-GitHub-Event", "pull_request")
+                        .header("X-GitHub-Delivery", DELIVERY_ID)
+                        .content(PAYLOAD))
+                .andExpect(status().isOk());
+    }
+
+    // [auto] When a webhook has an unknown secret not matching any registered repo, it returns 401
+    @Test
+    void webhookWithUnknownSecretReturns401() throws Exception {
+        String signature = computeSignature(PAYLOAD, "unknown-secret");
+
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
+
+        ProjectRepository repoA = new ProjectRepository();
+        repoA.setProjectId(PROJECT_ID);
+        repoA.setWebhookSecret("repo-a-secret");
+
+        when(projectRepositoryRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of(repoA));
+
+        mockMvc.perform(post("/api/v1/projects/{projectId}/github/webhook", PROJECT_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Hub-Signature-256", signature)
+                        .header("X-GitHub-Event", "push")
+                        .header("X-GitHub-Delivery", DELIVERY_ID)
+                        .content(PAYLOAD))
+                .andExpect(status().isUnauthorized());
+
+        verify(webhookEventRepository, never()).save(any());
+    }
+
+    // [auto] The legacy project_settings secret also works as a fallback (backward compat)
+    @Test
+    void legacyProjectSettingsSecretAcceptedAsFallback() throws Exception {
+        String legacySecret = "legacy-project-secret";
+        String signature = computeSignature(PAYLOAD, legacySecret);
+
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID))
+                .thenReturn(Optional.of(settingsWithSecret(legacySecret)));
+        when(projectRepositoryRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of());
+        when(webhookEventRepository.findByGithubDeliveryId(DELIVERY_ID)).thenReturn(Optional.empty());
+
+        GitHubWebhookEvent savedEvent = new GitHubWebhookEvent();
+        savedEvent.setProjectId(PROJECT_ID);
+        savedEvent.setStatus(WebhookEventStatus.PENDING);
+        when(webhookEventRepository.save(any(GitHubWebhookEvent.class))).thenReturn(savedEvent);
+
+        mockMvc.perform(post("/api/v1/projects/{projectId}/github/webhook", PROJECT_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Hub-Signature-256", signature)
+                        .header("X-GitHub-Event", "push")
+                        .header("X-GitHub-Delivery", DELIVERY_ID)
+                        .content(PAYLOAD))
+                .andExpect(status().isOk());
+    }
+
+    // [auto] Returns 401 when no secrets are configured at all (no settings, no repos)
+    @Test
+    void noSecretsConfiguredAtAllReturns401() throws Exception {
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
+        when(projectRepositoryRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of());
+
+        mockMvc.perform(post("/api/v1/projects/{projectId}/github/webhook", PROJECT_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header("X-Hub-Signature-256", "sha256=anything")
+                        .content(PAYLOAD))
+                .andExpect(status().isUnauthorized());
+
+        verify(webhookEventRepository, never()).save(any());
     }
 }
