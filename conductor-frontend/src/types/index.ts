@@ -52,3 +52,10 @@ export interface CreateApiKeyResponse {
   label: string
   createdAt: string
 }
+
+export interface Org {
+  id: string
+  name: string
+  slug: string
+  createdAt: string
+}

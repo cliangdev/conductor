@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useSidebar } from '@/contexts/SidebarContext'
 import { useProject } from '@/contexts/ProjectContext'
+import { useOrg } from '@/contexts/OrgContext'
 import { cn } from '@/lib/utils'
 import type { Project } from '@/types'
 
@@ -94,6 +95,7 @@ function SidebarNavGroup({
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter()
   const { projects, activeProject, setActiveProject } = useProject()
+  const { activeOrg } = useOrg()
 
   function handleProjectSelect(project: Project) {
     setActiveProject(project)
@@ -103,6 +105,15 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
+      {/* Org header */}
+      {activeOrg && (
+        <div className="px-4 py-2.5 border-b border-sidebar-border">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider truncate">
+            {activeOrg.name}
+          </p>
+        </div>
+      )}
+
       {/* Project selector header */}
       <div className="p-3 border-b border-sidebar-border">
         <DropdownMenu>

@@ -23,6 +23,16 @@ vi.mock('@/contexts/ProjectContext', () => ({
   }),
 }))
 
+vi.mock('@/contexts/OrgContext', () => ({
+  useOrg: () => ({
+    activeOrg: { id: 'org-1', name: 'Test Org', slug: 'test-org', createdAt: '2024-01-01' },
+    orgs: [{ id: 'org-1', name: 'Test Org', slug: 'test-org', createdAt: '2024-01-01' }],
+    loading: false,
+    needsOnboarding: false,
+    refetch: vi.fn(),
+  }),
+}))
+
 import { Sidebar } from './Sidebar'
 
 describe('Sidebar', () => {
