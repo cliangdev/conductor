@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { BellIcon, BuildingIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, FileTextIcon, GitBranchIcon, GitForkIcon, KeyIcon, PlusIcon, SettingsIcon, UsersIcon } from 'lucide-react'
+import { BellIcon, BuildingIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, FileTextIcon, GitBranchIcon, GitForkIcon, KeyIcon, PlusIcon, SettingsIcon, UsersIcon, UsersRoundIcon } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import {
   DropdownMenu,
@@ -123,6 +123,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             onNavigate={onNavigate}
           >
             Org Members
+          </SidebarNavLink>
+          <SidebarNavLink
+            href="/app/org/teams"
+            icon={<UsersRoundIcon className="h-4 w-4" />}
+            onNavigate={onNavigate}
+          >
+            Teams
           </SidebarNavLink>
         </nav>
       )}

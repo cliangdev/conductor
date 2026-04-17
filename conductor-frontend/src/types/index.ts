@@ -69,3 +69,20 @@ export interface OrgMember {
   role: OrgMemberRole
   joinedAt: string
 }
+
+export interface Team {
+  id: string
+  orgId: string
+  name: string
+  createdAt: string
+}
+
+export type TeamMemberRole = 'LEAD' | 'MEMBER'
+
+export interface TeamMember {
+  userId: string
+  name: string
+  email: string
+  role: TeamMemberRole
+  joinedAt: string
+}
