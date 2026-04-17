@@ -42,6 +42,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -132,6 +133,9 @@ class CommentServiceTest {
         comment.setLineNumber(42);
         comment.setCreatedAt(OffsetDateTime.now());
         comment.setUpdatedAt(OffsetDateTime.now());
+
+        // author is a project member by default; lenient to avoid UnnecessaryStubbing in read-only tests
+        lenient().when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
     }
 
     @Test
