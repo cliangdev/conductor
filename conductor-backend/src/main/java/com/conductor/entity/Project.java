@@ -35,6 +35,9 @@ public class Project {
     @Column(name = "org_id", length = 36)
     private String orgId;
 
+    @Column(name = "team_id", length = 36)
+    private String teamId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "visibility", nullable = false, columnDefinition = "VARCHAR(20) DEFAULT 'ORG'")
     private ProjectVisibility visibility = ProjectVisibility.ORG;
@@ -89,4 +92,7 @@ public class Project {
 
     public ProjectVisibility getVisibility() { return visibility; }
     public void setVisibility(ProjectVisibility visibility) { this.visibility = visibility; }
+
+    public String getTeamId() { return teamId; }
+    public void setTeamId(String teamId) { this.teamId = teamId; }
 }
