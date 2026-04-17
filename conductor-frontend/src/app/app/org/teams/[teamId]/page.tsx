@@ -12,19 +12,13 @@ import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useOrg } from '@/contexts/OrgContext'
 import { apiDelete, apiGet, apiPost } from '@/lib/api'
-import type { OrgMember, Team, TeamMember, TeamMemberRole } from '@/types'
+import type { OrgMember, Project, Team, TeamMember, TeamMemberRole } from '@/types'
 
 interface ApiError extends Error {
   status?: number
 }
 
 const TEAM_ROLES: TeamMemberRole[] = ['LEAD', 'MEMBER']
-
-function roleBadgeClass(role: TeamMemberRole): string {
-  return role === 'LEAD'
-    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
-    : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
-}
 
 function memberInitials(name: string): string {
   return name
@@ -33,6 +27,15 @@ function memberInitials(name: string): string {
     .join('')
     .toUpperCase()
     .slice(0, 2)
+}
+
+function visibilityLabel(visibility: string | undefined): string {
+  switch (visibility) {
+    case 'TEAM': return 'Team only'
+    case 'PRIVATE': return 'Private'
+    case 'PUBLIC': return 'Public'
+    default: return 'Visible to org'
+  }
 }
 
 export default function TeamDetailPage() {
@@ -45,6 +48,7 @@ export default function TeamDetailPage() {
   const [team, setTeam] = useState<Team | null>(null)
   const [members, setMembers] = useState<TeamMember[]>([])
   const [orgMembers, setOrgMembers] = useState<OrgMember[]>([])
+  const [teamProjects, setTeamProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -62,15 +66,17 @@ export default function TeamDetailPage() {
     if (!accessToken || !activeOrg) return
     setLoading(true)
     try {
-      const [teamsData, membersData, orgMembersData] = await Promise.all([
+      const [teamsData, membersData, orgMembersData, projectsData] = await Promise.all([
         apiGet<Team[]>(`/api/v1/orgs/${activeOrg.id}/teams`, accessToken),
         apiGet<TeamMember[]>(`/api/v1/teams/${teamId}/members`, accessToken),
         apiGet<OrgMember[]>(`/api/v1/orgs/${activeOrg.id}/members`, accessToken),
+        apiGet<Project[]>('/api/v1/projects', accessToken),
       ])
       const found = teamsData.find((t) => t.id === teamId) ?? null
       setTeam(found)
       setMembers(membersData)
       setOrgMembers(orgMembersData)
+      setTeamProjects(projectsData.filter((p) => p.teamId === teamId))
       setLoadError(null)
     } catch {
       setLoadError('Failed to load team data.')
@@ -144,14 +150,14 @@ export default function TeamDetailPage() {
 
   if (!activeOrg) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-8">
+      <div className="max-w-4xl mx-auto px-4 py-8">
         <p className="text-sm text-muted-foreground">No organization selected.</p>
       </div>
     )
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
+    <div className="max-w-4xl mx-auto px-4 py-8">
       <div className="mb-4">
         <Link
           href="/app/org/teams"
@@ -166,66 +172,104 @@ export default function TeamDetailPage() {
 
       {!loading && !loadError && (
         <>
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-foreground">
-                {team?.name ?? 'Team'}
-              </h1>
-              <p className="text-sm text-muted-foreground mt-1">{activeOrg.name}</p>
-            </div>
-            {canManage && eligibleOrgMembers.length > 0 && (
-              <Button onClick={openAdd} size="sm">
-                Add Member
-              </Button>
-            )}
+          <div className="mb-6">
+            <p className="text-xs text-muted-foreground mb-0.5">{activeOrg.name}</p>
+            <h1 className="text-2xl font-bold text-foreground">{team?.name ?? 'Team'}</h1>
           </div>
 
-          <div className="bg-card rounded-lg border border-border">
-            {members.length === 0 ? (
-              <p className="text-sm text-muted-foreground p-4">No members yet.</p>
-            ) : (
-              <div className="divide-y divide-border">
-                {members.map((member) => (
-                  <div key={member.userId} className="flex items-center justify-between px-4 py-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar className="h-9 w-9 shrink-0">
-                        <AvatarFallback>{memberInitials(member.name)}</AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground truncate">
-                          {member.name}
-                          {member.userId === user?.id && (
-                            <span className="ml-1 text-xs text-muted-foreground">(You)</span>
-                          )}
-                        </p>
-                        <p className="text-xs text-muted-foreground truncate">{member.email}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0 ml-4">
-                      <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${roleBadgeClass(member.role)}`}
-                      >
-                        {member.role.charAt(0) + member.role.slice(1).toLowerCase()}
-                      </span>
-                      {canManage && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setRemoveConfirm({ userId: member.userId, name: member.name })
-                            setRemoveError(null)
-                          }}
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                          aria-label={`Remove ${member.name}`}
-                        >
-                          Remove
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ))}
+          {/* Two-column layout */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Members column */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-foreground">
+                  Members ({members.length})
+                </h2>
+                {canManage && eligibleOrgMembers.length > 0 && (
+                  <Button onClick={openAdd} size="sm" variant="outline">
+                    + Add member
+                  </Button>
+                )}
               </div>
-            )}
+
+              <div className="bg-card rounded-lg border border-border">
+                {members.length === 0 ? (
+                  <p className="text-sm text-muted-foreground p-4">No members yet.</p>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {members.map((member) => (
+                      <div key={member.userId} className="flex items-center justify-between px-4 py-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Avatar className="h-8 w-8 shrink-0">
+                            <AvatarFallback className="text-xs">{memberInitials(member.name)}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">
+                              {member.name}
+                              {member.userId === user?.id && (
+                                <span className="ml-1 text-xs text-muted-foreground font-normal">(You)</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 ml-3">
+                          <span className="text-xs text-muted-foreground uppercase tracking-wide">
+                            {member.role}
+                          </span>
+                          {canManage && (
+                            <button
+                              onClick={() => {
+                                setRemoveConfirm({ userId: member.userId, name: member.name })
+                                setRemoveError(null)
+                              }}
+                              className="text-xs text-muted-foreground hover:text-destructive transition-colors px-1"
+                              aria-label={`Remove ${member.name}`}
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Projects column */}
+            <div>
+              <div className="mb-3">
+                <h2 className="text-sm font-semibold text-foreground">
+                  Projects ({teamProjects.length})
+                </h2>
+              </div>
+
+              <div className="bg-card rounded-lg border border-border">
+                {teamProjects.length === 0 ? (
+                  <p className="text-sm text-muted-foreground p-4">
+                    No projects assigned to this team.
+                  </p>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {teamProjects.map((project) => (
+                      <Link
+                        key={project.id}
+                        href={`/app/projects/${project.id}/issues`}
+                        className="flex items-center justify-between px-4 py-3 hover:bg-sidebar-hover transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-foreground truncate">{project.name}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {visibilityLabel(project.visibility)}
+                          </p>
+                        </div>
+                        <span className="text-muted-foreground text-sm ml-3">→</span>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </>
       )}
@@ -282,12 +326,7 @@ export default function TeamDetailPage() {
             <Button type="submit" disabled={addSubmitting || eligibleOrgMembers.length === 0}>
               {addSubmitting ? 'Adding…' : 'Add'}
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setAddOpen(false)}
-              disabled={addSubmitting}
-            >
+            <Button type="button" variant="outline" onClick={() => setAddOpen(false)} disabled={addSubmitting}>
               Cancel
             </Button>
           </div>

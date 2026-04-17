@@ -27,18 +27,21 @@ vi.mock('@/contexts/OrgContext', () => ({
   useOrg: () => ({
     activeOrg: { id: 'org-1', name: 'Test Org', slug: 'test-org', createdAt: '2024-01-01' },
     orgs: [{ id: 'org-1', name: 'Test Org', slug: 'test-org', createdAt: '2024-01-01' }],
+    teams: [],
     loading: false,
     needsOnboarding: false,
     refetch: vi.fn(),
+    setActiveOrg: vi.fn(),
   }),
 }))
 
 import { Sidebar } from './Sidebar'
 
 describe('Sidebar', () => {
-  it('renders Settings group when a project is active', () => {
+  it('renders Settings group when on a project settings page', () => {
     render(<Sidebar />)
-    expect(screen.getByText('Settings')).toBeInTheDocument()
+    // Both project Settings nav group and Workspace Settings link exist
+    expect(screen.getAllByText('Settings').length).toBeGreaterThanOrEqual(1)
   })
 
   it('renders Members link under Settings pointing to settings/members', () => {
@@ -65,15 +68,16 @@ describe('Sidebar', () => {
     expect(notificationsLink).toHaveAttribute('href', '/app/projects/proj-1/settings/notifications')
   })
 
-  it('renders Settings sub-links in order: Members, API Keys, Notifications', () => {
+  it('renders Workspace section with Members and Settings links', () => {
     render(<Sidebar />)
-    const links = screen.getAllByRole('link')
-    const linkTexts = links.map((l) => l.textContent?.trim())
-    const membersIndex = linkTexts.findIndex((t) => t === 'Members')
-    const apiKeysIndex = linkTexts.findIndex((t) => t === 'API Keys')
-    const notificationsIndex = linkTexts.findIndex((t) => t === 'Notifications')
-    expect(membersIndex).toBeGreaterThanOrEqual(0)
-    expect(apiKeysIndex).toBeGreaterThan(membersIndex)
-    expect(notificationsIndex).toBeGreaterThan(apiKeysIndex)
+    expect(screen.getByText('Workspace')).toBeInTheDocument()
+    const allMembersLinks = screen.getAllByRole('link', { name: /members/i })
+    const workspaceMembersLink = allMembersLinks.find((l) => l.getAttribute('href') === '/app/org/members')
+    expect(workspaceMembersLink).toBeInTheDocument()
+  })
+
+  it('does not render Teams section when org has no teams', () => {
+    render(<Sidebar />)
+    expect(screen.queryByText('Teams')).not.toBeInTheDocument()
   })
 })

@@ -12,6 +12,9 @@ export interface Project {
   description: string | null
   createdAt: string
   updatedAt: string
+  visibility?: 'PRIVATE' | 'ORG' | 'TEAM' | 'PUBLIC'
+  teamId?: string | null
+  orgId?: string | null
 }
 
 export interface AuthResponse {

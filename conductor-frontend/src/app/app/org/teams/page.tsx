@@ -3,7 +3,8 @@
 export const dynamic = 'force-dynamic'
 
 import { useCallback, useEffect, useState } from 'react'
-import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { ChevronRightIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
@@ -16,8 +17,9 @@ interface ApiError extends Error {
   status?: number
 }
 
-interface TeamWithCount extends Team {
+interface TeamWithCounts extends Team {
   memberCount: number
+  projectCount: number
 }
 
 function fetchTeamMemberCount(teamId: string, token: string): Promise<number> {
@@ -27,11 +29,12 @@ function fetchTeamMemberCount(teamId: string, token: string): Promise<number> {
 }
 
 export default function TeamsPage() {
+  const router = useRouter()
   const { accessToken, user } = useAuth()
-  const { activeOrg } = useOrg()
+  const { activeOrg, refetch: refetchOrg } = useOrg()
   const { showToast } = useToast()
 
-  const [teams, setTeams] = useState<TeamWithCount[]>([])
+  const [teams, setTeams] = useState<TeamWithCounts[]>([])
   const [orgMembers, setOrgMembers] = useState<OrgMember[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -50,6 +53,7 @@ export default function TeamsPage() {
         data.map(async (team) => ({
           ...team,
           memberCount: await fetchTeamMemberCount(team.id, accessToken),
+          projectCount: 0,
         })),
       )
       setTeams(withCounts)
@@ -67,7 +71,7 @@ export default function TeamsPage() {
       const data = await apiGet<OrgMember[]>(`/api/v1/orgs/${activeOrg.id}/members`, accessToken)
       setOrgMembers(data)
     } catch {
-      // non-critical, used for role check
+      // non-critical
     }
   }, [accessToken, activeOrg])
 
@@ -101,9 +105,10 @@ export default function TeamsPage() {
         { name },
         accessToken,
       )
-      setTeams((prev) => [...prev, { ...created, memberCount: 0 }])
+      setTeams((prev) => [...prev, { ...created, memberCount: 0, projectCount: 0 }])
       setCreateOpen(false)
       showToast(`Team "${created.name}" created.`)
+      refetchOrg()
     } catch (err) {
       const apiErr = err as ApiError
       if (apiErr.status === 409) {
@@ -128,48 +133,56 @@ export default function TeamsPage() {
     <div className="max-w-2xl mx-auto px-4 py-8">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Teams</h1>
-          <p className="text-sm text-muted-foreground mt-1">{activeOrg.name}</p>
+          <p className="text-xs text-muted-foreground mb-0.5">{activeOrg.name}</p>
+          <h1 className="text-2xl font-bold text-foreground">
+            Teams {!loading && teams.length > 0 && (
+              <span className="text-muted-foreground font-normal text-lg">({teams.length})</span>
+            )}
+          </h1>
         </div>
-        {isAdmin && (
+        {isAdmin && teams.length > 0 && (
           <Button onClick={openCreate} size="sm">
-            Create Team
+            + New team
           </Button>
         )}
       </div>
 
-      {loading && (
-        <p className="text-sm text-muted-foreground">Loading teams…</p>
-      )}
+      {loading && <p className="text-sm text-muted-foreground">Loading teams…</p>}
+      {loadError && <p className="text-sm text-destructive" role="alert">{loadError}</p>}
 
-      {loadError && (
-        <p className="text-sm text-destructive" role="alert">{loadError}</p>
-      )}
-
-      {!loading && !loadError && (
-        <div className="bg-card rounded-lg border border-border">
-          {teams.length === 0 ? (
-            <p className="text-sm text-muted-foreground p-4">No teams yet.</p>
-          ) : (
-            <div className="divide-y divide-border">
-              {teams.map((team) => (
-                <div key={team.id} className="flex items-center justify-between px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{team.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {team.memberCount} {team.memberCount === 1 ? 'member' : 'members'}
-                    </p>
-                  </div>
-                  <Link
-                    href={`/app/org/teams/${team.id}`}
-                    className="shrink-0 ml-4 text-sm font-medium text-primary hover:underline"
-                  >
-                    Manage
-                  </Link>
-                </div>
-              ))}
-            </div>
+      {!loading && !loadError && teams.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <h2 className="text-base font-semibold text-foreground mb-2">No teams yet</h2>
+          <p className="text-sm text-muted-foreground max-w-sm mb-6">
+            Teams let larger orgs partition work and control project visibility by department.
+            Skip this if everyone works together on everything.
+          </p>
+          {isAdmin && (
+            <Button onClick={openCreate}>
+              + Create a team
+            </Button>
           )}
+        </div>
+      )}
+
+      {!loading && !loadError && teams.length > 0 && (
+        <div className="bg-card rounded-lg border border-border divide-y divide-border">
+          {teams.map((team) => (
+            <button
+              key={team.id}
+              onClick={() => router.push(`/app/org/teams/${team.id}`)}
+              className="w-full flex items-center justify-between px-4 py-4 hover:bg-sidebar-hover transition-colors text-left"
+            >
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-foreground">{team.name}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {team.memberCount} {team.memberCount === 1 ? 'member' : 'members'}
+                  {team.projectCount > 0 && ` · ${team.projectCount} ${team.projectCount === 1 ? 'project' : 'projects'}`}
+                </p>
+              </div>
+              <ChevronRightIcon className="h-4 w-4 text-muted-foreground shrink-0 ml-4" />
+            </button>
+          ))}
         </div>
       )}
 
@@ -188,7 +201,7 @@ export default function TeamsPage() {
               type="text"
               value={teamName}
               onChange={(e) => setTeamName(e.target.value)}
-              placeholder="e.g. Frontend"
+              placeholder="e.g. Engineering"
               autoFocus
               className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
             />
