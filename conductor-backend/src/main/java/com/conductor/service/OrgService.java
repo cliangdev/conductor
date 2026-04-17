@@ -126,7 +126,10 @@ public class OrgService {
 
     @Transactional
     public void migrateExistingProjects(String userId, String orgId) {
-        List<ProjectMember> adminMemberships = projectMemberRepository.findByUserIdAndRole(userId, MemberRole.ADMIN);
+        // Filter by role in Java to avoid PG enum cast issue (member_role vs varchar)
+        List<ProjectMember> adminMemberships = projectMemberRepository.findByUserId(userId).stream()
+                .filter(pm -> pm.getRole() == MemberRole.ADMIN)
+                .toList();
         for (ProjectMember pm : adminMemberships) {
             Project project = pm.getProject();
             if (project.getOrgId() == null) {
