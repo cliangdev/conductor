@@ -23,10 +23,15 @@ export function useOrg(): OrgContextValue {
   return ctx
 }
 
+function getStoredOrgId(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem('active_org_id')
+}
+
 export function OrgProvider({ children }: { children: ReactNode }) {
   const { accessToken } = useAuth()
   const [orgs, setOrgs] = useState<Org[]>([])
-  const [activeOrgId, setActiveOrgId] = useState<string | null>(null)
+  const [activeOrgId, setActiveOrgId] = useState<string | null>(getStoredOrgId)
   const [teams, setTeams] = useState<Team[]>([])
   const [loading, setLoading] = useState(true)
   const [needsOnboarding, setNeedsOnboarding] = useState(false)
@@ -47,7 +52,6 @@ export function OrgProvider({ children }: { children: ReactNode }) {
       setLoading(false)
       return
     }
-
     setLoading(true)
     try {
       const data = await apiGet<Org[]>('/api/v1/users/me/orgs', accessToken)
@@ -57,8 +61,8 @@ export function OrgProvider({ children }: { children: ReactNode }) {
         const orgId = activeOrgId ?? data[0].id
         await fetchTeams(orgId, accessToken)
       }
-    } catch {
-      // Leave orgs empty on error
+    } catch (err) {
+      console.error('[OrgContext] Failed to load orgs:', err)
     } finally {
       setLoading(false)
     }
@@ -68,6 +72,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
     fetchOrgs()
   }, [fetchOrgs])
 
+  // Refresh teams when active org changes
   useEffect(() => {
     if (activeOrg && accessToken) {
       fetchTeams(activeOrg.id, accessToken)
@@ -76,6 +81,7 @@ export function OrgProvider({ children }: { children: ReactNode }) {
 
   function setActiveOrg(org: Org) {
     setActiveOrgId(org.id)
+    localStorage.setItem('active_org_id', org.id)
   }
 
   return (

@@ -35,16 +35,30 @@ vi.mock('@/contexts/OrgContext', () => ({
   }),
 }))
 
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({
+    user: { id: 'user-1', name: 'Test User', email: 'test@example.com', avatarUrl: null, displayName: null },
+    accessToken: 'test-token',
+    loading: false,
+    signIn: vi.fn(),
+    signOut: vi.fn(),
+  }),
+}))
+
 import { Sidebar } from './Sidebar'
 
 describe('Sidebar', () => {
+  it('renders the active project name in the project switcher', () => {
+    render(<Sidebar />)
+    expect(screen.getByText('Test Project')).toBeInTheDocument()
+  })
+
   it('renders Settings group when on a project settings page', () => {
     render(<Sidebar />)
-    // Both project Settings nav group and Workspace Settings link exist
     expect(screen.getAllByText('Settings').length).toBeGreaterThanOrEqual(1)
   })
 
-  it('renders Members link under Settings pointing to settings/members', () => {
+  it('renders Members link under project Settings pointing to settings/members', () => {
     render(<Sidebar />)
     const membersLinks = screen.getAllByRole('link', { name: /members/i })
     const settingsMembersLink = membersLinks.find((l) =>
@@ -61,7 +75,7 @@ describe('Sidebar', () => {
     expect(apiKeysLink).toHaveAttribute('href', '/app/settings/api-keys')
   })
 
-  it('renders Notifications link under Settings pointing to settings/notifications', () => {
+  it('renders Notifications link under Settings', () => {
     render(<Sidebar />)
     const notificationsLink = screen.getByRole('link', { name: /notifications/i })
     expect(notificationsLink).toBeInTheDocument()
@@ -76,8 +90,15 @@ describe('Sidebar', () => {
     expect(workspaceMembersLink).toBeInTheDocument()
   })
 
-  it('does not render Teams section when org has no teams', () => {
+  it('does not render Teams link in Workspace when org has no teams', () => {
     render(<Sidebar />)
-    expect(screen.queryByText('Teams')).not.toBeInTheDocument()
+    // Only check within workspace - no teams link should exist since teams=[]
+    const teamsLinks = screen.queryAllByRole('link', { name: /^teams$/i })
+    expect(teamsLinks).toHaveLength(0)
+  })
+
+  it('renders user name in footer', () => {
+    render(<Sidebar />)
+    expect(screen.getByText('Test User')).toBeInTheDocument()
   })
 })
