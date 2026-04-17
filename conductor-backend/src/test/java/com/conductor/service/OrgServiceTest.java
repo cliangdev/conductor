@@ -77,7 +77,7 @@ class OrgServiceTest {
         when(orgRepository.findBySlug("my-org")).thenReturn(Optional.empty());
         when(orgMemberRepository.findByUserId("user-1")).thenReturn(List.of());
         when(userRepository.findById("user-1")).thenReturn(Optional.of(creator));
-        when(projectMemberRepository.findByUserIdAndRole("user-1", MemberRole.ADMIN)).thenReturn(List.of());
+        when(projectMemberRepository.findByUserId("user-1")).thenReturn(List.of());
         when(orgRepository.save(any(Organization.class))).thenAnswer(inv -> {
             Organization o = inv.getArgument(0);
             o.setId("org-new");
@@ -126,7 +126,7 @@ class OrgServiceTest {
         adminMembership.setProject(unmigrated);
         adminMembership.setRole(MemberRole.ADMIN);
 
-        when(projectMemberRepository.findByUserIdAndRole("user-1", MemberRole.ADMIN))
+        when(projectMemberRepository.findByUserId("user-1"))
                 .thenReturn(List.of(adminMembership));
 
         orgService.createOrg("user-1", "My Org", "my-org");
@@ -154,7 +154,6 @@ class OrgServiceTest {
 
         orgService.createOrg("user-1", "My Org", "my-org");
 
-        verify(projectMemberRepository, never()).findByUserIdAndRole(any(), any());
         verify(projectRepository, never()).save(any());
     }
 
@@ -219,8 +218,7 @@ class OrgServiceTest {
             o.setUpdatedAt(OffsetDateTime.now());
             return o;
         });
-        when(projectMemberRepository.findByUserIdAndRole("user-1", MemberRole.ADMIN))
-                .thenReturn(List.of());
+        when(projectMemberRepository.findByUserId("user-1")).thenReturn(List.of());
 
         Organization result = orgService.getOrCreatePersonalOrg("user-1", "Alice Smith", "alice@example.com");
 
@@ -259,7 +257,7 @@ class OrgServiceTest {
         m2.setProject(proj2);
         m2.setRole(MemberRole.ADMIN);
 
-        when(projectMemberRepository.findByUserIdAndRole("user-1", MemberRole.ADMIN))
+        when(projectMemberRepository.findByUserId("user-1"))
                 .thenReturn(List.of(m1, m2));
 
         orgService.migrateExistingProjects("user-1", "org-new");
