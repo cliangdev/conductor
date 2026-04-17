@@ -14,10 +14,12 @@ import com.conductor.generated.model.InviteOrgMemberRequest;
 import com.conductor.generated.model.MessageResponse;
 import com.conductor.generated.model.OrgMemberResponse;
 import com.conductor.generated.model.OrgResponse;
+import com.conductor.generated.model.ProjectSummary;
 import com.conductor.generated.model.TeamMemberResponse;
 import com.conductor.generated.model.TeamResponse;
 import com.conductor.service.OrgMemberService;
 import com.conductor.service.OrgService;
+import com.conductor.service.ProjectService;
 import com.conductor.service.TeamService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,11 +40,13 @@ public class OrgController implements OrgsApi {
     private final OrgService orgService;
     private final OrgMemberService orgMemberService;
     private final TeamService teamService;
+    private final ProjectService projectService;
 
-    public OrgController(OrgService orgService, OrgMemberService orgMemberService, TeamService teamService) {
+    public OrgController(OrgService orgService, OrgMemberService orgMemberService, TeamService teamService, ProjectService projectService) {
         this.orgService = orgService;
         this.orgMemberService = orgMemberService;
         this.teamService = teamService;
+        this.projectService = projectService;
     }
 
     @Override
@@ -98,6 +102,13 @@ public class OrgController implements OrgsApi {
         User caller = currentUser();
         orgMemberService.removeMember(orgId, caller.getId(), userId);
         return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public ResponseEntity<List<ProjectSummary>> listOrgProjects(String orgId) {
+        User caller = currentUser();
+        List<ProjectSummary> projects = projectService.listOrgProjects(orgId, caller);
+        return ResponseEntity.ok(projects);
     }
 
     @Override

@@ -2964,6 +2964,48 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /orgs/{orgId}/projects:
+    get:
+      tags:
+        - orgs
+      summary: List all projects in an org visible to the requesting user
+      operationId: listOrgProjects
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of org projects visible to the caller
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectSummary"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of this org
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Org not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /users/me/orgs:
     get:
       tags:
@@ -3637,6 +3679,9 @@ components:
         description:
           type: string
           description: Optional project description
+        orgId:
+          type: string
+          description: Optional org to scope the project to. If omitted, auto-resolved from the creator's single org membership.
 
     ProjectResponse:
       type: object

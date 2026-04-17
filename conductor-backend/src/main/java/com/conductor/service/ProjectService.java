@@ -57,6 +57,19 @@ public class ProjectService {
         project.setDescription(request.getDescription());
         project.setCreatedBy(creator);
         project.setKey(resolveUniqueKey(request.getName()));
+        project.setVisibility(ProjectVisibility.ORG);
+
+        if (request.getOrgId() != null) {
+            orgMemberRepository.findByOrgIdAndUserId(request.getOrgId(), creator.getId())
+                    .orElseThrow(() -> new ForbiddenException("You are not a member of the specified org"));
+            project.setOrgId(request.getOrgId());
+        } else {
+            List<com.conductor.entity.OrgMember> memberships = orgMemberRepository.findByUserId(creator.getId());
+            if (memberships.size() == 1) {
+                project.setOrgId(memberships.get(0).getOrg().getId());
+            }
+        }
+
         projectRepository.save(project);
 
         ProjectMember adminMember = new ProjectMember();
@@ -66,6 +79,25 @@ public class ProjectService {
         projectMemberRepository.save(adminMember);
 
         return toProjectResponse(project);
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProjectSummary> listOrgProjects(String orgId, User caller) {
+        if (orgMemberRepository.findByOrgIdAndUserId(orgId, caller.getId()).isEmpty()) {
+            throw new ForbiddenException("You are not a member of this org");
+        }
+
+        return projectRepository.findByOrgId(orgId).stream()
+                .filter(p -> canUserAccessProject(caller.getId(), p))
+                .map(project -> {
+                    String roleStr = projectMemberRepository
+                            .findByProjectIdAndUserId(project.getId(), caller.getId())
+                            .map(m -> m.getRole().name())
+                            .orElse(null);
+                    long memberCount = projectMemberRepository.findByProjectId(project.getId()).size();
+                    return toProjectSummary(project, roleStr, (int) memberCount);
+                })
+                .toList();
     }
 
     @Transactional(readOnly = true)
