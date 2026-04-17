@@ -6,6 +6,7 @@ import com.conductor.entity.ProjectMember;
 import com.conductor.entity.ProjectVisibility;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.CreateProjectRequest;
 import com.conductor.generated.model.MemberResponse;
@@ -18,6 +19,7 @@ import com.conductor.repository.OrgMemberRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.TeamMemberRepository;
+import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -36,18 +38,21 @@ public class ProjectService {
     private final ProjectSecurityService projectSecurityService;
     private final OrgMemberRepository orgMemberRepository;
     private final TeamMemberRepository teamMemberRepository;
+    private final UserRepository userRepository;
 
     public ProjectService(
             ProjectRepository projectRepository,
             ProjectMemberRepository projectMemberRepository,
             ProjectSecurityService projectSecurityService,
             OrgMemberRepository orgMemberRepository,
-            TeamMemberRepository teamMemberRepository) {
+            TeamMemberRepository teamMemberRepository,
+            UserRepository userRepository) {
         this.projectRepository = projectRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.projectSecurityService = projectSecurityService;
         this.orgMemberRepository = orgMemberRepository;
         this.teamMemberRepository = teamMemberRepository;
+        this.userRepository = userRepository;
     }
 
     @Transactional
@@ -274,6 +279,40 @@ public class ProjectService {
                         && teamMemberRepository.findByTeamIdAndUserId(project.getTeamId(), userId).isPresent());
             case PUBLIC -> true;
         };
+    }
+
+    @Transactional
+    public MemberResponse addMember(String projectId, String userId, String roleStr, User caller) {
+        if (!projectSecurityService.isProjectAdmin(projectId, caller.getId())) {
+            throw new AccessDeniedException("Only project admins can add members");
+        }
+
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
+
+        if (project.getOrgId() == null) {
+            throw new BusinessException("This project does not belong to an org");
+        }
+
+        orgMemberRepository.findByOrgIdAndUserId(project.getOrgId(), userId)
+                .orElseThrow(() -> new ForbiddenException("User is not a member of this project's org"));
+
+        if (projectMemberRepository.findByProjectIdAndUserId(projectId, userId).isPresent()) {
+            throw new ConflictException("User is already a member of this project");
+        }
+
+        User targetUser = userRepository.findById(userId)
+                .orElseThrow(() -> new EntityNotFoundException("User not found"));
+
+        MemberRole role = parseMemberRole(roleStr);
+
+        ProjectMember member = new ProjectMember();
+        member.setProject(project);
+        member.setUser(targetUser);
+        member.setRole(role);
+        projectMemberRepository.save(member);
+
+        return toMemberResponse(member);
     }
 
     private MemberRole parseMemberRole(String role) {

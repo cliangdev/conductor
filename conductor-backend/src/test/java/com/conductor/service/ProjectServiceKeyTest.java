@@ -5,6 +5,7 @@ import com.conductor.repository.OrgMemberRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.TeamMemberRepository;
+import com.conductor.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,11 +35,14 @@ class ProjectServiceKeyTest {
     @Mock
     private TeamMemberRepository teamMemberRepository;
 
+    @Mock
+    private UserRepository userRepository;
+
     private ProjectService projectService;
 
     @BeforeEach
     void setUp() {
-        projectService = new ProjectService(projectRepository, projectMemberRepository, projectSecurityService, orgMemberRepository, teamMemberRepository);
+        projectService = new ProjectService(projectRepository, projectMemberRepository, projectSecurityService, orgMemberRepository, teamMemberRepository, userRepository);
     }
 
     @Test
