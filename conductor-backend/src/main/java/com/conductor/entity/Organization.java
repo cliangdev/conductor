@@ -2,8 +2,6 @@ package com.conductor.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
@@ -16,34 +14,21 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Entity
-@Table(name = "projects")
-public class Project {
+@Table(name = "organizations")
+public class Organization {
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
     private String id;
 
-    @Column(name = "name", length = 100, nullable = false)
+    @Column(name = "name", length = 255, nullable = false)
     private String name;
 
-    @Column(name = "key", length = 10, nullable = false, updatable = false)
-    private String key;
-
-    @Column(name = "description", columnDefinition = "TEXT")
-    private String description;
-
-    @Column(name = "org_id", length = 36)
-    private String orgId;
-
-    @Column(name = "team_id", length = 36)
-    private String teamId;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "visibility", nullable = false, columnDefinition = "VARCHAR(20) DEFAULT 'ORG'")
-    private ProjectVisibility visibility = ProjectVisibility.ORG;
+    @Column(name = "slug", length = 100, nullable = false, unique = true)
+    private String slug;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "created_by", nullable = false)
+    @JoinColumn(name = "created_by")
     private User createdBy;
 
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -72,11 +57,8 @@ public class Project {
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 
-    public String getKey() { return key; }
-    public void setKey(String key) { this.key = key; }
-
-    public String getDescription() { return description; }
-    public void setDescription(String description) { this.description = description; }
+    public String getSlug() { return slug; }
+    public void setSlug(String slug) { this.slug = slug; }
 
     public User getCreatedBy() { return createdBy; }
     public void setCreatedBy(User createdBy) { this.createdBy = createdBy; }
@@ -86,13 +68,4 @@ public class Project {
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
-
-    public String getOrgId() { return orgId; }
-    public void setOrgId(String orgId) { this.orgId = orgId; }
-
-    public ProjectVisibility getVisibility() { return visibility; }
-    public void setVisibility(ProjectVisibility visibility) { this.visibility = visibility; }
-
-    public String getTeamId() { return teamId; }
-    public void setTeamId(String teamId) { this.teamId = teamId; }
 }

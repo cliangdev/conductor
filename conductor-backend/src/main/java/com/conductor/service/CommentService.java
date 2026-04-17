@@ -5,6 +5,7 @@ import com.conductor.entity.CommentReply;
 import com.conductor.entity.Document;
 import com.conductor.entity.Issue;
 import com.conductor.entity.MemberRole;
+import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
@@ -22,6 +23,7 @@ import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
+import com.conductor.repository.ProjectRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +43,8 @@ public class CommentService {
     private final ProjectMemberRepository projectMemberRepository;
     private final StorageService storageService;
     private final NotificationDispatcher notificationDispatcher;
+    private final ProjectRepository projectRepository;
+    private final ProjectService projectService;
 
     public CommentService(
             CommentRepository commentRepository,
@@ -49,7 +53,9 @@ public class CommentService {
             DocumentRepository documentRepository,
             ProjectMemberRepository projectMemberRepository,
             StorageService storageService,
-            NotificationDispatcher notificationDispatcher) {
+            NotificationDispatcher notificationDispatcher,
+            ProjectRepository projectRepository,
+            ProjectService projectService) {
         this.commentRepository = commentRepository;
         this.commentReplyRepository = commentReplyRepository;
         this.issueRepository = issueRepository;
@@ -57,6 +63,8 @@ public class CommentService {
         this.projectMemberRepository = projectMemberRepository;
         this.storageService = storageService;
         this.notificationDispatcher = notificationDispatcher;
+        this.projectRepository = projectRepository;
+        this.projectService = projectService;
     }
 
     @Transactional
@@ -64,6 +72,8 @@ public class CommentService {
         if (request.getLineNumber() == null) {
             throw new BusinessException("lineNumber is required");
         }
+
+        verifyMembership(projectId, caller.getId());
 
         Issue issue = findIssueInProject(projectId, issueId);
 
@@ -113,7 +123,7 @@ public class CommentService {
 
     @Transactional(readOnly = true)
     public List<CommentWithRepliesResponse> listComments(String projectId, String issueId, Boolean resolved, User caller) {
-        verifyMembership(projectId, caller.getId());
+        verifyReadAccess(projectId, caller.getId());
 
         List<Comment> comments;
         if (resolved == null) {
@@ -220,7 +230,15 @@ public class CommentService {
 
     private void verifyMembership(String projectId, String userId) {
         if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, userId)) {
-            throw new EntityNotFoundException("Project not found");
+            throw new ForbiddenException("You must be a project member to perform this action");
+        }
+    }
+
+    private void verifyReadAccess(String projectId, String userId) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
+        if (!projectService.canUserAccessProject(userId, project)) {
+            throw new ForbiddenException("You do not have access to this project");
         }
     }
 

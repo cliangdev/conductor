@@ -115,8 +115,8 @@ class ProjectControllerTest {
     void listProjectsReturnsOnlyCallerProjects() throws Exception {
         OffsetDateTime now = OffsetDateTime.now();
         List<ProjectSummary> summaries = List.of(
-                new ProjectSummary("proj-1", "Project One", "PONE", "ADMIN", 2, now),
-                new ProjectSummary("proj-2", "Project Two", "PTWO", "CREATOR", 3, now)
+                new ProjectSummary("proj-1", "Project One", "PONE", 2, now).role("ADMIN"),
+                new ProjectSummary("proj-2", "Project Two", "PTWO", 3, now).role("CREATOR")
         );
 
         when(projectService.listProjects(testUser)).thenReturn(summaries);

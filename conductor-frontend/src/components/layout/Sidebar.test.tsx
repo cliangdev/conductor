@@ -23,19 +23,49 @@ vi.mock('@/contexts/ProjectContext', () => ({
   }),
 }))
 
+vi.mock('@/contexts/OrgContext', () => ({
+  useOrg: () => ({
+    activeOrg: { id: 'org-1', name: 'Test Org', slug: 'test-org', createdAt: '2024-01-01' },
+    orgs: [{ id: 'org-1', name: 'Test Org', slug: 'test-org', createdAt: '2024-01-01' }],
+    teams: [],
+    loading: false,
+    needsOnboarding: false,
+    refetch: vi.fn(),
+    setActiveOrg: vi.fn(),
+  }),
+}))
+
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({
+    user: { id: 'user-1', name: 'Test User', email: 'test@example.com', avatarUrl: null, displayName: null },
+    accessToken: 'test-token',
+    loading: false,
+    signIn: vi.fn(),
+    signOut: vi.fn(),
+  }),
+}))
+
 import { Sidebar } from './Sidebar'
 
 describe('Sidebar', () => {
-  it('renders Settings group when a project is active', () => {
+  it('renders the active project name in the project switcher', () => {
     render(<Sidebar />)
-    expect(screen.getByText('Settings')).toBeInTheDocument()
+    expect(screen.getByText('Test Project')).toBeInTheDocument()
   })
 
-  it('renders Members link under Settings pointing to settings/members', () => {
+  it('renders Settings group when on a project settings page', () => {
     render(<Sidebar />)
-    const membersLink = screen.getByRole('link', { name: /members/i })
-    expect(membersLink).toBeInTheDocument()
-    expect(membersLink).toHaveAttribute('href', '/app/projects/proj-1/settings/members')
+    expect(screen.getAllByText('Settings').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('renders Members link under project Settings pointing to settings/members', () => {
+    render(<Sidebar />)
+    const membersLinks = screen.getAllByRole('link', { name: /members/i })
+    const settingsMembersLink = membersLinks.find((l) =>
+      l.getAttribute('href')?.includes('settings/members')
+    )
+    expect(settingsMembersLink).toBeInTheDocument()
+    expect(settingsMembersLink).toHaveAttribute('href', '/app/projects/proj-1/settings/members')
   })
 
   it('renders API Keys link under Settings pointing to /app/settings/api-keys', () => {
@@ -45,22 +75,30 @@ describe('Sidebar', () => {
     expect(apiKeysLink).toHaveAttribute('href', '/app/settings/api-keys')
   })
 
-  it('renders Notifications link under Settings pointing to settings/notifications', () => {
+  it('renders Notifications link under Settings', () => {
     render(<Sidebar />)
     const notificationsLink = screen.getByRole('link', { name: /notifications/i })
     expect(notificationsLink).toBeInTheDocument()
     expect(notificationsLink).toHaveAttribute('href', '/app/projects/proj-1/settings/notifications')
   })
 
-  it('renders Settings sub-links in order: Members, API Keys, Notifications', () => {
+  it('renders org section using org name as label with Members link', () => {
     render(<Sidebar />)
-    const links = screen.getAllByRole('link')
-    const linkTexts = links.map((l) => l.textContent?.trim())
-    const membersIndex = linkTexts.findIndex((t) => t === 'Members')
-    const apiKeysIndex = linkTexts.findIndex((t) => t === 'API Keys')
-    const notificationsIndex = linkTexts.findIndex((t) => t === 'Notifications')
-    expect(membersIndex).toBeGreaterThanOrEqual(0)
-    expect(apiKeysIndex).toBeGreaterThan(membersIndex)
-    expect(notificationsIndex).toBeGreaterThan(apiKeysIndex)
+    expect(screen.getByText('Test Org')).toBeInTheDocument()
+    const allMembersLinks = screen.getAllByRole('link', { name: /members/i })
+    const workspaceMembersLink = allMembersLinks.find((l) => l.getAttribute('href') === '/app/org/members')
+    expect(workspaceMembersLink).toBeInTheDocument()
+  })
+
+  it('does not render Teams link in Workspace when org has no teams', () => {
+    render(<Sidebar />)
+    // Only check within workspace - no teams link should exist since teams=[]
+    const teamsLinks = screen.queryAllByRole('link', { name: /^teams$/i })
+    expect(teamsLinks).toHaveLength(0)
+  })
+
+  it('renders user name in footer', () => {
+    render(<Sidebar />)
+    expect(screen.getByText('Test User')).toBeInTheDocument()
   })
 })

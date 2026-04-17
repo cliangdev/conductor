@@ -42,6 +42,34 @@ public class EmailService {
         }
     }
 
+    public void sendOrgInviteEmail(String toEmail, String inviterName, String orgName) {
+        String apiKey = System.getenv("RESEND_API_KEY");
+        if (apiKey == null || apiKey.isBlank()) {
+            log.warn("RESEND_API_KEY not set — skipping org invite email to {}", toEmail);
+            return;
+        }
+
+        String subject = inviterName + " invited you to " + orgName + " on Conductor";
+        String body = "<html><body>" +
+                "<p>Hi,</p>" +
+                "<p><strong>" + inviterName + "</strong> has invited you to join <strong>" + orgName + "</strong> on Conductor.</p>" +
+                "<p>Sign in to Conductor to get started.</p>" +
+                "</body></html>";
+
+        try {
+            Resend resend = new Resend(apiKey);
+            CreateEmailOptions options = CreateEmailOptions.builder()
+                    .from("noreply@conductor.app")
+                    .to(toEmail)
+                    .subject(subject)
+                    .html(body)
+                    .build();
+            resend.emails().send(options);
+        } catch (ResendException e) {
+            log.error("Failed to send org invite email to {}: {}", toEmail, e.getMessage());
+        }
+    }
+
     private String buildEmailBody(String inviterName, String projectName, String acceptLink) {
         return "<html><body>" +
                 "<p>Hi,</p>" +

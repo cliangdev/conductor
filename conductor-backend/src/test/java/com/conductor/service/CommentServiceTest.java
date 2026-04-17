@@ -42,6 +42,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -68,6 +69,12 @@ class CommentServiceTest {
 
     @Mock
     private NotificationDispatcher notificationDispatcher;
+
+    @Mock
+    private com.conductor.repository.ProjectRepository projectRepository;
+
+    @Mock
+    private ProjectService projectService;
 
     @InjectMocks
     private CommentService commentService;
@@ -126,6 +133,9 @@ class CommentServiceTest {
         comment.setLineNumber(42);
         comment.setCreatedAt(OffsetDateTime.now());
         comment.setUpdatedAt(OffsetDateTime.now());
+
+        // author is a project member by default; lenient to avoid UnnecessaryStubbing in read-only tests
+        lenient().when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
     }
 
     @Test
@@ -260,7 +270,8 @@ class CommentServiceTest {
 
     @Test
     void listCommentsReturnsRepliesNested() {
-        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
 
         CommentReply reply = new CommentReply();
@@ -360,7 +371,8 @@ class CommentServiceTest {
 
     @Test
     void listCommentsNullResolvedReturnsAll() {
-        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 
@@ -383,7 +395,8 @@ class CommentServiceTest {
         resolvedComment.setCreatedAt(OffsetDateTime.now());
         resolvedComment.setUpdatedAt(OffsetDateTime.now());
 
-        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(commentRepository.findAllByIssueIdAndResolvedAtIsNotNull("issue-1"))
                 .thenReturn(List.of(resolvedComment));
         when(commentReplyRepository.findAllByCommentId("comment-resolved")).thenReturn(List.of());
@@ -397,7 +410,8 @@ class CommentServiceTest {
 
     @Test
     void listCommentsResolvedFalseReturnsOnlyUnresolvedComments() {
-        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(commentRepository.findAllByIssueIdAndResolvedAtIsNull("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 
@@ -414,7 +428,8 @@ class CommentServiceTest {
         comment.setQuotedText("The quoted line text");
         comment.setLineStale(true);
 
-        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 

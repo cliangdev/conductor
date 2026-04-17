@@ -60,7 +60,7 @@ public class ReviewService {
         }
 
         ProjectMember callerMember = projectMemberRepository.findByProjectIdAndUserId(projectId, currentUser.getId())
-                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
+                .orElseThrow(() -> new ForbiddenException("You must be a project member to perform this action"));
 
         if (callerMember.getRole() == MemberRole.CREATOR) {
             throw new ForbiddenException("CREATOR role cannot submit reviews");

@@ -6,6 +6,7 @@ import com.conductor.generated.model.CreateProjectRequest;
 import com.conductor.generated.model.ProjectDetail;
 import com.conductor.generated.model.ProjectResponse;
 import com.conductor.generated.model.ProjectSummary;
+import com.conductor.generated.model.UpdateProjectRequest;
 import com.conductor.service.ProjectService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,6 +47,13 @@ public class ProjectController implements ProjectsApi {
         User caller = currentUser();
         ProjectDetail detail = projectService.getProject(projectId, caller);
         return ResponseEntity.ok(detail);
+    }
+
+    @Override
+    public ResponseEntity<ProjectResponse> updateProject(String projectId, UpdateProjectRequest updateProjectRequest) {
+        User caller = currentUser();
+        ProjectResponse response = projectService.updateProject(projectId, updateProjectRequest, caller);
+        return ResponseEntity.ok(response);
     }
 
     private static final Logger log = LoggerFactory.getLogger(ProjectController.class);

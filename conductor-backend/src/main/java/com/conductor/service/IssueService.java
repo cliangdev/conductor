@@ -51,6 +51,7 @@ public class IssueService {
     private final NotificationDispatcher notificationDispatcher;
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
+    private final ProjectService projectService;
 
     public IssueService(
             IssueRepository issueRepository,
@@ -59,7 +60,8 @@ public class IssueService {
             ProjectMemberRepository projectMemberRepository,
             NotificationDispatcher notificationDispatcher,
             CommentRepository commentRepository,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            ProjectService projectService) {
         this.issueRepository = issueRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
@@ -67,6 +69,7 @@ public class IssueService {
         this.notificationDispatcher = notificationDispatcher;
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
+        this.projectService = projectService;
     }
 
     @Transactional
@@ -97,7 +100,7 @@ public class IssueService {
             com.conductor.generated.model.IssueType type,
             com.conductor.generated.model.IssueStatus status,
             User caller) {
-        verifyMembership(projectId, caller.getId());
+        verifyReadAccess(projectId, caller.getId());
 
         IssueType entityType = type != null ? toEntityIssueType(type) : null;
         IssueStatus entityStatus = status != null ? toEntityIssueStatus(status) : null;
@@ -128,7 +131,7 @@ public class IssueService {
 
     @Transactional(readOnly = true)
     public IssueResponse getIssue(String projectId, String issueId, User caller) {
-        verifyMembership(projectId, caller.getId());
+        verifyReadAccess(projectId, caller.getId());
         Issue issue = findIssueInProject(projectId, issueId);
         long count = commentRepository.countUnresolvedByIssueId(issue.getId());
         return toIssueResponse(issue).unresolvedCommentCount((int) count);
@@ -240,7 +243,15 @@ public class IssueService {
 
     private void verifyMembership(String projectId, String userId) {
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
-            throw new EntityNotFoundException("Project not found");
+            throw new ForbiddenException("You must be a project member to perform this action");
+        }
+    }
+
+    private void verifyReadAccess(String projectId, String userId) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
+        if (!projectService.canUserAccessProject(userId, project)) {
+            throw new ForbiddenException("You do not have access to this project");
         }
     }
 

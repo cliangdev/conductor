@@ -2,6 +2,7 @@ package com.conductor.controller;
 
 import com.conductor.entity.User;
 import com.conductor.generated.api.MembersApi;
+import com.conductor.generated.model.AddProjectMemberRequest;
 import com.conductor.generated.model.MemberResponse;
 import com.conductor.generated.model.UpdateMemberRoleRequest;
 import com.conductor.service.ProjectService;
@@ -20,6 +21,18 @@ public class MemberController implements MembersApi {
 
     public MemberController(ProjectService projectService) {
         this.projectService = projectService;
+    }
+
+    @Override
+    public ResponseEntity<MemberResponse> addProjectMember(String projectId, AddProjectMemberRequest addProjectMemberRequest) {
+        User caller = currentUser();
+        MemberResponse response = projectService.addMember(
+            projectId,
+            addProjectMemberRequest.getUserId(),
+            addProjectMemberRequest.getRole(),
+            caller
+        );
+        return ResponseEntity.status(201).body(response);
     }
 
     @Override
