@@ -17,8 +17,8 @@ vi.mock('@/contexts/SidebarContext', () => ({
 
 vi.mock('@/contexts/ProjectContext', () => ({
   useProject: () => ({
-    projects: [{ id: 'proj-1', name: 'Test Project' }],
-    activeProject: { id: 'proj-1', name: 'Test Project' },
+    projects: [{ id: 'proj-1', name: 'Test Project', orgId: 'org-1' }],
+    activeProject: { id: 'proj-1', name: 'Test Project', orgId: 'org-1' },
     setActiveProject: vi.fn(),
   }),
 }))
