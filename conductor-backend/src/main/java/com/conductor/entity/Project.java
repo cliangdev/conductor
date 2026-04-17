@@ -2,6 +2,8 @@ package com.conductor.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
@@ -29,6 +31,13 @@ public class Project {
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
+
+    @Column(name = "org_id", length = 36)
+    private String orgId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "visibility", nullable = false, columnDefinition = "VARCHAR(20) DEFAULT 'ORG'")
+    private ProjectVisibility visibility = ProjectVisibility.ORG;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by", nullable = false)
@@ -74,4 +83,10 @@ public class Project {
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getOrgId() { return orgId; }
+    public void setOrgId(String orgId) { this.orgId = orgId; }
+
+    public ProjectVisibility getVisibility() { return visibility; }
+    public void setVisibility(ProjectVisibility visibility) { this.visibility = visibility; }
 }
