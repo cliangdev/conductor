@@ -15,6 +15,7 @@ import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import com.conductor.service.OrgMemberService;
 import com.conductor.service.OrgService;
+import com.conductor.service.TeamService;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,9 @@ class OrgControllerTest {
 
     @MockitoBean
     private OrgMemberService orgMemberService;
+
+    @MockitoBean
+    private TeamService teamService;
 
     @MockitoBean
     private JwtService jwtService;

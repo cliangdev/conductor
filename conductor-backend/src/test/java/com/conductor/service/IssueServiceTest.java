@@ -64,6 +64,9 @@ class IssueServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private ProjectService projectService;
+
     @InjectMocks
     private IssueService issueService;
 
@@ -127,17 +130,18 @@ class IssueServiceTest {
     }
 
     @Test
-    void createIssueThrowsNotFoundForNonMember() {
+    void createIssueThrowsForbiddenForNonMember() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(false);
 
         assertThatThrownBy(() -> issueService.createIssue("proj-1",
                 new CreateIssueRequest(com.conductor.generated.model.IssueType.PRD, "title"), caller))
-                .isInstanceOf(EntityNotFoundException.class);
+                .isInstanceOf(ForbiddenException.class);
     }
 
     @Test
     void listIssuesFiltersByType() {
-        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(issueRepository.findByProjectIdAndType("proj-1", IssueType.PRD))
                 .thenReturn(List.of(testIssue));
 
@@ -153,7 +157,8 @@ class IssueServiceTest {
 
     @Test
     void listIssuesFiltersByStatus() {
-        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(issueRepository.findByProjectIdAndStatus("proj-1", IssueStatus.DRAFT))
                 .thenReturn(List.of(testIssue));
 
@@ -169,7 +174,8 @@ class IssueServiceTest {
 
     @Test
     void listIssuesFiltersByTypeAndStatus() {
-        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(issueRepository.findByProjectIdAndTypeAndStatus("proj-1", IssueType.PRD, IssueStatus.DRAFT))
                 .thenReturn(List.of(testIssue));
 

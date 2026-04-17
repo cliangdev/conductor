@@ -43,6 +43,12 @@ class ProjectServiceTest {
     @Mock
     private ProjectSecurityService projectSecurityService;
 
+    @Mock
+    private com.conductor.repository.OrgMemberRepository orgMemberRepository;
+
+    @Mock
+    private com.conductor.repository.TeamMemberRepository teamMemberRepository;
+
     @InjectMocks
     private ProjectService projectService;
 
@@ -106,6 +112,8 @@ class ProjectServiceTest {
     @Test
     void listProjectsReturnsOnlyCallerProjects() {
         when(projectRepository.findProjectsByMemberUserId("creator-id")).thenReturn(List.of(testProject));
+        when(orgMemberRepository.findByUserId("creator-id")).thenReturn(List.of());
+        when(teamMemberRepository.findByUserId("creator-id")).thenReturn(List.of());
         when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "creator-id"))
                 .thenReturn(Optional.of(adminMember));
         when(projectMemberRepository.findByProjectId("proj-1")).thenReturn(List.of(adminMember));
@@ -119,12 +127,15 @@ class ProjectServiceTest {
     }
 
     @Test
-    void getProjectReturns404ForNonMember() {
-        when(projectSecurityService.isProjectMember("proj-1", "creator-id")).thenReturn(false);
+    void getProjectReturnsForbiddenForNonMemberPrivateProject() {
+        testProject.setOrgId("org-1");
+        testProject.setVisibility(com.conductor.entity.ProjectVisibility.PRIVATE);
+
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(testProject));
+        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "creator-id")).thenReturn(false);
 
         assertThatThrownBy(() -> projectService.getProject("proj-1", creator))
-                .isInstanceOf(EntityNotFoundException.class)
-                .hasMessage("Project not found");
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
     }
 
     @Test
