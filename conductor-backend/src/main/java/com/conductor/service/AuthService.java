@@ -6,6 +6,8 @@ import com.conductor.generated.model.UserSummary;
 import com.conductor.repository.UserRepository;
 import com.google.firebase.auth.FirebaseAuthException;
 import com.google.firebase.auth.FirebaseToken;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -14,20 +16,25 @@ import org.springframework.transaction.support.TransactionTemplate;
 @Profile("!local")
 public class AuthService {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
+
     private final FirebaseTokenVerifier firebaseTokenVerifier;
     private final JwtService jwtService;
     private final UserRepository userRepository;
     private final TransactionTemplate transactionTemplate;
+    private final OrgService orgService;
 
     public AuthService(
             FirebaseTokenVerifier firebaseTokenVerifier,
             JwtService jwtService,
             UserRepository userRepository,
-            TransactionTemplate transactionTemplate) {
+            TransactionTemplate transactionTemplate,
+            OrgService orgService) {
         this.firebaseTokenVerifier = firebaseTokenVerifier;
         this.jwtService = jwtService;
         this.userRepository = userRepository;
         this.transactionTemplate = transactionTemplate;
+        this.orgService = orgService;
     }
 
     public AuthResponse authenticateWithFirebase(String idToken) throws FirebaseAuthException {
@@ -39,6 +46,12 @@ public class AuthService {
             syncProfile(u, firebaseToken);
             return userRepository.save(u);
         });
+
+        try {
+            orgService.getOrCreatePersonalOrg(user.getId(), user.getDisplayName(), user.getEmail());
+        } catch (Exception e) {
+            log.error("Failed to auto-create personal org for user {}: {}", user.getId(), e.getMessage(), e);
+        }
 
         String accessToken = jwtService.generateToken(user.getId());
 
