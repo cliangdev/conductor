@@ -6,8 +6,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
+import { useOrg } from '@/contexts/OrgContext'
 import { apiGet, apiPatch } from '@/lib/api'
-import type { Member } from '@/types'
+import type { Member, Team } from '@/types'
 
 type Visibility = 'PRIVATE' | 'ORG' | 'TEAM' | 'PUBLIC'
 
@@ -29,6 +30,7 @@ export default function VisibilitySettingsPage() {
   const params = useParams<{ projectId: string }>()
   const projectId = params.projectId
   const { accessToken, user } = useAuth()
+  const { activeOrg } = useOrg()
   const { showToast } = useToast()
 
   const [members, setMembers] = useState<Member[]>([])
@@ -39,6 +41,10 @@ export default function VisibilitySettingsPage() {
 
   const [visibility, setVisibility] = useState<Visibility>('PRIVATE')
   const [saving, setSaving] = useState(false)
+
+  const [teams, setTeams] = useState<Team[]>([])
+  const [teamsLoading, setTeamsLoading] = useState(true)
+  const [teamSaving, setTeamSaving] = useState(false)
 
   const fetchMembers = useCallback(async () => {
     if (!accessToken) return
@@ -65,8 +71,24 @@ export default function VisibilitySettingsPage() {
     }
   }, [accessToken, projectId])
 
+  const fetchTeams = useCallback(async () => {
+    if (!accessToken || !activeOrg) {
+      setTeamsLoading(false)
+      return
+    }
+    try {
+      const data = await apiGet<Team[]>(`/api/v1/orgs/${activeOrg.id}/teams`, accessToken)
+      setTeams(data)
+    } catch {
+      // non-fatal
+    } finally {
+      setTeamsLoading(false)
+    }
+  }, [accessToken, activeOrg])
+
   useEffect(() => { fetchMembers() }, [fetchMembers])
   useEffect(() => { fetchProject() }, [fetchProject])
+  useEffect(() => { fetchTeams() }, [fetchTeams])
 
   const currentUserRole = members.find((m) => m.userId === user?.id)?.role
   const isAdmin = currentUserRole === 'ADMIN'
@@ -84,6 +106,28 @@ export default function VisibilitySettingsPage() {
       showToast('Failed to update visibility. Please try again.', 'error')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleTeamChange(selectedTeamId: string) {
+    if (!accessToken || teamSaving) return
+    const previousTeamId = project?.teamId ?? null
+    const newTeamId = selectedTeamId === '' ? null : selectedTeamId
+
+    setProject((prev) => prev ? { ...prev, teamId: newTeamId } : prev)
+    setTeamSaving(true)
+    try {
+      await apiPatch(`/api/v1/projects/${projectId}`, { teamId: newTeamId }, accessToken)
+      showToast('Team assignment updated', 'success')
+      // If team was removed and current visibility is TEAM, reset to PRIVATE
+      if (newTeamId === null && visibility === 'TEAM') {
+        setVisibility('PRIVATE')
+      }
+    } catch {
+      setProject((prev) => prev ? { ...prev, teamId: previousTeamId } : prev)
+      showToast('Failed to update team assignment. Please try again.', 'error')
+    } finally {
+      setTeamSaving(false)
     }
   }
 
@@ -108,6 +152,29 @@ export default function VisibilitySettingsPage() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <h1 className="text-2xl font-bold text-foreground mb-6">Visibility</h1>
+
+      <div className="bg-card rounded-lg border border-border p-6 mb-6">
+        <h2 className="text-base font-semibold text-foreground mb-1">Owning Team</h2>
+        <p className="text-sm text-muted-foreground mb-3">
+          Assign a team to this project to enable Team visibility.
+        </p>
+        <select
+          disabled={teamsLoading || teamSaving}
+          value={project?.teamId ?? ''}
+          onChange={(e) => handleTeamChange(e.target.value)}
+          className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <option value="">None</option>
+          {teams.map((team) => (
+            <option key={team.id} value={team.id}>
+              {team.name}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-muted-foreground mt-2">
+          All team members get automatic access to this project.
+        </p>
+      </div>
 
       <div className="bg-card rounded-lg border border-border p-6">
         <p className="text-sm text-muted-foreground mb-4">
