@@ -12,9 +12,11 @@ import java.util.Optional;
 @Repository
 public interface OrgMemberRepository extends JpaRepository<OrgMember, String> {
 
-    List<OrgMember> findByOrgId(String orgId);
+    @Query("SELECT om FROM OrgMember om JOIN FETCH om.user WHERE om.org.id = :orgId")
+    List<OrgMember> findByOrgId(@Param("orgId") String orgId);
 
-    List<OrgMember> findByUserId(String userId);
+    @Query("SELECT om FROM OrgMember om JOIN FETCH om.org WHERE om.user.id = :userId")
+    List<OrgMember> findByUserId(@Param("userId") String userId);
 
     Optional<OrgMember> findByOrgIdAndUserId(String orgId, String userId);
 
