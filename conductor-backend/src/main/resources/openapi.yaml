@@ -42,6 +42,8 @@ tags:
     description: GitHub integration endpoints
   - name: daemon
     description: Daemon event polling endpoints
+  - name: repositories
+    description: Project repository registry endpoints
 
 paths:
   /health:
@@ -2665,6 +2667,116 @@ paths:
               schema:
                 $ref: "#/components/schemas/WorkflowRunDetailDto"
 
+  /projects/{projectId}/repositories:
+    post:
+      tags:
+        - repositories
+      summary: Add a repository to the project (Admin only)
+      operationId: addRepository
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddRepositoryRequest"
+      responses:
+        "201":
+          description: Repository added successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectRepositoryResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a project admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      tags:
+        - repositories
+      summary: List repositories for a project
+      operationId: listRepositories
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of repositories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectRepositoryResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/repositories/{repositoryId}:
+    delete:
+      tags:
+        - repositories
+      summary: Remove a repository from the project (Admin only)
+      operationId: deleteRepository
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: repositoryId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Repository deleted successfully
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a project admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/daemon/events:
     get:
       tags:
@@ -3953,3 +4065,49 @@ components:
           items:
             type: string
           description: List of event IDs to acknowledge
+
+    AddRepositoryRequest:
+      type: object
+      required:
+        - label
+        - repoUrl
+        - webhookSecret
+      properties:
+        label:
+          type: string
+          maxLength: 100
+          description: Human-readable label for this repository connection
+        repoUrl:
+          type: string
+          maxLength: 512
+          description: Full GitHub repository URL (e.g. https://github.com/owner/repo)
+        webhookSecret:
+          type: string
+          maxLength: 255
+          description: Shared secret for HMAC webhook signature verification
+
+    ProjectRepositoryResponse:
+      type: object
+      required:
+        - id
+        - label
+        - repoUrl
+        - repoFullName
+        - webhookSecretConfigured
+        - connectedAt
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        repoUrl:
+          type: string
+        repoFullName:
+          type: string
+          description: Parsed owner/repo from the URL (e.g. owner/repo)
+        webhookSecretConfigured:
+          type: boolean
+          description: True if a webhook secret is set (value is never returned)
+        connectedAt:
+          type: string
+          format: date-time
