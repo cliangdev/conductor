@@ -44,6 +44,19 @@ public class WorkflowScheduler {
         this.objectMapper = objectMapper;
     }
 
+    @Scheduled(fixedDelay = 60_000)
+    @Transactional
+    public void timeoutLocalPickupRuns() {
+        OffsetDateTime cutoff = OffsetDateTime.now().minusMinutes(10);
+        List<WorkflowRun> timedOut = runRepository
+                .findByStatusAndStartedAtBefore(WorkflowRunStatus.PENDING_LOCAL_PICKUP, cutoff);
+        for (WorkflowRun run : timedOut) {
+            run.setStatus(WorkflowRunStatus.LOCAL_PICKUP_TIMEOUT);
+            runRepository.save(run);
+            log.info("WorkflowRun {} timed out (LOCAL_PICKUP_TIMEOUT)", run.getId());
+        }
+    }
+
     @Scheduled(fixedDelay = 30_000)
     @Transactional
     public void poll() {

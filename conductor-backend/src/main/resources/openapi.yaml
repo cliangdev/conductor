@@ -40,6 +40,8 @@ tags:
     description: Workflow secret management endpoints
   - name: github
     description: GitHub integration endpoints
+  - name: daemon
+    description: Daemon event polling endpoints
 
 paths:
   /health:
@@ -2663,6 +2665,99 @@ paths:
               schema:
                 $ref: "#/components/schemas/WorkflowRunDetailDto"
 
+  /projects/{projectId}/daemon/events:
+    get:
+      tags:
+        - daemon
+      summary: Poll for pending daemon events
+      operationId: getDaemonEvents
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of pending daemon events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DaemonEventsResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/daemon/events/ack:
+    post:
+      tags:
+        - daemon
+      summary: Acknowledge daemon events by ID
+      operationId: ackDaemonEvents
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AckDaemonEventsRequest"
+      responses:
+        "204":
+          description: Events acknowledged
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /workflow-runs/{runId}:
+    patch:
+      tags: [workflows]
+      summary: Update workflow run status
+      operationId: updateWorkflowRunStatus
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWorkflowRunStatusRequest"
+      responses:
+        "200":
+          description: Updated workflow run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowRunDto"
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+
   /workflow-runs/{runId}/logs/stream:
     get:
       tags: [workflows]
@@ -3711,6 +3806,15 @@ components:
         value:
           type: string
 
+    UpdateWorkflowRunStatusRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: New status for the workflow run (e.g. SUCCESS or FAILED)
+
     WorkflowRunDto:
       type: object
       properties:
@@ -3813,3 +3917,39 @@ components:
           type: string
         runId:
           type: string
+
+    DaemonEventDto:
+      type: object
+      required:
+        - eventId
+        - type
+        - payload
+      properties:
+        eventId:
+          type: string
+        type:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+
+    DaemonEventsResponse:
+      type: object
+      required:
+        - events
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/DaemonEventDto"
+
+    AckDaemonEventsRequest:
+      type: object
+      required:
+        - eventIds
+      properties:
+        eventIds:
+          type: array
+          items:
+            type: string
+          description: List of event IDs to acknowledge

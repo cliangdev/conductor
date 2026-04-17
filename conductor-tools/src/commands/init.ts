@@ -160,15 +160,25 @@ export function registerInit(program: Command): void {
       const frontendUrl = process.env['CONDUCTOR_FRONTEND_URL'] ?? 'https://conductor-frontend-199707291514.us-central1.run.app'
 
       let config = readConfig()
-      if (!config || !(await isKeyValid(config.apiUrl ?? apiUrl, config.apiKey))) {
+
+      if (config) {
+        const authSpinner = ora('Checking authentication...').start()
+        const valid = await isKeyValid(config.apiUrl ?? apiUrl, config.apiKey)
+        if (!valid) {
+          authSpinner.warn('Session expired. Opening browser for authentication...')
+          const { apiKey, email } = await performBrowserLogin(apiUrl, frontendUrl)
+          config = { apiKey, email, projectId: '', projectName: '', apiUrl, frontendUrl }
+        } else {
+          authSpinner.succeed(chalk.green(`Logged in as ${config.email}`))
+        }
+      } else {
         console.log('Not logged in. Opening browser for authentication...')
         const { apiKey, email } = await performBrowserLogin(apiUrl, frontendUrl)
         config = { apiKey, email, projectId: '', projectName: '', apiUrl, frontendUrl }
-      } else {
-        console.log(chalk.green(`✓ Logged in as ${config.email}`))
       }
 
       if (options.projectId && options.projectId !== config.projectId) {
+        const projectSpinner = ora(`Fetching project "${options.projectId}"...`).start()
         try {
           const project = await apiGet<{ id: string, name: string }>(
             `/api/v1/projects/${options.projectId}`,
@@ -177,9 +187,11 @@ export function registerInit(program: Command): void {
           )
           config = { ...config, projectId: project.id, projectName: project.name }
           writeConfig(config)
+          projectSpinner.succeed(chalk.green(`Connected to "${config.projectName}"`))
         } catch (err) {
           const status = (err as { statusCode?: number }).statusCode
           if (status === 403 || status === 404) {
+            projectSpinner.fail('Access denied')
             console.error(chalk.red(`✗ You don't have access to project "${options.projectId}".`))
             console.error(`  Ask your admin to invite you, then run this command again.`)
             process.exit(1)
@@ -187,13 +199,14 @@ export function registerInit(program: Command): void {
           }
           throw err
         }
-        console.log(chalk.green(`✓ Connected to "${config.projectName}"`))
       } else if (!options.projectId) {
+        const listSpinner = ora('Fetching your projects...').start()
         const projects = await apiGet<Array<{ id: string; name: string }>>(
           '/api/v1/projects',
           config.apiKey,
           config.apiUrl ?? apiUrl
         )
+        listSpinner.succeed('Projects loaded')
 
         let projectId: string
         let projectName: string

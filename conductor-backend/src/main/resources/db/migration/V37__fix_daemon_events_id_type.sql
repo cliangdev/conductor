@@ -1,0 +1,1 @@
+ALTER TABLE daemon_events ALTER COLUMN id TYPE VARCHAR(36) USING id::text;

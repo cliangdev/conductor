@@ -4,6 +4,10 @@ import * as path from 'path'
 import * as os from 'os'
 import { fileURLToPath } from 'url'
 import { readConfig, Config } from '../lib/config.js'
+import { writeDaemonState, deleteDaemonState } from './state.js'
+import { startPoller } from './poller.js'
+import { RunQueue } from './run-queue.js'
+import type { WorkflowTriggerEvent } from './runner.js'
 
 const CONDUCTOR_DIR = path.join(os.homedir(), '.conductor')
 export const SYNC_QUEUE_PATH = path.join(CONDUCTOR_DIR, 'sync-queue.json')
@@ -200,6 +204,26 @@ export async function syncTasksJson(filePath: string, getConfig: () => Config): 
   }
 }
 
+export async function syncExistingTasksFiles(getConfig: () => Config): Promise<void> {
+  const config = getConfig()
+  if (!config.localPath) return
+  const issuesDir = path.join(config.localPath, '.conductor', 'issues')
+  let issueDirs: string[]
+  try {
+    issueDirs = fs.readdirSync(issuesDir)
+  } catch {
+    return
+  }
+  for (const issueId of issueDirs) {
+    const tasksPath = path.join(issuesDir, issueId, 'tasks.json')
+    if (fs.existsSync(tasksPath)) {
+      await syncTasksJson(tasksPath, getConfig).catch((err) => {
+        console.error(`Startup sync failed for ${tasksPath}: ${(err as Error).message}`)
+      })
+    }
+  }
+}
+
 export async function replayQueue(getConfig: () => Config): Promise<void> {
   const entries = readQueue()
   if (entries.length === 0) return
@@ -267,8 +291,12 @@ export function startWatcher(getConfig: () => Config): void {
   process.on('SIGTERM', () => {
     watcher.close().then(() => {
       console.log('Watcher closed.')
+      deleteDaemonState()
       process.exit(0)
-    }).catch(() => process.exit(0))
+    }).catch(() => {
+      deleteDaemonState()
+      process.exit(0)
+    })
   })
 }
 
@@ -287,6 +315,28 @@ if (process.argv[1] === __filename) {
   // Validate config is present at startup
   getConfig()
 
+  writeDaemonState({
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    pollMode: 'idle',
+    lastPollAt: null,
+    consecutiveErrors: 0,
+    eventsThisSession: 0,
+    activeRuns: [],
+    syncQueueSize: 0,
+  })
+
   replayQueue(getConfig).catch(console.error)
+  syncExistingTasksFiles(getConfig).catch(console.error)
   startWatcher(getConfig)
+
+  const runQueue = new RunQueue(getConfig().maxConcurrentRuns ?? 1)
+
+  startPoller(getConfig, async (events) => {
+    for (const event of events) {
+      if (event.type === 'workflow.trigger') {
+        runQueue.enqueue(event as unknown as WorkflowTriggerEvent, getConfig)
+      }
+    }
+  })
 }

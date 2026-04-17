@@ -3,7 +3,6 @@ import { Command } from 'commander'
 import { registerLogin } from './commands/login.js'
 import { registerLogout } from './commands/logout.js'
 import { registerInit } from './commands/init.js'
-import { registerStatus } from './commands/status.js'
 import { registerDoctor } from './commands/doctor.js'
 import { registerIssue } from './commands/issue.js'
 import { registerDoc } from './commands/doc.js'
@@ -11,6 +10,7 @@ import { registerStart } from './commands/start.js'
 import { registerStop } from './commands/stop.js'
 import { registerMcp } from './commands/mcp.js'
 import { registerConfig } from './commands/config.js'
+import { registerDashboard } from './commands/dashboard.js'
 
 const program = new Command()
 
@@ -22,7 +22,6 @@ program
 registerLogin(program)
 registerLogout(program)
 registerInit(program)
-registerStatus(program)
 registerDoctor(program)
 registerIssue(program)
 registerDoc(program)
@@ -30,5 +29,6 @@ registerStart(program)
 registerStop(program)
 registerMcp(program)
 registerConfig(program)
+registerDashboard(program)
 
 program.parse()
