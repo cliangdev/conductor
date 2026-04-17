@@ -5,18 +5,21 @@ export const dynamic = 'force-dynamic'
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
+import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet, apiPatch } from '@/lib/api'
+import { apiGet, listProjectRepositories, addProjectRepository, deleteProjectRepository } from '@/lib/api'
+import type { ProjectRepository } from '@/lib/api'
 import type { Member } from '@/types'
-
-interface ProjectSettings {
-  githubWebhookConfigured: boolean
-  githubRepoUrl: string | null
-}
 
 interface ApiError extends Error {
   status?: number
+}
+
+function generateWebhookSecret(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(32)))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 export default function GitHubSettingsPage() {
@@ -28,15 +31,18 @@ export default function GitHubSettingsPage() {
   const [members, setMembers] = useState<Member[]>([])
   const [membersLoading, setMembersLoading] = useState(true)
 
-  const [settings, setSettings] = useState<ProjectSettings | null>(null)
-  const [settingsLoading, setSettingsLoading] = useState(true)
-  const [settingsError, setSettingsError] = useState<string | null>(null)
-
-  const [repoUrl, setRepoUrl] = useState('')
-  const [webhookSecret, setWebhookSecret] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [repositories, setRepositories] = useState<ProjectRepository[]>([])
+  const [reposLoading, setReposLoading] = useState(true)
+  const [reposError, setReposError] = useState<string | null>(null)
 
   const [copied, setCopied] = useState(false)
+
+  const [addOpen, setAddOpen] = useState(false)
+  const [addLabel, setAddLabel] = useState('')
+  const [addRepoUrl, setAddRepoUrl] = useState('')
+  const [addSecret, setAddSecret] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
+  const [addSubmitting, setAddSubmitting] = useState(false)
 
   const webhookEndpointUrl = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/projects/${projectId}/github/webhook`
 
@@ -52,27 +58,26 @@ export default function GitHubSettingsPage() {
     }
   }, [accessToken, projectId])
 
-  const fetchSettings = useCallback(async () => {
+  const fetchRepositories = useCallback(async () => {
     if (!accessToken) return
     try {
-      const data = await apiGet<ProjectSettings>(`/api/v1/projects/${projectId}/settings`, accessToken)
-      setSettings(data)
-      setRepoUrl(data.githubRepoUrl ?? '')
-      setSettingsError(null)
+      const data = await listProjectRepositories(projectId, accessToken)
+      setRepositories(data)
+      setReposError(null)
     } catch (err) {
       const apiErr = err as ApiError
       if (apiErr.status === 403) {
-        setSettingsError('access_denied')
+        setReposError('access_denied')
       } else {
-        setSettingsError('Failed to load settings.')
+        setReposError('Failed to load repositories.')
       }
     } finally {
-      setSettingsLoading(false)
+      setReposLoading(false)
     }
   }, [accessToken, projectId])
 
   useEffect(() => { fetchMembers() }, [fetchMembers])
-  useEffect(() => { fetchSettings() }, [fetchSettings])
+  useEffect(() => { fetchRepositories() }, [fetchRepositories])
 
   const currentUserRole = members.find((m) => m.userId === user?.id)?.role
   const isAdmin = currentUserRole === 'ADMIN'
@@ -87,41 +92,76 @@ export default function GitHubSettingsPage() {
     }
   }
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleDeleteRepo(repositoryId: string) {
     if (!accessToken) return
-
-    setSaving(true)
     try {
-      const body: Record<string, string> = {
-        githubRepoUrl: repoUrl.trim(),
-      }
-      if (webhookSecret.trim()) {
-        body.githubWebhookSecret = webhookSecret.trim()
-      }
-
-      const updated = await apiPatch<ProjectSettings>(
-        `/api/v1/projects/${projectId}/settings`,
-        body,
-        accessToken
-      )
-      setSettings(updated)
-      setRepoUrl(updated.githubRepoUrl ?? '')
-      setWebhookSecret('')
-      showToast('GitHub settings saved.')
+      await deleteProjectRepository(projectId, repositoryId, accessToken)
+      setRepositories((prev) => prev.filter((r) => r.id !== repositoryId))
     } catch (err) {
       const apiErr = err as ApiError
       if (apiErr.status === 403) {
-        showToast('You do not have permission to update settings.', 'error')
+        showToast('You do not have permission to remove repositories.', 'error')
       } else {
-        showToast('Failed to save settings. Please try again.', 'error')
+        showToast('Failed to remove repository. Please try again.', 'error')
       }
-    } finally {
-      setSaving(false)
     }
   }
 
-  if (membersLoading || settingsLoading) {
+  function openAddModal() {
+    setAddLabel('')
+    setAddRepoUrl('')
+    setAddSecret('')
+    setAddError(null)
+    setAddOpen(true)
+  }
+
+  function closeAddModal() {
+    setAddOpen(false)
+  }
+
+  async function handleAddSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!accessToken) return
+
+    if (!addLabel.trim()) {
+      setAddError('Label is required.')
+      return
+    }
+    if (!addRepoUrl.trim()) {
+      setAddError('Repository URL is required.')
+      return
+    }
+    if (!addSecret.trim()) {
+      setAddError('Webhook secret is required.')
+      return
+    }
+
+    setAddSubmitting(true)
+    setAddError(null)
+    try {
+      const created = await addProjectRepository(
+        projectId,
+        { label: addLabel.trim(), repoUrl: addRepoUrl.trim(), webhookSecret: addSecret.trim() },
+        accessToken,
+      )
+      setRepositories((prev) => [...prev, created])
+      closeAddModal()
+      showToast('Repository added.')
+    } catch (err) {
+      const apiErr = err as ApiError
+      if (apiErr.status === 403) {
+        setAddError('You do not have permission to add repositories.')
+      } else if (apiErr.status === 409) {
+        setAddError('This repository is already registered.')
+      } else {
+        setAddError('Failed to add repository. Please try again.')
+      }
+    } finally {
+      setAddSubmitting(false)
+    }
+  }
+
+  if (membersLoading || reposLoading) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -139,7 +179,7 @@ export default function GitHubSettingsPage() {
     )
   }
 
-  if (settingsError === 'access_denied') {
+  if (reposError === 'access_denied') {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
         <p className="text-sm text-destructive" role="alert">
@@ -149,10 +189,10 @@ export default function GitHubSettingsPage() {
     )
   }
 
-  if (settingsError) {
+  if (reposError) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
-        <p className="text-sm text-destructive" role="alert">{settingsError}</p>
+        <p className="text-sm text-destructive" role="alert">{reposError}</p>
       </div>
     )
   }
@@ -161,86 +201,162 @@ export default function GitHubSettingsPage() {
     <div className="max-w-2xl mx-auto px-4 py-8">
       <h1 className="text-2xl font-bold text-foreground mb-6">GitHub Integration</h1>
 
+      {/* Webhook URL section */}
+      <div className="bg-card rounded-lg border border-border p-6 mb-6">
+        <label className="block text-sm font-medium text-foreground mb-1">
+          Webhook URL
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            readOnly
+            value={webhookEndpointUrl}
+            className="flex-1 rounded-md border border-input bg-muted text-foreground px-3 py-2 text-sm font-mono focus:outline-none"
+            onFocus={(e) => e.target.select()}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleCopyWebhookUrl}
+          >
+            {copied ? 'Copied!' : 'Copy'}
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Enter this URL in your GitHub repository&apos;s webhook settings.
+        </p>
+      </div>
+
+      {/* Repositories list */}
       <div className="bg-card rounded-lg border border-border p-6">
-        {/* Webhook endpoint URL */}
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-foreground mb-1">
-            Webhook URL
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              readOnly
-              value={webhookEndpointUrl}
-              className="flex-1 rounded-md border border-input bg-muted text-foreground px-3 py-2 text-sm font-mono focus:outline-none"
-              onFocus={(e) => e.target.select()}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleCopyWebhookUrl}
-            >
-              {copied ? 'Copied!' : 'Copy'}
-            </Button>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Enter this URL in your GitHub repository&apos;s webhook settings
-          </p>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-base font-semibold text-foreground">Repositories</h2>
+          <Button type="button" size="sm" onClick={openAddModal}>
+            Add Repository
+          </Button>
         </div>
 
-        <form onSubmit={handleSave} noValidate className="space-y-5">
-          {/* Repository URL */}
+        {repositories.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No repositories registered yet.</p>
+        ) : (
+          <div className="divide-y divide-border">
+            {repositories.map((repo) => (
+              <div key={repo.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground truncate">{repo.label}</p>
+                  <a
+                    href={repo.repoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-muted-foreground hover:text-foreground truncate block"
+                  >
+                    {repo.repoUrl}
+                  </a>
+                </div>
+                <div className="flex items-center gap-3 ml-4 shrink-0">
+                  {repo.webhookSecretConfigured ? (
+                    <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                      <span aria-hidden="true">✓</span> Configured
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">— Not configured</span>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Remove ${repo.label}`}
+                    onClick={() => handleDeleteRepo(repo.id)}
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                  >
+                    ×
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Add Repository modal */}
+      <Modal
+        open={addOpen}
+        onOpenChange={(open) => { if (!open) closeAddModal() }}
+        title="Add Repository"
+        description="Register a GitHub repository to receive webhook events."
+      >
+        <form onSubmit={handleAddSubmit} noValidate className="space-y-4">
           <div>
-            <label htmlFor="github-repo-url" className="block text-sm font-medium text-foreground mb-1">
-              Repository URL
+            <label htmlFor="add-repo-label" className="block text-sm font-medium text-foreground mb-1">
+              Label <span className="text-destructive">*</span>
             </label>
             <input
-              id="github-repo-url"
-              type="url"
-              value={repoUrl}
-              onChange={(e) => setRepoUrl(e.target.value)}
+              id="add-repo-label"
+              type="text"
+              value={addLabel}
+              onChange={(e) => setAddLabel(e.target.value)}
+              placeholder="e.g. Frontend"
+              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="add-repo-url" className="block text-sm font-medium text-foreground mb-1">
+              GitHub Repository URL <span className="text-destructive">*</span>
+            </label>
+            <input
+              id="add-repo-url"
+              type="text"
+              value={addRepoUrl}
+              onChange={(e) => setAddRepoUrl(e.target.value)}
               placeholder="https://github.com/org/repo"
               className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
             />
           </div>
 
-          {/* Webhook Secret */}
           <div>
-            <label htmlFor="github-webhook-secret" className="block text-sm font-medium text-foreground mb-1">
-              Webhook Secret
+            <label htmlFor="add-repo-secret" className="block text-sm font-medium text-foreground mb-1">
+              Webhook Secret <span className="text-destructive">*</span>
             </label>
-            <input
-              id="github-webhook-secret"
-              type="password"
-              value={webhookSecret}
-              onChange={(e) => setWebhookSecret(e.target.value)}
-              placeholder={
-                settings?.githubWebhookConfigured
-                  ? '••••••• configured'
-                  : 'Enter webhook secret'
-              }
-              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
-            />
-            {settings?.githubWebhookConfigured && !webhookSecret && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                A webhook secret is already configured. Enter a new value to replace it.
-              </p>
-            )}
-            <p className="mt-1 text-xs text-muted-foreground">
-              Tip: generate a secret with{' '}
-              <code className="font-mono bg-muted px-1 py-0.5 rounded">openssl rand -hex 32</code>{' '}
-              and paste the same value in GitHub under{' '}
-              <span className="font-medium">Repository → Settings → Webhooks → Secret</span>.
-            </p>
+            <div className="flex items-center gap-2">
+              <input
+                id="add-repo-secret"
+                type="password"
+                value={addSecret}
+                onChange={(e) => setAddSecret(e.target.value)}
+                placeholder="Enter webhook secret"
+                className="flex-1 rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setAddSecret(generateWebhookSecret())}
+              >
+                Generate
+              </Button>
+            </div>
           </div>
 
-          <div className="pt-1">
-            <Button type="submit" disabled={saving}>
-              {saving ? 'Saving…' : 'Save'}
+          {addError && (
+            <p className="text-sm text-destructive" role="alert">{addError}</p>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <Button type="submit" disabled={addSubmitting}>
+              {addSubmitting ? 'Saving…' : 'Save'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={closeAddModal}
+              disabled={addSubmitting}
+            >
+              Cancel
             </Button>
           </div>
         </form>
-      </div>
+      </Modal>
     </div>
   )
 }
