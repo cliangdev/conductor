@@ -47,6 +47,28 @@ public class ProjectRepositoryService {
     }
 
     @Transactional
+    public ProjectRepository updateRepository(
+            String projectId, String repositoryId, String label, String webhookSecret, String callerUserId) {
+        verifyAdmin(projectId, callerUserId);
+
+        ProjectRepository repo = projectRepositoryRepository.findById(repositoryId)
+                .orElseThrow(() -> new EntityNotFoundException("Repository not found: " + repositoryId));
+
+        if (!repo.getProjectId().equals(projectId)) {
+            throw new EntityNotFoundException("Repository not found: " + repositoryId);
+        }
+
+        if (label != null && !label.isBlank()) {
+            repo.setLabel(label.trim());
+        }
+        if (webhookSecret != null && !webhookSecret.isBlank()) {
+            repo.setWebhookSecret(webhookSecret.trim());
+        }
+
+        return projectRepositoryRepository.save(repo);
+    }
+
+    @Transactional
     public void deleteRepository(String projectId, String repositoryId, String callerUserId) {
         verifyAdmin(projectId, callerUserId);
 

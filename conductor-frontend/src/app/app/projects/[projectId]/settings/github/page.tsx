@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet, listProjectRepositories, addProjectRepository, deleteProjectRepository } from '@/lib/api'
+import { apiGet, listProjectRepositories, addProjectRepository, updateProjectRepository, deleteProjectRepository } from '@/lib/api'
 import type { ProjectRepository } from '@/lib/api'
 import type { Member } from '@/types'
 
@@ -43,6 +43,12 @@ export default function GitHubSettingsPage() {
   const [addSecret, setAddSecret] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
   const [addSubmitting, setAddSubmitting] = useState(false)
+
+  const [editRepo, setEditRepo] = useState<ProjectRepository | null>(null)
+  const [editLabel, setEditLabel] = useState('')
+  const [editSecret, setEditSecret] = useState('')
+  const [editError, setEditError] = useState<string | null>(null)
+  const [editSubmitting, setEditSubmitting] = useState(false)
 
   const webhookEndpointUrl = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/projects/${projectId}/github/webhook`
 
@@ -161,6 +167,53 @@ export default function GitHubSettingsPage() {
     }
   }
 
+  function openEditModal(repo: ProjectRepository) {
+    setEditRepo(repo)
+    setEditLabel(repo.label)
+    setEditSecret('')
+    setEditError(null)
+  }
+
+  function closeEditModal() {
+    setEditRepo(null)
+  }
+
+  async function handleEditSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!accessToken || !editRepo) return
+
+    if (!editLabel.trim()) {
+      setEditError('Label is required.')
+      return
+    }
+
+    setEditSubmitting(true)
+    setEditError(null)
+    try {
+      const updated = await updateProjectRepository(
+        projectId,
+        editRepo.id,
+        {
+          label: editLabel.trim(),
+          ...(editSecret.trim() ? { webhookSecret: editSecret.trim() } : {}),
+        },
+        accessToken,
+      )
+      setRepositories((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
+      closeEditModal()
+      showToast('Repository updated.')
+    } catch (err) {
+      const apiErr = err as ApiError
+      if (apiErr.status === 403) {
+        setEditError('You do not have permission to edit repositories.')
+      } else {
+        setEditError('Failed to update repository. Please try again.')
+      }
+    } finally {
+      setEditSubmitting(false)
+    }
+  }
+
   if (membersLoading || reposLoading) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8">
@@ -265,11 +318,20 @@ export default function GitHubSettingsPage() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    aria-label={`Remove ${repo.label}`}
+                    aria-label={`Edit ${repo.label}`}
+                    onClick={() => openEditModal(repo)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Delete ${repo.label}`}
                     onClick={() => handleDeleteRepo(repo.id)}
                     className="text-destructive hover:text-destructive hover:bg-destructive/10"
                   >
-                    ×
+                    Delete
                   </Button>
                 </div>
               </div>
@@ -277,6 +339,85 @@ export default function GitHubSettingsPage() {
           </div>
         )}
       </div>
+
+      {/* Edit Repository modal */}
+      <Modal
+        open={editRepo !== null}
+        onOpenChange={(open) => { if (!open) closeEditModal() }}
+        title="Edit Repository"
+        description="Update the label or rotate the webhook secret."
+      >
+        <form onSubmit={handleEditSubmit} noValidate className="space-y-4">
+          <div>
+            <label htmlFor="edit-repo-label" className="block text-sm font-medium text-foreground mb-1">
+              Label <span className="text-destructive">*</span>
+            </label>
+            <input
+              id="edit-repo-label"
+              type="text"
+              value={editLabel}
+              onChange={(e) => setEditLabel(e.target.value)}
+              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="edit-repo-url" className="block text-sm font-medium text-foreground mb-1">
+              GitHub Repository URL
+            </label>
+            <input
+              id="edit-repo-url"
+              type="text"
+              readOnly
+              value={editRepo?.repoUrl ?? ''}
+              className="w-full rounded-md border border-input bg-muted text-muted-foreground px-3 py-2 text-sm focus:outline-none"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">To change the repository, delete this entry and add a new one.</p>
+          </div>
+
+          <div>
+            <label htmlFor="edit-repo-secret" className="block text-sm font-medium text-foreground mb-1">
+              New Webhook Secret <span className="text-muted-foreground font-normal">(leave blank to keep existing)</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id="edit-repo-secret"
+                type="password"
+                value={editSecret}
+                onChange={(e) => setEditSecret(e.target.value)}
+                placeholder="Enter new secret to rotate"
+                className="flex-1 rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEditSecret(generateWebhookSecret())}
+              >
+                Generate
+              </Button>
+            </div>
+          </div>
+
+          {editError && (
+            <p className="text-sm text-destructive" role="alert">{editError}</p>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <Button type="submit" disabled={editSubmitting}>
+              {editSubmitting ? 'Saving…' : 'Save'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={closeEditModal}
+              disabled={editSubmitting}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Add Repository modal */}
       <Modal

@@ -2737,6 +2737,55 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /projects/{projectId}/repositories/{repositoryId}:
+    patch:
+      tags:
+        - repositories
+      summary: Update a repository's label or webhook secret (Admin only)
+      operationId: updateRepository
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: repositoryId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRepositoryRequest"
+      responses:
+        "200":
+          description: Repository updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectRepositoryResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a project admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Repository not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       tags:
         - repositories
@@ -4065,6 +4114,18 @@ components:
           items:
             type: string
           description: List of event IDs to acknowledge
+
+    UpdateRepositoryRequest:
+      type: object
+      properties:
+        label:
+          type: string
+          maxLength: 100
+          description: Updated human-readable label (omit to keep existing)
+        webhookSecret:
+          type: string
+          maxLength: 255
+          description: Updated webhook secret (omit to keep existing)
 
     AddRepositoryRequest:
       type: object

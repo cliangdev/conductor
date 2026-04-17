@@ -19,6 +19,19 @@ export function addProjectRepository(
   return apiPost<ProjectRepository>(`/api/v1/projects/${projectId}/repositories`, body, token)
 }
 
+export function updateProjectRepository(
+  projectId: string,
+  repositoryId: string,
+  body: { label?: string; webhookSecret?: string },
+  token: string,
+): Promise<ProjectRepository> {
+  return apiPatch<ProjectRepository>(
+    `/api/v1/projects/${projectId}/repositories/${repositoryId}`,
+    body,
+    token,
+  )
+}
+
 export function deleteProjectRepository(
   projectId: string,
   repositoryId: string,

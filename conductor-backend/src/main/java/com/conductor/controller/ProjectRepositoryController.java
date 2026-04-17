@@ -5,6 +5,7 @@ import com.conductor.entity.User;
 import com.conductor.generated.api.RepositoriesApi;
 import com.conductor.generated.model.AddRepositoryRequest;
 import com.conductor.generated.model.ProjectRepositoryResponse;
+import com.conductor.generated.model.UpdateRepositoryRequest;
 import com.conductor.service.ProjectRepositoryService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -49,6 +50,15 @@ public class ProjectRepositoryController implements RepositoriesApi {
                 .map(this::toResponse)
                 .toList();
         return ResponseEntity.ok(response);
+    }
+
+    @Override
+    public ResponseEntity<ProjectRepositoryResponse> updateRepository(
+            String projectId, String repositoryId, UpdateRepositoryRequest request) {
+        User caller = currentUser();
+        ProjectRepository repo = projectRepositoryService.updateRepository(
+                projectId, repositoryId, request.getLabel(), request.getWebhookSecret(), caller.getId());
+        return ResponseEntity.ok(toResponse(repo));
     }
 
     @Override

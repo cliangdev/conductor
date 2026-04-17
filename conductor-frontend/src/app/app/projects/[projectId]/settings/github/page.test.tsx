@@ -18,6 +18,7 @@ vi.mock('@/lib/api', () => ({
   apiGet: vi.fn(),
   listProjectRepositories: vi.fn(),
   addProjectRepository: vi.fn(),
+  updateProjectRepository: vi.fn(),
   deleteProjectRepository: vi.fn(),
 }))
 
@@ -128,7 +129,7 @@ describe('GitHubSettingsPage', () => {
     render(<GitHubSettingsPage />)
     await screen.findByText('Frontend')
 
-    fireEvent.click(screen.getByRole('button', { name: /remove frontend/i }))
+    fireEvent.click(screen.getByRole('button', { name: /delete frontend/i }))
 
     await waitFor(() => {
       expect(api.deleteProjectRepository).toHaveBeenCalledWith('proj-1', 'repo-1', 'test-token')
@@ -147,7 +148,7 @@ describe('GitHubSettingsPage', () => {
     render(<GitHubSettingsPage />)
     await screen.findByText('Frontend')
 
-    fireEvent.click(screen.getByRole('button', { name: /remove frontend/i }))
+    fireEvent.click(screen.getByRole('button', { name: /delete frontend/i }))
 
     await waitFor(() => {
       expect(mockShowToast).toHaveBeenCalledWith(
@@ -287,5 +288,39 @@ describe('GitHubSettingsPage', () => {
     expect(
       await screen.findByText(/access denied/i),
     ).toBeInTheDocument()
+  })
+
+  it('Edit button opens edit modal pre-filled with repo data', async () => {
+    render(<GitHubSettingsPage />)
+    await screen.findByText('Frontend')
+
+    fireEvent.click(screen.getByRole('button', { name: /edit frontend/i }))
+
+    const modal = await screen.findByTestId('modal')
+    expect(within(modal).getByLabelText(/label/i)).toHaveValue('Frontend')
+  })
+
+  it('successful edit updates repo in list and closes modal', async () => {
+    const updated = { ...sampleRepo, label: 'Frontend v2' }
+    vi.mocked(api.updateProjectRepository).mockResolvedValue(updated)
+
+    render(<GitHubSettingsPage />)
+    await screen.findByText('Frontend')
+
+    fireEvent.click(screen.getByRole('button', { name: /edit frontend/i }))
+    const modal = await screen.findByTestId('modal')
+
+    const labelInput = within(modal).getByLabelText(/label/i)
+    fireEvent.change(labelInput, { target: { value: 'Frontend v2' } })
+    fireEvent.click(within(modal).getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => {
+      expect(api.updateProjectRepository).toHaveBeenCalledWith(
+        'proj-1', 'repo-1', { label: 'Frontend v2' }, 'test-token',
+      )
+    })
+
+    await waitFor(() => expect(screen.queryByTestId('modal')).not.toBeInTheDocument())
+    expect(screen.getByText('Frontend v2')).toBeInTheDocument()
   })
 })
