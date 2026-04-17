@@ -2,11 +2,13 @@ package com.conductor.service;
 
 import com.conductor.entity.OrgMember;
 import com.conductor.entity.Organization;
+import com.conductor.entity.TeamMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.repository.OrgMemberRepository;
 import com.conductor.repository.OrgRepository;
+import com.conductor.repository.TeamMemberRepository;
 import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
@@ -34,16 +36,19 @@ public class OrgMemberService {
     private final OrgMemberRepository orgMemberRepository;
     private final UserRepository userRepository;
     private final EmailService emailService;
+    private final TeamMemberRepository teamMemberRepository;
 
     public OrgMemberService(
             OrgRepository orgRepository,
             OrgMemberRepository orgMemberRepository,
             UserRepository userRepository,
-            EmailService emailService) {
+            EmailService emailService,
+            TeamMemberRepository teamMemberRepository) {
         this.orgRepository = orgRepository;
         this.orgMemberRepository = orgMemberRepository;
         this.userRepository = userRepository;
         this.emailService = emailService;
+        this.teamMemberRepository = teamMemberRepository;
     }
 
     @Transactional(readOnly = true)
@@ -153,5 +158,8 @@ public class OrgMemberService {
         }
 
         orgMemberRepository.delete(targetMembership);
+
+        List<TeamMember> teamMemberships = teamMemberRepository.findByUserIdAndOrgId(targetUserId, orgId);
+        teamMemberRepository.deleteAll(teamMemberships);
     }
 }

@@ -212,8 +212,64 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller does not have access to this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Project not found or caller is not a member
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      tags:
+        - projects
+      summary: Update project settings (admin only)
+      operationId: updateProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProjectRequest"
+      responses:
+        "200":
+          description: Updated project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a project admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found
           content:
             application/json:
               schema:
@@ -3128,6 +3184,225 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /orgs/{orgId}/teams:
+    post:
+      tags:
+        - orgs
+      summary: Create a new team in the organization
+      operationId: createTeam
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeamRequest"
+      responses:
+        "201":
+          description: Team created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of this org
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Team name already exists in org
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      tags:
+        - orgs
+      summary: List teams in the organization
+      operationId: listTeams
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of teams in the org
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TeamResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of this org
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /teams/{teamId}/members:
+    get:
+      tags:
+        - orgs
+      summary: List members of a team
+      operationId: listTeamMembers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: teamId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of team members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TeamMemberResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of this org
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - orgs
+      summary: Add a member to a team
+      operationId: addTeamMember
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: teamId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddTeamMemberRequest"
+      responses:
+        "201":
+          description: Member added to team
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamMemberResponse"
+        "400":
+          description: User is not an org member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a team lead or org admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Team not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /teams/{teamId}/members/{userId}:
+    delete:
+      tags:
+        - orgs
+      summary: Remove a member from a team
+      operationId: removeTeamMember
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: teamId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Member removed from team
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a team lead or org admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Team or member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/daemon/events:
     get:
       tags:
@@ -3387,6 +3662,13 @@ components:
         createdAt:
           type: string
           format: date-time
+        visibility:
+          type: string
+          enum: [PRIVATE, ORG, TEAM, PUBLIC]
+          description: Project visibility level
+        teamId:
+          type: string
+          description: Team ID for TEAM visibility projects
 
     ProjectSummary:
       type: object
@@ -3394,7 +3676,6 @@ components:
         - id
         - name
         - key
-        - role
         - memberCount
         - createdAt
       properties:
@@ -3409,12 +3690,16 @@ components:
           type: string
         role:
           type: string
-          description: Caller's role in this project
+          description: Caller's role in this project (null if not explicit member)
         memberCount:
           type: integer
         createdAt:
           type: string
           format: date-time
+        visibility:
+          type: string
+          enum: [PRIVATE, ORG, TEAM, PUBLIC]
+          description: Project visibility level
 
     ProjectDetail:
       type: object
@@ -3443,6 +3728,31 @@ components:
         createdAt:
           type: string
           format: date-time
+        visibility:
+          type: string
+          enum: [PRIVATE, ORG, TEAM, PUBLIC]
+          description: Project visibility level
+        teamId:
+          type: string
+          description: Team ID for TEAM visibility projects
+
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          description: New project name
+        description:
+          type: string
+          description: New project description
+        visibility:
+          type: string
+          enum: [PRIVATE, ORG, TEAM, PUBLIC]
+          description: New visibility level
+        teamId:
+          type: string
+          description: Team ID (required when visibility is TEAM)
 
     MemberResponse:
       type: object
@@ -4560,3 +4870,67 @@ components:
       properties:
         message:
           type: string
+
+    CreateTeamRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Team display name (unique within the org)
+
+    TeamResponse:
+      type: object
+      required:
+        - id
+        - orgId
+        - name
+        - createdAt
+      properties:
+        id:
+          type: string
+        orgId:
+          type: string
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    TeamMemberResponse:
+      type: object
+      required:
+        - userId
+        - name
+        - email
+        - role
+        - joinedAt
+      properties:
+        userId:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [LEAD, MEMBER]
+        joinedAt:
+          type: string
+          format: date-time
+
+    AddTeamMemberRequest:
+      type: object
+      required:
+        - userId
+        - role
+      properties:
+        userId:
+          type: string
+          description: ID of the user to add to the team
+        role:
+          type: string
+          enum: [LEAD, MEMBER]
+          description: Role of the user in the team

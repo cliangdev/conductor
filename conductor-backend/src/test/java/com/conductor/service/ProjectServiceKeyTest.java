@@ -1,8 +1,10 @@
 package com.conductor.service;
 
 import com.conductor.exception.BusinessException;
+import com.conductor.repository.OrgMemberRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.repository.TeamMemberRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,11 +28,17 @@ class ProjectServiceKeyTest {
     @Mock
     private ProjectSecurityService projectSecurityService;
 
+    @Mock
+    private OrgMemberRepository orgMemberRepository;
+
+    @Mock
+    private TeamMemberRepository teamMemberRepository;
+
     private ProjectService projectService;
 
     @BeforeEach
     void setUp() {
-        projectService = new ProjectService(projectRepository, projectMemberRepository, projectSecurityService);
+        projectService = new ProjectService(projectRepository, projectMemberRepository, projectSecurityService, orgMemberRepository, teamMemberRepository);
     }
 
     @Test

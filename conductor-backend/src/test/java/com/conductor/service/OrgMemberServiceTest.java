@@ -7,6 +7,7 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.repository.OrgMemberRepository;
 import com.conductor.repository.OrgRepository;
+import com.conductor.repository.TeamMemberRepository;
 import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +40,9 @@ class OrgMemberServiceTest {
 
     @Mock
     private EmailService emailService;
+
+    @Mock
+    private TeamMemberRepository teamMemberRepository;
 
     @InjectMocks
     private OrgMemberService orgMemberService;

@@ -2,16 +2,23 @@ package com.conductor.controller;
 
 import com.conductor.entity.OrgMember;
 import com.conductor.entity.Organization;
+import com.conductor.entity.Team;
+import com.conductor.entity.TeamMember;
 import com.conductor.entity.User;
 import com.conductor.generated.api.OrgsApi;
+import com.conductor.generated.model.AddTeamMemberRequest;
 import com.conductor.generated.model.ChangeOrgMemberRoleRequest;
 import com.conductor.generated.model.CreateOrgRequest;
+import com.conductor.generated.model.CreateTeamRequest;
 import com.conductor.generated.model.InviteOrgMemberRequest;
 import com.conductor.generated.model.MessageResponse;
 import com.conductor.generated.model.OrgMemberResponse;
 import com.conductor.generated.model.OrgResponse;
+import com.conductor.generated.model.TeamMemberResponse;
+import com.conductor.generated.model.TeamResponse;
 import com.conductor.service.OrgMemberService;
 import com.conductor.service.OrgService;
+import com.conductor.service.TeamService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -30,10 +37,12 @@ public class OrgController implements OrgsApi {
 
     private final OrgService orgService;
     private final OrgMemberService orgMemberService;
+    private final TeamService teamService;
 
-    public OrgController(OrgService orgService, OrgMemberService orgMemberService) {
+    public OrgController(OrgService orgService, OrgMemberService orgMemberService, TeamService teamService) {
         this.orgService = orgService;
         this.orgMemberService = orgMemberService;
+        this.teamService = teamService;
     }
 
     @Override
@@ -91,6 +100,46 @@ public class OrgController implements OrgsApi {
         return ResponseEntity.noContent().build();
     }
 
+    @Override
+    public ResponseEntity<TeamResponse> createTeam(String orgId, CreateTeamRequest createTeamRequest) {
+        User caller = currentUser();
+        Team team = teamService.createTeam(orgId, caller.getId(), createTeamRequest.getName());
+        return ResponseEntity.status(201).body(toTeamResponse(team));
+    }
+
+    @Override
+    public ResponseEntity<List<TeamResponse>> listTeams(String orgId) {
+        User caller = currentUser();
+        List<TeamResponse> teams = teamService.getTeamsForOrg(orgId, caller.getId()).stream()
+                .map(this::toTeamResponse)
+                .toList();
+        return ResponseEntity.ok(teams);
+    }
+
+    @Override
+    public ResponseEntity<List<TeamMemberResponse>> listTeamMembers(String teamId) {
+        User caller = currentUser();
+        List<TeamMemberResponse> members = teamService.getTeamMembers(teamId, caller.getId()).stream()
+                .map(this::toTeamMemberResponse)
+                .toList();
+        return ResponseEntity.ok(members);
+    }
+
+    @Override
+    public ResponseEntity<TeamMemberResponse> addTeamMember(String teamId, AddTeamMemberRequest addTeamMemberRequest) {
+        User caller = currentUser();
+        TeamMember.TeamRole role = TeamMember.TeamRole.valueOf(addTeamMemberRequest.getRole().getValue());
+        TeamMember member = teamService.addTeamMember(teamId, caller.getId(), addTeamMemberRequest.getUserId(), role);
+        return ResponseEntity.status(201).body(toTeamMemberResponse(member));
+    }
+
+    @Override
+    public ResponseEntity<Void> removeTeamMember(String teamId, String userId) {
+        User caller = currentUser();
+        teamService.removeTeamMember(teamId, caller.getId(), userId);
+        return ResponseEntity.noContent().build();
+    }
+
     private OrgResponse toOrgResponse(Organization org) {
         return new OrgResponse(org.getId(), org.getName(), org.getSlug(), org.getCreatedAt());
     }
@@ -102,6 +151,30 @@ public class OrgController implements OrgsApi {
                 details.email(),
                 OrgMemberResponse.RoleEnum.fromValue(details.role().name()),
                 details.joinedAt()
+        );
+    }
+
+    private TeamResponse toTeamResponse(Team team) {
+        return new TeamResponse(team.getId(), team.getOrg().getId(), team.getName(), team.getCreatedAt());
+    }
+
+    private TeamMemberResponse toTeamMemberResponse(TeamService.TeamMemberDetails details) {
+        return new TeamMemberResponse(
+                details.userId(),
+                details.name(),
+                details.email(),
+                TeamMemberResponse.RoleEnum.fromValue(details.role().name()),
+                details.joinedAt()
+        );
+    }
+
+    private TeamMemberResponse toTeamMemberResponse(TeamMember member) {
+        return new TeamMemberResponse(
+                member.getUser().getId(),
+                member.getUser().getName(),
+                member.getUser().getEmail(),
+                TeamMemberResponse.RoleEnum.fromValue(member.getRole().name()),
+                member.getJoinedAt()
         );
     }
 
