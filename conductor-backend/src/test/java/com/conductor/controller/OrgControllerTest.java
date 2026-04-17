@@ -1,8 +1,10 @@
 package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
+import com.conductor.entity.OrgMember;
 import com.conductor.entity.Organization;
 import com.conductor.entity.User;
+import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.GlobalExceptionHandler;
@@ -11,6 +13,7 @@ import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
+import com.conductor.service.OrgMemberService;
 import com.conductor.service.OrgService;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,9 +31,10 @@ import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(OrgController.class)
@@ -42,6 +46,9 @@ class OrgControllerTest {
 
     @MockitoBean
     private OrgService orgService;
+
+    @MockitoBean
+    private OrgMemberService orgMemberService;
 
     @MockitoBean
     private JwtService jwtService;
@@ -160,5 +167,94 @@ class OrgControllerTest {
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].id").value("org-1"))
                 .andExpect(jsonPath("$[1].id").value("org-2"));
+    }
+
+    // Org Member endpoint tests
+
+    @Test
+    void listOrgMembersReturns200WithMembers() throws Exception {
+        OrgMemberService.OrgMemberDetails member = new OrgMemberService.OrgMemberDetails(
+                "user-id-123", "Test User", "user@example.com",
+                OrgMember.OrgRole.ADMIN, OffsetDateTime.now());
+
+        when(orgMemberService.getMembers("org-1", "user-id-123"))
+                .thenReturn(List.of(member));
+
+        mockMvc.perform(get("/api/v1/orgs/org-1/members")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].userId").value("user-id-123"))
+                .andExpect(jsonPath("$[0].role").value("ADMIN"));
+    }
+
+    @Test
+    void listOrgMembersReturns403ForNonMember() throws Exception {
+        when(orgMemberService.getMembers("org-1", "user-id-123"))
+                .thenThrow(new ForbiddenException("You are not a member of this org"));
+
+        mockMvc.perform(get("/api/v1/orgs/org-1/members")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void changeOrgMemberRoleReturns200WithUpdatedMember() throws Exception {
+        OrgMemberService.OrgMemberDetails updated = new OrgMemberService.OrgMemberDetails(
+                "target-user", "Target User", "target@example.com",
+                OrgMember.OrgRole.ADMIN, OffsetDateTime.now());
+
+        when(orgMemberService.changeMemberRole(
+                eq("org-1"), eq("user-id-123"), eq("target-user"), eq(OrgMember.OrgRole.ADMIN)))
+                .thenReturn(updated);
+
+        mockMvc.perform(patch("/api/v1/orgs/org-1/members/target-user")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"role\": \"ADMIN\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value("target-user"))
+                .andExpect(jsonPath("$.role").value("ADMIN"));
+    }
+
+    @Test
+    void changeOrgMemberRoleReturns403ForNonAdmin() throws Exception {
+        when(orgMemberService.changeMemberRole(any(), eq("user-id-123"), any(), any()))
+                .thenThrow(new ForbiddenException("Only org admins can change member roles"));
+
+        mockMvc.perform(patch("/api/v1/orgs/org-1/members/target-user")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"role\": \"MEMBER\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void removeOrgMemberReturns204OnSuccess() throws Exception {
+        doNothing().when(orgMemberService).removeMember("org-1", "user-id-123", "target-user");
+
+        mockMvc.perform(delete("/api/v1/orgs/org-1/members/target-user")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void removeOrgMemberReturns400WhenRemovingLastAdmin() throws Exception {
+        doThrow(new BusinessException("Cannot remove the last admin of the org"))
+                .when(orgMemberService).removeMember("org-1", "user-id-123", "user-id-123");
+
+        mockMvc.perform(delete("/api/v1/orgs/org-1/members/user-id-123")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void removeOrgMemberReturns403ForNonAdmin() throws Exception {
+        doThrow(new ForbiddenException("Only org admins can remove other members"))
+                .when(orgMemberService).removeMember(eq("org-1"), eq("user-id-123"), any());
+
+        mockMvc.perform(delete("/api/v1/orgs/org-1/members/another-user")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isForbidden());
     }
 }
