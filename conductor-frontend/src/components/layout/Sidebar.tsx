@@ -198,7 +198,25 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const { user, signOut } = useAuth()
   const { orgs, activeOrg, setActiveOrg } = useOrg()
+  const { projects } = useProject()
   const [showCreateOrg, setShowCreateOrg] = useState(false)
+
+  function handleOrgSwitch(org: Org) {
+    if (activeOrg?.id === org.id) {
+      onNavigate?.()
+      return
+    }
+    setActiveOrg(org)
+    if (pathname.startsWith('/app/projects/')) {
+      const orgProjects = projects.filter((p) => p.orgId === org.id)
+      router.push(
+        orgProjects.length > 0
+          ? `/app/projects/${orgProjects[0].id}/issues`
+          : '/app/org/members'
+      )
+    }
+    onNavigate?.()
+  }
 
   const initials = user?.name
     ? user.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
@@ -207,18 +225,6 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
   async function handleSignOut() {
     await signOut()
     router.push('/login')
-    onNavigate?.()
-  }
-
-  function selectOrg(org: Org) {
-    if (activeOrg?.id !== org.id) {
-      setActiveOrg(org)
-      // Leave project-scoped pages so ProjectLayout doesn't snap activeOrg
-      // back to match the URL's project.
-      if (pathname.startsWith('/app/projects/')) {
-        router.push('/app/org/members')
-      }
-    }
     onNavigate?.()
   }
 
@@ -246,7 +252,7 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
           {orgs.map((org) => (
             <DropdownMenuItem
               key={org.id}
-              onSelect={() => selectOrg(org)}
+              onSelect={() => handleOrgSwitch(org)}
               className="flex items-center gap-2"
             >
               {activeOrg?.id === org.id
