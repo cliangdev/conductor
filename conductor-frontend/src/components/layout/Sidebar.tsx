@@ -35,7 +35,7 @@ import { useProject } from '@/contexts/ProjectContext'
 import { useOrg } from '@/contexts/OrgContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
-import type { Project } from '@/types'
+import type { Org, Project } from '@/types'
 
 // ─── Primitives ───────────────────────────────────────────────────────────────
 
@@ -195,6 +195,7 @@ function ProjectSwitcher({
 
 function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter()
+  const pathname = usePathname()
   const { user, signOut } = useAuth()
   const { orgs, activeOrg, setActiveOrg } = useOrg()
   const [showCreateOrg, setShowCreateOrg] = useState(false)
@@ -206,6 +207,18 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
   async function handleSignOut() {
     await signOut()
     router.push('/login')
+    onNavigate?.()
+  }
+
+  function selectOrg(org: Org) {
+    if (activeOrg?.id !== org.id) {
+      setActiveOrg(org)
+      // Leave project-scoped pages so ProjectLayout doesn't snap activeOrg
+      // back to match the URL's project.
+      if (pathname.startsWith('/app/projects/')) {
+        router.push('/app/org/members')
+      }
+    }
     onNavigate?.()
   }
 
@@ -233,7 +246,7 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
           {orgs.map((org) => (
             <DropdownMenuItem
               key={org.id}
-              onSelect={() => { setActiveOrg(org); onNavigate?.() }}
+              onSelect={() => selectOrg(org)}
               className="flex items-center gap-2"
             >
               {activeOrg?.id === org.id
