@@ -3,9 +3,13 @@
 export const dynamic = 'force-dynamic'
 
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useState, Suspense } from 'react'
+import { useEffect, useState, Suspense } from 'react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/AuthContext'
+
+function resolveNext(next: string | null): string {
+  return next && next.startsWith('/') ? next : '/app/projects'
+}
 
 function LocalLoginForm() {
   const router = useRouter()
@@ -22,8 +26,7 @@ function LocalLoginForm() {
     setLoading(true)
     try {
       await signIn({ email, password })
-      const next = searchParams.get('next') ?? '/app/projects'
-      router.push(next)
+      router.push(resolveNext(searchParams.get('next')))
     } catch {
       setError('Invalid email or password')
     } finally {
@@ -85,8 +88,7 @@ function GoogleLoginForm() {
     setError(null)
     try {
       await signIn()
-      const next = searchParams.get('next') ?? '/app/projects'
-      router.push(next)
+      router.push(resolveNext(searchParams.get('next')))
     } catch {
       setError('Sign in failed. Please try again.')
       setLoading(false)
@@ -119,7 +121,19 @@ function GoogleLoginForm() {
 }
 
 function LoginForm() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const { user, loading } = useAuth()
   const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
+
+  useEffect(() => {
+    if (!loading && user) {
+      router.replace(resolveNext(searchParams.get('next')))
+    }
+  }, [loading, user, router, searchParams])
+
+  if (!loading && user) return null
+
   return isLocalMode ? <LocalLoginForm /> : <GoogleLoginForm />
 }
 

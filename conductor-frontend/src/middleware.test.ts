@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { middleware } from './middleware'
 import { NextRequest } from 'next/server'
 
-function makeRequest(pathname: string, cookies: Record<string, string> = {}): NextRequest {
-  const url = `http://localhost${pathname}`
+function makeRequest(pathAndQuery: string, cookies: Record<string, string> = {}): NextRequest {
+  const url = `http://localhost${pathAndQuery}`
   const req = new NextRequest(url)
   Object.entries(cookies).forEach(([name, value]) => {
     req.cookies.set(name, value)
@@ -39,7 +39,7 @@ describe('middleware', () => {
     expect(response.status).toBe(200)
   })
 
-  it('allows unauthenticated requests to non-app routes', () => {
+  it('allows unauthenticated requests to /login', () => {
     const req = makeRequest('/login')
     const response = middleware(req)
 
@@ -52,5 +52,51 @@ describe('middleware', () => {
 
     const location = response.headers.get('location')
     expect(location).toContain('next=%2Fapp%2Fprojects%2F123%2Fsettings')
+  })
+
+  it('redirects unauthenticated / to /login', () => {
+    const req = makeRequest('/')
+    const response = middleware(req)
+
+    expect(response.status).toBe(307)
+    expect(response.headers.get('location')).toBe('http://localhost/login')
+  })
+
+  it('redirects authenticated / to /app/projects', () => {
+    const req = makeRequest('/', { access_token: 'valid-token' })
+    const response = middleware(req)
+
+    expect(response.status).toBe(307)
+    expect(response.headers.get('location')).toBe('http://localhost/app/projects')
+  })
+
+  it('redirects authenticated /login to /app/projects', () => {
+    const req = makeRequest('/login', { access_token: 'valid-token' })
+    const response = middleware(req)
+
+    expect(response.status).toBe(307)
+    expect(response.headers.get('location')).toBe('http://localhost/app/projects')
+  })
+
+  it('honors the next param when redirecting authenticated /login', () => {
+    const req = makeRequest('/login?next=%2Fapp%2Fprojects%2Fabc%2Fissues', {
+      access_token: 'valid-token',
+    })
+    const response = middleware(req)
+
+    expect(response.status).toBe(307)
+    expect(response.headers.get('location')).toBe(
+      'http://localhost/app/projects/abc/issues',
+    )
+  })
+
+  it('ignores external next values when redirecting authenticated /login', () => {
+    const req = makeRequest('/login?next=https%3A%2F%2Fevil.example.com', {
+      access_token: 'valid-token',
+    })
+    const response = middleware(req)
+
+    expect(response.status).toBe(307)
+    expect(response.headers.get('location')).toBe('http://localhost/app/projects')
   })
 })
