@@ -111,6 +111,7 @@ class ProjectServiceTest {
 
     @Test
     void listProjectsReturnsOnlyCallerProjects() {
+        testProject.setOrgId("org-abc");
         when(projectRepository.findProjectsByMemberUserId("creator-id")).thenReturn(List.of(testProject));
         when(orgMemberRepository.findByUserId("creator-id")).thenReturn(List.of());
         when(teamMemberRepository.findByUserId("creator-id")).thenReturn(List.of());
@@ -124,6 +125,8 @@ class ProjectServiceTest {
         assertThat(projects.get(0).getId()).isEqualTo("proj-1");
         assertThat(projects.get(0).getRole()).isEqualTo("ADMIN");
         assertThat(projects.get(0).getMemberCount()).isEqualTo(1);
+        // orgId is required so the frontend sidebar can sync active org from the URL's project
+        assertThat(projects.get(0).getOrgId()).isEqualTo("org-abc");
     }
 
     @Test

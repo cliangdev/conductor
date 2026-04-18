@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
-import { useProject } from '@/contexts/ProjectContext'
 import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -309,13 +308,7 @@ export default function IssuesListPage() {
   const params = useParams<{ projectId: string }>()
   const { projectId } = params
   const { accessToken, user } = useAuth()
-  const { projects, setActiveProject } = useProject()
   const router = useRouter()
-
-  useEffect(() => {
-    const project = projects.find((p) => p.id === projectId)
-    if (project) setActiveProject(project)
-  }, [projectId, projects])
 
   const [issues, setIssues] = useState<IssueWithReviewers[]>([])
   const [members, setMembers] = useState<Member[]>([])

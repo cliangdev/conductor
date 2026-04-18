@@ -376,7 +376,8 @@ public class ProjectService {
                 .role(role)
                 .visibility(project.getVisibility() != null
                         ? ProjectSummary.VisibilityEnum.fromValue(project.getVisibility().name())
-                        : null);
+                        : null)
+                .orgId(project.getOrgId());
     }
 
     private ProjectDetail toProjectDetail(Project project, int memberCount) {
