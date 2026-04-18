@@ -3801,6 +3801,12 @@ components:
           type: string
           enum: [PRIVATE, ORG, TEAM, PUBLIC]
           description: Project visibility level
+        orgId:
+          type: string
+          description: ID of the org that owns this project
+        teamId:
+          type: string
+          description: Team ID for TEAM visibility projects
 
     ProjectDetail:
       type: object
@@ -3833,6 +3839,9 @@ components:
           type: string
           enum: [PRIVATE, ORG, TEAM, PUBLIC]
           description: Project visibility level
+        orgId:
+          type: string
+          description: ID of the org that owns this project
         teamId:
           type: string
           description: Team ID for TEAM visibility projects
