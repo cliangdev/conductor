@@ -35,7 +35,7 @@ export async function startDaemon(): Promise<boolean> {
   const config = readConfig()
   if (!config) {
     console.error('Not authenticated — run conductor login')
-    process.exit(1)
+    process.exit(78)
     return false
   }
 
@@ -79,5 +79,8 @@ export function registerStart(program: Command): void {
   program
     .command('start')
     .description('Start the file watcher daemon')
+    .addHelpText('after', `
+Examples:
+  conductor start`)
     .action(async () => { await startDaemon() })
 }

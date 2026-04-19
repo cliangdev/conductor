@@ -100,4 +100,47 @@ describe('config', () => {
       expect(() => clearConfig()).not.toThrow()
     })
   })
+
+  describe('loadConfigOrExit', () => {
+    it('returns config when config is valid', async () => {
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(validConfig))
+
+      const { loadConfigOrExit } = await import('../lib/config.js')
+      const result = loadConfigOrExit()
+      expect(result).toEqual(validConfig)
+    })
+
+    it('exits with code 78 when config is missing', async () => {
+      mockFs.readFileSync.mockImplementation(() => {
+        throw new Error('ENOENT: no such file or directory')
+      })
+
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+
+      const { loadConfigOrExit } = await import('../lib/config.js')
+      loadConfigOrExit()
+
+      expect(exitSpy).toHaveBeenCalledWith(78)
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('No config found'))
+
+      consoleSpy.mockRestore()
+      exitSpy.mockRestore()
+    })
+
+    it('exits with code 78 when config is invalid', async () => {
+      mockFs.readFileSync.mockReturnValue(JSON.stringify({ apiKey: 'only-key' }))
+
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+
+      const { loadConfigOrExit } = await import('../lib/config.js')
+      loadConfigOrExit()
+
+      expect(exitSpy).toHaveBeenCalledWith(78)
+
+      consoleSpy.mockRestore()
+      exitSpy.mockRestore()
+    })
+  })
 })

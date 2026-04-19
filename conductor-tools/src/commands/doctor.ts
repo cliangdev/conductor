@@ -28,7 +28,66 @@ export function registerDoctor(program: Command): void {
   program
     .command('doctor')
     .description('Run health checks on your Conductor setup')
-    .action(async () => {
+    .option('--json', 'Output results as JSON')
+    .addHelpText('after', `
+Examples:
+  conductor doctor
+  conductor doctor --json`)
+    .action(async (options: { json?: boolean }) => {
+      if (options.json) {
+        const checks: Array<{ name: string; status: 'pass' | 'fail' | 'warn'; message: string }> = []
+
+        const configExists = checkConfigFile()
+        checks.push({
+          name: 'config',
+          status: configExists ? 'pass' : 'fail',
+          message: configExists ? 'Config file found (~/.conductor/config.json)' : 'Config file not found — run conductor login',
+        })
+
+        const config = readConfig()
+
+        if (config) {
+          const apiReachable = await checkApiHealth(config.apiUrl)
+          checks.push({
+            name: 'api',
+            status: apiReachable ? 'pass' : 'fail',
+            message: apiReachable ? `API reachable (GET /api/v1/health → 200)` : 'API not reachable',
+          })
+        } else {
+          checks.push({
+            name: 'api',
+            status: 'fail',
+            message: 'API reachable (no config — skipped)',
+          })
+        }
+
+        const mcpExists = checkMcpJson(process.cwd())
+        checks.push({
+          name: 'mcp',
+          status: mcpExists ? 'pass' : 'fail',
+          message: mcpExists ? '.mcp.json found in current directory' : '.mcp.json not found in current directory',
+        })
+
+        const globalClaudeDir = path.join(os.homedir(), '.claude')
+        const localClaudeDir = path.join(process.cwd(), '.claude')
+        const { location, outdated } = getPluginInstallStatus(getAssetSrcDir(), globalClaudeDir, localClaudeDir)
+
+        if (location === 'none') {
+          checks.push({ name: 'plugin', status: 'fail', message: 'Claude plugin not installed — run conductor init' })
+        } else {
+          checks.push({ name: 'plugin', status: 'pass', message: `Claude plugin installed (${location})` })
+        }
+
+        if (location !== 'none' && outdated) {
+          checks.push({ name: 'plugin-version', status: 'warn', message: 'Claude plugin outdated — re-run conductor init to update' })
+        }
+
+        const allPass = checks.every(c => c.status !== 'fail')
+        process.stdout.write(JSON.stringify({ checks }, null, 2) + '\n')
+        process.exit(allPass ? 0 : 1)
+        return
+      }
+
       let failures = 0
       let warnings = 0
 

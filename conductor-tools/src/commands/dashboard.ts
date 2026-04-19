@@ -156,6 +156,10 @@ export function registerDashboard(program: Command): void {
   program
     .command('dashboard')
     .description('Show Conductor status (live in terminal, one-shot when piped)')
+    .addHelpText('after', `
+Examples:
+  conductor dashboard
+  conductor dashboard | cat`)
     .action(() => {
       const isLive = Boolean(process.stdout.isTTY)
 

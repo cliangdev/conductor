@@ -9,6 +9,7 @@ import { registerStop } from './commands/stop.js'
 import { registerMcp } from './commands/mcp.js'
 import { registerConfig } from './commands/config.js'
 import { registerDashboard } from './commands/dashboard.js'
+import { registerStatus } from './commands/status.js'
 
 const DEPRECATED_MSG = 'The issue and doc commands have been removed. Use Claude Code with the Conductor MCP server instead.'
 
@@ -28,6 +29,7 @@ registerStop(program)
 registerMcp(program)
 registerConfig(program)
 registerDashboard(program)
+registerStatus(program)
 
 program
   .command('issue', { hidden: true })

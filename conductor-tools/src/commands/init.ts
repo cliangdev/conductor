@@ -154,6 +154,11 @@ export function registerInit(program: Command): void {
     .description('Initialize Conductor in the current project')
     .option('--project-id <id>', 'Project ID to connect to (for new members or switching projects)')
     .option('--path <dir>', 'Working directory', process.cwd())
+    .addHelpText('after', `
+Examples:
+  conductor init
+  conductor init --project-id proj_abc123
+  conductor init --path /workspace/my-project`)
     .action(async (options: { projectId?: string, path: string }) => {
       const workingDir = path.resolve(options.path)
 

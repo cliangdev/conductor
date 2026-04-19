@@ -40,6 +40,15 @@ export function clearConfig(): void {
   }
 }
 
+export function loadConfigOrExit(): Config {
+  const config = readConfig()
+  if (!config) {
+    console.error('No config found — run conductor login first')
+    process.exit(78)
+  }
+  return config
+}
+
 function isConfig(value: unknown): value is Config {
   if (typeof value !== 'object' || value === null) return false
   const obj = value as Record<string, unknown>

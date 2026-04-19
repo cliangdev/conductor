@@ -10,6 +10,9 @@ export function registerStop(program: Command): void {
   program
     .command('stop')
     .description('Stop the file watcher daemon')
+    .addHelpText('after', `
+Examples:
+  conductor stop`)
     .action(() => {
       if (!fs.existsSync(PID_FILE)) {
         console.log('Daemon is not running')
