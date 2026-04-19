@@ -1,6 +1,6 @@
 ---
 name: conductor:implement
-description: Take a Conductor PRD issue from READY_FOR_DEVELOPMENT to a green PR — resolves the issue, sets it IN_PROGRESS, writes tasks.json breakdown, sets up a git branch, spawns parallel coding subagents, creates a PR, marks it CODE_REVIEW, and monitors CI (two checks max).
+description: Take a Conductor PRD issue to a green PR — advances it to IN_PROGRESS through the correct status transitions, writes tasks.json breakdown, sets up a git branch, spawns parallel coding subagents, creates a PR, marks it CODE_REVIEW, and monitors CI (two checks max).
 allowed-tools: mcp__conductor__*, AskUserQuestion, Agent, Read, Write, Glob, Grep, Bash, ScheduleWakeup, TaskCreate, TaskUpdate
 ---
 
@@ -60,27 +60,32 @@ Load the PRD if not already in context.
    - Call `get_issue` with the resolved `issueId`
    - Read the local file: `.conductor/issues/{issueId}/prd.md`
 
-3. **Status check**: If the issue status is not `READY_FOR_DEVELOPMENT`, warn the user:
-   > ⚠️ Issue is in `{status}` status (expected READY_FOR_DEVELOPMENT). Continue anyway?
-
-   Use AskUserQuestion with options: **Continue** / **Abort**.
-
 ---
 
-## Step 2b — Mark IN_PROGRESS
+## Step 2b — Advance to IN_PROGRESS
 
-Once the issue is confirmed and before any implementation work begins, call:
+The valid status transition graph is:
 
 ```
-set_issue_status(issueId, "IN_PROGRESS")
+DRAFT → IN_REVIEW → READY_FOR_DEVELOPMENT → IN_PROGRESS → CODE_REVIEW → DONE
 ```
 
-This transitions the issue from `READY_FOR_DEVELOPMENT` → `IN_PROGRESS`, signalling that implementation has started.
+Before implementation begins, walk the issue to `IN_PROGRESS` by calling `set_issue_status` for each required step in sequence based on the issue's **current status**:
 
-**Check the response**: if it contains a `warning` field, surface it immediately and pause:
+| Current status | Steps to call |
+|---|---|
+| `DRAFT` | `IN_REVIEW` → `READY_FOR_DEVELOPMENT` → `IN_PROGRESS` |
+| `IN_REVIEW` | `READY_FOR_DEVELOPMENT` → `IN_PROGRESS` |
+| `READY_FOR_DEVELOPMENT` | `IN_PROGRESS` |
+| `IN_PROGRESS` | (already correct, skip) |
+| `CODE_REVIEW`, `DONE`, `CLOSED` | Warn user — issue may already be implemented |
 
-> ⚠️ Status update to IN_PROGRESS failed (queued): {warning}
-> Run `conductor start` to drain the sync queue, or verify the status manually in the UI before continuing.
+For any status in the last row, use AskUserQuestion with options: **Continue anyway** / **Abort**.
+
+After each `set_issue_status` call, check for a `warning` field in the response. If present, surface it and pause:
+
+> ⚠️ Status update failed (queued): {warning}
+> Run `conductor start` to drain the sync queue, then verify the status in the UI before continuing.
 
 Use AskUserQuestion with options: **Continue anyway** / **Abort**.
 

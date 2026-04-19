@@ -119,6 +119,11 @@ export function registerLogin(program: Command): void {
     .description('Authenticate with Conductor via browser')
     .option('--force', 'Re-authenticate even if already logged in')
     .option('--local', 'Use email/password login (local dev only)')
+    .addHelpText('after', `
+Examples:
+  conductor login
+  conductor login --force
+  conductor login --local`)
     .action(async (options: { force?: boolean; local?: boolean }) => {
       const existing = readConfig()
 

@@ -1,14 +1,117 @@
-# @conductor/cli
+# Conductor
 
-CLI for managing Conductor issues and syncing documents locally.
+**Agentic software development — from idea to launch, with AI and humans in the loop.**
 
-## Installation
+[![npm](https://img.shields.io/npm/v/@cliangdev/conductor)](https://www.npmjs.com/package/@cliangdev/conductor)
 
-```bash
-npm install -g @conductor/cli
+## What is Conductor?
+
+Conductor is an agentic software development platform that manages the entire software development lifecycle using AI agents and human collaboration. You bring the intent; agents handle the execution.
+
+Today, Conductor covers product requirements (PRD), team review, and AI-driven implementation. The roadmap extends across the full SDLC — testing, deployment, monitoring, and incident response — every phase driven by agents, with humans in the loop at the moments that matter.
+
+The platform is built around Claude Code. You write PRDs with AI, your team reviews and approves them, then Claude implements them — opening PRs, running tests, and tracking progress — all coordinated through Conductor.
+
+## How it works
+
+```
+1. Write a PRD     →   /conductor:prd in Claude Code
+2. Team reviews    →   Conductor web app — comment, approve, request changes
+3. Implement       →   /conductor:implement in Claude Code
+4. PR opens        →   Claude commits, pushes, and creates the pull request
+5. Merge           →   Issue closes automatically
 ```
 
-Or build from source:
+Agents do the execution. Humans set the intent and sign off.
+
+## Quick Start
+
+```bash
+# Install
+npm install -g @cliangdev/conductor
+
+# Authenticate (opens browser for Google sign-in)
+conductor login
+
+# Connect to a project and configure Claude Code integration
+conductor init
+
+# Start the background sync daemon
+conductor start
+```
+
+Then open Claude Code in your project and run `/conductor:prd` to create your first PRD.
+
+## Claude Code Commands
+
+| Command | What it does |
+|---------|-------------|
+| `/conductor:prd` | Guides you through writing a PRD with AI — discovery, research, structured output |
+| `/conductor:implement` | Takes an approved PRD and implements it — task breakdown, parallel subagents, PR creation |
+
+These commands are installed automatically when you run `conductor init` (project-level) or during global install (user-level, to `~/.claude/`).
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `conductor login` | Authenticate via browser (Google OAuth) |
+| `conductor logout` | Clear stored credentials |
+| `conductor init` | Connect to a project and set up Claude Code MCP integration |
+| `conductor start` | Start the background sync daemon |
+| `conductor stop` | Stop the sync daemon |
+| `conductor status` | Show daemon status and sync queue |
+| `conductor doctor` | Check config, API connectivity, and Claude Code integration |
+| `conductor config show` | Print current config (API key redacted) |
+| `conductor config set-url <url>` | Hot-swap API URL without re-auth |
+| `conductor dashboard` | Live terminal view of daemon, sync queue, and active workflow runs |
+
+## MCP Tools
+
+Once `conductor init` runs, Claude Code gets access to these tools via the Conductor MCP server:
+
+| Tool | Description |
+|------|-------------|
+| `create_issue` | Create a new PRD or task |
+| `list_issues` | List issues with optional filters |
+| `get_issue` | Fetch a single issue with its document |
+| `update_issue` | Update title or description |
+| `set_issue_status` | Advance issue through the workflow |
+| `scaffold_document` | Create a new document attached to an issue |
+| `delete_document` | Remove a document |
+| `list_issue_comments` | Fetch reviewer comments on an issue |
+
+## Links
+
+- **GitHub**: [github.com/cliangdev/conductor](https://github.com/cliangdev/conductor)
+- **Web app**: [conductor-frontend-199707291514.us-central1.run.app](https://conductor-frontend-199707291514.us-central1.run.app)
+
+---
+
+## For Contributors & Local Development
+
+### Local dev setup
+
+The local stack runs at `http://localhost:8080` (backend) and `http://localhost:3000` (frontend) with email/password auth — no Firebase required.
+
+```bash
+# First-time login against local stack
+CONDUCTOR_API_URL=http://localhost:8080 conductor login --local
+# Default credentials: dev@example.com / conductor
+
+# Verify
+conductor config show
+conductor doctor
+```
+
+Switching between local and prod:
+
+```bash
+conductor config set-url http://localhost:8080   # local
+conductor config set-url <prod-url>              # prod
+```
+
+### Build from source
 
 ```bash
 cd conductor-tools
@@ -17,126 +120,22 @@ npm run build
 npm link          # makes `conductor` available globally
 ```
 
-## Setup
+### Configuration
 
-```bash
-conductor login       # authenticate via browser (Google OAuth, prod)
-conductor login --local  # authenticate via email/password (local dev)
-conductor init        # connect to a project and configure local sync path
-conductor start       # start the local file sync daemon
-```
-
-After `init`, issues sync to `~/.conductor/{projectId}/issues/` and Claude Code can read them directly via the MCP server.
-
-## Local Dev vs Prod
-
-### Local dev (`make dev`)
-
-The local stack runs at `http://localhost:8080` (backend) and `http://localhost:3000` (frontend). It uses email/password auth — no Firebase/Google required.
-
-```bash
-# First time: login with email/password
-CONDUCTOR_API_URL=http://localhost:8080 conductor login --local
-# Prompts for email and password (default: dev@example.com / conductor)
-
-# Verify
-conductor config show
-conductor doctor
-```
-
-If you've already logged in to prod and want to switch to local:
-
-```bash
-conductor config set-url http://localhost:8080
-```
-
-### Prod (Cloud Run)
-
-```bash
-# First time: opens browser for Google sign-in
-CONDUCTOR_API_URL=<prod-url> conductor login
-
-# Already logged in locally — just swap the URL
-conductor config set-url <prod-url>
-
-# Verify
-conductor config show
-conductor doctor
-```
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `conductor login` | Authenticate via browser (Google OAuth, prod) |
-| `conductor login --local` | Authenticate via email/password (local dev only) |
-| `conductor logout` | Clear stored credentials |
-| `conductor init` | Connect to a project and set up Claude Code MCP integration |
-| `conductor start` | Start the background sync daemon (file watcher, 500ms debounce) |
-| `conductor stop` | Stop the sync daemon |
-| `conductor status` | Show sync daemon status and current project config |
-| `conductor config show` | Print current config (apiKey redacted) |
-| `conductor config set-url <url>` | Hot-swap API URL without re-auth |
-| `conductor issue list` | List issues in the project |
-| `conductor issue create` | Create a new issue |
-| `conductor doc pull <issueId>` | Download a document draft to the local sync path |
-| `conductor doc push <issueId>` | Upload a local document draft to the cloud |
-| `conductor doctor` | Check config and API connectivity |
-| `conductor mcp` | Start the MCP server (stdio transport) — used internally by Claude Code |
-
-## MCP Integration
-
-`conductor init` automatically adds the MCP server entry to your Claude Code config (`~/.claude/mcp.json`):
+`~/.conductor/config.json`:
 
 ```json
 {
-  "mcpServers": {
-    "conductor": {
-      "command": "conductor",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-Once configured, Claude Code can use these tools:
-- `create_issue` — create a new issue
-- `list_issues` — fetch all issues
-- `get_issue` — fetch a single issue with its document
-- `update_issue` — update issue title, status, or type
-- `create_document` — write a document draft for an issue
-- `update_document` — update an existing document draft
-- `get_document` — fetch the current document content
-- `list_documents` — list all documents for an issue
-
-## Local Files
-
-```
-~/.conductor/
-├── config.json               # auth + project config
-└── {projectId}/
-    └── issues/
-        └── {issueId}.md      # local document drafts
-```
-
-The sync daemon watches the `issues/` directory and pushes changes to the API with a 500ms debounce. Offline changes are queued at `~/.conductor/sync-queue.json` and flushed when connectivity is restored.
-
-## Configuration
-
-`~/.conductor/config.json` schema:
-
-```json
-{
-  "apiUrl": "https://api.example.com",
+  "apiUrl": "https://...",
   "apiKey": "...",
   "email": "user@example.com",
-  "projectId": "abc123",
+  "projectId": "...",
   "localPath": "/path/to/project"
 }
 ```
 
-Override the API URL with the `CONDUCTOR_API_URL` environment variable.
+Override the API URL: `CONDUCTOR_API_URL=http://localhost:8080 conductor login --local`
 
-## E2E Testing
+### Testing
 
-See [TESTING.md](./TESTING.md) for the full step-by-step test procedure for both CLI and MCP against prod.
+See [TESTING.md](./TESTING.md) for the end-to-end test procedure for CLI and MCP against prod.

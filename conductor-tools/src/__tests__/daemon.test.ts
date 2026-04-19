@@ -81,7 +81,7 @@ describe('conductor start', () => {
     vi.useRealTimers()
   })
 
-  it('exits 1 when not authenticated', async () => {
+  it('exits 78 when not authenticated', async () => {
     mockReadConfig.mockReturnValue(null)
 
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -93,7 +93,7 @@ describe('conductor start', () => {
 
     await program.parseAsync(['node', 'conductor', 'start'])
 
-    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(exitSpy).toHaveBeenCalledWith(78)
 
     consoleSpy.mockRestore()
     exitSpy.mockRestore()
@@ -736,5 +736,56 @@ describe('queueChange and replayQueue', () => {
     expect(mockFetch).not.toHaveBeenCalled()
 
     vi.unstubAllGlobals()
+  })
+})
+
+// ─── T4.6: log rotation ───────────────────────────────────────────────────────
+
+describe('rotateDaemonLogIfNeeded', () => {
+  const CONDUCTOR_DIR_HOME = path.join(os.homedir(), '.conductor')
+  const LOG_FILE = path.join(CONDUCTOR_DIR_HOME, 'daemon.log')
+  const LOG_FILE_ROTATED = path.join(CONDUCTOR_DIR_HOME, 'daemon.log.1')
+
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('renames daemon.log to daemon.log.1 when size >= 5 MB', async () => {
+    mockFs.statSync.mockReturnValue({ size: 5 * 1024 * 1024 } as fs.Stats)
+    mockFs.renameSync.mockReturnValue(undefined)
+
+    const { rotateDaemonLogIfNeeded } = await import('../daemon/watcher.js')
+    rotateDaemonLogIfNeeded()
+
+    expect(mockFs.renameSync).toHaveBeenCalledWith(LOG_FILE, LOG_FILE_ROTATED)
+  })
+
+  it('does not rotate when log file is below 5 MB', async () => {
+    mockFs.statSync.mockReturnValue({ size: 4 * 1024 * 1024 } as fs.Stats)
+    mockFs.renameSync.mockReturnValue(undefined)
+
+    const { rotateDaemonLogIfNeeded } = await import('../daemon/watcher.js')
+    rotateDaemonLogIfNeeded()
+
+    expect(mockFs.renameSync).not.toHaveBeenCalled()
+  })
+
+  it('does not throw when log file does not exist', async () => {
+    mockFs.statSync.mockImplementation(() => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) })
+
+    const { rotateDaemonLogIfNeeded } = await import('../daemon/watcher.js')
+    expect(() => rotateDaemonLogIfNeeded()).not.toThrow()
+  })
+
+  it('rotates at exactly 5 MB boundary', async () => {
+    mockFs.statSync.mockReturnValue({ size: 5 * 1024 * 1024 } as fs.Stats)
+    mockFs.renameSync.mockReturnValue(undefined)
+
+    const { rotateDaemonLogIfNeeded } = await import('../daemon/watcher.js')
+    rotateDaemonLogIfNeeded()
+
+    expect(mockFs.renameSync).toHaveBeenCalledTimes(1)
+    expect(mockFs.renameSync).toHaveBeenCalledWith(LOG_FILE, LOG_FILE_ROTATED)
   })
 })

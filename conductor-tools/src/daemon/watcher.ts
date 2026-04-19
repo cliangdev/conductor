@@ -11,6 +11,20 @@ import type { WorkflowTriggerEvent } from './runner.js'
 
 const CONDUCTOR_DIR = path.join(os.homedir(), '.conductor')
 export const SYNC_QUEUE_PATH = path.join(CONDUCTOR_DIR, 'sync-queue.json')
+const LOG_FILE = path.join(CONDUCTOR_DIR, 'daemon.log')
+const LOG_FILE_ROTATED = path.join(CONDUCTOR_DIR, 'daemon.log.1')
+const LOG_ROTATION_BYTES = 5 * 1024 * 1024
+
+export function rotateDaemonLogIfNeeded(): void {
+  try {
+    const stat = fs.statSync(LOG_FILE)
+    if (stat.size >= LOG_ROTATION_BYTES) {
+      fs.renameSync(LOG_FILE, LOG_FILE_ROTATED)
+    }
+  } catch {
+    // Log file may not exist yet — nothing to rotate
+  }
+}
 
 export interface QueueEntry {
   method: 'POST' | 'PUT' | 'DELETE'
@@ -307,10 +321,13 @@ if (process.argv[1] === __filename) {
     const cfg = readConfig()
     if (!cfg) {
       console.error('Not authenticated — run conductor login')
-      process.exit(1)
+      process.exit(78)
     }
     return cfg
   }
+
+  // Rotate log before writing new entries
+  rotateDaemonLogIfNeeded()
 
   // Validate config is present at startup
   getConfig()

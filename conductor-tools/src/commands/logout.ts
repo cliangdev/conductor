@@ -5,6 +5,9 @@ export function registerLogout(program: Command): void {
   program
     .command('logout')
     .description('Clear saved Conductor credentials')
+    .addHelpText('after', `
+Examples:
+  conductor logout`)
     .action(() => {
       clearConfig()
       console.log('Logged out.')

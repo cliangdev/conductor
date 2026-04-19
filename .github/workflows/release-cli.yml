@@ -1,9 +1,16 @@
 name: Release CLI
 
 on:
-  push:
-    tags:
-      - 'cli-v*'
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 jobs:
   release:
@@ -16,20 +23,64 @@ jobs:
         working-directory: conductor-tools
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
           cache: npm
           cache-dependency-path: conductor-tools/package-lock.json
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check for CLI changes since last release
+        working-directory: ${{ github.workspace }}
+        run: |
+          LAST_TAG=$(git tag --list 'cli-v*' --sort=-version:refname | head -n1)
+          if [ -z "$LAST_TAG" ]; then
+            echo "No previous CLI release found — proceeding with first release."
+          else
+            CHANGES=$(git diff --name-only "$LAST_TAG" HEAD -- conductor-tools/)
+            if [ -z "$CHANGES" ]; then
+              echo "::error::No changes in conductor-tools/ since $LAST_TAG. Aborting release."
+              exit 1
+            fi
+            echo "Changes since $LAST_TAG:"
+            echo "$CHANGES"
+          fi
+
       - run: npm ci
-      - run: npm run build
+
       - run: npm run test
+
+      - run: npm run build
+
+      - name: Bump version
+        run: npm version ${{ github.event.inputs.version_type }} --no-git-tag-version
+
+      - name: Read new version
+        id: version
+        run: echo "value=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Commit and tag
+        run: |
+          git add package.json
+          git commit -m "chore: release @cliangdev/conductor v${{ steps.version.outputs.value }}"
+          git tag cli-v${{ steps.version.outputs.value }}
+          git push origin HEAD:main --follow-tags
+
       - name: Publish to npm
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Create GitHub Release
-        run: gh release create ${{ github.ref_name }} --generate-notes --title "${{ github.ref_name }}"
+        run: gh release create cli-v${{ steps.version.outputs.value }} --generate-notes --title "CLI v${{ steps.version.outputs.value }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

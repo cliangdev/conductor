@@ -170,14 +170,16 @@ Present the full PRD and ask via AskUserQuestion:
 Call MCP tools in this exact sequence:
 
 1. **Create issue**: `create_issue({type: "PRD", title, description})`
-   - Receive: `{issueId, localPath}`
+   - Receive: `{issueId, displayId, localPath}`
 
 2. **Scaffold document**: `scaffold_document({issueId, filename: "prd.md"})`
    - Receive: `{localPath: ".conductor/issues/{issueId}/prd.md"}`
 
 3. **Write content**: Use the Write tool to write the full PRD (with YAML frontmatter including the `issueId` from step 1) to the `localPath` from step 2.
 
-4. **Confirm**: "PRD saved — syncing to conductor in the background."
+4. **Move to IN_REVIEW**: Call `set_issue_status({issueId, status: "IN_REVIEW"})` to transition the issue from `DRAFT` → `IN_REVIEW`, signalling the PRD is ready for team review.
+
+5. **Confirm**: "PRD saved — **{displayId}** is now IN_REVIEW."
 
 Then offer supporting documents via AskUserQuestion:
 > "Would you like to add any supporting documents?"

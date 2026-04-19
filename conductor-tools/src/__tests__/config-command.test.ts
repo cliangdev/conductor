@@ -282,7 +282,7 @@ describe('config set-url command', () => {
     exitSpy.mockRestore()
   })
 
-  it('prints error and exits 1 for URL without http/https prefix', async () => {
+  it('prints error and exits 2 for URL without http/https prefix (invalid usage)', async () => {
     mockReadConfig.mockReturnValue({ ...mockConfig })
 
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -295,7 +295,7 @@ describe('config set-url command', () => {
     await program.parseAsync(['node', 'conductor', 'config', 'set-url', 'example.com'])
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('http'))
-    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(exitSpy).toHaveBeenCalledWith(2)
     expect(mockWriteConfig).not.toHaveBeenCalled()
 
     consoleSpy.mockRestore()
