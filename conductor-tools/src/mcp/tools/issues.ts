@@ -5,6 +5,7 @@ import { queueChange } from '../queue.js'
 
 interface IssueResponse {
   id: string
+  displayId: string
   type: string
   title: string
   status: string
@@ -76,6 +77,7 @@ export async function createIssue(
 
   const result: Record<string, unknown> = {
     issueId,
+    displayId: backendResult?.displayId,
     type: params.type,
     title: params.title,
     status: 'DRAFT',
