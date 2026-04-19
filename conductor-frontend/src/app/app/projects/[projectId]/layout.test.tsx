@@ -99,6 +99,25 @@ describe('ProjectLayout URL sync', () => {
     expect(mockSetActiveOrg).not.toHaveBeenCalled()
   })
 
+  it('does not call setActiveOrg on re-render when only activeOrg changes externally', () => {
+    mockParams = { projectId: 'proj-1' }
+    projectCtx.projects = [projectInAlpha]
+    orgCtx.orgs = [orgAlpha, orgBeta]
+    orgCtx.activeOrg = orgAlpha
+    projectCtx.activeProject = projectInAlpha
+
+    const { rerender } = render(<ProjectLayout>child</ProjectLayout>)
+    expect(mockSetActiveOrg).not.toHaveBeenCalled()
+    vi.clearAllMocks()
+
+    // Simulate user switching to orgBeta externally (org switcher)
+    orgCtx.activeOrg = orgBeta
+    rerender(<ProjectLayout>child</ProjectLayout>)
+
+    // Effect must NOT re-run just because activeOrg changed — that would revert the switch
+    expect(mockSetActiveOrg).not.toHaveBeenCalled()
+  })
+
   it('renders children unchanged', () => {
     mockParams = { projectId: 'proj-1' }
     projectCtx.projects = [projectInAlpha]
