@@ -73,7 +73,8 @@ jobs:
           git add package.json
           git commit -m "chore: release @cliangdev/conductor v${{ steps.version.outputs.value }}"
           git tag cli-v${{ steps.version.outputs.value }}
-          git push origin HEAD:main --follow-tags
+          git push origin HEAD:main
+          git push origin cli-v${{ steps.version.outputs.value }}
 
       - name: Publish to npm
         run: npm publish --access public --provenance
