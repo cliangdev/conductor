@@ -11,7 +11,7 @@ import { MemberRow } from '@/components/members/MemberRow'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api'
-import type { Member, MemberRole, OrgMember } from '@/types'
+import type { Invite, Member, MemberRole, OrgMember } from '@/types'
 
 interface ApiError extends Error {
   status?: number
@@ -37,6 +37,13 @@ export default function MembersPage() {
   const [addRole, setAddRole] = useState<MemberRole>('CREATOR')
   const [addError, setAddError] = useState<string | null>(null)
   const [addSubmitting, setAddSubmitting] = useState(false)
+
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState<MemberRole>('CREATOR')
+  const [inviteError, setInviteError] = useState<string | null>(null)
+  const [inviteSubmitting, setInviteSubmitting] = useState(false)
+  const [inviteLink, setInviteLink] = useState<string | null>(null)
 
   const [removeConfirm, setRemoveConfirm] = useState<{ userId: string; name: string } | null>(null)
   const [removeError, setRemoveError] = useState<string | null>(null)
@@ -164,6 +171,50 @@ export default function MembersPage() {
     }
   }
 
+  function openInviteModal() {
+    setInviteEmail('')
+    setInviteRole('CREATOR')
+    setInviteError(null)
+    setInviteLink(null)
+    setInviteOpen(true)
+  }
+
+  function closeInviteModal() {
+    setInviteOpen(false)
+    setInviteLink(null)
+    setInviteError(null)
+  }
+
+  async function handleInviteSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!accessToken || !inviteEmail.trim()) {
+      setInviteError('Please enter an email address.')
+      return
+    }
+
+    setInviteSubmitting(true)
+    setInviteError(null)
+    try {
+      const result = await apiPost<Invite>(
+        `/api/v1/projects/${projectId}/invites`,
+        { email: inviteEmail.trim(), role: inviteRole },
+        accessToken,
+      )
+      setInviteLink(`${window.location.origin}/invites/${result.token}/accept`)
+    } catch (err) {
+      const apiErr = err as ApiError
+      if (apiErr.status === 403) {
+        setInviteError('Only project admins can send invites.')
+      } else if (apiErr.status === 409) {
+        setInviteError('This email already has a pending invite or is already a member.')
+      } else {
+        setInviteError('Failed to send invite. Please try again.')
+      }
+    } finally {
+      setInviteSubmitting(false)
+    }
+  }
+
   const projectName = activeProject?.name ?? 'this project'
 
   return (
@@ -171,9 +222,14 @@ export default function MembersPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-foreground">Members</h1>
         {isAdmin && (
-          <Button onClick={openAddModal} size="sm">
-            Add Member
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={openInviteModal} size="sm" variant="outline">
+              Invite by Email
+            </Button>
+            <Button onClick={openAddModal} size="sm">
+              Add Member
+            </Button>
+          </div>
         )}
       </div>
 
@@ -205,6 +261,90 @@ export default function MembersPage() {
           )}
         </div>
       )}
+
+      {/* Invite by email modal */}
+      <Modal
+        open={inviteOpen}
+        onOpenChange={(open) => { if (!open) closeInviteModal() }}
+        title="Invite by email"
+        description={`Send an invite link for ${projectName}`}
+      >
+        {inviteLink ? (
+          <div className="space-y-4">
+            <p className="text-sm font-medium text-foreground">Invite link created</p>
+            <div className="flex gap-2">
+              <input
+                readOnly
+                value={inviteLink}
+                className="flex-1 rounded-md border border-input bg-muted text-foreground px-3 py-2 text-sm focus:outline-none"
+              />
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(inviteLink)
+                  showToast('Link copied to clipboard')
+                }}
+              >
+                Copy
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Expires in 72 hours.</p>
+            <Button type="button" variant="outline" onClick={closeInviteModal}>
+              Close
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={handleInviteSubmit} noValidate className="space-y-4">
+            <div>
+              <label htmlFor="invite-email" className="block text-sm font-medium text-foreground mb-1">
+                Email address <span className="text-destructive">*</span>
+              </label>
+              <input
+                id="invite-email"
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="colleague@example.com"
+                className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="invite-role" className="block text-sm font-medium text-foreground mb-1">
+                Role
+              </label>
+              <select
+                id="invite-role"
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as MemberRole)}
+                className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {ADDABLE_ROLES.map((role) => (
+                  <option key={role} value={role}>
+                    {role.charAt(0) + role.slice(1).toLowerCase()}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {inviteError && (
+              <p className="text-sm text-destructive" role="alert">
+                {inviteError}
+              </p>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <Button type="submit" disabled={inviteSubmitting}>
+                {inviteSubmitting ? 'Creating invite…' : 'Create invite link'}
+              </Button>
+              <Button type="button" variant="outline" onClick={closeInviteModal} disabled={inviteSubmitting}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
 
       {/* Add member modal */}
       <Modal

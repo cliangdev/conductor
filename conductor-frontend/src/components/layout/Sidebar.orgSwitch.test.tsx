@@ -96,4 +96,17 @@ describe('Sidebar org switcher', () => {
     expect(setActiveOrgMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'org-2' }))
     expect(pushMock).not.toHaveBeenCalled()
   })
+
+  it('switches org and navigates when on a nested project settings page (e.g. settings/members)', async () => {
+    pathnameValue = '/app/projects/proj-1/settings/members'
+    const user = userEvent.setup()
+    render(<Sidebar />)
+
+    await user.click(screen.getByRole('button', { name: /test user/i }))
+    await user.click(await screen.findByText('Rexcipe'))
+
+    expect(setActiveOrgMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'org-2' }))
+    // org-2 has no projects in this mock, so falls back to org members page
+    expect(pushMock).toHaveBeenCalledWith('/app/org/members')
+  })
 })

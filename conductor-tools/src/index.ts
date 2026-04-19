@@ -1,5 +1,9 @@
 #!/usr/bin/env node
+import { createRequire } from 'module'
 import { Command } from 'commander'
+
+const require = createRequire(import.meta.url)
+const { version } = require('../package.json')
 import { registerLogin } from './commands/login.js'
 import { registerLogout } from './commands/logout.js'
 import { registerInit } from './commands/init.js'
@@ -18,7 +22,7 @@ const program = new Command()
 program
   .name('conductor')
   .description('Conductor CLI for project setup and MCP integration')
-  .version('0.1.0')
+  .version(version)
 
 registerLogin(program)
 registerLogout(program)

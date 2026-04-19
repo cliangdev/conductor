@@ -97,4 +97,54 @@ describe('ProjectContext', () => {
 
     expect(captured?.activeProject).toBeNull()
   })
+
+  it('addProject appends a new project without refetching', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue([mockProjects[0]])
+    let captured: ReturnType<typeof useProject> | null = null
+
+    render(
+      <ProjectProvider>
+        <TestConsumer onValues={(v) => { captured = v }} />
+      </ProjectProvider>
+    )
+
+    await waitFor(() => expect(captured?.loading).toBe(false))
+    expect(captured?.projects).toHaveLength(1)
+
+    act(() => { captured?.addProject(mockProjects[1]) })
+
+    expect(captured?.projects).toHaveLength(2)
+    expect(captured?.projects[1].id).toBe('proj-2')
+    expect(api.apiGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('setActiveProject reference is stable across re-renders', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue(mockProjects)
+    const refs: Array<ReturnType<typeof useProject>['setActiveProject']> = []
+
+    render(
+      <ProjectProvider>
+        <TestConsumer onValues={(v) => { refs.push(v.setActiveProject) }} />
+      </ProjectProvider>
+    )
+
+    await waitFor(() => refs.length >= 2)
+
+    expect(refs[0]).toBe(refs[refs.length - 1])
+  })
+
+  it('addProject reference is stable across re-renders', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue(mockProjects)
+    const refs: Array<ReturnType<typeof useProject>['addProject']> = []
+
+    render(
+      <ProjectProvider>
+        <TestConsumer onValues={(v) => { refs.push(v.addProject) }} />
+      </ProjectProvider>
+    )
+
+    await waitFor(() => refs.length >= 2)
+
+    expect(refs[0]).toBe(refs[refs.length - 1])
+  })
 })
