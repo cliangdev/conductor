@@ -77,10 +77,6 @@ conductor doctor
 | `conductor status` | Show sync daemon status and current project config |
 | `conductor config show` | Print current config (apiKey redacted) |
 | `conductor config set-url <url>` | Hot-swap API URL without re-auth |
-| `conductor issue list` | List issues in the project |
-| `conductor issue create` | Create a new issue |
-| `conductor doc pull <issueId>` | Download a document draft to the local sync path |
-| `conductor doc push <issueId>` | Upload a local document draft to the cloud |
 | `conductor doctor` | Check config and API connectivity |
 | `conductor mcp` | Start the MCP server (stdio transport) — used internally by Claude Code |
 
