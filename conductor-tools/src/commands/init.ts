@@ -11,6 +11,7 @@ import { apiGet, apiPost } from '../lib/api.js'
 import { findAvailablePort, waitForOAuthCallback } from '../lib/oauth-server.js'
 import { startDaemon } from './start.js'
 import { installPluginAssets, getAssetSrcDir } from '../lib/plugin-assets.js'
+import { printNextSteps } from '../lib/next-steps.js'
 
 interface McpServerEntry {
   command: string
@@ -309,6 +310,7 @@ export function registerInit(program: Command): void {
           console.log(chalk.dim('  Run `conductor start` when ready.'))
         }
       }
+      printNextSteps()
       process.exit(0)
     })
 }
