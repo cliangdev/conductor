@@ -75,10 +75,10 @@ export function OrgProvider({ children }: { children: ReactNode }) {
     }
   }, [activeOrg?.id, accessToken, fetchTeams])
 
-  function setActiveOrg(org: Org) {
+  const setActiveOrg = useCallback((org: Org) => {
     setActiveOrgId(org.id)
     localStorage.setItem('active_org_id', org.id)
-  }
+  }, [])
 
   return (
     <OrgContext.Provider value={{ orgs, activeOrg, teams, loading, needsOnboarding, refetch: fetchOrgs, setActiveOrg }}>

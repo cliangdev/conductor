@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
 import { apiGet } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import type { Project } from '@/types'
@@ -57,14 +57,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     fetchProjects()
   }, [accessToken])
 
-  function setActiveProject(project: Project) {
+  const setActiveProject = useCallback((project: Project) => {
     setActiveProjectState(project)
     localStorage.setItem(ACTIVE_PROJECT_KEY, project.id)
-  }
+  }, [])
 
-  function addProject(project: Project) {
+  const addProject = useCallback((project: Project) => {
     setProjects((prev) => [...prev, project])
-  }
+  }, [])
 
   return (
     <ProjectContext.Provider value={{ projects, activeProject, setActiveProject, addProject, loading }}>

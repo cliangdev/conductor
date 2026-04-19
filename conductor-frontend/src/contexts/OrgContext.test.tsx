@@ -82,4 +82,40 @@ describe('OrgContext', () => {
     expect(captured.current?.needsOnboarding).toBe(false)
     expect(captured.current?.activeOrg?.id).toBe('org-1')
   })
+
+  it('setActiveOrg updates activeOrg and persists to localStorage', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue(mockOrgs)
+    const captured: { current: OrgContextValue | null } = { current: null }
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    render(
+      <OrgProvider>
+        <TestConsumer onValues={(v) => { captured.current = v }} />
+      </OrgProvider>
+    )
+
+    await waitFor(() => expect(captured.current?.loading).toBe(false))
+    expect(captured.current?.activeOrg?.id).toBe('org-1')
+
+    captured.current!.setActiveOrg(mockOrgs[1])
+
+    await waitFor(() => expect(captured.current?.activeOrg?.id).toBe('org-2'))
+    expect(setItemSpy).toHaveBeenCalledWith('active_org_id', 'org-2')
+  })
+
+  it('setActiveOrg reference is stable across re-renders', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue(mockOrgs)
+    const refs: Array<OrgContextValue['setActiveOrg']> = []
+
+    render(
+      <OrgProvider>
+        <TestConsumer onValues={(v) => { refs.push(v.setActiveOrg) }} />
+      </OrgProvider>
+    )
+
+    await waitFor(() => refs.length >= 2)
+
+    // All captured references must be the same function identity
+    expect(refs[0]).toBe(refs[refs.length - 1])
+  })
 })
