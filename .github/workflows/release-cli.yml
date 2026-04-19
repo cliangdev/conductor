@@ -39,6 +39,22 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Check for CLI changes since last release
+        working-directory: ${{ github.workspace }}
+        run: |
+          LAST_TAG=$(git tag --list 'cli-v*' --sort=-version:refname | head -n1)
+          if [ -z "$LAST_TAG" ]; then
+            echo "No previous CLI release found — proceeding with first release."
+          else
+            CHANGES=$(git diff --name-only "$LAST_TAG" HEAD -- conductor-tools/)
+            if [ -z "$CHANGES" ]; then
+              echo "::error::No changes in conductor-tools/ since $LAST_TAG. Aborting release."
+              exit 1
+            fi
+            echo "Changes since $LAST_TAG:"
+            echo "$CHANGES"
+          fi
+
       - run: npm ci
 
       - run: npm run test
