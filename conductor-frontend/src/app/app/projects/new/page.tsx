@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
+import { useOrg } from '@/contexts/OrgContext'
 import { apiPost } from '@/lib/api'
 import type { Project } from '@/types'
 
@@ -16,6 +17,7 @@ interface CreateProjectResponse {
   id: string
   name: string
   description: string | null
+  orgId: string | null
   createdBy: string
   createdAt: string
 }
@@ -24,6 +26,7 @@ export default function NewProjectPage() {
   const router = useRouter()
   const { accessToken } = useAuth()
   const { addProject, setActiveProject } = useProject()
+  const { activeOrg } = useOrg()
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -61,7 +64,7 @@ export default function NewProjectPage() {
     try {
       const created = await apiPost<CreateProjectResponse>(
         '/api/v1/projects',
-        { name: name.trim(), description: description.trim() || undefined },
+        { name: name.trim(), description: description.trim() || undefined, orgId: activeOrg?.id },
         accessToken,
       )
 
@@ -69,6 +72,7 @@ export default function NewProjectPage() {
         id: created.id,
         name: created.name,
         description: created.description,
+        orgId: created.orgId,
         createdAt: created.createdAt,
         updatedAt: created.createdAt,
       }

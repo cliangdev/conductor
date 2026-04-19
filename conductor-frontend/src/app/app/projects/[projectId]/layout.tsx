@@ -23,7 +23,8 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
       const org = orgs.find((o) => o.id === project.orgId)
       if (org) setActiveOrg(org)
     }
-  }, [projectId, projects, orgs, activeProject?.id, activeOrg?.id, setActiveProject, setActiveOrg])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, projects, orgs, activeProject?.id, setActiveProject, setActiveOrg])
 
   return <>{children}</>
 }
