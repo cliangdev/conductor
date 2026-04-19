@@ -57,16 +57,12 @@ export function OrgProvider({ children }: { children: ReactNode }) {
       const data = await apiGet<Org[]>('/api/v1/users/me/orgs', accessToken)
       setOrgs(data)
       setNeedsOnboarding(data.length === 0)
-      if (data.length > 0) {
-        const orgId = activeOrgId ?? data[0].id
-        await fetchTeams(orgId, accessToken)
-      }
     } catch (err) {
       console.error('[OrgContext] Failed to load orgs:', err)
     } finally {
       setLoading(false)
     }
-  }, [accessToken, activeOrgId, fetchTeams])
+  }, [accessToken])
 
   useEffect(() => {
     fetchOrgs()
