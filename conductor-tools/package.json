@@ -1,7 +1,7 @@
 {
   "name": "@conductor/cli",
   "version": "0.1.0",
-  "description": "Conductor CLI for project setup and issue management",
+  "description": "Conductor CLI for project setup and MCP integration",
   "type": "module",
   "bin": {
     "conductor": "./dist/index.js"
@@ -16,7 +16,8 @@
     "build": "tsc",
     "dev": "ts-node src/index.ts",
     "test": "vitest run",
-    "postinstall": "node scripts/postinstall.js"
+    "postinstall": "node scripts/postinstall.js",
+    "preuninstall": "node scripts/preuninstall.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
