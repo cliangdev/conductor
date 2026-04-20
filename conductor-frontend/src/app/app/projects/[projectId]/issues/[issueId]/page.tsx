@@ -61,6 +61,7 @@ interface Member {
 }
 
 function isMarkdown(doc: Document): boolean {
+  if (doc.filename.endsWith('.html') || doc.filename.endsWith('.htm')) return false
   return (
     doc.contentType === 'text/markdown' ||
     doc.contentType === 'text/plain' ||
