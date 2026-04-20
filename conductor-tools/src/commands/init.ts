@@ -157,6 +157,8 @@ Examples:
       const frontendUrl = process.env['CONDUCTOR_FRONTEND_URL'] ?? 'https://conductor-frontend-199707291514.us-central1.run.app'
 
       let config = readConfig()
+      // Capture original projects before any mutations so we can merge into it later
+      const originalConfig = config
 
       if (config) {
         const authSpinner = ora('Checking authentication...').start()
@@ -290,7 +292,16 @@ Examples:
       writeMcpJson(workingDir, buildMcpJson(existing))
       console.log(chalk.green('✓ Updated .mcp.json'))
 
-      writeConfig({ ...config, localPath: projectRoot })
+      const legacyEntry =
+        originalConfig?.projectId && originalConfig?.localPath
+          ? { [originalConfig.projectId]: { localPath: originalConfig.localPath, projectName: originalConfig.projectName } }
+          : {}
+      const existingProjects = originalConfig?.projects ?? legacyEntry
+      const updatedProjects = {
+        ...existingProjects,
+        [config.projectId]: { localPath: projectRoot, projectName: config.projectName },
+      }
+      writeConfig({ ...config, localPath: projectRoot, projects: updatedProjects })
 
       console.log()
       const ok = await startDaemon()

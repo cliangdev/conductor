@@ -2,11 +2,17 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { Config } from './config.js'
 
-export function getLocalIssueDir(config: Config, issueId: string): string {
-  if (!config.localPath) {
+export function resolveLocalPath(config: Config): string {
+  const proj = config.projects?.[config.projectId]
+  const localPath = proj?.localPath ?? config.localPath
+  if (!localPath) {
     throw new Error('Run conductor init to set up local project directory')
   }
-  return path.join(config.localPath, '.conductor', 'issues', issueId)
+  return localPath
+}
+
+export function getLocalIssueDir(config: Config, issueId: string): string {
+  return path.join(resolveLocalPath(config), '.conductor', 'issues', issueId)
 }
 
 export function issueFilePath(config: Config, issueId: string): string {
