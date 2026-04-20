@@ -82,15 +82,6 @@ export function buildMcpJson(existing: McpJson): McpJson {
   }
 }
 
-async function askYesNo(question: string): Promise<boolean> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-  return new Promise(resolve => {
-    rl.question(question, answer => {
-      rl.close()
-      resolve(answer.trim().toLowerCase() !== 'n')
-    })
-  })
-}
 
 async function isKeyValid(apiUrl: string, apiKey: string): Promise<boolean> {
   try {
@@ -301,19 +292,12 @@ Examples:
 
       writeConfig({ ...config, localPath: projectRoot })
 
-      if (process.stdin.isTTY) {
-        console.log()
-        const shouldSync = await askYesNo('Start syncing now? [Y/n] ')
-        if (shouldSync) {
-          const ok = await startDaemon()
-          if (ok) {
-            console.log(chalk.green('✓ Sync daemon started'))
-          } else {
-            console.log(chalk.red('✗ Daemon failed to start — run `conductor start` to retry'))
-          }
-        } else {
-          console.log(chalk.dim('  Run `conductor start` when ready.'))
-        }
+      console.log()
+      const ok = await startDaemon()
+      if (ok) {
+        console.log(chalk.green('✓ Sync daemon started'))
+      } else {
+        console.log(chalk.red('✗ Daemon failed to start — run `conductor start` to retry'))
       }
       printNextSteps()
       process.exit(0)

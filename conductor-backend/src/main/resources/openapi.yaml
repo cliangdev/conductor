@@ -2285,6 +2285,52 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /org-invites/{token}/accept:
+    post:
+      tags:
+        - invites
+      summary: Accept an org invite by token
+      operationId: acceptOrgInvite
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Org invite accepted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcceptOrgInviteResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Invite not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Invite already used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "410":
+          description: Invite has expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /invites/{token}/accept:
     post:
       tags:
@@ -3150,11 +3196,11 @@ paths:
               $ref: "#/components/schemas/InviteOrgMemberRequest"
       responses:
         "200":
-          description: Invitation sent
+          description: Invitation created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessageResponse"
+                $ref: "#/components/schemas/OrgInviteResponse"
         "400":
           description: Validation error
           content:
@@ -3175,6 +3221,93 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Org not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Invite already pending or user already a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /orgs/{orgId}/members/invites:
+    get:
+      tags:
+        - orgs
+      summary: List pending org member invites
+      operationId: listOrgInvites
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of pending invites
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OrgInviteResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an org admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /orgs/{orgId}/members/invites/{inviteId}/resend:
+    post:
+      tags:
+        - orgs
+      summary: Resend an org member invite
+      operationId: resendOrgInvite
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orgId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: inviteId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Invite resent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrgInviteResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not an org admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Invite not found
           content:
             application/json:
               schema:
@@ -5049,4 +5182,43 @@ components:
         role:
           type: string
           enum: [LEAD, MEMBER]
+
+    OrgInviteResponse:
+      type: object
+      required:
+        - id
+        - email
+        - role
+        - token
+        - status
+        - expiresAt
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [ADMIN, MEMBER]
+        token:
+          type: string
+        status:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+
+    AcceptOrgInviteResponse:
+      type: object
+      required:
+        - orgId
+        - orgName
+        - role
+      properties:
+        orgId:
+          type: string
+        orgName:
+          type: string
+        role:
+          type: string
           description: Role of the user in the team

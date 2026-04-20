@@ -20,6 +20,7 @@ vi.mock('../lib/oauth-server.js', () => ({
   waitForOAuthCallback: vi.fn(),
 }))
 vi.mock('open', () => ({ default: vi.fn() }))
+vi.mock('../commands/start.js', () => ({ startDaemon: vi.fn().mockResolvedValue(true) }))
 vi.mock('../lib/api.js', () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),

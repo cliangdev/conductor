@@ -17,6 +17,15 @@ interface ApiError extends Error {
   status?: number
 }
 
+interface OrgInvite {
+  id: string
+  email: string
+  role: string
+  token: string
+  status: string
+  expiresAt: string
+}
+
 const ORG_ROLES: OrgMemberRole[] = ['ADMIN', 'MEMBER']
 
 function memberInitials(name: string): string {
@@ -148,11 +157,14 @@ export default function OrgMembersPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
+  const [pendingInvites, setPendingInvites] = useState<OrgInvite[]>([])
+
   const [inviteOpen, setInviteOpen] = useState(false)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState<OrgMemberRole>('MEMBER')
   const [inviteSubmitting, setInviteSubmitting] = useState(false)
   const [inviteError, setInviteError] = useState<string | null>(null)
+  const [inviteLink, setInviteLink] = useState<string | null>(null)
 
   const [removeConfirm, setRemoveConfirm] = useState<{ userId: string; name: string } | null>(null)
   const [removeError, setRemoveError] = useState<string | null>(null)
@@ -172,9 +184,20 @@ export default function OrgMembersPage() {
     }
   }, [accessToken, activeOrg])
 
+  const fetchPendingInvites = useCallback(async () => {
+    if (!accessToken || !activeOrg) return
+    try {
+      const data = await apiGet<OrgInvite[]>(`/api/v1/orgs/${activeOrg.id}/members/invites`, accessToken)
+      setPendingInvites(data)
+    } catch {
+      // non-critical, silently ignore
+    }
+  }, [accessToken, activeOrg])
+
   useEffect(() => {
     fetchMembers()
-  }, [fetchMembers])
+    fetchPendingInvites()
+  }, [fetchMembers, fetchPendingInvites])
 
   const currentUserMember = members.find((m) => m.userId === user?.id)
   const isAdmin = currentUserMember?.role === 'ADMIN'
@@ -224,7 +247,14 @@ export default function OrgMembersPage() {
     setInviteEmail('')
     setInviteRole('MEMBER')
     setInviteError(null)
+    setInviteLink(null)
     setInviteOpen(true)
+  }
+
+  function closeInviteModal() {
+    setInviteOpen(false)
+    setInviteLink(null)
+    setInviteError(null)
   }
 
   async function handleInviteSubmit(e: React.FormEvent) {
@@ -238,24 +268,39 @@ export default function OrgMembersPage() {
     setInviteSubmitting(true)
     setInviteError(null)
     try {
-      await apiPost<{ message: string }>(
+      const result = await apiPost<OrgInvite>(
         `/api/v1/orgs/${activeOrg.id}/members/invite`,
         { email, role: inviteRole },
         accessToken,
       )
-      showToast(`Invitation sent to ${email}`)
-      setInviteOpen(false)
+      setInviteLink(`${window.location.origin}/org-invites/${result.token}/accept`)
+      setPendingInvites((prev) => [...prev, result])
     } catch (err) {
       const apiErr = err as ApiError
       if (apiErr.status === 400) {
         setInviteError('Invalid email address.')
       } else if (apiErr.status === 409) {
-        setInviteError('An invite is already pending for this email.')
+        setInviteError('An invite is already pending for this email, or they are already a member.')
       } else {
-        setInviteError('Failed to send invite. Please try again.')
+        setInviteError('Failed to create invite. Please try again.')
       }
     } finally {
       setInviteSubmitting(false)
+    }
+  }
+
+  async function handleResendInvite(inviteId: string) {
+    if (!accessToken || !activeOrg) return
+    try {
+      const result = await apiPost<OrgInvite>(
+        `/api/v1/orgs/${activeOrg.id}/members/invites/${inviteId}/resend`,
+        {},
+        accessToken,
+      )
+      setPendingInvites((prev) => prev.map((inv) => (inv.id === inviteId ? result : inv)))
+      showToast('Invite resent')
+    } catch {
+      showToast('Failed to resend invite.', 'error')
     }
   }
 
@@ -329,56 +374,111 @@ export default function OrgMembersPage() {
         </div>
       )}
 
+      {/* Pending invites */}
+      {isAdmin && pendingInvites.length > 0 && (
+        <div className="mt-6">
+          <h2 className="text-sm font-medium text-muted-foreground mb-2">Pending invitations</h2>
+          <div className="bg-card rounded-lg border border-border divide-y divide-border">
+            {pendingInvites.map((invite) => (
+              <div key={invite.id} className="flex items-center justify-between px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-foreground truncate">{invite.email}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {invite.role.charAt(0) + invite.role.slice(1).toLowerCase()} · expires {new Date(invite.expiresAt).toLocaleDateString()}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleResendInvite(invite.id)}
+                  className="ml-4 shrink-0"
+                >
+                  Resend
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Invite modal */}
       <Modal
         open={inviteOpen}
-        onOpenChange={(open) => { if (!open) setInviteOpen(false) }}
+        onOpenChange={(open) => { if (!open) closeInviteModal() }}
         title="Invite a member"
       >
-        <form onSubmit={handleInviteSubmit} noValidate className="flex flex-col gap-4">
-          <div>
-            <label htmlFor="invite-email" className="block text-sm font-medium text-foreground mb-1">
-              Email address
-            </label>
-            <input
-              id="invite-email"
-              type="email"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="colleague@example.com"
-              autoFocus
-              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
-            />
-          </div>
-          <div>
-            <label htmlFor="invite-role" className="block text-sm font-medium text-foreground mb-1">
-              Role
-            </label>
-            <select
-              id="invite-role"
-              value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as OrgMemberRole)}
-              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              {ORG_ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {role.charAt(0) + role.slice(1).toLowerCase()}
-                </option>
-              ))}
-            </select>
-          </div>
-          {inviteError && (
-            <p className="text-sm text-destructive" role="alert">{inviteError}</p>
-          )}
-          <div className="flex gap-3">
-            <Button type="submit" disabled={inviteSubmitting}>
-              {inviteSubmitting ? 'Sending…' : 'Send Invite'}
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setInviteOpen(false)} disabled={inviteSubmitting}>
-              Cancel
+        {inviteLink ? (
+          <div className="space-y-4">
+            <p className="text-sm font-medium text-foreground">Invite link created</p>
+            <p className="text-xs text-muted-foreground">Share this link with the person you want to invite to {orgName}.</p>
+            <div className="flex gap-2">
+              <input
+                readOnly
+                value={inviteLink}
+                className="flex-1 rounded-md border border-input bg-muted text-foreground px-3 py-2 text-sm focus:outline-none"
+              />
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(inviteLink)
+                  showToast('Link copied to clipboard')
+                }}
+              >
+                Copy
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Expires in 72 hours.</p>
+            <Button type="button" variant="outline" onClick={closeInviteModal}>
+              Close
             </Button>
           </div>
-        </form>
+        ) : (
+          <form onSubmit={handleInviteSubmit} noValidate className="flex flex-col gap-4">
+            <div>
+              <label htmlFor="invite-email" className="block text-sm font-medium text-foreground mb-1">
+                Email address
+              </label>
+              <input
+                id="invite-email"
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="colleague@example.com"
+                autoFocus
+                className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label htmlFor="invite-role" className="block text-sm font-medium text-foreground mb-1">
+                Role
+              </label>
+              <select
+                id="invite-role"
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as OrgMemberRole)}
+                className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                {ORG_ROLES.map((role) => (
+                  <option key={role} value={role}>
+                    {role.charAt(0) + role.slice(1).toLowerCase()}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {inviteError && (
+              <p className="text-sm text-destructive" role="alert">{inviteError}</p>
+            )}
+            <div className="flex gap-3">
+              <Button type="submit" disabled={inviteSubmitting}>
+                {inviteSubmitting ? 'Creating…' : 'Create invite link'}
+              </Button>
+              <Button type="button" variant="outline" onClick={closeInviteModal} disabled={inviteSubmitting}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
       </Modal>
 
       {/* Remove / Leave confirm modal */}

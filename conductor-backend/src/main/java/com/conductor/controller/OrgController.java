@@ -11,7 +11,7 @@ import com.conductor.generated.model.ChangeOrgMemberRoleRequest;
 import com.conductor.generated.model.CreateOrgRequest;
 import com.conductor.generated.model.CreateTeamRequest;
 import com.conductor.generated.model.InviteOrgMemberRequest;
-import com.conductor.generated.model.MessageResponse;
+import com.conductor.generated.model.OrgInviteResponse;
 import com.conductor.generated.model.OrgMemberResponse;
 import com.conductor.generated.model.OrgResponse;
 import com.conductor.generated.model.ProjectSummary;
@@ -82,11 +82,25 @@ public class OrgController implements OrgsApi {
     }
 
     @Override
-    public ResponseEntity<MessageResponse> inviteOrgMember(String orgId, InviteOrgMemberRequest request) {
+    public ResponseEntity<OrgInviteResponse> inviteOrgMember(String orgId, InviteOrgMemberRequest request) {
         User caller = currentUser();
         OrgMember.OrgRole role = OrgMember.OrgRole.valueOf(request.getRole().getValue());
-        orgMemberService.inviteMember(orgId, caller.getId(), request.getEmail(), role);
-        return ResponseEntity.ok(new MessageResponse("Invitation sent to " + request.getEmail()));
+        OrgInviteResponse response = orgMemberService.inviteMember(orgId, caller.getId(), request.getEmail(), role);
+        return ResponseEntity.ok(response);
+    }
+
+    @Override
+    public ResponseEntity<List<OrgInviteResponse>> listOrgInvites(String orgId) {
+        User caller = currentUser();
+        List<OrgInviteResponse> invites = orgMemberService.listPendingInvites(orgId, caller.getId());
+        return ResponseEntity.ok(invites);
+    }
+
+    @Override
+    public ResponseEntity<OrgInviteResponse> resendOrgInvite(String orgId, String inviteId) {
+        User caller = currentUser();
+        OrgInviteResponse response = orgMemberService.resendInvite(orgId, inviteId, caller.getId());
+        return ResponseEntity.ok(response);
     }
 
     @Override
