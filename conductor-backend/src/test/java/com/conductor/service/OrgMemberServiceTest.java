@@ -1,10 +1,13 @@
 package com.conductor.service;
 
+import com.conductor.entity.OrgInvite;
 import com.conductor.entity.OrgMember;
 import com.conductor.entity.Organization;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
+import com.conductor.repository.OrgInviteRepository;
 import com.conductor.repository.OrgMemberRepository;
 import com.conductor.repository.OrgRepository;
 import com.conductor.repository.TeamMemberRepository;
@@ -34,6 +37,9 @@ class OrgMemberServiceTest {
 
     @Mock
     private OrgMemberRepository orgMemberRepository;
+
+    @Mock
+    private OrgInviteRepository orgInviteRepository;
 
     @Mock
     private UserRepository userRepository;
@@ -250,6 +256,9 @@ class OrgMemberServiceTest {
                 .thenReturn(Optional.of(adminMembership));
         when(userRepository.findById("admin-1")).thenReturn(Optional.of(adminUser));
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
+        when(orgInviteRepository.findByOrgIdAndEmailAndStatus("org-1", "new@example.com", "PENDING"))
+                .thenReturn(Optional.empty());
+        when(orgInviteRepository.save(any(OrgInvite.class))).thenAnswer(i -> i.getArgument(0));
 
         orgMemberService.inviteMember("org-1", "admin-1", "new@example.com", OrgMember.OrgRole.MEMBER);
 
@@ -274,7 +283,7 @@ class OrgMemberServiceTest {
 
         assertThatThrownBy(() -> orgMemberService.inviteMember(
                 "org-1", "admin-1", "existing@example.com", OrgMember.OrgRole.MEMBER))
-                .isInstanceOf(BusinessException.class)
+                .isInstanceOf(ConflictException.class)
                 .hasMessageContaining("already a member");
     }
 }
