@@ -11,6 +11,7 @@ import { ReviewSubmissionForm } from '@/components/reviews/ReviewSubmissionForm'
 import { ReviewersSummaryPanel } from '@/components/reviews/ReviewersSummaryPanel'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import { TaskProgressPanel } from '@/components/issues/TaskProgressPanel'
+import { HtmlViewer } from '@/components/markdown/HtmlViewer'
 import type { Comment } from '@/components/comments/types'
 import type { MemberRole } from '@/types'
 
@@ -64,6 +65,14 @@ function isMarkdown(doc: Document): boolean {
     doc.contentType === 'text/markdown' ||
     doc.contentType === 'text/plain' ||
     doc.filename.endsWith('.md')
+  )
+}
+
+function isHtml(doc: Document): boolean {
+  return (
+    doc.contentType === 'text/html' ||
+    doc.filename.endsWith('.html') ||
+    doc.filename.endsWith('.htm')
   )
 }
 
@@ -192,7 +201,7 @@ export default function IssueDetailPage() {
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null
 
   function handleDocClick(doc: Document) {
-    if (isMarkdown(doc)) {
+    if (isMarkdown(doc) || isHtml(doc)) {
       setSelectedDocId(doc.id)
       setActiveTab('content')
     } else if (doc.storageUrl) {
@@ -292,7 +301,7 @@ export default function IssueDetailPage() {
                 title={doc.filename}
               >
                 {doc.filename}
-                {!isMarkdown(doc) && (
+                {!isMarkdown(doc) && !isHtml(doc) && (
                   <span className="ml-1 text-xs text-muted-foreground">(binary)</span>
                 )}
               </button>
@@ -346,6 +355,10 @@ export default function IssueDetailPage() {
           }}
         />
       ) : selectedDoc && isMarkdown(selectedDoc) && !selectedDoc.content ? (
+        <div className="text-muted-foreground text-sm">Document content is empty.</div>
+      ) : selectedDoc && isHtml(selectedDoc) && selectedDoc.content ? (
+        <HtmlViewer content={selectedDoc.content} />
+      ) : selectedDoc && isHtml(selectedDoc) && !selectedDoc.content ? (
         <div className="text-muted-foreground text-sm">Document content is empty.</div>
       ) : (
         <div className="text-muted-foreground text-sm">
