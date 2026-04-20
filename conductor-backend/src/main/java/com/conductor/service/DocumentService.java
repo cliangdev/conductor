@@ -28,7 +28,7 @@ public class DocumentService {
 
     static final int MAX_CONTENT_BYTES = 52_428_800; // 50 MB
 
-    private static final Set<String> TEXT_CONTENT_TYPES = Set.of("text/markdown", "text/plain");
+    private static final Set<String> TEXT_CONTENT_TYPES = Set.of("text/markdown", "text/plain", "text/html");
 
     private final DocumentRepository documentRepository;
     private final IssueRepository issueRepository;
