@@ -62,6 +62,41 @@ describe('config', () => {
       const result = readConfig()
       expect(result).toEqual(validConfig)
     })
+
+    it('synthesizes projects map from legacy single-project fields', async () => {
+      const legacyConfig = { ...validConfig, localPath: '/home/user/myproject' }
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(legacyConfig))
+
+      const { readConfig } = await import('../lib/config.js')
+      const result = readConfig()
+      expect(result?.projects).toEqual({
+        proj_123: { localPath: '/home/user/myproject', projectName: 'Test Project' },
+      })
+    })
+
+    it('preserves existing projects map when already present', async () => {
+      const configWithProjects = {
+        ...validConfig,
+        localPath: '/home/user/project-b',
+        projects: {
+          proj_aaa: { localPath: '/home/user/project-a', projectName: 'Project A' },
+          proj_123: { localPath: '/home/user/project-b', projectName: 'Test Project' },
+        },
+      }
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(configWithProjects))
+
+      const { readConfig } = await import('../lib/config.js')
+      const result = readConfig()
+      expect(result?.projects).toEqual(configWithProjects.projects)
+    })
+
+    it('does not synthesize projects when localPath is absent', async () => {
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(validConfig))
+
+      const { readConfig } = await import('../lib/config.js')
+      const result = readConfig()
+      expect(result?.projects).toBeUndefined()
+    })
   })
 
   describe('writeConfig', () => {

@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { Config } from '../config.js'
 import { apiPost, apiDelete } from '../api.js'
-import { deleteDocumentFile } from '../files.js'
+import { deleteDocumentFile, resolveLocalPath } from '../files.js'
 import { queueChange } from '../queue.js'
 
 interface DocumentResponse {
@@ -29,12 +29,15 @@ export async function scaffoldDocument(
   params: { issueId: string; filename: string },
   config: Config
 ): Promise<Record<string, unknown>> {
-  if (!config.localPath) {
+  let localRoot: string
+  try {
+    localRoot = resolveLocalPath(config)
+  } catch {
     return { error: 'Run conductor init to set up local project directory' }
   }
 
   const localFilePath = path.join(
-    config.localPath,
+    localRoot,
     '.conductor',
     'issues',
     params.issueId,

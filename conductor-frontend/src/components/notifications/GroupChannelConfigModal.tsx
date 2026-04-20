@@ -130,13 +130,34 @@ export function GroupChannelConfigModal({
   const someEnabled = groupEventTypes.some((t) => enabledEventTypes.includes(t))
   const webhookInstruction = WEBHOOK_INSTRUCTIONS[provider]
 
+  const footer = (
+    <div className="flex items-center gap-3">
+      <button
+        type="submit"
+        form="channel-form"
+        disabled={saving || !selectedGroup}
+        className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {saving ? 'Saving…' : 'Save'}
+      </button>
+      <button
+        type="button"
+        onClick={onClose}
+        className="border border-border bg-background text-foreground hover:bg-muted px-4 py-2 rounded-md text-sm"
+      >
+        Cancel
+      </button>
+    </div>
+  )
+
   return (
     <Modal
       open={open}
       onOpenChange={(o) => { if (!o) onClose() }}
       title={isEditing ? `Edit: ${existingGroup?.label}` : 'Add Notification Channel'}
+      footer={footer}
     >
-      <form onSubmit={handleSubmit} noValidate className="space-y-5">
+      <form id="channel-form" onSubmit={handleSubmit} noValidate className="space-y-5">
 
         {/* Channel group selector — only for new channels */}
         {!isEditing && availableGroups.length > 1 && (
@@ -262,23 +283,6 @@ export function GroupChannelConfigModal({
         {saveError && (
           <p className="text-sm text-destructive" role="alert">{saveError}</p>
         )}
-
-        <div className="flex items-center gap-3 pt-1">
-          <button
-            type="submit"
-            disabled={saving || !selectedGroup}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-md text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="border border-border bg-background text-foreground hover:bg-muted px-4 py-2 rounded-md text-sm"
-          >
-            Cancel
-          </button>
-        </div>
       </form>
     </Modal>
   )

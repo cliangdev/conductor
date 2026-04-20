@@ -20,6 +20,7 @@ vi.mock('../lib/oauth-server.js', () => ({
   waitForOAuthCallback: vi.fn(),
 }))
 vi.mock('open', () => ({ default: vi.fn() }))
+vi.mock('../commands/start.js', () => ({ startDaemon: vi.fn().mockResolvedValue(true) }))
 vi.mock('../lib/api.js', () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
@@ -451,6 +452,88 @@ describe('installPluginAssets', () => {
     expect(content).toContain('Phase 4')
     expect(content).toContain('create_issue')
     expect(content).toContain('scaffold_document')
+  })
+})
+
+describe('multi-project: projects map is merged on init', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    vi.mocked(child_process.execSync).mockReturnValue('/tmp/project-b\n' as unknown as Buffer)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200, ok: true }))
+    vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined)
+    vi.mocked(fs.readFileSync).mockImplementation(() => { throw new Error('ENOENT') })
+    vi.mocked(fs.writeFileSync).mockReturnValue(undefined)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('adds new project to existing projects map without overwriting others', async () => {
+    const { readConfig, writeConfig } = await import('../lib/config.js')
+    const existingConfig = {
+      ...validConfig,
+      localPath: '/tmp/project-a',
+      projects: {
+        proj_test123: { localPath: '/tmp/project-a', projectName: 'Test Project' },
+      },
+    }
+    vi.mocked(readConfig).mockReturnValue(existingConfig)
+
+    const projectBId = 'proj_bbb'
+    const { apiGet } = await import('../lib/api.js')
+    vi.mocked(apiGet as (...a: unknown[]) => unknown).mockResolvedValue({ id: projectBId, name: 'Project B' })
+
+    const { Command } = await import('commander')
+    const { registerInit } = await import('../commands/init.js')
+    const program = new Command()
+    program.exitOverride()
+    registerInit(program)
+    await program.parseAsync(['node', 'conductor', 'init', '--project-id', projectBId])
+
+    const savedConfig = vi.mocked(writeConfig).mock.calls.at(-1)?.[0]
+    expect(savedConfig?.projects?.['proj_test123']).toEqual({
+      localPath: '/tmp/project-a',
+      projectName: 'Test Project',
+    })
+    expect(savedConfig?.projects?.[projectBId]).toEqual({
+      localPath: '/tmp/project-b',
+      projectName: 'Project B',
+    })
+  })
+
+  it('creates projects map from legacy config on first multi-project init', async () => {
+    const { readConfig, writeConfig } = await import('../lib/config.js')
+    const legacyConfig = {
+      ...validConfig,
+      localPath: '/tmp/project-a',
+    }
+    vi.mocked(readConfig).mockReturnValue(legacyConfig)
+
+    const { apiGet } = await import('../lib/api.js')
+    vi.mocked(apiGet as (...a: unknown[]) => unknown).mockResolvedValue({ id: 'proj_bbb', name: 'Project B' })
+
+    const { Command } = await import('commander')
+    const { registerInit } = await import('../commands/init.js')
+    const program = new Command()
+    program.exitOverride()
+    registerInit(program)
+    await program.parseAsync(['node', 'conductor', 'init', '--project-id', 'proj_bbb'])
+
+    const savedConfig = vi.mocked(writeConfig).mock.calls.at(-1)?.[0]
+    // Original project preserved
+    expect(savedConfig?.projects?.['proj_test123']).toEqual({
+      localPath: '/tmp/project-a',
+      projectName: 'Test Project',
+    })
+    // New project added
+    expect(savedConfig?.projects?.['proj_bbb']).toEqual({
+      localPath: '/tmp/project-b',
+      projectName: 'Project B',
+    })
   })
 })
 

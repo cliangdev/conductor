@@ -739,6 +739,133 @@ describe('queueChange and replayQueue', () => {
   })
 })
 
+// ─── Multi-project: getAllWatchPaths ──────────────────────────────────────────
+
+describe('getAllWatchPaths', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('returns issues dirs for all entries in the projects map', async () => {
+    const { getAllWatchPaths } = await import('../daemon/watcher.js')
+    const config = {
+      ...mockConfig,
+      projects: {
+        proj_a: { localPath: '/home/user/project-a', projectName: 'Project A' },
+        proj_b: { localPath: '/home/user/project-b', projectName: 'Project B' },
+      },
+    }
+    const result = getAllWatchPaths(config)
+    expect(result).toContain('/home/user/project-a/.conductor/issues')
+    expect(result).toContain('/home/user/project-b/.conductor/issues')
+  })
+
+  it('deduplicates when localPath matches a projects entry', async () => {
+    const { getAllWatchPaths } = await import('../daemon/watcher.js')
+    const config = {
+      ...mockConfig,
+      localPath: '/home/user/myproject',
+      projects: {
+        proj_123: { localPath: '/home/user/myproject', projectName: 'Test Project' },
+      },
+    }
+    const result = getAllWatchPaths(config)
+    const issuesPath = '/home/user/myproject/.conductor/issues'
+    expect(result.filter(p => p === issuesPath)).toHaveLength(1)
+  })
+
+  it('falls back to legacy localPath when projects map is absent', async () => {
+    const { getAllWatchPaths } = await import('../daemon/watcher.js')
+    const result = getAllWatchPaths(mockConfig)
+    expect(result).toEqual(['/home/user/myproject/.conductor/issues'])
+  })
+
+  it('returns empty array when neither projects nor localPath is set', async () => {
+    const { getAllWatchPaths } = await import('../daemon/watcher.js')
+    const config = { ...mockConfig, localPath: undefined, projects: undefined }
+    const result = getAllWatchPaths(config)
+    expect(result).toHaveLength(0)
+  })
+})
+
+// ─── Multi-project: resolveProjectIdForFile ───────────────────────────────────
+
+describe('resolveProjectIdForFile', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('returns matching projectId when file is under a known project path', async () => {
+    const { resolveProjectIdForFile } = await import('../daemon/watcher.js')
+    const config = {
+      ...mockConfig,
+      projects: {
+        proj_a: { localPath: '/home/user/project-a', projectName: 'Project A' },
+        proj_b: { localPath: '/home/user/project-b', projectName: 'Project B' },
+      },
+    }
+    const filePath = '/home/user/project-b/.conductor/issues/iss_xyz/prd.md'
+    expect(resolveProjectIdForFile(filePath, config)).toBe('proj_b')
+  })
+
+  it('falls back to config.projectId when file does not match any project', async () => {
+    const { resolveProjectIdForFile } = await import('../daemon/watcher.js')
+    const config = {
+      ...mockConfig,
+      projects: {
+        proj_a: { localPath: '/home/user/project-a', projectName: 'Project A' },
+      },
+    }
+    const filePath = '/home/user/unknown-project/.conductor/issues/iss_xyz/prd.md'
+    expect(resolveProjectIdForFile(filePath, config)).toBe('proj_123')
+  })
+
+  it('returns config.projectId when projects map is absent', async () => {
+    const { resolveProjectIdForFile } = await import('../daemon/watcher.js')
+    const filePath = '/home/user/myproject/.conductor/issues/iss_abc/prd.md'
+    expect(resolveProjectIdForFile(filePath, mockConfig)).toBe('proj_123')
+  })
+})
+
+// ─── Multi-project: syncFile routes to correct project ───────────────────────
+
+describe('syncFile multi-project routing', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('uses the project matching the file path, not config.projectId', async () => {
+    mockFs.readFileSync.mockReturnValue('# PRD content')
+
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncFile } = await import('../daemon/watcher.js')
+
+    const multiProjectConfig = {
+      ...mockConfig,
+      projectId: 'proj_a',
+      localPath: '/home/user/project-a',
+      projects: {
+        proj_a: { localPath: '/home/user/project-a', projectName: 'Project A' },
+        proj_b: { localPath: '/home/user/project-b', projectName: 'Project B' },
+      },
+    }
+
+    // File belongs to project-b, not the active project-a
+    const filePath = '/home/user/project-b/.conductor/issues/iss_xyz/prd.md'
+    await syncFile(filePath, () => multiProjectConfig)
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/projects/proj_b/issues/iss_xyz/documents/prd.md'),
+      expect.objectContaining({ method: 'PUT' })
+    )
+
+    vi.unstubAllGlobals()
+  })
+})
+
 // ─── T4.6: log rotation ───────────────────────────────────────────────────────
 
 describe('rotateDaemonLogIfNeeded', () => {

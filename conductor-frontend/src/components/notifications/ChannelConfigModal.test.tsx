@@ -7,15 +7,18 @@ vi.mock('@/components/ui/modal', () => ({
     open,
     children,
     title,
+    footer,
   }: {
     open: boolean
     children: React.ReactNode
     title: string
+    footer?: React.ReactNode
   }) =>
     open ? (
       <div data-testid="modal">
         <h2>{title}</h2>
         {children}
+        {footer}
       </div>
     ) : null,
 }))
@@ -159,7 +162,7 @@ describe('GroupChannelConfigModal', () => {
     )
     const urlInput = screen.getByLabelText(/webhook url/i)
     await userEvent.clear(urlInput)
-    fireEvent.submit(screen.getByRole('button', { name: /save/i }).closest('form')!)
+    fireEvent.submit(document.querySelector('#channel-form')!)
     expect(await screen.findByText(/webhook url is required/i)).toBeInTheDocument()
   })
 

@@ -1,11 +1,15 @@
 package com.conductor.service;
 
+import com.conductor.entity.OrgInvite;
 import com.conductor.entity.OrgMember;
 import com.conductor.entity.Organization;
 import com.conductor.entity.TeamMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
+import com.conductor.generated.model.OrgInviteResponse;
+import com.conductor.repository.OrgInviteRepository;
 import com.conductor.repository.OrgMemberRepository;
 import com.conductor.repository.OrgRepository;
 import com.conductor.repository.TeamMemberRepository;
@@ -18,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class OrgMemberService {
@@ -34,6 +39,7 @@ public class OrgMemberService {
 
     private final OrgRepository orgRepository;
     private final OrgMemberRepository orgMemberRepository;
+    private final OrgInviteRepository orgInviteRepository;
     private final UserRepository userRepository;
     private final EmailService emailService;
     private final TeamMemberRepository teamMemberRepository;
@@ -41,11 +47,13 @@ public class OrgMemberService {
     public OrgMemberService(
             OrgRepository orgRepository,
             OrgMemberRepository orgMemberRepository,
+            OrgInviteRepository orgInviteRepository,
             UserRepository userRepository,
             EmailService emailService,
             TeamMemberRepository teamMemberRepository) {
         this.orgRepository = orgRepository;
         this.orgMemberRepository = orgMemberRepository;
+        this.orgInviteRepository = orgInviteRepository;
         this.userRepository = userRepository;
         this.emailService = emailService;
         this.teamMemberRepository = teamMemberRepository;
@@ -71,7 +79,7 @@ public class OrgMemberService {
     }
 
     @Transactional
-    public void inviteMember(String orgId, String inviterUserId, String email, OrgMember.OrgRole role) {
+    public OrgInviteResponse inviteMember(String orgId, String inviterUserId, String email, OrgMember.OrgRole role) {
         Organization org = orgRepository.findById(orgId)
                 .orElseThrow(() -> new EntityNotFoundException("Org not found: " + orgId));
 
@@ -87,15 +95,85 @@ public class OrgMemberService {
 
         userRepository.findByEmail(email).ifPresent(existingUser -> {
             orgMemberRepository.findByOrgIdAndUserId(orgId, existingUser.getId()).ifPresent(existing -> {
-                throw new BusinessException("User is already a member of this org");
+                throw new ConflictException("User is already a member of this org");
             });
         });
+
+        orgInviteRepository.findByOrgIdAndEmailAndStatus(orgId, email, "PENDING").ifPresent(existing -> {
+            throw new ConflictException("Invite already pending for this email");
+        });
+
+        OrgInvite invite = new OrgInvite();
+        invite.setOrg(org);
+        invite.setEmail(email);
+        invite.setRole(role);
+        invite.setToken(UUID.randomUUID().toString());
+        invite.setInvitedBy(inviter);
+        invite.setExpiresAt(OffsetDateTime.now().plusHours(72));
+        orgInviteRepository.save(invite);
 
         try {
             emailService.sendOrgInviteEmail(email, inviter.getName(), org.getName());
         } catch (Exception e) {
             log.warn("Failed to send org invite email to {}: {}", email, e.getMessage());
         }
+
+        return toOrgInviteResponse(invite);
+    }
+
+    @Transactional(readOnly = true)
+    public List<OrgInviteResponse> listPendingInvites(String orgId, String callerUserId) {
+        orgRepository.findById(orgId)
+                .orElseThrow(() -> new EntityNotFoundException("Org not found: " + orgId));
+
+        OrgMember callerMembership = orgMemberRepository.findByOrgIdAndUserId(orgId, callerUserId)
+                .orElseThrow(() -> new ForbiddenException("You are not a member of this org"));
+
+        if (callerMembership.getRole() != OrgMember.OrgRole.ADMIN) {
+            throw new ForbiddenException("Only org admins can list invites");
+        }
+
+        return orgInviteRepository.findByOrgIdAndStatus(orgId, "PENDING").stream()
+                .map(this::toOrgInviteResponse)
+                .toList();
+    }
+
+    @Transactional
+    public OrgInviteResponse resendInvite(String orgId, String inviteId, String callerUserId) {
+        orgRepository.findById(orgId)
+                .orElseThrow(() -> new EntityNotFoundException("Org not found: " + orgId));
+
+        OrgMember callerMembership = orgMemberRepository.findByOrgIdAndUserId(orgId, callerUserId)
+                .orElseThrow(() -> new ForbiddenException("You are not a member of this org"));
+
+        if (callerMembership.getRole() != OrgMember.OrgRole.ADMIN) {
+            throw new ForbiddenException("Only org admins can resend invites");
+        }
+
+        OrgInvite invite = orgInviteRepository.findById(inviteId)
+                .orElseThrow(() -> new EntityNotFoundException("Invite not found: " + inviteId));
+
+        invite.setToken(UUID.randomUUID().toString());
+        invite.setExpiresAt(OffsetDateTime.now().plusHours(72));
+        orgInviteRepository.save(invite);
+
+        try {
+            emailService.sendOrgInviteEmail(invite.getEmail(), callerMembership.getUser().getName(), invite.getOrg().getName());
+        } catch (Exception e) {
+            log.warn("Failed to resend org invite email to {}: {}", invite.getEmail(), e.getMessage());
+        }
+
+        return toOrgInviteResponse(invite);
+    }
+
+    private OrgInviteResponse toOrgInviteResponse(OrgInvite invite) {
+        return new OrgInviteResponse()
+                .id(invite.getId())
+                .email(invite.getEmail())
+                .role(OrgInviteResponse.RoleEnum.fromValue(invite.getRole().name()))
+                .token(invite.getToken())
+                .status(invite.getStatus())
+                .expiresAt(invite.getExpiresAt());
     }
 
     @Transactional

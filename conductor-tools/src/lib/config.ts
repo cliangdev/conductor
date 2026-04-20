@@ -2,6 +2,11 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 
+export interface ProjectEntry {
+  localPath: string
+  projectName: string
+}
+
 export interface Config {
   apiKey: string
   projectId: string
@@ -11,6 +16,7 @@ export interface Config {
   frontendUrl?: string
   localPath?: string
   maxConcurrentRuns?: number
+  projects?: Record<string, ProjectEntry>
 }
 
 export const CONFIG_PATH = path.join(os.homedir(), '.conductor', 'config.json')
@@ -20,6 +26,12 @@ export function readConfig(): Config | null {
     const raw = fs.readFileSync(CONFIG_PATH, 'utf8')
     const parsed = JSON.parse(raw) as unknown
     if (!isConfig(parsed)) return null
+    // Synthesize projects map from legacy single-project fields for backward compat
+    if (!parsed.projects && parsed.projectId && parsed.localPath) {
+      parsed.projects = {
+        [parsed.projectId]: { localPath: parsed.localPath, projectName: parsed.projectName },
+      }
+    }
     return parsed
   } catch {
     return null

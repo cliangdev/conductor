@@ -82,15 +82,6 @@ export function buildMcpJson(existing: McpJson): McpJson {
   }
 }
 
-async function askYesNo(question: string): Promise<boolean> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-  return new Promise(resolve => {
-    rl.question(question, answer => {
-      rl.close()
-      resolve(answer.trim().toLowerCase() !== 'n')
-    })
-  })
-}
 
 async function isKeyValid(apiUrl: string, apiKey: string): Promise<boolean> {
   try {
@@ -166,6 +157,8 @@ Examples:
       const frontendUrl = process.env['CONDUCTOR_FRONTEND_URL'] ?? 'https://conductor-frontend-199707291514.us-central1.run.app'
 
       let config = readConfig()
+      // Capture original projects before any mutations so we can merge into it later
+      const originalConfig = config
 
       if (config) {
         const authSpinner = ora('Checking authentication...').start()
@@ -299,21 +292,23 @@ Examples:
       writeMcpJson(workingDir, buildMcpJson(existing))
       console.log(chalk.green('✓ Updated .mcp.json'))
 
-      writeConfig({ ...config, localPath: projectRoot })
+      const legacyEntry =
+        originalConfig?.projectId && originalConfig?.localPath
+          ? { [originalConfig.projectId]: { localPath: originalConfig.localPath, projectName: originalConfig.projectName } }
+          : {}
+      const existingProjects = originalConfig?.projects ?? legacyEntry
+      const updatedProjects = {
+        ...existingProjects,
+        [config.projectId]: { localPath: projectRoot, projectName: config.projectName },
+      }
+      writeConfig({ ...config, localPath: projectRoot, projects: updatedProjects })
 
-      if (process.stdin.isTTY) {
-        console.log()
-        const shouldSync = await askYesNo('Start syncing now? [Y/n] ')
-        if (shouldSync) {
-          const ok = await startDaemon()
-          if (ok) {
-            console.log(chalk.green('✓ Sync daemon started'))
-          } else {
-            console.log(chalk.red('✗ Daemon failed to start — run `conductor start` to retry'))
-          }
-        } else {
-          console.log(chalk.dim('  Run `conductor start` when ready.'))
-        }
+      console.log()
+      const ok = await startDaemon()
+      if (ok) {
+        console.log(chalk.green('✓ Sync daemon started'))
+      } else {
+        console.log(chalk.red('✗ Daemon failed to start — run `conductor start` to retry'))
       }
       printNextSteps()
       process.exit(0)

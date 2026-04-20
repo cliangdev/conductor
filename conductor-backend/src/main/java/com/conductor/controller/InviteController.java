@@ -3,9 +3,11 @@ package com.conductor.controller;
 import com.conductor.entity.User;
 import com.conductor.generated.api.InvitesApi;
 import com.conductor.generated.model.AcceptInviteResponse;
+import com.conductor.generated.model.AcceptOrgInviteResponse;
 import com.conductor.generated.model.CreateInviteRequest;
 import com.conductor.generated.model.InviteResponse;
 import com.conductor.service.InviteService;
+import com.conductor.service.OrgInviteService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,9 +20,11 @@ import java.util.List;
 public class InviteController implements InvitesApi {
 
     private final InviteService inviteService;
+    private final OrgInviteService orgInviteService;
 
-    public InviteController(InviteService inviteService) {
+    public InviteController(InviteService inviteService, OrgInviteService orgInviteService) {
         this.inviteService = inviteService;
+        this.orgInviteService = orgInviteService;
     }
 
     @Override
@@ -52,6 +56,13 @@ public class InviteController implements InvitesApi {
     public ResponseEntity<AcceptInviteResponse> acceptInvite(String token) {
         User caller = currentUser();
         AcceptInviteResponse response = inviteService.acceptInvite(token, caller);
+        return ResponseEntity.ok(response);
+    }
+
+    @Override
+    public ResponseEntity<AcceptOrgInviteResponse> acceptOrgInvite(String token) {
+        User caller = currentUser();
+        AcceptOrgInviteResponse response = orgInviteService.acceptInvite(token, caller);
         return ResponseEntity.ok(response);
     }
 

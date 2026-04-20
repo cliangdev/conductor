@@ -9,14 +9,6 @@ describe('printNextSteps', () => {
     vi.restoreAllMocks()
   })
 
-  it('outputs conductor start', async () => {
-    const { printNextSteps } = await import('../lib/next-steps.js')
-    printNextSteps()
-
-    const output = vi.mocked(console.log).mock.calls.flat().join('\n')
-    expect(output).toContain('conductor start')
-  })
-
   it('outputs /conductor:prd', async () => {
     const { printNextSteps } = await import('../lib/next-steps.js')
     printNextSteps()

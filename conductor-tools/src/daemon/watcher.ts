@@ -82,6 +82,30 @@ export function queueChange(entry: Omit<QueueEntry, 'timestamp'>): void {
   writeQueue(entries)
 }
 
+export function getAllWatchPaths(config: Config): string[] {
+  const paths = new Set<string>()
+  if (config.projects) {
+    for (const proj of Object.values(config.projects)) {
+      paths.add(path.join(proj.localPath, '.conductor', 'issues'))
+    }
+  }
+  if (config.localPath) {
+    paths.add(path.join(config.localPath, '.conductor', 'issues'))
+  }
+  return Array.from(paths)
+}
+
+export function resolveProjectIdForFile(filePath: string, config: Config): string {
+  const normalized = filePath.replace(/\\/g, '/')
+  if (config.projects) {
+    for (const [projectId, proj] of Object.entries(config.projects)) {
+      const prefix = proj.localPath.replace(/\\/g, '/') + '/.conductor/issues/'
+      if (normalized.startsWith(prefix)) return projectId
+    }
+  }
+  return config.projectId
+}
+
 async function callApi(
   method: string,
   apiPath: string,
@@ -120,7 +144,8 @@ export async function syncFile(filePath: string, getConfig: () => Config): Promi
   }
 
   const config = getConfig()
-  const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
+  const projectId = resolveProjectIdForFile(filePath, config)
+  const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
   const body = { content, contentType: 'text/markdown' }
 
   try {
@@ -139,7 +164,8 @@ export async function deleteFile(filePath: string, getConfig: () => Config): Pro
   if (parsed.filename === 'issue.md') return
 
   const config = getConfig()
-  const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
+  const projectId = resolveProjectIdForFile(filePath, config)
+  const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
 
   try {
     await callApi('DELETE', apiPath, undefined, getConfig)
@@ -182,7 +208,8 @@ export async function syncIssueMd(filePath: string, getConfig: () => Config): Pr
   if (Object.keys(patchBody).length === 0) return
 
   const config = getConfig()
-  const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}`
+  const projectId = resolveProjectIdForFile(filePath, config)
+  const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}`
 
   try {
     await callApi('PATCH', apiPath, patchBody, getConfig)
@@ -207,7 +234,8 @@ export async function syncTasksJson(filePath: string, getConfig: () => Config): 
 
   const tasks = JSON.parse(content)
   const config = getConfig()
-  const apiPath = `/api/v1/projects/${config.projectId}/issues/${parsed.issueId}/tasks`
+  const projectId = resolveProjectIdForFile(filePath, config)
+  const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/tasks`
 
   try {
     await callApi('PUT', apiPath, tasks, getConfig)
@@ -220,20 +248,21 @@ export async function syncTasksJson(filePath: string, getConfig: () => Config): 
 
 export async function syncExistingTasksFiles(getConfig: () => Config): Promise<void> {
   const config = getConfig()
-  if (!config.localPath) return
-  const issuesDir = path.join(config.localPath, '.conductor', 'issues')
-  let issueDirs: string[]
-  try {
-    issueDirs = fs.readdirSync(issuesDir)
-  } catch {
-    return
-  }
-  for (const issueId of issueDirs) {
-    const tasksPath = path.join(issuesDir, issueId, 'tasks.json')
-    if (fs.existsSync(tasksPath)) {
-      await syncTasksJson(tasksPath, getConfig).catch((err) => {
-        console.error(`Startup sync failed for ${tasksPath}: ${(err as Error).message}`)
-      })
+  const watchPaths = getAllWatchPaths(config)
+  for (const issuesDir of watchPaths) {
+    let issueDirs: string[]
+    try {
+      issueDirs = fs.readdirSync(issuesDir)
+    } catch {
+      continue
+    }
+    for (const issueId of issueDirs) {
+      const tasksPath = path.join(issuesDir, issueId, 'tasks.json')
+      if (fs.existsSync(tasksPath)) {
+        await syncTasksJson(tasksPath, getConfig).catch((err) => {
+          console.error(`Startup sync failed for ${tasksPath}: ${(err as Error).message}`)
+        })
+      }
     }
   }
 }
@@ -265,15 +294,17 @@ export async function replayQueue(getConfig: () => Config): Promise<void> {
 
 export function startWatcher(getConfig: () => Config): void {
   const config = getConfig()
-  if (!config.localPath) {
-    console.error('localPath not set in config — run conductor init first')
+  const watchPaths = getAllWatchPaths(config)
+  if (watchPaths.length === 0) {
+    console.error('No project paths configured — run conductor init first')
     process.exit(1)
   }
 
-  const watchPath = path.join(config.localPath, '.conductor', 'issues')
-  console.log(`Watching: ${watchPath}`)
+  for (const watchPath of watchPaths) {
+    console.log(`Watching: ${watchPath}`)
+  }
 
-  const watcher = chokidar.watch(watchPath, { ignoreInitial: true, persistent: true, depth: 2 })
+  const watcher = chokidar.watch(watchPaths, { ignoreInitial: true, persistent: true, depth: 2 })
 
   watcher
     .on('add', (filePath) => debounce(filePath, () => {
