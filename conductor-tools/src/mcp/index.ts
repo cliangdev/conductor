@@ -2,7 +2,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { getConfig } from './config.js'
+import { getConfig, resolveProjectIdByCwd } from './config.js'
 import { createIssue, updateIssue, setIssueStatus, listIssues, getIssue } from './tools/issues.js'
 import { deleteDocument, scaffoldDocument } from './tools/documents.js'
 import { listIssueComments } from './tools/comments.js'
@@ -158,6 +158,7 @@ export async function runMcpServer(): Promise<void> {
     let config
     try {
       config = getConfig()
+      config.projectId = resolveProjectIdByCwd(config)
     } catch {
       return authErrorResponse()
     }
