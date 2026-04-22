@@ -8,8 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet, listProjectRepositories, addProjectRepository, updateProjectRepository, deleteProjectRepository } from '@/lib/api'
-import type { ProjectRepository } from '@/lib/api'
+import { apiGet, listProjectRepositories, addProjectRepository, updateProjectRepository, deleteProjectRepository, listWebhookEvents } from '@/lib/api'
+import type { ProjectRepository, WebhookEventSummary } from '@/lib/api'
 import type { Member } from '@/types'
 
 interface ApiError extends Error {
@@ -36,6 +36,9 @@ export default function GitHubSettingsPage() {
   const [reposError, setReposError] = useState<string | null>(null)
 
   const [copied, setCopied] = useState(false)
+
+  const [webhookEvents, setWebhookEvents] = useState<WebhookEventSummary[]>([])
+  const [eventsLoading, setEventsLoading] = useState(true)
 
   const [addOpen, setAddOpen] = useState(false)
   const [addLabel, setAddLabel] = useState('')
@@ -84,8 +87,21 @@ export default function GitHubSettingsPage() {
     }
   }, [accessToken, projectId])
 
+  const fetchWebhookEvents = useCallback(async () => {
+    if (!accessToken) return
+    try {
+      const data = await listWebhookEvents(projectId, accessToken)
+      setWebhookEvents(data)
+    } catch {
+      // non-fatal
+    } finally {
+      setEventsLoading(false)
+    }
+  }, [accessToken, projectId])
+
   useEffect(() => { fetchMembers() }, [fetchMembers])
   useEffect(() => { fetchRepositories() }, [fetchRepositories])
+  useEffect(() => { fetchWebhookEvents() }, [fetchWebhookEvents])
 
   const currentUserRole = members.find((m) => m.userId === user?.id)?.role
   const isAdmin = currentUserRole === 'ADMIN'
@@ -280,7 +296,8 @@ export default function GitHubSettingsPage() {
           </Button>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          Enter this URL in your GitHub repository&apos;s webhook settings.
+          Enter this URL in your GitHub repository&apos;s webhook settings. Make sure to select{' '}
+          <strong>Pull requests</strong> under &ldquo;Let me select individual events&rdquo; so PR merges trigger status updates.
         </p>
       </div>
 
@@ -340,6 +357,51 @@ export default function GitHubSettingsPage() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* Recent Webhook Events */}
+      <div className="bg-card rounded-lg border border-border p-6 mt-6">
+        <h2 className="text-base font-semibold text-foreground mb-4">Recent Webhook Events</h2>
+        {eventsLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : webhookEvents.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No webhook events received yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground border-b border-border">
+                  <th className="pb-2 pr-4 font-medium">Time</th>
+                  <th className="pb-2 pr-4 font-medium">Event type</th>
+                  <th className="pb-2 pr-4 font-medium">Status</th>
+                  <th className="pb-2 font-medium">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {webhookEvents.map((event) => (
+                  <tr key={event.id}>
+                    <td className="py-2 pr-4 text-muted-foreground whitespace-nowrap">
+                      {new Date(event.createdAt).toLocaleString()}
+                    </td>
+                    <td className="py-2 pr-4 font-mono">{event.eventType}</td>
+                    <td className="py-2 pr-4">
+                      <span className={
+                        event.status === 'PROCESSED' ? 'text-green-600 dark:text-green-400' :
+                        event.status === 'PENDING' ? 'text-yellow-600 dark:text-yellow-400' :
+                        'text-destructive'
+                      }>
+                        {event.status}
+                      </span>
+                    </td>
+                    <td className="py-2 text-muted-foreground text-xs">
+                      {event.errorMessage ?? (event.status === 'PROCESSED' ? '—' : '')}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

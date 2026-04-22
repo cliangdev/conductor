@@ -45,6 +45,20 @@ export function deleteProjectRepository(
   return apiDelete(`/api/v1/projects/${projectId}/repositories/${repositoryId}`, token)
 }
 
+export interface WebhookEventSummary {
+  id: string
+  deliveryId?: string
+  eventType: string
+  status: 'PENDING' | 'PROCESSED' | 'FAILED' | 'DEAD'
+  attempts: number
+  errorMessage?: string
+  createdAt: string
+}
+
+export function listWebhookEvents(projectId: string, token: string): Promise<WebhookEventSummary[]> {
+  return apiGet<WebhookEventSummary[]>(`/api/v1/projects/${projectId}/github/webhook-events`, token)
+}
+
 export async function apiGet<T>(path: string, token: string): Promise<T> {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },

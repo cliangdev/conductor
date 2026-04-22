@@ -1995,6 +1995,32 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/github/webhook-events:
+    get:
+      tags:
+        - github
+      summary: List recent GitHub webhook events (Admin only)
+      operationId: listGitHubWebhookEvents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Recent webhook events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WebhookEventSummary"
+        "403":
+          description: Access denied
+
   /projects/{projectId}/github/webhook:
     post:
       tags:
@@ -5031,6 +5057,32 @@ components:
           type: boolean
           description: True if a webhook secret is set (value is never returned)
         connectedAt:
+          type: string
+          format: date-time
+
+    WebhookEventSummary:
+      type: object
+      required:
+        - id
+        - eventType
+        - status
+        - attempts
+        - createdAt
+      properties:
+        id:
+          type: string
+        deliveryId:
+          type: string
+        eventType:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, PROCESSED, FAILED, DEAD]
+        attempts:
+          type: integer
+        errorMessage:
+          type: string
+        createdAt:
           type: string
           format: date-time
 
