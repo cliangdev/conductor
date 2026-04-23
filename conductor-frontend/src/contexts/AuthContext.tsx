@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import type { User, AuthResponse } from '@/types'
-import { apiPost } from '@/lib/api'
+import { apiPost, setOnUnauthorized } from '@/lib/api'
 
 interface AuthContextValue {
   user: User | null
@@ -37,7 +37,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  function clearLocalAuth() {
+    setUser(null)
+    setAccessToken(null)
+    localStorage.removeItem('access_token')
+    localStorage.removeItem('user')
+    clearAccessTokenCookie()
+  }
+
   useEffect(() => {
+    setOnUnauthorized(() => {
+      clearLocalAuth()
+      window.location.href = '/login'
+    })
+
     const storedToken = localStorage.getItem('access_token')
     const storedUser = localStorage.getItem('user')
     if (storedToken) {

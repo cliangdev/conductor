@@ -1,3 +1,8 @@
+let onUnauthorized: (() => void) | null = null
+export function setOnUnauthorized(cb: () => void) {
+  onUnauthorized = cb
+}
+
 export interface ProjectRepository {
   id: string
   label: string
@@ -40,11 +45,26 @@ export function deleteProjectRepository(
   return apiDelete(`/api/v1/projects/${projectId}/repositories/${repositoryId}`, token)
 }
 
+export interface WebhookEventSummary {
+  id: string
+  deliveryId?: string
+  eventType: string
+  status: 'PENDING' | 'PROCESSED' | 'FAILED' | 'DEAD'
+  attempts: number
+  errorMessage?: string
+  createdAt: string
+}
+
+export function listWebhookEvents(projectId: string, token: string): Promise<WebhookEventSummary[]> {
+  return apiGet<WebhookEventSummary[]>(`/api/v1/projects/${projectId}/github/webhook-events`, token)
+}
+
 export async function apiGet<T>(path: string, token: string): Promise<T> {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (!res.ok) {
+    if (res.status === 401) onUnauthorized?.()
     const err = new Error(`API error: ${res.status}`) as Error & { status: number }
     err.status = res.status
     throw err
@@ -62,6 +82,7 @@ export async function apiPost<T>(path: string, body: unknown, token?: string): P
     body: JSON.stringify(body),
   })
   if (!res.ok) {
+    if (res.status === 401 && token) onUnauthorized?.()
     const err = new Error(`API error: ${res.status}`) as Error & { status: number }
     err.status = res.status
     throw err
@@ -79,6 +100,7 @@ export async function apiPatch<T>(path: string, body: unknown, token: string): P
     body: JSON.stringify(body),
   })
   if (!res.ok) {
+    if (res.status === 401) onUnauthorized?.()
     const err = new Error(`API error: ${res.status}`) as Error & { status: number }
     err.status = res.status
     throw err
@@ -96,6 +118,7 @@ export async function apiPut<T>(path: string, body: unknown, token: string): Pro
     body: JSON.stringify(body),
   })
   if (!res.ok) {
+    if (res.status === 401) onUnauthorized?.()
     const err = new Error(`API error: ${res.status}`) as Error & { status: number }
     err.status = res.status
     throw err
@@ -109,6 +132,7 @@ export async function apiDelete(path: string, token: string): Promise<void> {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (!res.ok) {
+    if (res.status === 401) onUnauthorized?.()
     const err = new Error(`API error: ${res.status}`) as Error & { status: number }
     err.status = res.status
     throw err

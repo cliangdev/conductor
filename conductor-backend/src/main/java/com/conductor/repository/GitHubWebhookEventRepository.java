@@ -15,6 +15,8 @@ public interface GitHubWebhookEventRepository extends JpaRepository<GitHubWebhoo
 
     List<GitHubWebhookEvent> findByProjectIdAndStatus(String projectId, WebhookEventStatus status);
 
+    List<GitHubWebhookEvent> findTop20ByProjectIdOrderByCreatedAtDesc(String projectId);
+
     @Query("SELECT e FROM GitHubWebhookEvent e WHERE e.status = 'FAILED' AND e.attempts < :maxAttempts AND (e.lastAttemptedAt IS NULL OR e.lastAttemptedAt < :cutoff)")
     List<GitHubWebhookEvent> findRetryableEvents(int maxAttempts, OffsetDateTime cutoff);
 }

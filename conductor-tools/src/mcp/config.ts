@@ -31,6 +31,21 @@ function isConfig(value: unknown): value is Config {
   )
 }
 
+export function resolveProjectIdByCwd(config: Config, cwd: string = process.cwd()): string {
+  if (!config.projects) return config.projectId
+  const normalizedCwd = cwd.replace(/\\/g, '/')
+  let bestMatch: { projectId: string; pathLen: number } | null = null
+  for (const [projectId, proj] of Object.entries(config.projects)) {
+    const normalizedPath = proj.localPath.replace(/\\/g, '/')
+    if (normalizedCwd === normalizedPath || normalizedCwd.startsWith(normalizedPath + '/')) {
+      if (!bestMatch || normalizedPath.length > bestMatch.pathLen) {
+        bestMatch = { projectId, pathLen: normalizedPath.length }
+      }
+    }
+  }
+  return bestMatch?.projectId ?? config.projectId
+}
+
 export function getConfig(): Config {
   try {
     const raw = fs.readFileSync(CONFIG_PATH, 'utf8')

@@ -15,6 +15,7 @@ vi.mock('firebase/auth', () => ({
 
 vi.mock('@/lib/api', () => ({
   apiPost: vi.fn(),
+  setOnUnauthorized: vi.fn(),
 }))
 
 import * as firebaseAuth from 'firebase/auth'

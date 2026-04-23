@@ -58,7 +58,13 @@ public class GitHubWebhookProcessor {
     }
 
     private void doProcess(GitHubWebhookEvent event) throws Exception {
-        if (!"pull_request".equals(event.getEventType())) return;
+        log.info("Processing webhook event {} type={} project={}", event.getId(), event.getEventType(), event.getProjectId());
+
+        if (!"pull_request".equals(event.getEventType())) {
+            log.warn("Skipping event {} - unsupported event type '{}' (expected 'pull_request'). " +
+                    "Ensure the GitHub webhook is configured to send Pull Request events.", event.getId(), event.getEventType());
+            return;
+        }
 
         JsonNode root = objectMapper.readTree(event.getPayload());
 
@@ -67,25 +73,43 @@ public class GitHubWebhookProcessor {
 
         boolean isOpenEvent = "opened".equals(action) || "reopened".equals(action) || "synchronize".equals(action);
         boolean isMergeEvent = "closed".equals(action) && merged;
-        if (!isOpenEvent && !isMergeEvent) return;
+        if (!isOpenEvent && !isMergeEvent) {
+            log.info("Skipping event {} - action='{}' merged={} is not an open or merge event", event.getId(), action, merged);
+            return;
+        }
 
         String prBody = root.path("pull_request").path("body").asText("");
         String prUrl = root.path("pull_request").path("html_url").asText("");
 
         Matcher matcher = CLOSES_PATTERN.matcher(prBody);
-        if (!matcher.find()) return;
+        if (!matcher.find()) {
+            log.warn("Skipping event {} - PR body does not contain 'closes conductor/ISSUE-KEY' pattern. PR: {}", event.getId(), prUrl);
+            return;
+        }
         String displayId = matcher.group(1).toUpperCase();
         String[] parts = displayId.split("-");
         String projectKey = parts[0];
         int sequenceNumber = Integer.parseInt(parts[1]);
+        log.info("Event {} matched issue {}-{} from PR: {}", event.getId(), projectKey, sequenceNumber, prUrl);
 
         Issue issue = issueRepository.findByProjectKeyAndSequenceNumber(projectKey, sequenceNumber).orElse(null);
-        if (issue == null || !issue.getProject().getId().equals(event.getProjectId())) return;
+        if (issue == null) {
+            log.warn("Skipping event {} - no issue found for key {}-{}", event.getId(), projectKey, sequenceNumber);
+            return;
+        }
+        if (!issue.getProject().getId().equals(event.getProjectId())) {
+            log.warn("Skipping event {} - issue {}-{} belongs to project {} but webhook is for project {}",
+                    event.getId(), projectKey, sequenceNumber, issue.getProject().getId(), event.getProjectId());
+            return;
+        }
 
         issue.setGithubPrUrl(prUrl.isBlank() ? null : prUrl);
 
         if (isMergeEvent && issue.getStatus() != IssueStatus.DONE && issue.getStatus() != IssueStatus.CLOSED) {
             issue.setStatus(IssueStatus.DONE);
+            log.info("Event {} - issue {}-{} transitioned to DONE", event.getId(), projectKey, sequenceNumber);
+        } else if (isMergeEvent) {
+            log.info("Event {} - issue {}-{} already in terminal status {}, skipping transition", event.getId(), projectKey, sequenceNumber, issue.getStatus());
         }
 
         issueRepository.save(issue);
