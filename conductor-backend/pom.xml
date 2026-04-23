@@ -18,6 +18,15 @@
     <name>conductor-backend</name>
     <description>Conductor PRD Collaboration Platform Backend</description>
 
+    <licenses>
+        <license>
+            <name>PolyForm Noncommercial License 1.0.0</name>
+            <url>https://polyformproject.org/licenses/noncommercial/1.0.0/</url>
+            <distribution>repo</distribution>
+            <comments>Free for personal and non-commercial use. Commercial use requires a separate license.</comments>
+        </license>
+    </licenses>
+
     <properties>
         <java.version>21</java.version>
         <springdoc.version>3.0.2</springdoc.version>

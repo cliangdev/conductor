@@ -1,5 +1,11 @@
 # Conductor
 
+[![License: PolyForm NC 1.0.0](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-blue)](LICENSE)
+[![Backend CI](https://github.com/cliangdev/conductor/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/cliangdev/conductor/actions/workflows/backend-ci.yml)
+[![Frontend CI](https://github.com/cliangdev/conductor/actions/workflows/frontend-ci.yml/badge.svg)](https://github.com/cliangdev/conductor/actions/workflows/frontend-ci.yml)
+[![Tools CI](https://github.com/cliangdev/conductor/actions/workflows/tools.yml/badge.svg)](https://github.com/cliangdev/conductor/actions/workflows/tools.yml)
+[![npm](https://img.shields.io/npm/v/%40cliangdev%2Fconductor)](https://www.npmjs.com/package/@cliangdev/conductor)
+
 Agentic software development platform. Conductor uses AI to orchestrate the full software development lifecycle — from spec to ship. AI agents author PRDs, teams review and approve them, and Conductor coordinates what gets built, by whom, and when.
 
 ## How it works
@@ -124,4 +130,18 @@ See the [CLI README](conductor-tools/README.md).
 ## Workflows
 
 See the [Workflows guide](docs/workflows.md) for how to automate work with triggers, jobs, steps, loops, conditions, and self-hosted execution.
+
+## Contributing
+
+Contributions are welcome — bug reports, docs, and code. See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, PR workflow, and coding conventions. All contributors agree to our [Code of Conduct](CODE_OF_CONDUCT.md) and sign a lightweight [CLA](.github/CLA.md) on their first PR (a bot prompts you automatically).
+
+## Security
+
+Found a vulnerability? Please report it privately via [GitHub Security Advisories](https://github.com/cliangdev/conductor/security/advisories/new) — do not open a public issue. See [SECURITY.md](SECURITY.md) for scope and response expectations.
+
+## License
+
+Conductor is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). You are free to use, modify, and distribute Conductor for personal and non-commercial purposes — including hobby projects, research, and use by charitable, educational, or government organizations.
+
+**Commercial use requires a separate license.** If you'd like to use Conductor commercially, please open a [GitHub Discussion](https://github.com/cliangdev/conductor/discussions) or contact [@cliangdev](https://github.com/cliangdev).
 

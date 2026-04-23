@@ -108,9 +108,10 @@ src/
 
 ## Fetching Cloud Run Logs
 
-Use `scripts/logs.sh` to fetch logs from the deployed services on GCP (`ai-conductor-prod`, `us-central1`).
+Use `scripts/logs.sh` to fetch logs from the deployed services on GCP. Set `CONDUCTOR_GCP_PROJECT` (required) and optionally `CONDUCTOR_GCP_REGION` (defaults to `us-central1`):
 
 ```bash
+export CONDUCTOR_GCP_PROJECT=my-gcp-project
 ./scripts/logs.sh                        # backend logs, last 50 lines
 ./scripts/logs.sh frontend               # frontend logs, last 50 lines
 ./scripts/logs.sh backend --lines 200    # last 200 lines
@@ -118,7 +119,7 @@ Use `scripts/logs.sh` to fetch logs from the deployed services on GCP (`ai-condu
 ./scripts/logs.sh backend --tail         # stream live logs
 ```
 
-Requires `gcloud` CLI authenticated with the `conductor` configuration (`gcloud config configurations activate conductor`).
+Requires `gcloud` CLI authenticated (`gcloud auth login`) with access to the target project.
 
 ## API Workflow
 
