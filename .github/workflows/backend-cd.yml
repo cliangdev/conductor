@@ -25,6 +25,7 @@ jobs:
 
   deploy-backend:
     needs: build-and-test
+    if: github.repository == 'cliangdev/conductor'
     permissions:
       contents: read
       id-token: write
