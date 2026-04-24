@@ -62,7 +62,7 @@ app.post('/run-job', bearerAuth, async (req: Request, res: Response) => {
 });
 
 app.get('/job/:workerJobId/status', bearerAuth, (req: Request, res: Response) => {
-  const job = getJob(req.params.workerJobId);
+  const job = getJob(req.params.workerJobId as string);
   if (!job) {
     res.status(404).json({ error: 'Job not found' });
     return;
@@ -78,7 +78,7 @@ app.get('/job/:workerJobId/status', bearerAuth, (req: Request, res: Response) =>
 });
 
 app.delete('/job/:workerJobId', bearerAuth, async (req: Request, res: Response) => {
-  const job = getJob(req.params.workerJobId);
+  const job = getJob(req.params.workerJobId as string);
   if (!job) {
     res.status(404).json({ error: 'Job not found' });
     return;
