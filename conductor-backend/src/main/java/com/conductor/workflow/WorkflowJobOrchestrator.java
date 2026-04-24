@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,13 @@ public class WorkflowJobOrchestrator {
     private final LogRedactionService logRedactionService;
     private final Map<String, WorkflowExecutionBackend> backends;
     private final ObjectMapper objectMapper;
+
+    // Self-reference injected lazily so @Transactional helpers are invoked through the Spring proxy
+    // even when called from the same class. Required because executeJob() is deliberately NOT
+    // @Transactional so no DB connection is held during external step I/O.
+    @Lazy
+    @Autowired
+    private WorkflowJobOrchestrator self;
 
     public WorkflowJobOrchestrator(WorkflowJobRunRepository jobRunRepository,
                                    WorkflowStepRunRepository stepRunRepository,
@@ -56,20 +64,54 @@ public class WorkflowJobOrchestrator {
         this.backends = backendMap;
     }
 
-    @Transactional
+    /**
+     * NOT @Transactional. Long-running external step I/O (HTTP polls, Docker waits, Kestra polls)
+     * must not hold a DB connection — otherwise JDBC sessions accumulate in "idle in transaction"
+     * when Cloud Run kills an instance mid-step, exhausting the Supavisor/Postgres pool.
+     *
+     * DB work is delegated to @Transactional helpers via {@link #self} so each unit of persistence
+     * runs in its own short transaction.
+     */
     public void executeJob(WorkflowRun run, String jobId) {
+        executeJob(run.getId(), jobId);
+    }
+
+    public void executeJob(String runId, String jobId) {
+        JobExecutionPlan plan = self.planJobExecution(runId, jobId);
+        if (plan == null || plan.done) return;
+
+        boolean jobFailed = runSteps(plan);
+
+        self.finalizeJob(plan, jobFailed);
+    }
+
+    /**
+     * TX boundary: load run + workflow, create/find jobRun, mark RUNNING, evaluate if-condition,
+     * collect secrets + upstream outputs. All lazy associations (workflow, project) are resolved
+     * here so the outer non-transactional loop can rely on primitives + pre-fetched data.
+     *
+     * Returns {@link JobExecutionPlan#complete()} when the if-condition causes the job to skip —
+     * the skip + propagation have already been persisted inside this same transaction.
+     */
+    @Transactional
+    public JobExecutionPlan planJobExecution(String runId, String jobId) {
+        WorkflowRun run = runRepository.findById(runId).orElse(null);
+        if (run == null) {
+            log.warn("Run {} not found, skipping job {}", runId, jobId);
+            return null;
+        }
+
         WorkflowDefinition workflow = run.getWorkflow();
         Map<String, Object> parsedWorkflow = parseYaml(workflow.getYaml());
-        if (parsedWorkflow == null) return;
+        if (parsedWorkflow == null) return null;
 
         @SuppressWarnings("unchecked")
         Map<String, Object> jobs = (Map<String, Object>) parsedWorkflow.get("jobs");
-        if (jobs == null || !jobs.containsKey(jobId)) return;
+        if (jobs == null || !jobs.containsKey(jobId)) return null;
 
         @SuppressWarnings("unchecked")
         Map<String, Object> jobDef = (Map<String, Object>) jobs.get(jobId);
 
-        // For loop jobs, find the latest iteration run; otherwise find or create
         WorkflowJobRun jobRun = findOrCreateLatestJobRun(run, jobId);
 
         jobRun.setStatus(WorkflowJobStatus.RUNNING);
@@ -77,11 +119,8 @@ public class WorkflowJobOrchestrator {
         jobRunRepository.save(jobRun);
 
         String projectId = workflow.getProject().getId();
-
-        // 1-based loop iteration for context
         int loopIteration = jobRun.getIteration() + 1;
 
-        // Evaluate job-level if condition
         String ifCondition = (String) jobDef.get("if");
         if (ifCondition != null) {
             Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
@@ -93,60 +132,135 @@ public class WorkflowJobOrchestrator {
                 jobRun.setCompletedAt(OffsetDateTime.now());
                 jobRunRepository.save(jobRun);
                 propagateSkipToDependents(run, jobId, jobs);
-                return;
+                return JobExecutionPlan.complete();
             }
         }
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> steps = (List<Map<String, Object>>) jobDef.get("steps");
         if (steps == null) steps = List.of();
+        List<Map<String, Object>> executableSteps = steps.stream()
+                .filter(s -> !"condition".equals(s.get("type")))
+                .toList();
 
         Map<String, String> secrets = contextBuilder.loadSecrets(projectId);
         Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
 
-        boolean jobFailed = false;
-        // Skip condition steps during normal step execution — handled after steps complete
-        List<Map<String, Object>> executableSteps = steps.stream()
-                .filter(s -> !"condition".equals(s.get("type")))
-                .collect(java.util.stream.Collectors.toList());
+        return new JobExecutionPlan(runId, jobId, jobRun.getId(), projectId, loopIteration,
+                jobs, jobDef, steps, executableSteps, secrets, upstreamOutputs, false);
+    }
 
-        for (Map<String, Object> stepDef : executableSteps) {
+    /**
+     * Iterates executable steps with NO outer transaction. Each step's backend.execute() runs
+     * external I/O unencumbered; the per-step DB write happens in its own short transaction
+     * via {@link #persistStepResult}.
+     */
+    private boolean runSteps(JobExecutionPlan plan) {
+        boolean jobFailed = false;
+        for (Map<String, Object> stepDef : plan.executableSteps) {
             if (jobFailed) break;
-            RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
-            StepResult result = executeStep(run, jobRun, stepDef, ctx, projectId);
+            RuntimeContext ctx = self.buildStepContext(plan.runId, plan.jobRunId,
+                    plan.secrets, plan.upstreamOutputs, plan.loopIteration);
+            StepResult result = runStep(plan.runId, plan.jobRunId, stepDef, ctx, plan.projectId);
+            self.persistStepResult(plan.jobRunId, stepDef, result, plan.projectId);
             if (result.getStatus() == WorkflowStepStatus.FAILED) {
                 jobFailed = true;
             }
         }
+        return jobFailed;
+    }
+
+    /**
+     * Runs a single step's backend. NO transaction here — backend.execute() may block for
+     * minutes on external I/O (HTTP timeouts, Docker polling, Kestra polling).
+     */
+    private StepResult runStep(String runId, String jobRunId, Map<String, Object> stepDef,
+                               RuntimeContext ctx, String projectId) {
+        String stepType = resolveStepType(stepDef);
+        String ifCond = (String) stepDef.get("if");
+        if (ifCond != null) {
+            String interpolated = interpolator.interpolate(ifCond, ctx);
+            if (!conditionEvaluator.evaluate(interpolated)) {
+                return StepResult.skipped();
+            }
+        }
+
+        WorkflowExecutionBackend backend = backends.get(stepType);
+        if (backend == null) {
+            return StepResult.failed("", "Unknown step type: " + stepType);
+        }
+
+        // Executors only read non-lazy primitives (IDs). Load once inside a short read-only tx.
+        StepExecutionContext execCtx = self.buildStepExecutionContext(runId, jobRunId, stepDef, ctx, projectId);
+        return backend.execute(execCtx);
+    }
+
+    @Transactional(readOnly = true)
+    public StepExecutionContext buildStepExecutionContext(String runId, String jobRunId,
+                                                          Map<String, Object> stepDef,
+                                                          RuntimeContext ctx, String projectId) {
+        WorkflowRun run = runRepository.findById(runId).orElseThrow();
+        WorkflowJobRun jobRun = jobRunRepository.findById(jobRunId).orElseThrow();
+        return new StepExecutionContext(run, jobRun, stepDef, ctx, projectId);
+    }
+
+    @Transactional(readOnly = true)
+    public RuntimeContext buildStepContext(String runId, String jobRunId,
+                                           Map<String, String> secrets,
+                                           Map<String, Map<String, String>> upstreamOutputs,
+                                           int loopIteration) {
+        WorkflowRun run = runRepository.findById(runId).orElseThrow();
+        WorkflowJobRun jobRun = jobRunRepository.findById(jobRunId).orElseThrow();
+        return contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
+    }
+
+    @Transactional
+    public void persistStepResult(String jobRunId, Map<String, Object> stepDef,
+                                   StepResult result, String projectId) {
+        WorkflowJobRun jobRun = jobRunRepository.findById(jobRunId).orElseThrow();
+        String stepId = (String) stepDef.get("id");
+        String stepName = (String) stepDef.getOrDefault("name", "unnamed");
+        String stepType = resolveStepType(stepDef);
+        persistStepRun(jobRun, stepId, stepName, stepType, result, projectId);
+    }
+
+    /**
+     * TX boundary: set terminal job status, propagate skips/failures, enqueue dependents or
+     * handle loop/condition tail. Runs after all step I/O has completed.
+     */
+    @Transactional
+    public void finalizeJob(JobExecutionPlan plan, boolean jobFailed) {
+        WorkflowRun run = runRepository.findById(plan.runId).orElseThrow();
+        WorkflowJobRun jobRun = jobRunRepository.findById(plan.jobRunId).orElseThrow();
 
         if (jobFailed) {
             jobRun.setStatus(WorkflowJobStatus.FAILED);
             jobRun.setCompletedAt(OffsetDateTime.now());
             jobRunRepository.save(jobRun);
-            propagateFailureToDependents(run, jobId, jobs);
+            propagateFailureToDependents(run, plan.jobId, plan.jobs);
             return;
         }
 
-        // Check for condition step (must be last step)
-        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> steps = plan.allSteps;
         Map<String, Object> lastStep = steps.isEmpty() ? null : steps.get(steps.size() - 1);
         if (lastStep != null && "condition".equals(lastStep.get("type"))) {
-            handleConditionStep(run, jobRun, lastStep, secrets, upstreamOutputs, loopIteration, jobId, jobs);
+            handleConditionStep(run, jobRun, lastStep, plan.secrets, plan.upstreamOutputs,
+                    plan.loopIteration, plan.jobId, plan.jobs);
             return;
         }
 
-        // Check for loop block
         @SuppressWarnings("unchecked")
-        Map<String, Object> loopDef = (Map<String, Object>) jobDef.get("loop");
+        Map<String, Object> loopDef = (Map<String, Object>) plan.jobDef.get("loop");
         if (loopDef != null) {
-            handleLoop(run, jobRun, jobDef, loopDef, jobId, jobs, secrets, upstreamOutputs, loopIteration);
+            handleLoop(run, jobRun, plan.jobDef, loopDef, plan.jobId, plan.jobs,
+                    plan.secrets, plan.upstreamOutputs, plan.loopIteration);
             return;
         }
 
         jobRun.setStatus(WorkflowJobStatus.SUCCESS);
         jobRun.setCompletedAt(OffsetDateTime.now());
         jobRunRepository.save(jobRun);
-        enqueueReadyDependents(run, jobId, jobs);
+        enqueueReadyDependents(run, plan.jobId, plan.jobs);
     }
 
     private WorkflowJobRun findOrCreateLatestJobRun(WorkflowRun run, String jobId) {
@@ -158,7 +272,6 @@ public class WorkflowJobOrchestrator {
                 return latest;
             }
         }
-        // Create new job run
         WorkflowJobRun jr = new WorkflowJobRun();
         jr.setRun(run);
         jr.setJobId(jobId);
@@ -188,12 +301,10 @@ public class WorkflowJobOrchestrator {
             jobRunRepository.save(jobRun);
             enqueueReadyDependents(run, jobId, jobs);
         } else if (jobRun.getIteration() < maxIterations - 1) {
-            // Mark current iteration run as done (steps completed, not terminal failure)
             jobRun.setStatus(WorkflowJobStatus.SUCCESS);
             jobRun.setCompletedAt(OffsetDateTime.now());
             jobRunRepository.save(jobRun);
 
-            // Create new iteration run
             WorkflowJobRun nextRun = new WorkflowJobRun();
             nextRun.setRun(run);
             nextRun.setJobId(jobId);
@@ -248,34 +359,6 @@ public class WorkflowJobOrchestrator {
         jobRun.setCompletedAt(OffsetDateTime.now());
         jobRunRepository.save(jobRun);
         engine.checkRunCompletion(run);
-    }
-
-    private StepResult executeStep(WorkflowRun run, WorkflowJobRun jobRun,
-                                   Map<String, Object> stepDef, RuntimeContext ctx, String projectId) {
-        String stepId = (String) stepDef.get("id");
-        String stepName = (String) stepDef.getOrDefault("name", "unnamed");
-        String stepType = resolveStepType(stepDef);
-
-        String ifCond = (String) stepDef.get("if");
-        if (ifCond != null) {
-            String interpolated = interpolator.interpolate(ifCond, ctx);
-            if (!conditionEvaluator.evaluate(interpolated)) {
-                persistStepRun(jobRun, stepId, stepName, stepType, StepResult.skipped(), projectId);
-                return StepResult.skipped();
-            }
-        }
-
-        WorkflowExecutionBackend backend = backends.get(stepType);
-        StepResult result;
-        if (backend == null) {
-            result = StepResult.failed("", "Unknown step type: " + stepType);
-        } else {
-            StepExecutionContext execCtx = new StepExecutionContext(run, jobRun, stepDef, ctx, projectId);
-            result = backend.execute(execCtx);
-        }
-
-        persistStepRun(jobRun, stepId, stepName, stepType, result, projectId);
-        return result;
     }
 
     private void persistStepRun(WorkflowJobRun jobRun, String stepId, String stepName,
@@ -382,7 +465,6 @@ public class WorkflowJobOrchestrator {
         List<String> needs = getNeedsList(currentJob);
 
         for (String depJobId : needs) {
-            // For loop jobs, use the latest (highest iteration) run to collect outputs
             List<WorkflowJobRun> depJobRuns = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(run.getId(), depJobId);
             if (depJobRuns.isEmpty()) continue;
             String depJobRunId = depJobRuns.get(0).getId();
@@ -412,11 +494,6 @@ public class WorkflowJobOrchestrator {
         return List.of();
     }
 
-    /**
-     * Resolves the effective step type:
-     * - If "uses" starts with "docker://", returns "docker"
-     * - Otherwise returns "type" field (defaulting to "http")
-     */
     private String resolveStepType(Map<String, Object> stepDef) {
         Object usesVal = stepDef.get("uses");
         if (usesVal instanceof String uses && uses.startsWith("docker://")) {
@@ -431,6 +508,50 @@ public class WorkflowJobOrchestrator {
         } catch (Exception e) {
             log.error("Failed to parse YAML: {}", e.getMessage());
             return null;
+        }
+    }
+
+    /**
+     * Snapshot of data needed to execute a job's steps outside of any DB transaction.
+     * Populated by {@link #planJobExecution} inside a transaction; consumed by the
+     * non-transactional step-execution loop and by {@link #finalizeJob}.
+     */
+    public static final class JobExecutionPlan {
+        final String runId;
+        final String jobId;
+        final String jobRunId;
+        final String projectId;
+        final int loopIteration;
+        final Map<String, Object> jobs;
+        final Map<String, Object> jobDef;
+        final List<Map<String, Object>> allSteps;
+        final List<Map<String, Object>> executableSteps;
+        final Map<String, String> secrets;
+        final Map<String, Map<String, String>> upstreamOutputs;
+        final boolean done;
+
+        JobExecutionPlan(String runId, String jobId, String jobRunId, String projectId,
+                         int loopIteration, Map<String, Object> jobs, Map<String, Object> jobDef,
+                         List<Map<String, Object>> allSteps, List<Map<String, Object>> executableSteps,
+                         Map<String, String> secrets, Map<String, Map<String, String>> upstreamOutputs,
+                         boolean done) {
+            this.runId = runId;
+            this.jobId = jobId;
+            this.jobRunId = jobRunId;
+            this.projectId = projectId;
+            this.loopIteration = loopIteration;
+            this.jobs = jobs;
+            this.jobDef = jobDef;
+            this.allSteps = allSteps;
+            this.executableSteps = executableSteps;
+            this.secrets = secrets;
+            this.upstreamOutputs = upstreamOutputs;
+            this.done = done;
+        }
+
+        static JobExecutionPlan complete() {
+            return new JobExecutionPlan(null, null, null, null, 0,
+                    null, null, null, null, null, null, true);
         }
     }
 }
