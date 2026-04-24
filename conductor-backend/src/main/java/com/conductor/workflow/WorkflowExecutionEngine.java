@@ -118,16 +118,15 @@ public class WorkflowExecutionEngine {
         queueRepository.save(entry);
     }
 
-    @Transactional
+    /**
+     * NOT @Transactional. Step execution makes long-running external calls (HTTP, Docker, Kestra)
+     * — holding a DB connection across those would strand "idle in transaction" sessions on
+     * Supabase/Supavisor when a Cloud Run instance is killed mid-step. Transactional boundaries
+     * are managed inside {@link WorkflowJobOrchestrator} around the discrete units of DB work.
+     */
     public void processJob(String runId, String jobId) {
         log.info("processJob started: runId={}, jobId={}", runId, jobId);
-        WorkflowRun run = runRepository.findById(runId).orElse(null);
-        if (run == null) {
-            log.warn("Run {} not found, skipping job {}", runId, jobId);
-            return;
-        }
-
-        orchestrator.executeJob(run, jobId);
+        orchestrator.executeJob(runId, jobId);
         log.info("processJob finished: runId={}, jobId={}", runId, jobId);
     }
 

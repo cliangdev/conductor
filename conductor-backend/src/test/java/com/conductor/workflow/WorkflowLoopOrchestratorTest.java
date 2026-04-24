@@ -12,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -46,10 +47,20 @@ class WorkflowLoopOrchestratorTest {
                 jobRunRepository, stepRunRepository, runRepository, workflowRepository,
                 engine, conditionEvaluator, interpolator, contextBuilder,
                 logRedactionService, List.of(), objectMapper);
+        // The production code uses @Lazy @Autowired self so @Transactional helper methods
+        // go through the Spring proxy. In unit tests there is no Spring context, so point
+        // self at the bare instance — @Transactional is a no-op without a tx manager anyway.
+        ReflectionTestUtils.setField(orchestrator, "self", orchestrator);
 
         when(secretsService.resolveSecrets(any())).thenReturn(Map.of());
         when(stepRunRepository.findByJobRunId(any())).thenReturn(List.of());
         when(logRedactionService.redact(any(), any())).thenAnswer(inv -> inv.getArgument(1));
+    }
+
+    /** Mock the reloads that planJobExecution / finalizeJob now do by ID. */
+    private void mockEntityReloads(WorkflowRun run, WorkflowJobRun jobRun) {
+        when(runRepository.findById(run.getId())).thenReturn(Optional.of(run));
+        when(jobRunRepository.findById(jobRun.getId())).thenReturn(Optional.of(jobRun));
     }
 
     private WorkflowRun makeRun(String workflowYaml) {
@@ -92,6 +103,7 @@ class WorkflowLoopOrchestratorTest {
                 """;
         WorkflowRun run = makeRun(yaml);
         WorkflowJobRun jobRun = pendingJobRun(run, "poll", 0);
+        mockEntityReloads(run, jobRun);
 
         when(jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc("run-1", "poll"))
                 .thenReturn(List.of(jobRun));
@@ -119,6 +131,7 @@ class WorkflowLoopOrchestratorTest {
         WorkflowRun run = makeRun(yaml);
         // Already at max iteration index (iteration=1, maxIterations=2, so index 0 and 1)
         WorkflowJobRun jobRun = pendingJobRun(run, "poll", 1);
+        mockEntityReloads(run, jobRun);
 
         when(jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc("run-1", "poll"))
                 .thenReturn(List.of(jobRun));
@@ -146,6 +159,7 @@ class WorkflowLoopOrchestratorTest {
                 """;
         WorkflowRun run = makeRun(yaml);
         WorkflowJobRun jobRun = pendingJobRun(run, "poll", 1);
+        mockEntityReloads(run, jobRun);
 
         when(jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc("run-1", "poll"))
                 .thenReturn(List.of(jobRun));
@@ -171,6 +185,7 @@ class WorkflowLoopOrchestratorTest {
                 """;
         WorkflowRun run = makeRun(yaml);
         WorkflowJobRun jobRun = pendingJobRun(run, "poll", 0);
+        mockEntityReloads(run, jobRun);
 
         when(jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc("run-1", "poll"))
                 .thenReturn(List.of(jobRun));
@@ -211,6 +226,7 @@ class WorkflowLoopOrchestratorTest {
                 """;
         WorkflowRun run = makeRun(yaml);
         WorkflowJobRun jobRun = pendingJobRun(run, "router", 0);
+        mockEntityReloads(run, jobRun);
 
         when(jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc("run-1", "router"))
                 .thenReturn(List.of(jobRun));
@@ -248,6 +264,7 @@ class WorkflowLoopOrchestratorTest {
                 """;
         WorkflowRun run = makeRun(yaml);
         WorkflowJobRun jobRun = pendingJobRun(run, "router", 0);
+        mockEntityReloads(run, jobRun);
 
         when(jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc("run-1", "router"))
                 .thenReturn(List.of(jobRun));
@@ -285,6 +302,7 @@ class WorkflowLoopOrchestratorTest {
                 """;
         WorkflowRun run = makeRun(yaml);
         WorkflowJobRun jobRun = pendingJobRun(run, "router", 0);
+        mockEntityReloads(run, jobRun);
 
         when(jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc("run-1", "router"))
                 .thenReturn(List.of(jobRun));

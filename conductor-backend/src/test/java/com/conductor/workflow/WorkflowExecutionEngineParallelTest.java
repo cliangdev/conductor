@@ -77,18 +77,14 @@ class WorkflowExecutionEngineParallelTest {
         WorkflowJobQueue entry1 = makeQueueEntry("run-1", "job-a");
         WorkflowJobQueue entry2 = makeQueueEntry("run-1", "job-b");
 
-        WorkflowRun run = new WorkflowRun();
-        run.setId("run-1");
-
         when(queueRepository.claimAllReadyJobs()).thenReturn(List.of(entry1, entry2));
-        when(runRepository.findById("run-1")).thenReturn(java.util.Optional.of(run));
-        doNothing().when(orchestrator).executeJob(any(), any());
+        doNothing().when(orchestrator).executeJob(anyString(), anyString());
 
         engine.pollQueue();
 
         // Allow async tasks to complete
         Thread.sleep(200);
 
-        verify(orchestrator, times(2)).executeJob(any(WorkflowRun.class), anyString());
+        verify(orchestrator, times(2)).executeJob(anyString(), anyString());
     }
 }
