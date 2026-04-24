@@ -1,0 +1,16 @@
+name: Frontend CI (no-op)
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'conductor-frontend/**'
+
+permissions: {}
+
+jobs:
+  build-and-test:
+    name: frontend-ci
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No conductor-frontend/** changes; skipping real CI."
