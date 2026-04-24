@@ -6,6 +6,8 @@ on:
     paths-ignore:
       - 'conductor-frontend/**'
 
+permissions: {}
+
 jobs:
   build-and-test:
     name: frontend-ci
