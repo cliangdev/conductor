@@ -35,8 +35,7 @@ public class WorkflowRun {
     private String eventPayload;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, columnDefinition = "workflow_run_status")
-    @ColumnTransformer(write = "?::workflow_run_status")
+    @Column(name = "status", nullable = false, length = 32)
     private WorkflowRunStatus status;
 
     @Column(name = "started_at", nullable = false, updatable = false)
