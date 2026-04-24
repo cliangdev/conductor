@@ -2,6 +2,7 @@
   "name": "@cliangdev/conductor",
   "version": "0.1.4",
   "description": "Agentic software development platform — AI-driven PRD, implementation, and beyond",
+  "license": "SEE LICENSE IN ../LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/cliangdev/conductor"
