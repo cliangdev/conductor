@@ -1,0 +1,16 @@
+name: Tools CI (no-op)
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'conductor-tools/**'
+
+permissions: {}
+
+jobs:
+  test-cli:
+    name: tools
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No conductor-tools/** changes; skipping real CI."
