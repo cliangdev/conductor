@@ -11,6 +11,8 @@ on:
     paths-ignore:
       - 'conductor-backend/**'
 
+permissions: {}
+
 jobs:
   build-and-test:
     name: backend-ci
