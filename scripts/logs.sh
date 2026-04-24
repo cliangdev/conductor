@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Fetch Cloud Run logs for conductor-backend or conductor-frontend
+# Fetch Cloud Run logs for conductor-backend or conductor-frontend.
+#
+# Configuration:
+#   CONDUCTOR_GCP_PROJECT   (required)  GCP project ID hosting the Cloud Run service
+#   CONDUCTOR_GCP_REGION    (optional)  defaults to us-central1
 #
 # Usage:
-#   ./scripts/logs.sh                        # backend logs, last 50 lines
-#   ./scripts/logs.sh frontend               # frontend logs, last 50 lines
-#   ./scripts/logs.sh backend --lines 200    # backend logs, last 200 lines
-#   ./scripts/logs.sh backend --since 1h     # backend logs from last 1 hour
-#   ./scripts/logs.sh backend --tail         # stream live logs
+#   CONDUCTOR_GCP_PROJECT=my-project ./scripts/logs.sh
+#   CONDUCTOR_GCP_PROJECT=my-project ./scripts/logs.sh frontend
+#   CONDUCTOR_GCP_PROJECT=my-project ./scripts/logs.sh backend --lines 200
+#   CONDUCTOR_GCP_PROJECT=my-project ./scripts/logs.sh backend --since 1h
+#   CONDUCTOR_GCP_PROJECT=my-project ./scripts/logs.sh backend --tail
 
 set -euo pipefail
 
-PROJECT="ai-conductor-prod"
-REGION="us-central1"
+PROJECT="${CONDUCTOR_GCP_PROJECT:?set CONDUCTOR_GCP_PROJECT to your GCP project ID}"
+REGION="${CONDUCTOR_GCP_REGION:-us-central1}"
 SERVICE="conductor-backend"
 LINES=50
 SINCE=""
@@ -48,18 +52,18 @@ since_timestamp() {
 }
 
 if [[ "$TAIL" == true ]]; then
-  gcloud --configuration=conductor beta run services logs tail "$SERVICE" \
+  gcloud beta run services logs tail "$SERVICE" \
     --project="$PROJECT" \
     --region="$REGION"
 elif [[ -n "$SINCE" ]]; then
   TS=$(since_timestamp "$SINCE")
-  gcloud --configuration=conductor logging read \
+  gcloud logging read \
     "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE AND timestamp>=\"$TS\"" \
     --project="$PROJECT" \
     --format="$LOG_FORMAT" \
     --order=asc
 else
-  gcloud --configuration=conductor logging read \
+  gcloud logging read \
     "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE" \
     --project="$PROJECT" \
     --limit="$LINES" \
