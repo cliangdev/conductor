@@ -51,7 +51,7 @@
     "@playwright/test": "^1.59.1",
     "@types/dagre": "^0.7.54",
     "@types/highlight.js": "^9.12.4",
-    "@types/node": "^20",
+    "@types/node": "^25",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
