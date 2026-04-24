@@ -11,6 +11,7 @@ function makeDeprecatedDocCommand(): Command {
   program
     .command('doc', { hidden: true })
     .allowUnknownOption()
+    .allowExcessArguments()
     .action(() => {
       console.log(DEPRECATED_MSG)
       process.exit(1)
