@@ -29,6 +29,12 @@ public class WorkflowExecutionEngine {
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowJobOrchestrator orchestrator;
 
+    // Adaptive poll backoff (in 500ms ticks). Busy (work found last poll) → every tick (500ms).
+    // Idle → exponentially back off up to MAX_BACKOFF_TICKS * 500ms = 5s between DB queries.
+    private static final int MAX_BACKOFF_TICKS = 10;
+    private int currentBackoffTicks = 1;
+    private int ticksUntilNextPoll = 0;
+
     // Self-reference injected lazily to ensure processJob() is called through the Spring proxy,
     // enabling @Transactional to work when invoked from within pollQueue() (self-invocation workaround).
     @Lazy
@@ -49,34 +55,64 @@ public class WorkflowExecutionEngine {
         this.orchestrator = orchestrator;
     }
 
-    /** Poll every 500ms — claim ALL ready jobs and dispatch each asynchronously */
+    /**
+     * Tick every 500ms — but only actually query the DB when the adaptive backoff counter
+     * allows. Fast (500ms) while jobs are flowing, slow (up to 5s) when the queue is idle.
+     * Cuts DB chatter ~10× on an idle system without hurting responsiveness when there's work.
+     */
     @Scheduled(fixedDelay = 500)
-    @Transactional
     public void pollQueue() {
+        if (ticksUntilNextPoll > 0) {
+            ticksUntilNextPoll--;
+            return;
+        }
+
+        boolean hadWork;
         try {
-            List<WorkflowJobQueue> entries = queueRepository.claimAllReadyJobs();
-            if (entries.isEmpty()) return;
-            log.info("Claimed {} job(s) from queue", entries.size());
-            List<String> ids = entries.stream().map(WorkflowJobQueue::getId).collect(Collectors.toList());
-            queueRepository.markAllClaimed(ids);
-            for (WorkflowJobQueue queued : entries) {
-                String runId = queued.getRun().getId();
-                String jobId = queued.getJobId();
-                log.info("Dispatching job {} for run {}", jobId, runId);
-                CompletableFuture.runAsync(() -> {
-                    try {
-                        self.processJob(runId, jobId);
-                        // After processJob transaction commits, check completion in a fresh transaction
-                        // so all concurrent job results are visible.
-                        self.checkRunCompletionAfterCommit(runId);
-                    } catch (Exception e) {
-                        log.error("Error processing job {}: {}", jobId, e.getMessage(), e);
-                    }
-                });
-            }
+            hadWork = self.pollQueueOnce();
         } catch (Exception e) {
             log.error("Error polling workflow job queue: {}", e.getMessage(), e);
+            hadWork = false;
         }
+
+        if (hadWork) {
+            currentBackoffTicks = 1;
+        } else {
+            currentBackoffTicks = Math.min(currentBackoffTicks * 2, MAX_BACKOFF_TICKS);
+        }
+        ticksUntilNextPoll = currentBackoffTicks - 1;
+    }
+
+    /**
+     * Single-tick DB poll. @Transactional for the short claim + mark-claimed work only;
+     * dispatch happens asynchronously after the transaction returns so no connection is
+     * held during job processing.
+     *
+     * @return true if any jobs were claimed and dispatched this tick
+     */
+    @Transactional
+    public boolean pollQueueOnce() {
+        List<WorkflowJobQueue> entries = queueRepository.claimAllReadyJobs();
+        if (entries.isEmpty()) return false;
+        log.info("Claimed {} job(s) from queue", entries.size());
+        List<String> ids = entries.stream().map(WorkflowJobQueue::getId).collect(Collectors.toList());
+        queueRepository.markAllClaimed(ids);
+        for (WorkflowJobQueue queued : entries) {
+            String runId = queued.getRun().getId();
+            String jobId = queued.getJobId();
+            log.info("Dispatching job {} for run {}", jobId, runId);
+            CompletableFuture.runAsync(() -> {
+                try {
+                    self.processJob(runId, jobId);
+                    // After processJob transaction commits, check completion in a fresh transaction
+                    // so all concurrent job results are visible.
+                    self.checkRunCompletionAfterCommit(runId);
+                } catch (Exception e) {
+                    log.error("Error processing job {}: {}", jobId, e.getMessage(), e);
+                }
+            });
+        }
+        return true;
     }
 
     /** On startup: re-enqueue any jobs stuck in RUNNING state */

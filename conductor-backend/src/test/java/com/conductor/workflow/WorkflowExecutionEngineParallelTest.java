@@ -87,4 +87,42 @@ class WorkflowExecutionEngineParallelTest {
 
         verify(orchestrator, times(2)).executeJob(anyString(), anyString());
     }
+
+    @Test
+    void pollQueue_backsOffExponentiallyWhenQueueStaysEmpty() {
+        when(queueRepository.claimAllReadyJobs()).thenReturn(List.of());
+
+        // Tick #1 — does the DB query, finds nothing, bumps backoff to 2 ticks
+        engine.pollQueue();
+        // Tick #2 — skipped (backoff counter still positive)
+        engine.pollQueue();
+        // Tick #3 — does DB query, empty again, bumps backoff to 4
+        engine.pollQueue();
+        // Ticks #4..#6 — skipped
+        engine.pollQueue();
+        engine.pollQueue();
+        engine.pollQueue();
+        // Tick #7 — does DB query
+        engine.pollQueue();
+
+        // 7 scheduled ticks, only 3 should have actually hit the DB (#1, #3, #7)
+        verify(queueRepository, times(3)).claimAllReadyJobs();
+    }
+
+    @Test
+    void pollQueue_resetsBackoffWhenWorkAppears() {
+        WorkflowJobQueue entry = makeQueueEntry("run-1", "job-a");
+        when(queueRepository.claimAllReadyJobs())
+                .thenReturn(List.of())         // tick #1 — empty, backoff → 2
+                .thenReturn(List.of(entry))    // tick #3 — has work, backoff → 1
+                .thenReturn(List.of(entry));   // tick #4 — still has work
+        // orchestrator.executeJob is void → default mock behavior (no-op) suffices; no stub needed.
+
+        engine.pollQueue();  // #1 — queries (empty), sets skip=1
+        engine.pollQueue();  // #2 — skipped
+        engine.pollQueue();  // #3 — queries (work found), resets backoff, skip=0
+        engine.pollQueue();  // #4 — queries again immediately (no skip)
+
+        verify(queueRepository, times(3)).claimAllReadyJobs();
+    }
 }
