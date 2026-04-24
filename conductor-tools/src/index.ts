@@ -38,6 +38,7 @@ registerStatus(program)
 program
   .command('issue', { hidden: true })
   .allowUnknownOption()
+  .allowExcessArguments()
   .action(() => {
     console.log(DEPRECATED_MSG)
     process.exit(1)
@@ -46,6 +47,7 @@ program
 program
   .command('doc', { hidden: true })
   .allowUnknownOption()
+  .allowExcessArguments()
   .action(() => {
     console.log(DEPRECATED_MSG)
     process.exit(1)

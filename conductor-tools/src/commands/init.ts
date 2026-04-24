@@ -311,6 +311,5 @@ Examples:
         console.log(chalk.red('✗ Daemon failed to start — run `conductor start` to retry'))
       }
       printNextSteps()
-      process.exit(0)
     })
 }

@@ -1,3 +1,4 @@
+@import 'highlight.js/styles/github.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -130,9 +131,6 @@
   background-color: hsl(45 80% 25%);
   color: hsl(45 80% 85%);
 }
-
-/* Highlight.js light theme */
-@import 'highlight.js/styles/github.css';
 
 /* Highlight.js dark mode overrides (github-dark token colors) */
 .dark .hljs {
