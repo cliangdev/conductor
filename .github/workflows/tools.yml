@@ -12,6 +12,7 @@ on:
 
 jobs:
   test-cli:
+    name: tools
     runs-on: ubuntu-latest
     defaults:
       run:

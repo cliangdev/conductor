@@ -1,0 +1,21 @@
+name: Backend CI (no-op)
+
+# Required-status-check stub: `backend-ci` is enforced by branch protection
+# but the real workflow only runs when conductor-backend/** changes. This
+# stub reports the same check name as an immediate success on PRs that
+# don't touch the backend, so branch protection can be satisfied.
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'conductor-backend/**'
+
+permissions: {}
+
+jobs:
+  build-and-test:
+    name: backend-ci
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No conductor-backend/** changes; skipping real CI."
