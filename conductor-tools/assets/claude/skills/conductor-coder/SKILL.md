@@ -21,6 +21,48 @@ Read all of it before writing any code.
 
 ---
 
+## Step 1.5: Validate task contract
+
+Before doing anything else, verify the dispatched task carries a complete v2 contract. The task object MUST contain all five of the following fields with non-empty values:
+
+- `contract.input` (string) — what this task receives as input
+- `contract.output` (string) — what this task must produce
+- `contract.invariant` (string) — what must remain true after this task
+- `test_plan` (array, ≥1 entry) — concrete checks that prove the task is done
+- `files_owned` (array, ≥1 entry) — the exhaustive list of file paths this task is allowed to edit
+
+**Validation rules — no inference, no guessing:**
+
+- Do NOT infer any of these fields from the task description, title, epic context, or PRD.
+- Do NOT proceed to Step 2 if any required field is missing or empty.
+- Do NOT silently fill in defaults.
+
+**On any missing or empty field, immediately emit a BLOCKED report.** The blocker line MUST use this exact wording:
+
+```
+task contract incomplete: {missing fields}
+```
+
+where `{missing fields}` is a comma-separated list of the missing field names drawn from the set `{contract.input, contract.output, contract.invariant, test_plan, files_owned}`. For example:
+
+```
+## Task Blocked: {task.id}
+
+Blocker: task contract incomplete: contract.input, files_owned
+
+Attempted:
+- contract validation in Step 1.5
+
+Needs:
+- task to be re-dispatched with the missing contract fields populated
+```
+
+After emitting BLOCKED, stop. Do not continue to Step 2.
+
+**v1 task fallback (backward compat):** If the task object has NONE of the v2 contract fields at all (no `contract`, no `test_plan`, no `files_owned`), treat it as a legacy v1 task: skip Step 1.5 entirely and proceed to Step 2 with the existing v1 behavior. The all-or-nothing rule prevents partial-contract tasks from slipping through — a task with `contract.input` but no `files_owned`, for instance, is a malformed v2 task and MUST emit BLOCKED, not fall back to v1.
+
+---
+
 ## Step 2: Detect Tech Stack
 
 Use Glob to check for stack indicator files in the project root. Check these in order:
@@ -105,6 +147,23 @@ Also write tests for:
 Write the minimum code needed to make the tests pass. Follow the loaded stack skill's patterns exactly.
 
 Run tests after each meaningful change. Do not move on until all `[auto]` tests are green.
+
+**File-scope rule (v2 contract tasks):** Edit only files listed in the task's `files_owned`. If implementation requires a file not in `files_owned`, emit BLOCKED with reason `out-of-scope file required: {path}` instead of editing it. The coder may not extend `files_owned` mid-task. This applies to both source files and any companion files (configs, fixtures, generated artifacts) discovered during implementation. If an out-of-scope edit is genuinely required, the task must be redispatched with an updated `files_owned`. (v1 tasks that fell through Step 1.5's backward-compat path are exempt from this rule, since they have no `files_owned`.)
+
+Example BLOCKED report for an out-of-scope file:
+
+```
+## Task Blocked: {task.id}
+
+Blocker: out-of-scope file required: src/lib/utils/parser.ts
+
+Attempted:
+- implementation per files_owned
+
+Needs:
+- task redispatched with src/lib/utils/parser.ts added to files_owned, OR
+- a separate task to handle that file
+```
 
 **Code quality rules (always apply):**
 - Small, focused functions — one responsibility each
@@ -205,6 +264,13 @@ Needs:
 - `[auto]` — write a failing test first, implement until it passes
 - `[manual]` — document verification steps in commit body or code comment
 
+### Contract Validation (v2 tasks)
+
+- All five fields required: `contract.input`, `contract.output`, `contract.invariant`, `test_plan` (≥1 entry), `files_owned` (≥1 entry)
+- Missing → emit `task contract incomplete: {fields}` and STOP
+- Out-of-scope file needed → emit `out-of-scope file required: {path}` and STOP
+- Never extend `files_owned` mid-task; never infer missing contract fields
+
 ### Never
 
 - Commit without running tests
@@ -212,3 +278,5 @@ Needs:
 - Implement more than the acceptance criteria require
 - Skip the stack skill if it exists
 - Use `git add -A` or `git add .` — stage specific files by name
+- Edit a file outside `files_owned` (v2 tasks) — emit BLOCKED instead
+- Guess or infer missing contract fields — emit BLOCKED instead
