@@ -27,3 +27,28 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test
+
+  version-bump-check:
+    name: version-bump-check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Require version bump if CLI source changed
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          SRC_CHANGED=$(git diff --name-only "$BASE" "$HEAD" -- \
+            'conductor-tools/src/**' \
+            'conductor-tools/assets/**' \
+            'conductor-tools/scripts/**' \
+            ':(exclude)conductor-tools/src/__tests__/**' | wc -l)
+          VER_CHANGED=$(git diff "$BASE" "$HEAD" -- conductor-tools/package.json \
+            | grep -E '^\+\s*"version":' | wc -l)
+          if [ "$SRC_CHANGED" -gt 0 ] && [ "$VER_CHANGED" -eq 0 ]; then
+            echo "::error::CLI source changed but conductor-tools/package.json version did not. Run: cd conductor-tools && npm version <patch|minor|major> --no-git-tag-version"
+            exit 1
+          fi
+          echo "✓ Version-bump check passed (src changed: $SRC_CHANGED, version changed: $VER_CHANGED)"

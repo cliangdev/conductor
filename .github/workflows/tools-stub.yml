@@ -14,3 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "No conductor-tools/** changes; skipping real CI."
+
+  version-bump-check:
+    name: version-bump-check
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No conductor-tools/** changes; version bump not required."

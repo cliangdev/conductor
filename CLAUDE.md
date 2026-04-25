@@ -82,6 +82,45 @@ Local files at `~/.conductor/{projectId}/issues/**`. Offline queue at `~/.conduc
 
 **Build**: `npm run build` · **Test**: `npx vitest`
 
+### Releasing the CLI
+
+The CLI publishes to npm automatically on push to `main` whenever `conductor-tools/package.json` changes. The `Release CLI` workflow (`.github/workflows/release-cli.yml`) is idempotent: it reads the version from `package.json`, skips if `cli-vX.Y.Z` already exists, otherwise runs `npm ci → test → build → publish → tag → gh release create`.
+
+**Per-release workflow:**
+
+1. **On your feature branch, bump the version** in the same commit set as your changes:
+   ```bash
+   cd conductor-tools && npm version <patch|minor|major> --no-git-tag-version
+   ```
+   This edits `package.json` and `package-lock.json`. Stage and commit alongside your feature changes.
+   → Next: open the PR.
+
+2. **Open and merge the PR.** The `version-bump-check` job in `tools.yml` fails the PR if CLI source under `src/`, `assets/`, or `scripts/` changed without a `package.json` version bump — so you'll know before merge if you forgot.
+   → Next: wait for CI to go green and merge via the GitHub UI.
+
+3. **The `Release CLI` workflow auto-fires** on the merge commit (path filter: `conductor-tools/package.json`).
+   → Next: watch `Actions → Release CLI → <run>`. ~2 minutes to npm.
+
+4. **Verify the release:**
+   ```bash
+   npm install -g @cliangdev/conductor@latest
+   conductor --version    # → matches the bump
+   ```
+   → Next: in a target project, `conductor init` to refresh `~/.claude/` skills.
+
+**Recovery cases:**
+
+- **Forgot the version bump (PR already merged)**: open a one-line follow-up PR bumping `conductor-tools/package.json`. Same flow.
+- **Workflow failed mid-release**: re-run via `Actions → Release CLI → <run> → Re-run failed jobs`. Idempotent — skips publish if the tag already landed, retries from the failure point otherwise.
+- **Two PRs raced on the same version**: the second `npm publish` fails with HTTP 403 (`version already exists`). Bump again in a new PR.
+- **Manual fallback** (workflow broken):
+  ```bash
+  cd conductor-tools && npm publish --access public
+  git tag cli-vX.Y.Z && git push origin cli-vX.Y.Z
+  gh release create cli-vX.Y.Z --generate-notes --title "CLI vX.Y.Z"
+  ```
+- **Need to release a version already in `main` but not yet tagged** (e.g. recovery from a failed manual run): `Actions → Release CLI → Run workflow` (workflow_dispatch). Reads the current `package.json` and ships it.
+
 ## conductor-tools/mcp
 
 `@conductor/mcp` — MCP server for Claude Code integration (stdio transport, 8 tools).
