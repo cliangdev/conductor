@@ -1,23 +1,18 @@
 name: Release CLI
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'conductor-tools/package.json'
   workflow_dispatch:
-    inputs:
-      version_type:
-        description: 'Version bump type'
-        required: true
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
+      contents: write       # tag push + gh release create
+      id-token: write       # npm publish --provenance
     defaults:
       run:
         working-directory: conductor-tools
@@ -25,7 +20,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v6
         with:
@@ -34,54 +28,49 @@ jobs:
           cache: npm
           cache-dependency-path: conductor-tools/package-lock.json
 
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Read version from package.json
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
 
-      - name: Check for CLI changes since last release
+      - name: Check if version is already released
+        id: tag
         working-directory: ${{ github.workspace }}
         run: |
-          LAST_TAG=$(git tag --list 'cli-v*' --sort=-version:refname | head -n1)
-          if [ -z "$LAST_TAG" ]; then
-            echo "No previous CLI release found — proceeding with first release."
+          if git rev-parse "cli-v${{ steps.pkg.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "::notice::cli-v${{ steps.pkg.outputs.version }} already released — skipping."
           else
-            CHANGES=$(git diff --name-only "$LAST_TAG" HEAD -- conductor-tools/)
-            if [ -z "$CHANGES" ]; then
-              echo "::error::No changes in conductor-tools/ since $LAST_TAG. Aborting release."
-              exit 1
-            fi
-            echo "Changes since $LAST_TAG:"
-            echo "$CHANGES"
+            echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
-      - run: npm ci
+      - name: Install dependencies
+        if: steps.tag.outputs.exists == 'false'
+        run: npm ci
 
-      - run: npm run test
+      - name: Run tests
+        if: steps.tag.outputs.exists == 'false'
+        run: npm test
 
-      - run: npm run build
-
-      - name: Bump version
-        run: npm version ${{ github.event.inputs.version_type }} --no-git-tag-version
-
-      - name: Read new version
-        id: version
-        run: echo "value=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
-
-      - name: Commit and tag
-        run: |
-          git add package.json
-          git commit -m "chore: release @cliangdev/conductor v${{ steps.version.outputs.value }}"
-          git tag cli-v${{ steps.version.outputs.value }}
-          git push origin HEAD:main
-          git push origin cli-v${{ steps.version.outputs.value }}
+      - name: Build
+        if: steps.tag.outputs.exists == 'false'
+        run: npm run build
 
       - name: Publish to npm
+        if: steps.tag.outputs.exists == 'false'
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Create GitHub Release
-        run: gh release create cli-v${{ steps.version.outputs.value }} --generate-notes --title "CLI v${{ steps.version.outputs.value }}"
+      - name: Tag and create GitHub Release
+        if: steps.tag.outputs.exists == 'false'
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "cli-v${{ steps.pkg.outputs.version }}"
+          git push origin "cli-v${{ steps.pkg.outputs.version }}"
+          gh release create "cli-v${{ steps.pkg.outputs.version }}" \
+            --generate-notes \
+            --title "CLI v${{ steps.pkg.outputs.version }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
