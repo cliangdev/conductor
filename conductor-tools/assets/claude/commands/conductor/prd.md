@@ -100,7 +100,13 @@ Use AskUserQuestion:
 Write the PRD using the format below. Target 1-2 pages — keep it concise enough to review in under 5 minutes.
 
 **Guidelines:**
-- Every P0 feature must include the What/Not pattern and at least one testable acceptance criterion
+- Frontmatter MUST include `schemaVersion: 2`
+- The seven required H2 sections must appear in this exact order: `Problem`, `Glossary`, `Goals`, `Non-Goals`, `Users`, `Reference Patterns`, `Features`
+- If `Glossary` or `Reference Patterns` truly has nothing to add, write `_None._` rather than omitting the section
+- Features get stable IDs that restart within each priority: `P0-1`, `P0-2`, ... and `P1-1`, `P1-2`, ...
+- Every P0 feature must include all six bold-prefix lines: `**What**`, `**Not**`, `**Inputs**`, `**Outputs**`, `**Invariants**`, `**Acceptance Criteria**`
+- For P0 features with no exclusions, write `**Not**: _None._` rather than omitting the line; P1 features may omit `Not`
+- Every acceptance criterion line gets a stable ID matching the regex `^AC-P[01]-\d+\.\d+$` (e.g. `AC-P0-1.1`, `AC-P1-2.3`); AC IDs must be unique within the PRD
 - Acceptance criteria should be verifiable: use "Given/When/Then" or measurable thresholds — not vague descriptions like "works correctly"
 - Keep technical implementation details out of the main PRD (they go in `architecture.md`)
 - Keep edge cases out of the main PRD (they go in implementation specs)
@@ -113,12 +119,19 @@ Write the PRD using the format below. Target 1-2 pages — keep it concise enoug
 issueId: {issueId}
 title: {title}
 createdAt: {ISO timestamp}
+schemaVersion: 2
 ---
 
 # {title}
 
 ## Problem
 {2-3 sentences: what hurts, for whom, and how we know}
+
+## Glossary
+- **{Term}**: {project-specific definition, distinguishing it from generic usage}
+- **{Term}**: {definition}
+
+(If truly nothing to define, write `_None._`)
 
 ## Goals
 - {Measurable outcome 1}
@@ -131,22 +144,41 @@ createdAt: {ISO timestamp}
 ## Users
 {Target users and their primary needs — 2-4 sentences}
 
+## Reference Patterns
+- **{Aspect}**: {existing file or convention to mirror, e.g. "follow `src/commands/doctor.ts` — same Commander registration, `--json` output mode, exit codes"}
+- **{Aspect}**: {pattern}
+
+(If truly no reference patterns apply, write `_None._`)
+
 ## Features
 
 ### P0: Must Have
 
-#### {Feature Name}
+#### P0-1: {Feature Name}
 - **What**: {precise scope in 1 sentence}
-- **Not**: {explicit exclusions}
+- **Not**: {explicit exclusions, or `_None._` if nothing is excluded}
+- **Inputs**: {what triggers this feature / what data flows in}
+- **Outputs**: {what artifact, response, or state change results}
+- **Invariants**: {properties that must always hold — uniqueness, ordering, idempotency, etc.}
 - **Acceptance Criteria**:
-  - [ ] {Given/When/Then or measurable threshold}
+  - [ ] `AC-P0-1.1` {Given/When/Then or measurable threshold}
+  - [ ] `AC-P0-1.2` {testable criterion}
+
+#### P0-2: {Feature Name}
+- **What**: {precise scope in 1 sentence}
+- **Not**: _None._
+- **Inputs**: {inputs}
+- **Outputs**: {outputs}
+- **Invariants**: {invariants}
+- **Acceptance Criteria**:
+  - [ ] `AC-P0-2.1` {testable criterion}
 
 ### P1: Should Have
 
-#### {Feature Name}
+#### P1-1: {Feature Name}
 - **What**: {precise scope in 1 sentence}
 - **Acceptance Criteria**:
-  - [ ] {testable criterion}
+  - [ ] `AC-P1-1.1` {testable criterion}
 
 ### Out of Scope
 - {Item explicitly deferred}
@@ -158,7 +190,22 @@ createdAt: {ISO timestamp}
 {Links will be added here as supporting documents are created}
 ```
 
-### 3c. Review
+### 3c. Self-Check
+
+Before showing the PRD to the user in Step 3d, run through this checklist mentally and fix any items that fail. Do not skip — this is the gate that keeps schema v2 PRDs deterministic for downstream agents.
+
+- [ ] Frontmatter contains `schemaVersion: 2`
+- [ ] All seven H2 sections are present in this exact order: `Problem`, `Glossary`, `Goals`, `Non-Goals`, `Users`, `Reference Patterns`, `Features`
+- [ ] `Glossary` and `Reference Patterns` are non-empty (either real entries, or the literal text `_None._`)
+- [ ] Every P0 feature has all six bold-prefix lines: `**What**`, `**Not**`, `**Inputs**`, `**Outputs**`, `**Invariants**`, `**Acceptance Criteria**` (P0 features with no exclusions write `**Not**: _None._`)
+- [ ] Every feature heading uses a stable ID — `P0-1`, `P0-2`, ... within P0; `P1-1`, `P1-2`, ... within P1 (numbering restarts per priority)
+- [ ] Every acceptance criterion line matches the regex `^- \[[ x]\] \`AC-P[01]-\d+\.\d+\`` (the AC ID is wrapped in backticks immediately after the checkbox)
+- [ ] Every AC ID is unique within the PRD (no two ACs share the same `AC-P{0|1}-{n}.{m}` token)
+- [ ] AC IDs match their feature: a feature `P0-3` only has ACs of the form `AC-P0-3.{m}`
+
+If any check fails, edit the draft until all pass, then proceed to 3d.
+
+### 3d. Review
 
 Present the full PRD and ask via AskUserQuestion:
 - "Save as-is" (Recommended)
