@@ -164,6 +164,7 @@ Write the file directly using the Write tool to `.conductor/issues/{issueId}/tas
   "issue_id": "{issueId}",
   "issue_title": "{issue title from PRD}",
   "created_at": "{ISO timestamp}",
+  "schema_version": 2,
   "status": "PENDING",
   "epics": [
     {
@@ -181,6 +182,17 @@ Write the file directly using the Write tool to `.conductor/issues/{issueId}/tas
           "complexity": "small",
           "depends_on": [],
           "status": "PENDING",
+          "files_owned": ["conductor-backend/src/main/resources/db/migration/V42__add_reviews.sql"],
+          "covers_acs": ["AC-P0-1.1"],
+          "contract": {
+            "input": "A Flyway migration script applied against the existing schema",
+            "output": "A `reviews` table with columns id, issue_id, reviewer_id, decision, created_at and the matching FK indexes",
+            "invariant": "Migration is idempotent under Flyway's checksum (no retroactive edits once shipped); existing tables untouched"
+          },
+          "test_plan": [
+            "Apply migration on a fresh test DB and assert `reviews` table exists with expected columns",
+            "Re-running `mvn flyway:migrate` is a no-op (validate checksum stable)"
+          ],
           "criteria": [
             {
               "text": "Specific verifiable outcome",
@@ -196,6 +208,16 @@ Write the file directly using the Write tool to `.conductor/issues/{issueId}/tas
 ```
 
 Valid values: `status` — `PENDING | IN_PROGRESS | COMPLETED | BLOCKED`; `priority` — `HIGH | MEDIUM | LOW`; `complexity` — `small | medium | large`; `type` — `auto | manual`.
+
+**v2 required fields** (top-level `schema_version: 2`): every task must additionally carry
+- `files_owned` — string array of repo-relative paths the task is authorized to edit (≥1 entry)
+- `covers_acs` — string array of AC IDs from the PRD in the form `AC-P{0|1}-{n}.{m}` (≥1 entry; each ID must reference a real AC in the PRD)
+- `contract` — object with non-empty string fields `input`, `output`, `invariant` describing the task boundary
+- `test_plan` — string array of short test descriptions (NOT pseudocode; ≥1 entry)
+
+The existing task fields (`id`, `title`, `description`, `priority`, `complexity`, `depends_on`, `status`, `criteria`) are preserved unchanged in v2; the criteria entry shape (`text` / `type` / `met`) is also unchanged.
+
+**v1 fallback**: tasks files without a top-level `schema_version` (i.e. legacy v1) load and run unchanged; the orchestrator skips file-conflict detection for them (see Step 5) and does not require the four new fields.
 
 ---
 
@@ -252,6 +274,14 @@ Group independent tasks (no unresolved dependencies, no file-level conflicts) in
 | mixed batch | cap at heaviest task in batch |
 
 Tasks with `depends_on` within the same epic always run sequentially (wait for dependency to complete first).
+
+### File-conflict check
+
+Before dispatching a batch, compute the union of `files_owned` across tasks in the batch. If any path appears more than once, split the batch into sequential sub-batches.
+
+When splitting, place the conflicting tasks in different sub-batches such that each sub-batch's `files_owned` union has no duplicates; sub-batches then run one after another (the second sub-batch waits for the first to complete).
+
+For v1 tasks (no top-level `schema_version`, or no `files_owned` on tasks), behavior falls back to the existing heuristic-based grouping — the file-conflict check is skipped and v1 batches are formed from the complexity table above without change.
 
 ### Subagent Dispatch
 
