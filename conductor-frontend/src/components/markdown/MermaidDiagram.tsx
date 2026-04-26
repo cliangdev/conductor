@@ -1,40 +1,32 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
-import { useTheme } from 'next-themes'
+import { useState } from 'react'
+import { Maximize2 } from 'lucide-react'
+import { MermaidRenderer } from './MermaidRenderer'
+import { MermaidFullscreenViewer } from './MermaidFullscreenViewer'
 
 interface Props {
   chart: string
 }
 
 export function MermaidDiagram({ chart }: Props) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [error, setError] = useState<string | null>(null)
-  const { resolvedTheme } = useTheme()
+  const [open, setOpen] = useState(false)
 
-  useEffect(() => {
-    const id = 'mermaid-' + Math.random().toString(36).slice(2)
-    import('mermaid').then((m) => {
-      m.default.initialize({
-        startOnLoad: false,
-        theme: resolvedTheme === 'dark' ? 'dark' : 'neutral',
-        securityLevel: 'loose',
-      })
-      m.default
-        .render(id, chart)
-        .then(({ svg }) => {
-          if (ref.current) ref.current.innerHTML = svg
-        })
-        .catch((e: unknown) => setError(String(e)))
-    })
-  }, [chart, resolvedTheme])
-
-  if (error) {
-    return (
-      <pre className="text-red-500 text-sm p-3 border border-red-200 rounded bg-red-50 dark:bg-red-950 dark:border-red-800">
-        {error}
-      </pre>
-    )
-  }
-
-  return <div ref={ref} className="my-4 flex justify-center overflow-x-auto" />
+  return (
+    <>
+      <div className="group relative my-4">
+        <MermaidRenderer chart={chart} className="overflow-x-auto" />
+        <button
+          type="button"
+          aria-label="Expand diagram to fullscreen"
+          onClick={() => setOpen(true)}
+          className="absolute top-2 right-2 inline-flex items-center justify-center h-8 w-8 rounded-md border border-border bg-popover/90 backdrop-blur text-muted-foreground hover:text-foreground hover:bg-accent shadow-sm transition-opacity opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Maximize2 className="h-4 w-4" />
+        </button>
+      </div>
+      {open && (
+        <MermaidFullscreenViewer chart={chart} open={open} onOpenChange={setOpen} />
+      )}
+    </>
+  )
 }
