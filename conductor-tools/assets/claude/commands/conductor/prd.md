@@ -220,9 +220,9 @@ Call MCP tools in this exact sequence:
    - Receive: `{issueId, displayId, localPath}`
 
 2. **Scaffold document**: `scaffold_document({issueId, filename: "prd.md"})`
-   - Receive: `{localPath: ".conductor/issues/{issueId}/prd.md"}`
+   - Receive: `{localPath: ".conductor/issues/{issueId}/prd.md", absolutePath: "/abs/path/to/.conductor/issues/{issueId}/prd.md"}`
 
-3. **Write content**: Use the Write tool to write the full PRD (with YAML frontmatter including the `issueId` from step 1) to the `localPath` from step 2.
+3. **Write content**: Use the Write tool with the `absolutePath` from step 2 (Write requires absolute paths) to write the full PRD with YAML frontmatter including the `issueId` from step 1.
 
 4. **Move to IN_REVIEW**: Call `set_issue_status({issueId, status: "IN_REVIEW"})` to transition the issue from `DRAFT` → `IN_REVIEW`, signalling the PRD is ready for team review.
 
@@ -239,8 +239,8 @@ Options:
 
 For each accepted supporting document:
 1. `scaffold_document({issueId, filename: "{doc-filename}"})`
-2. Write the template content (see templates below) to the returned localPath
-3. **Update the PRD's Supporting Documents section**: Read the saved `prd.md`, replace the placeholder line with a relative link entry (e.g. `- [Architecture](./architecture.md)`), and write it back.
+2. Write the template content (see templates below) using the Write tool with the returned `absolutePath`
+3. **Update the PRD's Supporting Documents section**: Read the saved `prd.md` (use the `absolutePath` returned from step 2 of the main save sequence), replace the placeholder line with a relative link entry (e.g. `- [Architecture](./architecture.md)`), and write it back.
 
 ## Supporting Document Templates
 

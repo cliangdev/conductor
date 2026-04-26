@@ -46,7 +46,7 @@ export async function scaffoldDocument(
   const relativePath = `.conductor/issues/${params.issueId}/${params.filename}`
 
   if (fs.existsSync(localFilePath)) {
-    return { localPath: relativePath, alreadyExists: true }
+    return { localPath: relativePath, absolutePath: localFilePath, alreadyExists: true }
   }
 
   fs.mkdirSync(path.dirname(localFilePath), { recursive: true })
@@ -69,6 +69,7 @@ export async function scaffoldDocument(
     })
     return {
       localPath: relativePath,
+      absolutePath: localFilePath,
       warning: 'Backend sync failed — queued for retry',
     }
   }
@@ -76,5 +77,6 @@ export async function scaffoldDocument(
   return {
     documentId,
     localPath: relativePath,
+    absolutePath: localFilePath,
   }
 }

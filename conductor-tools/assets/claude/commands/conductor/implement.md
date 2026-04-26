@@ -57,8 +57,8 @@ Load the PRD if not already in context.
 1. **If the PRD content is already present in the conversation** (e.g. user just ran `/conductor:prd`): skip the file read entirely.
 
 2. **If the PRD is not in context**:
-   - Call `get_issue` with the resolved `issueId`
-   - Read the local file: `.conductor/issues/{issueId}/prd.md`
+   - Call `get_issue` with the resolved `issueId` — note the returned `absolutePath` (the issue directory on disk); use it for any subsequent `Read` / `Write` / `Edit` calls in this skill (the `Read`, `Write`, and `Edit` tools require absolute paths)
+   - Read the local file at `{absolutePath}prd.md`
 
 ---
 
@@ -93,7 +93,7 @@ Use AskUserQuestion with options: **Continue anyway** / **Abort**.
 
 ## Step 3 — Task Breakdown
 
-Check if `.conductor/issues/{issueId}/tasks.json` already exists.
+Check if `{absolutePath}tasks.json` already exists (where `absolutePath` was returned by `get_issue` in Step 2; the Read/Write/Edit tools require absolute paths).
 
 **If it exists**: use AskUserQuestion:
 ```json
@@ -157,7 +157,7 @@ When uncertain, ask for confirmation before writing.
 
 ### Writing tasks.json
 
-Write the file directly using the Write tool to `.conductor/issues/{issueId}/tasks.json` with this schema:
+Write the file directly using the Write tool to `{absolutePath}tasks.json` (the absolute issue dir from `get_issue` in Step 2) with this schema:
 
 ```json
 {
@@ -250,7 +250,7 @@ Before any implementation begins, set up the feature branch.
 
 ## Step 5 — Implementation Orchestration
 
-Read `tasks.json` (or use the in-memory breakdown from Step 3).
+Read `tasks.json` from `{absolutePath}tasks.json` (or use the in-memory breakdown from Step 3).
 
 ### Work Queue
 
