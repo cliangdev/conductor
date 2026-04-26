@@ -1,6 +1,7 @@
+import * as path from 'path'
 import { Config } from '../config.js'
 import { apiGet, apiPost, apiPatch } from '../api.js'
-import { writeIssueFile, readIssueFile } from '../files.js'
+import { writeIssueFile, readIssueFile, resolveLocalPath } from '../files.js'
 import { queueChange } from '../queue.js'
 
 interface IssueResponse {
@@ -74,6 +75,7 @@ export async function createIssue(
   writeIssueFile(config, issueId, content)
 
   const localPath = `.conductor/issues/${issueId}/`
+  const absolutePath = path.join(resolveLocalPath(config), '.conductor', 'issues', issueId) + path.sep
 
   const result: Record<string, unknown> = {
     issueId,
@@ -82,6 +84,7 @@ export async function createIssue(
     title: params.title,
     status: 'DRAFT',
     localPath,
+    absolutePath,
   }
 
   if (warning !== undefined) {
@@ -195,14 +198,32 @@ export async function getIssue(
   params: { issueId: string },
   config: Config
 ): Promise<Record<string, unknown>> {
+  let absolutePath: string | undefined
+  try {
+    absolutePath = path.join(resolveLocalPath(config), '.conductor', 'issues', params.issueId) + path.sep
+  } catch {
+    // localPath not configured — omit absolutePath
+  }
+  const localPath = `.conductor/issues/${params.issueId}/`
+
   const local = readIssueFile(config, params.issueId)
   if (local !== null) {
-    return { issueId: params.issueId, content: local, source: 'local' }
+    return {
+      issueId: params.issueId,
+      content: local,
+      source: 'local',
+      localPath,
+      ...(absolutePath ? { absolutePath } : {}),
+    }
   }
 
   const issue = await apiGet<IssueResponse>(
     `/api/v1/projects/${config.projectId}/issues/${params.issueId}`,
     config
   )
-  return issue as unknown as Record<string, unknown>
+  return {
+    ...(issue as unknown as Record<string, unknown>),
+    localPath,
+    ...(absolutePath ? { absolutePath } : {}),
+  }
 }

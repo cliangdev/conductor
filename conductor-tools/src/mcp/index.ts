@@ -70,7 +70,7 @@ const TOOLS = [
   },
   {
     name: 'scaffold_document',
-    description: 'Create an empty document file locally and register it with the backend. Use the returned localPath to write content with the Write tool.',
+    description: 'Create an empty document file locally and register it with the backend. Returns absolutePath (use this with the Write tool — Write requires absolute paths) and localPath (relative, for display).',
     inputSchema: {
       type: 'object',
       properties: {
