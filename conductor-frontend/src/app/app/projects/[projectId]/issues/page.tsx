@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useEffect, useMemo, useState } from 'react'
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
@@ -86,16 +86,29 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 const TYPE_OPTIONS = ['All', 'PRD', 'RFC', 'BUG', 'TASK'] as const
-const STATUS_OPTIONS = [
-  'All',
+
+const ACTIVE_STATUSES = [
   'DRAFT',
   'IN_REVIEW',
   'READY_FOR_DEVELOPMENT',
   'IN_PROGRESS',
   'CODE_REVIEW',
-  'DONE',
-  'CLOSED',
 ] as const
+const DONE_STATUSES = ['DONE', 'CLOSED'] as const
+
+type View = 'active' | 'done' | 'all'
+
+function statusOptionsForView(view: View): readonly string[] {
+  if (view === 'active') return ['All', ...ACTIVE_STATUSES]
+  if (view === 'done') return ['All', ...DONE_STATUSES]
+  return ['All', ...ACTIVE_STATUSES, ...DONE_STATUSES]
+}
+
+function isInView(status: string, view: View): boolean {
+  if (view === 'active') return (ACTIVE_STATUSES as readonly string[]).includes(status)
+  if (view === 'done') return (DONE_STATUSES as readonly string[]).includes(status)
+  return true
+}
 
 const VERDICT_ICONS: Record<string, string> = {
   APPROVED: '✅',
@@ -309,6 +322,11 @@ export default function IssuesListPage() {
   const { projectId } = params
   const { accessToken, user } = useAuth()
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  const viewParam = searchParams.get('view')
+  const view: View = viewParam === 'done' || viewParam === 'all' ? viewParam : 'active'
 
   const [issues, setIssues] = useState<IssueWithReviewers[]>([])
   const [members, setMembers] = useState<Member[]>([])
@@ -317,6 +335,16 @@ export default function IssuesListPage() {
   const [error, setError] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<string>('All')
   const [statusFilter, setStatusFilter] = useState<string>('All')
+
+  function setView(next: View) {
+    if (next === view) return
+    setStatusFilter('All')
+    const sp = new URLSearchParams(searchParams.toString())
+    if (next === 'active') sp.delete('view')
+    else sp.set('view', next)
+    const qs = sp.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname)
+  }
 
   useEffect(() => {
     if (!accessToken) return
@@ -367,11 +395,26 @@ export default function IssuesListPage() {
     setIssues((prev) => prev.map((i) => i.id === issueId ? { ...i, reviewers } : i))
   }
 
-  const filteredIssues = issues.filter((issue) => {
+  const counts = useMemo(() => {
+    let active = 0
+    let done = 0
+    for (const issue of issues) {
+      if (isInView(issue.status, 'active')) active++
+      else if (isInView(issue.status, 'done')) done++
+    }
+    return { active, done, all: issues.length }
+  }, [issues])
+
+  const issuesInView = issues.filter((issue) => isInView(issue.status, view))
+
+  const filteredIssues = issuesInView.filter((issue) => {
     if (typeFilter !== 'All' && issue.type !== typeFilter) return false
     if (statusFilter !== 'All' && issue.status !== statusFilter) return false
     return true
   })
+
+  const statusOptions = statusOptionsForView(view)
+  const statusFilterValue = statusOptions.includes(statusFilter) ? statusFilter : 'All'
 
   if (loading) {
     return (
@@ -389,9 +432,65 @@ export default function IssuesListPage() {
 
   const canEdit = userRole !== 'REVIEWER'
 
+  const tabs: { id: View; label: string; count: number }[] = [
+    { id: 'active', label: 'Active', count: counts.active },
+    { id: 'done', label: 'Done', count: counts.done },
+    { id: 'all', label: 'All', count: counts.all },
+  ]
+
+  const allStatusLabel = view === 'done' ? 'All done/closed' : view === 'active' ? 'All active' : 'All'
+
+  const filtersAreActive = typeFilter !== 'All' || statusFilterValue !== 'All'
+
   return (
     <div className="p-4 sm:p-6">
       <h1 className="text-xl font-semibold text-foreground mb-4">Issues</h1>
+
+      {/* View tabs */}
+      <div
+        role="tablist"
+        aria-label="Issue view"
+        className="flex items-center gap-1 border-b border-border mb-4 -mx-1 px-1 overflow-x-auto"
+      >
+        {tabs.map((t) => {
+          const selected = t.id === view
+          return (
+            <button
+              key={t.id}
+              role="tab"
+              type="button"
+              aria-selected={selected}
+              onClick={() => setView(t.id)}
+              className={
+                'relative px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors ' +
+                (selected
+                  ? 'text-foreground'
+                  : 'text-muted-foreground hover:text-foreground')
+              }
+            >
+              <span className="inline-flex items-center gap-1.5">
+                {t.label}
+                <span
+                  className={
+                    'inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-xs font-medium ' +
+                    (selected
+                      ? 'bg-foreground/10 text-foreground'
+                      : 'bg-muted text-muted-foreground')
+                  }
+                >
+                  {t.count}
+                </span>
+              </span>
+              {selected && (
+                <span
+                  aria-hidden="true"
+                  className="absolute left-0 right-0 -bottom-px h-0.5 bg-primary rounded-full"
+                />
+              )}
+            </button>
+          )
+        })}
+      </div>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">
@@ -413,20 +512,41 @@ export default function IssuesListPage() {
           <label htmlFor="status-filter" className="text-sm text-muted-foreground">Status:</label>
           <select
             id="status-filter"
-            value={statusFilter}
+            value={statusFilterValue}
             onChange={(e) => setStatusFilter(e.target.value)}
             className="border border-border bg-background text-foreground rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
-            {STATUS_OPTIONS.map((s) => (
-              <option key={s} value={s}>{s === 'All' ? 'All' : (STATUS_LABELS[s] ?? s.replace(/_/g, ' '))}</option>
+            {statusOptions.map((s) => (
+              <option key={s} value={s}>{s === 'All' ? allStatusLabel : (STATUS_LABELS[s] ?? s.replace(/_/g, ' '))}</option>
             ))}
           </select>
         </div>
       </div>
 
       {filteredIssues.length === 0 ? (
-        <div className="flex items-center justify-center h-48 text-muted-foreground border border-dashed border-border rounded-lg">
-          No issues yet
+        <div className="flex flex-col items-center justify-center h-48 gap-2 text-muted-foreground border border-dashed border-border rounded-lg">
+          {issuesInView.length === 0 ? (
+            <span>
+              {view === 'done'
+                ? 'No completed issues yet'
+                : view === 'active'
+                ? 'No active issues — nice work!'
+                : 'No issues yet'}
+            </span>
+          ) : (
+            <>
+              <span>No issues match the current filters</span>
+              {filtersAreActive && (
+                <button
+                  type="button"
+                  onClick={() => { setTypeFilter('All'); setStatusFilter('All') }}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Clear filters
+                </button>
+              )}
+            </>
+          )}
         </div>
       ) : (
         <>
