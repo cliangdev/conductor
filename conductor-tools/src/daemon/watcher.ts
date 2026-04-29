@@ -27,7 +27,7 @@ export function rotateDaemonLogIfNeeded(): void {
 }
 
 export interface QueueEntry {
-  method: 'POST' | 'PUT' | 'DELETE'
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   path: string
   body?: Record<string, unknown>
   timestamp: string
@@ -106,6 +106,12 @@ export function resolveProjectIdForFile(filePath: string, config: Config): strin
   return config.projectId
 }
 
+class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message)
+  }
+}
+
 async function callApi(
   method: string,
   apiPath: string,
@@ -124,7 +130,7 @@ async function callApi(
   })
   if (!response.ok) {
     const text = await response.text().catch(() => response.statusText)
-    throw new Error(`${method} ${apiPath} failed with status ${response.status}: ${text}`)
+    throw new ApiError(response.status, `${method} ${apiPath} failed with status ${response.status}: ${text}`)
   }
 }
 
@@ -216,7 +222,7 @@ export async function syncIssueMd(filePath: string, getConfig: () => Config): Pr
     console.log(`Synced issue.md: ${filePath}`)
   } catch (err) {
     console.error(`Issue sync failed, queuing: ${filePath} — ${(err as Error).message}`)
-    queueChange({ method: 'PUT', path: apiPath, body: patchBody })
+    queueChange({ method: 'PATCH', path: apiPath, body: patchBody })
   }
 }
 
@@ -279,8 +285,13 @@ export async function replayQueue(getConfig: () => Config): Promise<void> {
       await callApi(entry.method, entry.path, entry.body, getConfig)
       console.log(`Replayed: ${entry.method} ${entry.path}`)
     } catch (err) {
-      console.error(`Replay failed for ${entry.method} ${entry.path}: ${(err as Error).message}`)
-      remaining.push(entry)
+      const status = err instanceof ApiError ? err.status : 0
+      if (status >= 400 && status < 500) {
+        console.error(`Dropping unretryable queue entry (${status}): ${entry.method} ${entry.path}`)
+      } else {
+        console.error(`Replay failed for ${entry.method} ${entry.path}: ${(err as Error).message}`)
+        remaining.push(entry)
+      }
     }
   }
 
