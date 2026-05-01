@@ -8,7 +8,8 @@ vi.mock('@/lib/firebase', () => ({
 
 vi.mock('firebase/auth', () => ({
   GoogleAuthProvider: class GoogleAuthProvider {},
-  signInWithPopup: vi.fn(),
+  signInWithRedirect: vi.fn(),
+  getRedirectResult: vi.fn().mockResolvedValue(null),
   signOut: vi.fn(),
   getIdToken: vi.fn(),
 }))
@@ -77,13 +78,8 @@ describe('AuthContext', () => {
     expect(captured?.accessToken).toBe('stored-token')
   })
 
-  it('signIn calls signInWithPopup and stores user after Google auth', async () => {
-    const mockFirebaseUser = { uid: 'firebase-uid' }
-    vi.mocked(firebaseAuth.signInWithPopup).mockResolvedValue({
-      user: mockFirebaseUser,
-    } as Awaited<ReturnType<typeof firebaseAuth.signInWithPopup>>)
-    vi.mocked(firebaseAuth.getIdToken).mockResolvedValue('firebase-id-token')
-    vi.mocked(api.apiPost).mockResolvedValue({ accessToken: 'backend-token', user: mockUser })
+  it('signIn calls signInWithRedirect', async () => {
+    vi.mocked(firebaseAuth.signInWithRedirect).mockResolvedValue(undefined)
 
     let captured: ReturnType<typeof useAuth> | null = null
 
@@ -99,7 +95,28 @@ describe('AuthContext', () => {
       await captured?.signIn()
     })
 
-    expect(firebaseAuth.signInWithPopup).toHaveBeenCalled()
+    expect(firebaseAuth.signInWithRedirect).toHaveBeenCalled()
+  })
+
+  it('stores user after redirect result resolves on mount', async () => {
+    const mockFirebaseUser = { uid: 'firebase-uid' }
+    vi.mocked(firebaseAuth.getRedirectResult).mockResolvedValue({
+      user: mockFirebaseUser,
+    } as Awaited<ReturnType<typeof firebaseAuth.getRedirectResult>>)
+    vi.mocked(firebaseAuth.getIdToken).mockResolvedValue('firebase-id-token')
+    vi.mocked(api.apiPost).mockResolvedValue({ accessToken: 'backend-token', user: mockUser })
+
+    let captured: ReturnType<typeof useAuth> | null = null
+
+    render(
+      <AuthProvider>
+        <TestConsumer onValues={(v) => { captured = v }} />
+      </AuthProvider>
+    )
+
+    await waitFor(() => expect(captured?.loading).toBe(false))
+
+    expect(firebaseAuth.getRedirectResult).toHaveBeenCalled()
     expect(api.apiPost).toHaveBeenCalledWith('/api/v1/auth/firebase', { idToken: 'firebase-id-token' })
     expect(captured?.user).toEqual(mockUser)
     expect(captured?.accessToken).toBe('backend-token')
@@ -177,7 +194,7 @@ describe('AuthContext', () => {
         await captured?.signIn({ email: 'user@example.com', password: 'secret123' })
       })
 
-      expect(firebaseAuth.signInWithPopup).not.toHaveBeenCalled()
+      expect(firebaseAuth.signInWithRedirect).not.toHaveBeenCalled()
       expect(firebaseAuth.getIdToken).not.toHaveBeenCalled()
     })
 

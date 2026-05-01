@@ -77,21 +77,17 @@ function LocalLoginForm() {
 }
 
 function GoogleLoginForm() {
-  const router = useRouter()
-  const searchParams = useSearchParams()
-  const { signIn } = useAuth()
+  const { signIn, signInError } = useAuth()
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
   async function handleSignIn() {
     setLoading(true)
-    setError(null)
     try {
       await signIn()
-      router.push(resolveNext(searchParams.get('next')))
+      // signInWithRedirect navigates away; loading state is intentionally left true
     } catch (err) {
       const code = (err as { code?: string })?.code
-      setError(code ? `Sign in failed: ${code}` : 'Sign in failed. Please try again.')
+      console.error('signInWithRedirect failed:', code ?? err)
       setLoading(false)
     }
   }
@@ -115,7 +111,7 @@ function GoogleLoginForm() {
           </svg>
           {loading ? 'Signing in...' : 'Sign in with Google'}
         </button>
-        {error && <p className="mt-3 text-sm text-destructive text-center">{error}</p>}
+        {signInError && <p className="mt-3 text-sm text-destructive text-center">{signInError}</p>}
       </div>
     </div>
   )
