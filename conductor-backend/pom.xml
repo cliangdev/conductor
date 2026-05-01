@@ -32,7 +32,7 @@
         <springdoc.version>3.0.3</springdoc.version>
         <jjwt.version>0.13.0</jjwt.version>
         <firebase.version>9.8.0</firebase.version>
-        <openapi-generator.version>7.21.0</openapi-generator.version>
+        <openapi-generator.version>7.22.0</openapi-generator.version>
     </properties>
 
 
