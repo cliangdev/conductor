@@ -89,8 +89,9 @@ function GoogleLoginForm() {
     try {
       await signIn()
       router.push(resolveNext(searchParams.get('next')))
-    } catch {
-      setError('Sign in failed. Please try again.')
+    } catch (err) {
+      const code = (err as { code?: string })?.code
+      setError(code ? `Sign in failed: ${code}` : 'Sign in failed. Please try again.')
       setLoading(false)
     }
   }

@@ -147,18 +147,32 @@ src/
 
 ## Fetching Cloud Run Logs
 
-Use `scripts/logs.sh` to fetch logs from the deployed services on GCP. Set `CONDUCTOR_GCP_PROJECT` (required) and optionally `CONDUCTOR_GCP_REGION` (defaults to `us-central1`):
+Two options:
 
+**Option 1 — `scripts/logs.sh`** (wraps gcloud, requires `CONDUCTOR_GCP_PROJECT`):
 ```bash
-export CONDUCTOR_GCP_PROJECT=my-gcp-project
+export CONDUCTOR_GCP_PROJECT=<your-gcp-project>
 ./scripts/logs.sh                        # backend logs, last 50 lines
 ./scripts/logs.sh frontend               # frontend logs, last 50 lines
 ./scripts/logs.sh backend --lines 200    # last 200 lines
 ./scripts/logs.sh backend --since 1h     # last 1 hour
-./scripts/logs.sh backend --tail         # stream live logs
 ```
 
-Requires `gcloud` CLI authenticated (`gcloud auth login`) with access to the target project.
+**Option 2 — `gcloud` directly** (useful with a named configuration or alias):
+```bash
+gcloud --configuration=<config> --project=<project> logging read \
+  "resource.type=cloud_run_revision AND resource.labels.service_name=conductor-backend" \
+  --limit=50 --format=json | python3 -c "
+import json, sys
+for l in reversed(json.load(sys.stdin)):
+    ts = l.get('timestamp','')[:19]
+    sev = l.get('severity','')
+    msg = l.get('textPayload') or l.get('jsonPayload',{}).get('message','') or l.get('httpRequest',{}).get('requestUrl','')
+    if msg: print(f'{ts} [{sev}] {msg}')
+"
+```
+
+Set up a shell alias for your deployment (see `scripts/gcloud-alias-example.sh`) so you don't have to repeat the flags. Requires `gcloud` CLI authenticated with access to the target project.
 
 ## API Workflow
 
