@@ -3,6 +3,8 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import type { User, AuthResponse } from '@/types'
 import { apiPost, setOnUnauthorized } from '@/lib/api'
+import { getFirebaseAuth } from '@/lib/firebase'
+import { GoogleAuthProvider, signInWithPopup, getIdToken, signOut as firebaseSignOut } from 'firebase/auth'
 
 interface AuthContextValue {
   user: User | null
@@ -85,12 +87,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setSignInError(null)
     try {
-      const { getFirebaseAuth } = await import('@/lib/firebase')
-      const { GoogleAuthProvider, signInWithPopup, getIdToken } = await import('firebase/auth')
-
-      const auth = getFirebaseAuth()
-      const provider = new GoogleAuthProvider()
-      const result = await signInWithPopup(auth, provider)
+      // signInWithPopup must be called synchronously within the user gesture;
+      // static imports above ensure no async gap before the popup is opened.
+      const result = await signInWithPopup(getFirebaseAuth(), new GoogleAuthProvider())
       const idToken = await getIdToken(result.user)
       const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
       setUser(response.user)
@@ -117,8 +116,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
     if (!isLocalMode) {
-      const { getFirebaseAuth } = await import('@/lib/firebase')
-      const { signOut: firebaseSignOut } = await import('firebase/auth')
       await firebaseSignOut(getFirebaseAuth())
     }
 
