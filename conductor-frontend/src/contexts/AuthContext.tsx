@@ -89,7 +89,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       // signInWithPopup must be called synchronously within the user gesture;
       // static imports above ensure no async gap before the popup is opened.
-      const result = await signInWithPopup(getFirebaseAuth(), new GoogleAuthProvider())
+      const provider = new GoogleAuthProvider()
+      provider.setCustomParameters({ prompt: 'select_account' })
+      const result = await signInWithPopup(getFirebaseAuth(), provider)
       const idToken = await getIdToken(result.user)
       const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
       setUser(response.user)
