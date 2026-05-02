@@ -3,6 +3,8 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import type { User, AuthResponse } from '@/types'
 import { apiPost, setOnUnauthorized } from '@/lib/api'
+import { getFirebaseAuth } from '@/lib/firebase'
+import { GoogleAuthProvider, signInWithPopup, getIdToken, signOut as firebaseSignOut } from 'firebase/auth'
 
 interface AuthContextValue {
   user: User | null
@@ -53,53 +55,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.location.href = '/login'
     })
 
-    async function init() {
-      const storedToken = localStorage.getItem('access_token')
-      const storedUser = localStorage.getItem('user')
-      console.log('[auth] init: storedToken=', !!storedToken, 'storedUser=', !!storedUser)
-      if (storedToken) {
-        setAccessToken(storedToken)
-        setAccessTokenCookie(storedToken)
-        if (storedUser) {
-          try {
-            setUser(JSON.parse(storedUser))
-          } catch {
-            // Ignore malformed stored user
-          }
-        }
-      }
-
-      const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
-      if (!isLocalMode) {
+    const storedToken = localStorage.getItem('access_token')
+    const storedUser = localStorage.getItem('user')
+    if (storedToken) {
+      setAccessToken(storedToken)
+      setAccessTokenCookie(storedToken)
+      if (storedUser) {
         try {
-          console.log('[auth] calling getRedirectResult...')
-          const { getFirebaseAuth } = await import('@/lib/firebase')
-          const { getRedirectResult, getIdToken } = await import('firebase/auth')
-          const result = await getRedirectResult(getFirebaseAuth())
-          console.log('[auth] getRedirectResult returned:', result ? `user=${result.user?.email}` : 'null')
-          if (result) {
-            const idToken = await getIdToken(result.user)
-            console.log('[auth] got Firebase idToken, calling backend...')
-            const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
-            console.log('[auth] backend auth success, user=', response.user?.email)
-            setUser(response.user)
-            setAccessToken(response.accessToken)
-            localStorage.setItem('access_token', response.accessToken)
-            localStorage.setItem('user', JSON.stringify(response.user))
-            setAccessTokenCookie(response.accessToken)
-          }
-        } catch (err) {
-          console.error('[auth] auth error:', err)
-          const code = (err as { code?: string })?.code
-          setSignInError(code ? `Sign in failed: ${code}` : 'Sign in failed. Please try again.')
+          setUser(JSON.parse(storedUser))
+        } catch {
+          // Ignore malformed stored user
         }
       }
-
-      console.log('[auth] init complete, setLoading(false)')
-      setLoading(false)
     }
 
-    init()
+    setLoading(false)
   }, [])
 
   async function signIn(credentials?: { email: string; password: string }): Promise<void> {
@@ -115,13 +85,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    const { getFirebaseAuth } = await import('@/lib/firebase')
-    const { GoogleAuthProvider, signInWithRedirect } = await import('firebase/auth')
-
-    const auth = getFirebaseAuth()
-    const provider = new GoogleAuthProvider()
-    await signInWithRedirect(auth, provider)
-    // Page navigates away; auth completion is handled by getRedirectResult in useEffect
+    setSignInError(null)
+    try {
+      // signInWithPopup must be called synchronously within the user gesture;
+      // static imports above ensure no async gap before the popup is opened.
+      const result = await signInWithPopup(getFirebaseAuth(), new GoogleAuthProvider())
+      const idToken = await getIdToken(result.user)
+      const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
+      setUser(response.user)
+      setAccessToken(response.accessToken)
+      localStorage.setItem('access_token', response.accessToken)
+      localStorage.setItem('user', JSON.stringify(response.user))
+      setAccessTokenCookie(response.accessToken)
+    } catch (err) {
+      const code = (err as { code?: string })?.code
+      setSignInError(code ? `Sign in failed: ${code}` : 'Sign in failed. Please try again.')
+      throw err
+    }
   }
 
   async function signOut(): Promise<void> {
@@ -136,8 +116,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
     if (!isLocalMode) {
-      const { getFirebaseAuth } = await import('@/lib/firebase')
-      const { signOut: firebaseSignOut } = await import('firebase/auth')
       await firebaseSignOut(getFirebaseAuth())
     }
 
