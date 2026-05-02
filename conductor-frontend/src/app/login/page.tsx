@@ -84,10 +84,8 @@ function GoogleLoginForm() {
     setLoading(true)
     try {
       await signIn()
-      // signInWithRedirect navigates away; loading state is intentionally left true
-    } catch (err) {
-      const code = (err as { code?: string })?.code
-      console.error('signInWithRedirect failed:', code ?? err)
+      // On success the LoginForm effect detects user and navigates; leave loading true
+    } catch {
       setLoading(false)
     }
   }
