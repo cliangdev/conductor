@@ -8,6 +8,7 @@ interface AuthContextValue {
   user: User | null
   accessToken: string | null
   loading: boolean
+  signInError: string | null
   signIn: (credentials?: { email: string; password: string }) => Promise<void>
   signOut: () => Promise<void>
 }
@@ -36,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [signInError, setSignInError] = useState<string | null>(null)
 
   function clearLocalAuth() {
     setUser(null)
@@ -51,20 +53,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.location.href = '/login'
     })
 
-    const storedToken = localStorage.getItem('access_token')
-    const storedUser = localStorage.getItem('user')
-    if (storedToken) {
-      setAccessToken(storedToken)
-      setAccessTokenCookie(storedToken)
-      if (storedUser) {
-        try {
-          setUser(JSON.parse(storedUser))
-        } catch {
-          // Ignore malformed stored user
+    async function init() {
+      const storedToken = localStorage.getItem('access_token')
+      const storedUser = localStorage.getItem('user')
+      if (storedToken) {
+        setAccessToken(storedToken)
+        setAccessTokenCookie(storedToken)
+        if (storedUser) {
+          try {
+            setUser(JSON.parse(storedUser))
+          } catch {
+            // Ignore malformed stored user
+          }
         }
       }
+
+      const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
+      if (!isLocalMode) {
+        try {
+          const { getFirebaseAuth } = await import('@/lib/firebase')
+          const { getRedirectResult, getIdToken } = await import('firebase/auth')
+          const result = await getRedirectResult(getFirebaseAuth())
+          if (result) {
+            const idToken = await getIdToken(result.user)
+            const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
+            setUser(response.user)
+            setAccessToken(response.accessToken)
+            localStorage.setItem('access_token', response.accessToken)
+            localStorage.setItem('user', JSON.stringify(response.user))
+            setAccessTokenCookie(response.accessToken)
+          }
+        } catch (err) {
+          const code = (err as { code?: string })?.code
+          setSignInError(code ? `Sign in failed: ${code}` : 'Sign in failed. Please try again.')
+        }
+      }
+
+      setLoading(false)
     }
-    setLoading(false)
+
+    init()
   }, [])
 
   async function signIn(credentials?: { email: string; password: string }): Promise<void> {
@@ -81,18 +109,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const { getFirebaseAuth } = await import('@/lib/firebase')
-    const { GoogleAuthProvider, signInWithPopup, getIdToken } = await import('firebase/auth')
+    const { GoogleAuthProvider, signInWithRedirect } = await import('firebase/auth')
 
     const auth = getFirebaseAuth()
     const provider = new GoogleAuthProvider()
-    const credential = await signInWithPopup(auth, provider)
-    const idToken = await getIdToken(credential.user)
-    const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
-    setUser(response.user)
-    setAccessToken(response.accessToken)
-    localStorage.setItem('access_token', response.accessToken)
-    localStorage.setItem('user', JSON.stringify(response.user))
-    setAccessTokenCookie(response.accessToken)
+    await signInWithRedirect(auth, provider)
+    // Page navigates away; auth completion is handled by getRedirectResult in useEffect
   }
 
   async function signOut(): Promise<void> {
@@ -120,7 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, accessToken, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ user, accessToken, loading, signInError, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   )
