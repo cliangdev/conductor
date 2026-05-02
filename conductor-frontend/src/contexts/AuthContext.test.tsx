@@ -7,7 +7,9 @@ vi.mock('@/lib/firebase', () => ({
 }))
 
 vi.mock('firebase/auth', () => ({
-  GoogleAuthProvider: class GoogleAuthProvider {},
+  GoogleAuthProvider: class GoogleAuthProvider {
+    setCustomParameters() {}
+  },
   signInWithPopup: vi.fn(),
   signOut: vi.fn(),
   getIdToken: vi.fn(),
@@ -124,7 +126,7 @@ describe('AuthContext', () => {
       try { await captured?.signIn() } catch { /* expected */ }
     })
 
-    expect(captured?.signInError).toMatch('auth/popup-closed-by-user')
+    expect(captured?.signInError).toBe('Sign in failed: auth/popup-closed-by-user')
     expect(captured?.user).toBeNull()
   })
 
