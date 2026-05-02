@@ -56,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async function init() {
       const storedToken = localStorage.getItem('access_token')
       const storedUser = localStorage.getItem('user')
+      console.log('[auth] init: storedToken=', !!storedToken, 'storedUser=', !!storedUser)
       if (storedToken) {
         setAccessToken(storedToken)
         setAccessTokenCookie(storedToken)
@@ -71,12 +72,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const isLocalMode = process.env.NEXT_PUBLIC_AUTH_MODE === 'local'
       if (!isLocalMode) {
         try {
+          console.log('[auth] calling getRedirectResult...')
           const { getFirebaseAuth } = await import('@/lib/firebase')
           const { getRedirectResult, getIdToken } = await import('firebase/auth')
           const result = await getRedirectResult(getFirebaseAuth())
+          console.log('[auth] getRedirectResult returned:', result ? `user=${result.user?.email}` : 'null')
           if (result) {
             const idToken = await getIdToken(result.user)
+            console.log('[auth] got Firebase idToken, calling backend...')
             const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
+            console.log('[auth] backend auth success, user=', response.user?.email)
             setUser(response.user)
             setAccessToken(response.accessToken)
             localStorage.setItem('access_token', response.accessToken)
@@ -84,11 +89,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setAccessTokenCookie(response.accessToken)
           }
         } catch (err) {
+          console.error('[auth] auth error:', err)
           const code = (err as { code?: string })?.code
           setSignInError(code ? `Sign in failed: ${code}` : 'Sign in failed. Please try again.')
         }
       }
 
+      console.log('[auth] init complete, setLoading(false)')
       setLoading(false)
     }
 
