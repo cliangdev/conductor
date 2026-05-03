@@ -47,8 +47,6 @@ The Maintainer may update this Agreement from time to time. Material changes wil
 
 ## How to sign
 
-To accept this Agreement, comment on your first pull request with exactly the following text:
+When you open a pull request, the CLA Assistant bot will post a comment with a link to sign this Agreement. Click the link, authenticate with GitHub, and follow the prompts.
 
-> I have read the CLA Document and I hereby sign the CLA
-
-The CLA bot will record your signature. You only need to sign once — it applies to all your future Contributions to this Project.
+Your signature is recorded once and applies to all future Contributions to this Project.
