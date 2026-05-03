@@ -19,7 +19,8 @@ The platform is built around Claude Code. You write PRDs with AI, your team revi
 2. Team reviews    →   Conductor web app — comment, approve, request changes
 3. Implement       →   /conductor:implement in Claude Code
 4. PR opens        →   Claude commits, pushes, and creates the pull request
-5. Merge           →   Issue closes automatically
+5. Fix & iterate   →   /conductor:fix — address review feedback on the open PR
+6. Merge           →   Issue closes automatically
 ```
 
 Agents do the execution. Humans set the intent and sign off.
@@ -48,6 +49,7 @@ Then open Claude Code in your project and run `/conductor:prd` to create your fi
 |---------|-------------|
 | `/conductor:prd` | Guides you through writing a PRD with AI — discovery, research, structured output |
 | `/conductor:implement` | Takes an approved PRD and implements it — task breakdown, parallel subagents, PR creation |
+| `/conductor:fix` | Fixes bugs and review feedback on an open PR — structured intake, investigation, build validation, and push |
 
 These commands are installed automatically when you run `conductor init` (project-level) or during global install (user-level, to `~/.claude/`).
 
