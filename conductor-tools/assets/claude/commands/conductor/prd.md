@@ -46,6 +46,7 @@ Before drafting, explore the codebase:
 2. Search for relevant existing patterns using Grep/Glob
 3. Identify tech stack, data models, and constraints relevant to the feature
 4. Note any files that will need to change
+5. **If the feature involves UI**: scan existing frontend pages and components to catalogue the design language in use — layout structure, spacing conventions, color/typography primitives, component library (e.g. shadcn/ui, MUI), interaction patterns, and navigation model. Record these as the baseline that new UI must match.
 
 Use the codebase context to make the PRD technically accurate and grounded.
 
@@ -242,6 +243,15 @@ For each accepted supporting document:
 2. Write the template content (see templates below) using the Write tool with the returned `absolutePath`
 3. **Update the PRD's Supporting Documents section**: Read the saved `prd.md` (use the `absolutePath` returned from step 2 of the main save sequence), replace the placeholder line with a relative link entry (e.g. `- [Architecture](./architecture.md)`), and write it back.
 
+**UI/UX quality bar for wireframes and HTML mocks:**
+Before writing any UI artifact, recall the design language catalogued in Phase 2a. All wireframes and mocks must:
+- **Be user-first**: present the user's primary task prominently; avoid burying key actions in menus or below the fold
+- **Be consistent with the existing product**: reuse the same layout skeleton, navigation position, spacing scale, component vocabulary, and color/type tokens found in codebase research — do not invent new patterns when existing ones apply
+- **Show real interaction states**: include empty state, loading, error, and success variants — not just the happy path
+- **Follow progressive disclosure**: surface only what users need at each step; defer advanced options to secondary panels or modals
+- **Apply accessibility basics**: adequate contrast, meaningful labels on controls, keyboard-navigable flows
+- **Annotate decisions**: for non-obvious layout choices, add a brief rationale comment so reviewers understand intent
+
 ## Supporting Document Templates
 
 ### Mermaid authoring rules (ASCII-safe — follow these to avoid render failures)
@@ -313,39 +323,93 @@ title: {title} — Wireframes
 
 # {title} — Wireframes
 
-## Desktop Layout
+> Style notes: mirrors existing product design language — [note the component library, layout skeleton, and navigation model observed in Phase 2a, e.g. "left sidebar nav, shadcn/ui Card + Button primitives, 4px spacing scale"]
+
+## User Flow
 
 \`\`\`
-+--------------------+----------------------------------+
-|  Sidebar           |  Main Content Area               |
-|                    |                                  |
-|  [Issues]          |  Page Title                      |
-|  [Members]         |  +----------------------------+  |
-|  [Settings]        |  |  Primary Content           |  |
-|                    |  |                            |  |
-|                    |  +----------------------------+  |
-+--------------------+----------------------------------+
+[Entry point] → [Primary action] → [Confirmation / Result]
+                      ↓ (error path)
+               [Error state] → [Recovery action]
 \`\`\`
 
-## Mobile Layout
+## Desktop Layout — {Primary Screen Name}
 
 \`\`\`
-+----------------------+
-|  ☰  Conductor        |
-+----------------------+
-|  Page Title          |
-|                      |
-|  Primary Content     |
-|                      |
-+----------------------+
++--------------------+------------------------------------------+
+|  {Nav / Sidebar}   |  {Page Title}          [{Action Button}] |
+|                    +------------------------------------------+
+|  {Nav Item 1}  ◀  |  {Section heading}                       |
+|  {Nav Item 2}      |  +--------------------------------------+ |
+|  {Nav Item 3}      |  |  {Primary Content}                   | |
+|                    |  |                                      | |
+|                    |  |  {Field / Element 1}  [  Action  ]   | |
+|                    |  |  {Field / Element 2}                 | |
+|                    |  +--------------------------------------+ |
++--------------------+------------------------------------------+
 \`\`\`
 
-## Element Description
+## Mobile Layout — {Primary Screen Name}
 
-| Element | Description | Interaction |
-|---------|-------------|-------------|
-| ...     | ...         | ...         |
+\`\`\`
++-----------------------------+
+|  ☰  {App Name}             |
++-----------------------------+
+|  {Page Title}               |
+|  ─────────────────────────  |
+|  {Primary Content}          |
+|                             |
+|  {Field / Element 1}        |
+|  [      Primary Action    ] |
++-----------------------------+
+\`\`\`
+
+## State Variants
+
+### Empty State
+\`\`\`
++------------------------------------------+
+|  {Illustration or icon placeholder}      |
+|  {Heading: "No {items} yet"}             |
+|  {Sub-copy: what user should do next}    |
+|  [  {Primary CTA}  ]                     |
++------------------------------------------+
+\`\`\`
+
+### Loading State
+\`\`\`
++------------------------------------------+
+|  ▓▓▓▓▓▓▓▓▓▓▓▓  (skeleton line)          |
+|  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  (skeleton line)    |
++------------------------------------------+
+\`\`\`
+
+### Error State
+\`\`\`
++------------------------------------------+
+|  ⚠  {Error message}                      |
+|  {Recovery instruction}    [Retry]        |
++------------------------------------------+
+\`\`\`
+
+## Element Annotations
+
+| Element | Component | Interaction | Notes |
+|---------|-----------|-------------|-------|
+| {Element 1} | {e.g. Button / Card / Input} | {click / hover / focus behavior} | {any non-obvious rationale} |
+| {Element 2} | ... | ... | ... |
+
+## Accessibility Notes
+- {e.g. "Primary action button must have visible focus ring and aria-label"}
+- {e.g. "Error messages linked to input via aria-describedby"}
 ```
 
 ### HTML Mock (mockup.html)
 Write a valid standalone HTML file with inline CSS — no external dependencies.
+
+**Style consistency rules for HTML mocks:**
+- Match the color palette, border-radius, and font observed in the existing product (reference the Phase 2a findings; if unknown, use a clean neutral palette — white/gray-50 backgrounds, gray-900 text, a single accent color)
+- Replicate the existing layout skeleton (sidebar, top nav, or other chrome) so the new screen looks like it belongs in the product
+- Use the same component vocabulary: if the product uses card containers with subtle shadows, use that here; if it uses bordered panels, do that instead
+- Show at least two states: the default/happy-path view AND one of empty/loading/error
+- Add a small `<!-- note: ... -->` comment for any placeholder or approximation that differs from the real product
