@@ -8,6 +8,13 @@ import { updateDoc } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
 import type { MemberRole } from '@/types'
 
+const ALLOWED_IMAGE_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]
+
 export interface DocEditorProps {
   doc: ProjectDoc
   projectId: string
@@ -65,8 +72,71 @@ export function DocEditor({
 }: DocEditorProps) {
   const [value, setValue] = useState(doc.content ?? '')
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const { showToast } = useToast()
+
+  async function uploadImage(file: File) {
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      showToast('Invalid file type. Allowed: PNG, JPEG, GIF, WebP', 'error')
+      return
+    }
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('image', file)
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? ''
+      const res = await fetch(
+        `${apiUrl}/api/v1/projects/${projectId}/docs/${doc.id}/images`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        },
+      )
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || `Upload failed (${res.status})`)
+      }
+      const data = (await res.json()) as {
+        markdownSnippet: string
+        storageUrl: string
+      }
+      if (textareaRef.current) {
+        setValue(insertAtCursor(textareaRef.current, data.markdownSnippet, ''))
+      }
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Image upload failed',
+        'error',
+      )
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function handleImageButtonClick() {
+    fileInputRef.current?.click()
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) uploadImage(file)
+    e.target.value = ''
+  }
+
+  function handleDragOver(e: React.DragEvent<HTMLTextAreaElement>) {
+    e.preventDefault()
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLTextAreaElement>) {
+    e.preventDefault()
+    const file = e.dataTransfer.files[0]
+    if (file && ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      uploadImage(file)
+    }
+  }
 
   // REVIEWER guard: redirect immediately on mount
   useEffect(() => {
@@ -187,12 +257,20 @@ export function DocEditor({
         <span className="w-px h-4 bg-border mx-0.5" aria-hidden />
         <button
           type="button"
-          title="Image — coming soon"
-          disabled
-          className="h-7 px-2 rounded text-sm opacity-40 cursor-not-allowed"
+          title="Upload image"
+          disabled={uploading}
+          className="h-7 px-2 rounded text-sm hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={handleImageButtonClick}
         >
-          Image
+          {uploading ? 'Uploading...' : 'Image'}
         </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          className="hidden"
+          onChange={handleFileInputChange}
+        />
       </div>
 
       {/* Editor panes */}
@@ -206,6 +284,8 @@ export function DocEditor({
             ref={textareaRef}
             value={value}
             onChange={(e) => setValue(e.target.value)}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
             className="flex-1 resize-none p-4 font-mono text-sm bg-background text-foreground focus:outline-none"
             spellCheck={false}
             placeholder="Write markdown here…"

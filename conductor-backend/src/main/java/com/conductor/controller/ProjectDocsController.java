@@ -7,6 +7,7 @@ import com.conductor.entity.DocVersion;
 import com.conductor.entity.ProjectDoc;
 import com.conductor.entity.User;
 import com.conductor.generated.api.ProjectDocsApi;
+import com.conductor.exception.StorageUploadException;
 import com.conductor.generated.model.CreateDocCommentReplyRequest;
 import com.conductor.generated.model.CreateDocCommentRequest;
 import com.conductor.generated.model.CreateDocRequest;
@@ -14,6 +15,7 @@ import com.conductor.generated.model.CreateFolderRequest;
 import com.conductor.generated.model.DocCommentReplyResponse;
 import com.conductor.generated.model.DocCommentResponse;
 import com.conductor.generated.model.DocFolderResponse;
+import com.conductor.generated.model.DocImageUploadResponse;
 import com.conductor.generated.model.DocVersionResponse;
 import com.conductor.generated.model.DocVersionSummaryResponse;
 import com.conductor.generated.model.ProjectDocResponse;
@@ -27,35 +29,56 @@ import com.conductor.service.DocCommentService;
 import com.conductor.service.DocFolderService;
 import com.conductor.service.DocVersionService;
 import com.conductor.service.ProjectDocService;
+import com.conductor.service.StorageService;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1")
 public class ProjectDocsController implements ProjectDocsApi {
 
+    private static final Map<String, String> ALLOWED_IMAGE_TYPES = Map.of(
+            "image/png", "png",
+            "image/jpeg", "jpg",
+            "image/gif", "gif",
+            "image/webp", "webp"
+    );
+
     private final DocFolderService docFolderService;
     private final ProjectDocService projectDocService;
     private final DocVersionService docVersionService;
     private final DocCommentService docCommentService;
     private final DocCommentReplyRepository docCommentReplyRepository;
+    private final StorageService storageService;
+    private final int signedUrlExpiryMinutes;
 
     public ProjectDocsController(
             DocFolderService docFolderService,
             ProjectDocService projectDocService,
             DocVersionService docVersionService,
             DocCommentService docCommentService,
-            DocCommentReplyRepository docCommentReplyRepository) {
+            DocCommentReplyRepository docCommentReplyRepository,
+            StorageService storageService,
+            @Value("${gcp.signed-url.expiry-minutes:15}") int signedUrlExpiryMinutes) {
         this.docFolderService = docFolderService;
         this.projectDocService = projectDocService;
         this.docVersionService = docVersionService;
         this.docCommentService = docCommentService;
         this.docCommentReplyRepository = docCommentReplyRepository;
+        this.storageService = storageService;
+        this.signedUrlExpiryMinutes = signedUrlExpiryMinutes;
     }
 
     // --- Folder endpoints ---
@@ -224,6 +247,38 @@ public class ProjectDocsController implements ProjectDocsApi {
     public ResponseEntity<DocCommentResponse> resolveDocComment(String projectId, String docId, String commentId) {
         DocComment comment = docCommentService.resolveThread(commentId);
         return ResponseEntity.ok(toCommentResponse(comment));
+    }
+
+    // --- Image upload endpoint ---
+
+    @Override
+    public ResponseEntity<DocImageUploadResponse> uploadDocImage(String projectId, String docId, MultipartFile image) {
+        String contentType = image.getContentType();
+        String ext = contentType != null ? ALLOWED_IMAGE_TYPES.get(contentType) : null;
+        if (ext == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid file type. Allowed: png, jpeg, gif, webp");
+        }
+
+        String filename = UUID.randomUUID() + "." + ext;
+        String gcsPath = "projects/" + projectId + "/docs/" + docId + "/images/" + filename;
+
+        try {
+            storageService.upload(gcsPath, image.getBytes(), contentType);
+        } catch (IOException e) {
+            throw new StorageUploadException("Failed to read uploaded image", e);
+        } catch (Exception e) {
+            throw new StorageUploadException("Storage upload failed — try again", e);
+        }
+
+        String signedUrl = storageService.generateSignedUrl(gcsPath, signedUrlExpiryMinutes);
+        String originalName = image.getOriginalFilename() != null ? image.getOriginalFilename() : filename;
+        String markdownSnippet = "![" + originalName + "](" + signedUrl + ")";
+
+        DocImageUploadResponse response = new DocImageUploadResponse();
+        response.setMarkdownSnippet(markdownSnippet);
+        response.setStorageUrl(signedUrl);
+
+        return ResponseEntity.ok(response);
     }
 
     // --- Mapping helpers ---
