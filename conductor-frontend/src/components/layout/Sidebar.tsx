@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   BellIcon,
+  BookOpenIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -317,6 +318,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               onNavigate={onNavigate}
             >
               Issues
+            </NavItem>
+            <NavItem
+              href={`/app/projects/${currentProject.id}/docs`}
+              icon={<BookOpenIcon className="h-4 w-4" />}
+              onNavigate={onNavigate}
+            >
+              Docs
             </NavItem>
             <NavItem
               href={`/app/projects/${currentProject.id}/workflows`}
