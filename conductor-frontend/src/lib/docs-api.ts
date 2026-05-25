@@ -198,3 +198,21 @@ export function resolveDocComment(
     token,
   )
 }
+
+export interface DocSearchResult {
+  id: string
+  title: string
+  folderId: string | null
+  snippet: string
+}
+
+export function searchDocs(
+  projectId: string,
+  q: string,
+  token: string,
+): Promise<DocSearchResult[]> {
+  return apiGet<DocSearchResult[]>(
+    `/api/v1/projects/${projectId}/docs/search?q=${encodeURIComponent(q)}`,
+    token,
+  )
+}

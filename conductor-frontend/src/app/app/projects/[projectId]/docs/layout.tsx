@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { DocTree } from '@/components/docs/DocTree'
+import { DocSearch } from '@/components/docs/DocSearch'
 import { apiGet } from '@/lib/api'
 import type { MemberRole } from '@/types'
 
@@ -47,15 +48,22 @@ export default function DocsLayout({
 
   return (
     <div className="flex h-full">
-      {/* Left panel: DocTree */}
+      {/* Left panel: DocSearch + DocTree */}
       <div className="w-60 shrink-0 border-r border-border bg-sidebar-bg overflow-y-auto">
         {accessToken && (
-          <DocTree
-            projectId={projectId}
-            token={accessToken}
-            userRole={userRole}
-            onDocSelect={handleDocSelect}
-          />
+          <>
+            <DocSearch
+              projectId={projectId}
+              token={accessToken}
+              onResultSelect={(docId) => router.push(`/app/projects/${projectId}/docs/${docId}`)}
+            />
+            <DocTree
+              projectId={projectId}
+              token={accessToken}
+              userRole={userRole}
+              onDocSelect={handleDocSelect}
+            />
+          </>
         )}
       </div>
 
