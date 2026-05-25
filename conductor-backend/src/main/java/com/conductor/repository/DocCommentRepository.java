@@ -12,4 +12,6 @@ public interface DocCommentRepository extends JpaRepository<DocComment, String> 
     List<DocComment> findByDocIdOrderByCreatedAtAsc(String docId);
 
     List<DocComment> findByDocIdAndLineNumberInAndResolvedAtIsNull(String docId, List<Integer> lineNumbers);
+
+    List<DocComment> findByDocIdAndResolvedAtIsNull(String docId);
 }

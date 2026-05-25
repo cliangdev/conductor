@@ -12,6 +12,8 @@ import com.conductor.repository.ProjectDocRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +27,10 @@ public class ProjectDocService {
     private final DocFolderRepository docFolderRepository;
     private final UserRepository userRepository;
     private final ProjectRepository projectRepository;
+
+    @Lazy
+    @Autowired
+    private DocCommentService docCommentService;
 
     public ProjectDocService(
             ProjectDocRepository projectDocRepository,
@@ -117,7 +123,7 @@ public class ProjectDocService {
         version.setAuthor(user);
         docVersionRepository.save(version);
 
-        // TODO (T3.4): call markCommentsStale(docId, content) once DocCommentService is wired in
+        docCommentService.markCommentsStale(docId);
 
         return doc;
     }
