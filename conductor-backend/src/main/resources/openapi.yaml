@@ -1700,6 +1700,374 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/docs/{docId}/versions:
+    get:
+      tags:
+        - project-docs
+      summary: List versions of a doc
+      operationId: listDocVersions
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of doc versions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DocVersionSummaryResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs/{docId}/versions/{versionId}:
+    get:
+      tags:
+        - project-docs
+      summary: Get a specific version of a doc
+      operationId: getDocVersion
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: versionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Doc version detail with content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocVersionResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Version not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs/{docId}/versions/{versionId}/restore:
+    post:
+      tags:
+        - project-docs
+      summary: Restore a doc to a previous version
+      operationId: restoreDocVersion
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: versionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Doc restored to the specified version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDocResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Version not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs/{docId}/comments:
+    get:
+      tags:
+        - project-docs
+      summary: List comments for a doc
+      operationId: listDocComments
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of doc comments with replies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DocCommentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - project-docs
+      summary: Create a comment on a doc
+      operationId: createDocComment
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDocCommentRequest"
+      responses:
+        "201":
+          description: Doc comment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocCommentResponse"
+        "400":
+          description: Invalid request (lineNumber is required)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs/{docId}/comments/{commentId}:
+    delete:
+      tags:
+        - project-docs
+      summary: Delete a doc comment (author or project Admin only)
+      operationId: deleteDocComment
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Doc comment deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not the author or an admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs/{docId}/comments/{commentId}/replies:
+    post:
+      tags:
+        - project-docs
+      summary: Add a reply to a doc comment
+      operationId: addDocCommentReply
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDocCommentReplyRequest"
+      responses:
+        "201":
+          description: Reply created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocCommentReplyResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs/{docId}/comments/{commentId}/resolve:
+    patch:
+      tags:
+        - project-docs
+      summary: Resolve a doc comment
+      operationId: resolveDocComment
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Doc comment resolved with resolvedAt set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocCommentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/issues/{issueId}/tasks:
     put:
       tags:
@@ -5904,4 +6272,150 @@ components:
           type: string
           nullable: true
         snippet:
+          type: string
+
+    DocVersionSummaryResponse:
+      type: object
+      required:
+        - id
+        - docId
+        - versionNumber
+        - authorId
+        - authorName
+        - createdAt
+      properties:
+        id:
+          type: string
+        docId:
+          type: string
+        versionNumber:
+          type: integer
+        authorId:
+          type: string
+        authorName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    DocVersionResponse:
+      type: object
+      required:
+        - id
+        - docId
+        - versionNumber
+        - authorId
+        - authorName
+        - createdAt
+      properties:
+        id:
+          type: string
+        docId:
+          type: string
+        versionNumber:
+          type: integer
+        content:
+          type: string
+          nullable: true
+        authorId:
+          type: string
+        authorName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    DocCommentReplyResponse:
+      type: object
+      required:
+        - id
+        - commentId
+        - authorId
+        - authorName
+        - content
+        - createdAt
+      properties:
+        id:
+          type: string
+        commentId:
+          type: string
+        authorId:
+          type: string
+        authorName:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    DocCommentResponse:
+      type: object
+      required:
+        - id
+        - docId
+        - authorId
+        - authorName
+        - content
+        - lineStale
+        - createdAt
+        - updatedAt
+        - replies
+      properties:
+        id:
+          type: string
+        docId:
+          type: string
+        authorId:
+          type: string
+        authorName:
+          type: string
+        content:
+          type: string
+        lineNumber:
+          type: integer
+          nullable: true
+        quotedText:
+          type: string
+          nullable: true
+        lineStale:
+          type: boolean
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        resolvedByName:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        replies:
+          type: array
+          items:
+            $ref: "#/components/schemas/DocCommentReplyResponse"
+
+    CreateDocCommentRequest:
+      type: object
+      required:
+        - content
+        - lineNumber
+      properties:
+        content:
+          type: string
+        lineNumber:
+          type: integer
+        quotedText:
+          type: string
+          nullable: true
+
+    CreateDocCommentReplyRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
           type: string
