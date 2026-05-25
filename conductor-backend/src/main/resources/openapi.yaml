@@ -46,6 +46,8 @@ tags:
     description: Project repository registry endpoints
   - name: orgs
     description: Organization management endpoints
+  - name: project-docs
+    description: Project document and folder management endpoints
 
 paths:
   /health:
@@ -1222,6 +1224,477 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs/folders:
+    get:
+      tags:
+        - project-docs
+      summary: List folder tree for a project
+      operationId: listDocFolders
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of folders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DocFolderResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - project-docs
+      summary: Create a folder in a project
+      operationId: createDocFolder
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFolderRequest"
+      responses:
+        "201":
+          description: Folder created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocFolderResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs/folders/{folderId}:
+    patch:
+      tags:
+        - project-docs
+      summary: Rename a folder
+      operationId: renameDocFolder
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: folderId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameFolderRequest"
+      responses:
+        "200":
+          description: Folder renamed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocFolderResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Folder not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - project-docs
+      summary: Delete a folder
+      operationId: deleteDocFolder
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: folderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Folder deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Folder not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs/search:
+    get:
+      tags:
+        - project-docs
+      summary: Search docs in a project
+      operationId: searchProjectDocs
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectDocSearchResult"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs:
+    get:
+      tags:
+        - project-docs
+      summary: List docs in a project
+      operationId: listProjectDocs
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: folderId
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of docs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectDocSummaryResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - project-docs
+      summary: Create a doc in a project
+      operationId: createProjectDoc
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDocRequest"
+      responses:
+        "201":
+          description: Doc created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDocResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/docs/{docId}:
+    get:
+      tags:
+        - project-docs
+      summary: Get a doc
+      operationId: getProjectDoc
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Doc detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDocResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags:
+        - project-docs
+      summary: Update doc content
+      operationId: updateProjectDoc
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDocRequest"
+      responses:
+        "200":
+          description: Doc updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDocResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      tags:
+        - project-docs
+      summary: Rename or move a doc
+      operationId: renameOrMoveProjectDoc
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RenameDocRequest"
+      responses:
+        "200":
+          description: Doc renamed or moved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDocResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - project-docs
+      summary: Delete a doc
+      operationId: deleteProjectDoc
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Doc deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Doc not found
           content:
             application/json:
               schema:
@@ -5274,3 +5747,161 @@ components:
         role:
           type: string
           description: Role of the user in the team
+
+    DocFolderResponse:
+      type: object
+      required:
+        - id
+        - projectId
+        - name
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        parentId:
+          type: string
+          nullable: true
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateFolderRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        parentId:
+          type: string
+          nullable: true
+
+    RenameFolderRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+
+    ProjectDocSummaryResponse:
+      type: object
+      required:
+        - id
+        - projectId
+        - title
+        - createdAt
+        - updatedAt
+        - createdByName
+        - updatedByName
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        folderId:
+          type: string
+          nullable: true
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        createdByName:
+          type: string
+        updatedByName:
+          type: string
+
+    ProjectDocResponse:
+      type: object
+      required:
+        - id
+        - projectId
+        - title
+        - createdAt
+        - updatedAt
+        - createdByName
+        - updatedByName
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        folderId:
+          type: string
+          nullable: true
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        createdByName:
+          type: string
+        updatedByName:
+          type: string
+        content:
+          type: string
+          nullable: true
+
+    CreateDocRequest:
+      type: object
+      required:
+        - title
+      properties:
+        title:
+          type: string
+        folderId:
+          type: string
+          nullable: true
+        content:
+          type: string
+          default: ""
+
+    UpdateDocRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+
+    RenameDocRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          nullable: true
+        folderId:
+          type: string
+          nullable: true
+
+    ProjectDocSearchResult:
+      type: object
+      required:
+        - id
+        - title
+        - snippet
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        folderId:
+          type: string
+          nullable: true
+        snippet:
+          type: string
