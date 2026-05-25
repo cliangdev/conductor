@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { getDoc } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
 import { DocViewer } from '@/components/docs/DocViewer'
+import { DocHistoryPanel } from '@/components/docs/DocHistoryPanel'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { History, Pencil } from 'lucide-react'
@@ -20,6 +21,7 @@ export default function DocDetailPage() {
   const [doc, setDoc] = useState<ProjectDoc | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
 
   useEffect(() => {
     if (!accessToken) return
@@ -57,8 +59,7 @@ export default function DocDetailPage() {
             {doc.title}
           </h1>
           <div className="flex items-center gap-2 shrink-0">
-            {/* History button — stub for DocHistoryPanel */}
-            <Button variant="outline" size="sm" disabled title="Version history coming soon">
+            <Button variant="outline" size="sm" onClick={() => setShowHistory(true)}>
               <History className="h-3.5 w-3.5 mr-1.5" />
               History
             </Button>
@@ -74,16 +75,31 @@ export default function DocDetailPage() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-4 md:p-6">
-        {doc.content ? (
-          <DocViewer
-            doc={doc}
+      <div className="flex-1 relative overflow-hidden">
+        <div className="h-full overflow-y-auto p-4 md:p-6">
+          {doc.content ? (
+            <DocViewer
+              doc={doc}
+              projectId={projectId}
+              token={accessToken!}
+              currentUserId={user?.id ?? ''}
+            />
+          ) : (
+            <p className="text-muted-foreground text-sm">No content yet.</p>
+          )}
+        </div>
+
+        {showHistory && (
+          <DocHistoryPanel
             projectId={projectId}
+            docId={docId}
             token={accessToken!}
-            currentUserId={user?.id ?? ''}
+            onClose={() => setShowHistory(false)}
+            onRestored={(updated) => {
+              setDoc(updated)
+              setShowHistory(false)
+            }}
           />
-        ) : (
-          <p className="text-muted-foreground text-sm">No content yet.</p>
         )}
       </div>
     </div>
