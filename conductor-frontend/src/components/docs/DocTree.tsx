@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { DocFolderDialog } from './DocFolderDialog'
+import { MoveDocDialog } from './MoveDocDialog'
 import { getFolders, getDocs, deleteFolder, deleteDoc } from '@/lib/docs-api'
 import type { DocFolder, ProjectDocSummary } from '@/lib/docs-api'
 
@@ -26,6 +27,7 @@ type DialogState =
   | { mode: 'rename-folder'; folderId: string; currentName: string }
   | { mode: 'new-doc'; parentFolderId: string | null }
   | { mode: 'rename-doc'; docId: string; currentName: string }
+  | { mode: 'move-doc'; docId: string; docTitle: string; folderId: string | null }
 
 interface FolderNodeProps {
   folder: DocFolder
@@ -260,6 +262,14 @@ function DocLeaf({
               Rename
             </DropdownMenuItem>
             <DropdownMenuItem
+              className="cursor-pointer"
+              onClick={() =>
+                onOpenDialog({ mode: 'move-doc', docId: doc.id, docTitle: doc.title, folderId: doc.folderId })
+              }
+            >
+              Move to...
+            </DropdownMenuItem>
+            <DropdownMenuItem
               className="cursor-pointer text-destructive focus:text-destructive"
               onClick={handleDelete}
             >
@@ -392,7 +402,7 @@ export function DocTree({
         )}
       </div>
 
-      {dialog && (
+      {dialog && dialog.mode !== 'move-doc' && (
         <DocFolderDialog
           mode={dialog.mode}
           projectId={projectId}
@@ -409,6 +419,18 @@ export function DocTree({
               ? dialog.currentName
               : undefined
           }
+          onSuccess={handleRefresh}
+          onClose={() => setDialog(null)}
+        />
+      )}
+
+      {dialog && dialog.mode === 'move-doc' && (
+        <MoveDocDialog
+          projectId={projectId}
+          docId={dialog.docId}
+          docTitle={dialog.docTitle}
+          currentFolderId={dialog.folderId}
+          token={token}
           onSuccess={handleRefresh}
           onClose={() => setDialog(null)}
         />
