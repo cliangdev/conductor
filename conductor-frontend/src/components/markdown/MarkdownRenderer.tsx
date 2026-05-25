@@ -10,6 +10,7 @@ interface Props {
   content: string
   className?: string
   onDocumentNavigate?: (filename: string) => void
+  projectId?: string
 }
 
 function stripFrontmatter(content: string): string {
@@ -19,7 +20,7 @@ function stripFrontmatter(content: string): string {
   return content.slice(end + 4).trimStart()
 }
 
-export function MarkdownRenderer({ content, className, onDocumentNavigate }: Props) {
+export function MarkdownRenderer({ content, className, onDocumentNavigate, projectId }: Props) {
   const stripped = stripFrontmatter(content)
   return (
     <div className={`prose prose-sm dark:prose-invert max-w-none ${className ?? ''}`}>
@@ -36,6 +37,14 @@ export function MarkdownRenderer({ content, className, onDocumentNavigate }: Pro
             return <code className={cls} {...props}>{children}</code>
           },
           a: ({ href, children, ...props }) => {
+            if (href?.startsWith('doc:') && projectId) {
+              const docId = href.slice(4)
+              return (
+                <a href={`/app/projects/${projectId}/docs/${docId}`} {...props}>
+                  {children}
+                </a>
+              )
+            }
             if (href?.startsWith('./') && onDocumentNavigate) {
               const filename = href.slice(2)
               return (
