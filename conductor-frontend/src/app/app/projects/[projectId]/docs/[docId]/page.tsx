@@ -2,15 +2,20 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { getDoc } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
+import { DocViewer } from '@/components/docs/DocViewer'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+import { History, Pencil } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
 export default function DocDetailPage() {
   const { projectId, docId } = useParams<{ projectId: string; docId: string }>()
-  const { accessToken } = useAuth()
+  const { accessToken, user } = useAuth()
 
   const [doc, setDoc] = useState<ProjectDoc | null>(null)
   const [loading, setLoading] = useState(true)
@@ -44,13 +49,43 @@ export default function DocDetailPage() {
   if (!doc) return null
 
   return (
-    <div className="p-4 sm:p-6 max-w-3xl">
-      <h1 className="text-2xl font-semibold text-foreground mb-4">{doc.title}</h1>
-      {doc.content ? (
-        <pre className="text-sm text-foreground whitespace-pre-wrap font-sans">{doc.content}</pre>
-      ) : (
-        <p className="text-muted-foreground text-sm">No content yet.</p>
-      )}
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="border-b border-border bg-background px-4 sm:px-6 py-4 shrink-0">
+        <div className="flex items-center gap-3">
+          <h1 className="text-lg sm:text-xl font-semibold text-foreground flex-1 min-w-0 truncate">
+            {doc.title}
+          </h1>
+          <div className="flex items-center gap-2 shrink-0">
+            {/* History button — stub for DocHistoryPanel */}
+            <Button variant="outline" size="sm" disabled title="Version history coming soon">
+              <History className="h-3.5 w-3.5 mr-1.5" />
+              History
+            </Button>
+            <Link
+              href={`/app/projects/${projectId}/docs/${docId}/edit`}
+              className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+            >
+              <Pencil className="h-3.5 w-3.5 mr-1.5" />
+              Edit
+            </Link>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-4 md:p-6">
+        {doc.content ? (
+          <DocViewer
+            doc={doc}
+            projectId={projectId}
+            token={accessToken!}
+            currentUserId={user?.id ?? ''}
+          />
+        ) : (
+          <p className="text-muted-foreground text-sm">No content yet.</p>
+        )}
+      </div>
     </div>
   )
 }
