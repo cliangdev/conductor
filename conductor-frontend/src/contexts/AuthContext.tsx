@@ -25,7 +25,8 @@ export function useAuth(): AuthContextValue {
 
 function setAccessTokenCookie(token: string) {
   if (typeof document !== 'undefined') {
-    document.cookie = `access_token=${token}; path=/; SameSite=Lax`
+    const maxAge = 24 * 60 * 60 // 24h, matches JWT expiry
+    document.cookie = `access_token=${token}; path=/; SameSite=Lax; Max-Age=${maxAge}`
   }
 }
 

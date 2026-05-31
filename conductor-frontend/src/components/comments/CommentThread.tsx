@@ -13,6 +13,8 @@ interface Props {
   token: string
   onUpdated: () => void
   onClose?: () => void
+  /** Override the base path for comment API calls (e.g. for doc comments). Defaults to issue comment path. */
+  commentApiBasePath?: string
 }
 
 function formatTime(iso: string): string {
@@ -36,7 +38,10 @@ export function CommentThread({
   token,
   onUpdated,
   onClose,
+  commentApiBasePath,
 }: Props) {
+  const basePath =
+    commentApiBasePath ?? `/api/v1/projects/${projectId}/issues/${issueId}/comments`
   const [showResolved, setShowResolved] = useState(false)
   const [showReplyForm, setShowReplyForm] = useState(false)
 
@@ -61,29 +66,18 @@ export function CommentThread({
   }
 
   async function handleResolve() {
-    await apiPatch(
-      `/api/v1/projects/${projectId}/issues/${issueId}/comments/${comment.id}/resolve`,
-      {},
-      token
-    )
+    await apiPatch(`${basePath}/${comment.id}/resolve`, {}, token)
     onUpdated()
   }
 
   async function handleDelete() {
     if (!confirm('Delete this comment?')) return
-    await apiDelete(
-      `/api/v1/projects/${projectId}/issues/${issueId}/comments/${comment.id}`,
-      token
-    )
+    await apiDelete(`${basePath}/${comment.id}`, token)
     onUpdated()
   }
 
   async function handleReply(content: string) {
-    await apiPost(
-      `/api/v1/projects/${projectId}/issues/${issueId}/comments/${comment.id}/replies`,
-      { content },
-      token
-    )
+    await apiPost(`${basePath}/${comment.id}/replies`, { content }, token)
     setShowReplyForm(false)
     onUpdated()
   }

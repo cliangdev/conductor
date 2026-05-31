@@ -18,6 +18,8 @@ interface Props {
   token: string
   currentUserId: string
   onDocumentNavigate?: (filename: string) => void
+  /** Override the base path for comment API calls (e.g. for doc comments). Defaults to issue comment path. */
+  commentApiBasePath?: string
 }
 
 interface PopoverState {
@@ -38,7 +40,10 @@ export function CommentableDocument({
   token,
   currentUserId,
   onDocumentNavigate,
+  commentApiBasePath,
 }: Props) {
+  const basePath =
+    commentApiBasePath ?? `/api/v1/projects/${projectId}/issues/${issueId}/comments`
   const [popover, setPopover] = useState<PopoverState | null>(null)
 
   const lines = content.split('\n')
@@ -65,14 +70,14 @@ export function CommentableDocument({
     async (text: string) => {
       if (!popover) return
       await apiPost(
-        `/api/v1/projects/${projectId}/issues/${issueId}/comments`,
+        basePath,
         { documentId, content: text, lineNumber: popover.lineNumber },
         token
       )
       onCommentAdded()
       setPopover(null)
     },
-    [popover, projectId, issueId, documentId, token, onCommentAdded]
+    [popover, basePath, documentId, token, onCommentAdded]
   )
 
   return (
@@ -113,6 +118,7 @@ export function CommentableDocument({
                     token={token}
                     onUpdated={() => { onCommentAdded(); setPopover(null) }}
                     onClose={() => setPopover(null)}
+                    commentApiBasePath={commentApiBasePath}
                   />
                 ))}
               </div>
@@ -202,6 +208,7 @@ export function CommentableDocument({
                       currentUserId={currentUserId}
                       token={token}
                       onUpdated={onCommentAdded}
+                      commentApiBasePath={commentApiBasePath}
                     />
                   ))}
               </div>

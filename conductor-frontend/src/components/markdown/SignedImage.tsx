@@ -6,11 +6,25 @@ interface Props {
   alt?: string
 }
 
+// Parses "alt text|300" or "alt text|50%" — the suffix after the last | sets the width.
+function parseAlt(raw: string | undefined): { label: string; width?: string } {
+  if (!raw) return { label: '' }
+  const match = raw.match(/^(.*)\|(\d+%?)$/)
+  if (!match) return { label: raw }
+  const raw_width = match[2]
+  return { label: match[1], width: raw_width.endsWith('%') ? raw_width : `${raw_width}px` }
+}
+
 export function SignedImage({ src, alt }: Props) {
   const [resolvedSrc] = useState(src)
-  // For MVP: render signed URL as-is — the storageUrl from the document response is already signed.
-  // The issue page re-fetches documents on mount and checks storageUrlExpiresAt to refresh
-  // before expiry, so the URL passed here is always fresh.
+  const { label, width } = parseAlt(alt)
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={resolvedSrc} alt={alt ?? ''} className="max-w-full rounded" />
+  return (
+    <img
+      src={resolvedSrc}
+      alt={label}
+      className="rounded"
+      style={width ? { width, maxWidth: '100%' } : { maxWidth: '100%' }}
+    />
+  )
 }
