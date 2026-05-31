@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
+import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from '@/lib/api'
 
 export interface DocFolder {
   id: string
@@ -59,7 +59,7 @@ export interface DocComment {
 }
 
 export function getFolders(projectId: string, token: string): Promise<DocFolder[]> {
-  return apiGet<DocFolder[]>(`/api/v1/projects/${projectId}/doc-folders`, token)
+  return apiGet<DocFolder[]>(`/api/v1/projects/${projectId}/docs/folders`, token)
 }
 
 export function createFolder(
@@ -68,7 +68,7 @@ export function createFolder(
   parentId: string | null,
   token: string,
 ): Promise<DocFolder> {
-  return apiPost<DocFolder>(`/api/v1/projects/${projectId}/doc-folders`, { name, parentId }, token)
+  return apiPost<DocFolder>(`/api/v1/projects/${projectId}/docs/folders`, { name, parentId }, token)
 }
 
 export function renameFolder(
@@ -77,11 +77,11 @@ export function renameFolder(
   name: string,
   token: string,
 ): Promise<DocFolder> {
-  return apiPatch<DocFolder>(`/api/v1/projects/${projectId}/doc-folders/${folderId}`, { name }, token)
+  return apiPatch<DocFolder>(`/api/v1/projects/${projectId}/docs/folders/${folderId}`, { name }, token)
 }
 
 export function deleteFolder(projectId: string, folderId: string, token: string): Promise<void> {
-  return apiDelete(`/api/v1/projects/${projectId}/doc-folders/${folderId}`, token)
+  return apiDelete(`/api/v1/projects/${projectId}/docs/folders/${folderId}`, token)
 }
 
 export function getDocs(
@@ -112,7 +112,7 @@ export function updateDoc(
   content: string,
   token: string,
 ): Promise<ProjectDoc> {
-  return apiPatch<ProjectDoc>(`/api/v1/projects/${projectId}/docs/${docId}`, { content }, token)
+  return apiPut<ProjectDoc>(`/api/v1/projects/${projectId}/docs/${docId}`, { content }, token)
 }
 
 export function deleteDoc(projectId: string, docId: string, token: string): Promise<void> {

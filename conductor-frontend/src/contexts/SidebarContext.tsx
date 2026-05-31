@@ -8,6 +8,8 @@ interface SidebarContextValue {
   closeSidebar: () => void
   sidebarWidth: number
   setSidebarWidth: (w: number) => void
+  sidebarCollapsed: boolean
+  setSidebarCollapsed: (v: boolean) => void
 }
 
 const SidebarContext = createContext<SidebarContextValue | null>(null)
@@ -15,6 +17,7 @@ const SidebarContext = createContext<SidebarContextValue | null>(null)
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(false)
   const [sidebarWidth, setSidebarWidthState] = useState(240)
+  const [sidebarCollapsed, setSidebarCollapsedState] = useState(false)
 
   useEffect(() => {
     const stored = localStorage.getItem('sidebar_width')
@@ -22,6 +25,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
       const parsed = parseInt(stored, 10)
       if (parsed >= 160 && parsed <= 400) setSidebarWidthState(parsed)
     }
+    setSidebarCollapsedState(localStorage.getItem('sidebar_nav_collapsed') === 'true')
   }, [])
 
   function toggleSidebar() {
@@ -36,8 +40,13 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     setSidebarWidthState(w)
   }
 
+  function setSidebarCollapsed(v: boolean) {
+    setSidebarCollapsedState(v)
+    localStorage.setItem('sidebar_nav_collapsed', String(v))
+  }
+
   return (
-    <SidebarContext.Provider value={{ isOpen, toggleSidebar, closeSidebar, sidebarWidth, setSidebarWidth }}>
+    <SidebarContext.Provider value={{ isOpen, toggleSidebar, closeSidebar, sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed }}>
       {children}
     </SidebarContext.Provider>
   )

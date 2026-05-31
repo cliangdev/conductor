@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Modal } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { createFolder, renameFolder, createDoc } from '@/lib/docs-api'
+import type { DocFolder } from '@/lib/docs-api'
 import { apiPatch } from '@/lib/api'
 
 export interface DocFolderDialogProps {
@@ -14,7 +15,8 @@ export interface DocFolderDialogProps {
   folderId?: string
   docId?: string
   currentName?: string
-  onSuccess: () => void
+  folders?: DocFolder[]
+  onSuccess: (newDocId?: string) => void
   onClose: () => void
 }
 
@@ -40,12 +42,16 @@ export function DocFolderDialog({
   folderId,
   docId,
   currentName,
+  folders,
   onSuccess,
   onClose,
 }: DocFolderDialogProps) {
   const [value, setValue] = useState(currentName ?? '')
+  const [selectedFolderId, setSelectedFolderId] = useState<string>(parentFolderId ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const showFolderPicker = mode === 'new-doc' && folders && folders.length > 0
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -57,14 +63,18 @@ export function DocFolderDialog({
     try {
       if (mode === 'new-folder') {
         await createFolder(projectId, trimmed, parentFolderId ?? null, token)
+        onSuccess()
       } else if (mode === 'rename-folder' && folderId) {
         await renameFolder(projectId, folderId, trimmed, token)
+        onSuccess()
       } else if (mode === 'new-doc') {
-        await createDoc(projectId, trimmed, parentFolderId ?? null, token)
+        const folderIdToUse = showFolderPicker ? (selectedFolderId || null) : (parentFolderId ?? null)
+        const newDoc = await createDoc(projectId, trimmed, folderIdToUse, token)
+        onSuccess(newDoc.id)
       } else if (mode === 'rename-doc' && docId) {
         await apiPatch(`/api/v1/projects/${projectId}/docs/${docId}`, { title: trimmed }, token)
+        onSuccess()
       }
-      onSuccess()
       onClose()
     } catch {
       setError('Something went wrong. Please try again.')
@@ -108,6 +118,24 @@ export function DocFolderDialog({
             placeholder={LABELS[mode]}
           />
         </div>
+        {showFolderPicker && (
+          <div className="space-y-1">
+            <label htmlFor="folder-select" className="text-sm font-medium text-foreground">
+              Folder
+            </label>
+            <select
+              id="folder-select"
+              value={selectedFolderId}
+              onChange={(e) => setSelectedFolderId(e.target.value)}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            >
+              <option value="">No folder</option>
+              {folders.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {error && <p className="text-sm text-destructive">{error}</p>}
       </form>
     </Modal>

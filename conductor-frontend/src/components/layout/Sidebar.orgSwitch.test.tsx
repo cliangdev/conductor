@@ -43,6 +43,15 @@ vi.mock('@/contexts/OrgContext', () => ({
   }),
 }))
 
+vi.mock('@/contexts/EditorChromeContext', () => ({
+  useEditorChrome: () => ({
+    fullscreen: false,
+    setFullscreen: vi.fn(),
+    docsTreeCollapsed: false,
+    setDocsTreeCollapsed: vi.fn(),
+  }),
+}))
+
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { id: 'user-1', name: 'Test User', email: 'test@example.com', avatarUrl: null, displayName: null },

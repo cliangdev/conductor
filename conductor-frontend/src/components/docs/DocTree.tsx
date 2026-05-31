@@ -56,6 +56,7 @@ function FolderNode({
   const [childDocs, setChildDocs] = useState<ProjectDocSummary[]>([])
   const [loadingChildren, setLoadingChildren] = useState(false)
   const [hovered, setHovered] = useState(false)
+  const [dropdownOpen, setDropdownOpen] = useState(false)
 
   const childFolders = allFolders.filter((f) => f.parentId === folder.id)
   const canEdit = userRole === 'ADMIN' || userRole === 'CREATOR'
@@ -112,8 +113,8 @@ function FolderNode({
         {loadingChildren && (
           <span className="text-xs text-muted-foreground">...</span>
         )}
-        {canEdit && hovered && (
-          <DropdownMenu>
+        {canEdit && (hovered || dropdownOpen) && (
+          <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
@@ -214,6 +215,7 @@ function DocLeaf({
   onRefresh,
 }: DocLeafProps) {
   const [hovered, setHovered] = useState(false)
+  const [dropdownOpen, setDropdownOpen] = useState(false)
   const canEdit = userRole === 'ADMIN' || userRole === 'CREATOR'
 
   async function handleDelete() {
@@ -242,8 +244,8 @@ function DocLeaf({
       <span className="w-3 shrink-0" />
       <span className="text-base leading-none mr-1">📄</span>
       <span className="flex-1 truncate">{doc.title}</span>
-      {canEdit && hovered && (
-        <DropdownMenu>
+      {canEdit && (hovered || dropdownOpen) && (
+        <DropdownMenu open={dropdownOpen} onOpenChange={setDropdownOpen}>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
@@ -294,7 +296,7 @@ export function DocTree({
   const [rootDocs, setRootDocs] = useState<ProjectDocSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [dialog, setDialog] = useState<DialogState | null>(null)
-  const [rootHovered, setRootHovered] = useState(false)
+  const [rootDropdownOpen, setRootDropdownOpen] = useState(false)
   const canEdit = userRole === 'ADMIN' || userRole === 'CREATOR'
 
   const fetchTree = useCallback(async () => {
@@ -332,20 +334,16 @@ export function DocTree({
 
   return (
     <div className="py-2 select-none">
-      <div
-        className="flex items-center justify-between px-3 py-1 mb-1"
-        onMouseEnter={() => setRootHovered(true)}
-        onMouseLeave={() => setRootHovered(false)}
-      >
+      <div className="flex items-center justify-between px-3 py-1 mb-1">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Docs
         </span>
-        {canEdit && rootHovered && (
-          <DropdownMenu>
+        {canEdit && (
+          <DropdownMenu open={rootDropdownOpen} onOpenChange={setRootDropdownOpen}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="rounded px-1 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground focus:outline-none"
+                className="rounded px-1 py-0.5 text-lg leading-none text-muted-foreground hover:bg-accent hover:text-accent-foreground focus:outline-none"
                 aria-label="Add doc or folder"
               >
                 +
@@ -419,7 +417,11 @@ export function DocTree({
               ? dialog.currentName
               : undefined
           }
-          onSuccess={handleRefresh}
+          folders={dialog.mode === 'new-doc' ? allFolders : undefined}
+          onSuccess={(newDocId) => {
+            handleRefresh()
+            if (newDocId) onDocSelect(newDocId)
+          }}
           onClose={() => setDialog(null)}
         />
       )}

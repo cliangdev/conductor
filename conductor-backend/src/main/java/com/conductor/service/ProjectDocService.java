@@ -97,7 +97,7 @@ public class ProjectDocService {
 
     @Transactional(readOnly = true)
     public ProjectDoc getDoc(String docId) {
-        return projectDocRepository.findById(docId)
+        return projectDocRepository.findByIdWithUsers(docId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found: " + docId));
     }
 

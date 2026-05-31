@@ -11,13 +11,18 @@ import java.util.List;
 @Repository
 public interface ProjectDocRepository extends JpaRepository<ProjectDoc, String> {
 
-    List<ProjectDoc> findByProjectIdAndFolderIsNull(String projectId);
+    @Query("SELECT DISTINCT d FROM ProjectDoc d JOIN FETCH d.createdBy JOIN FETCH d.updatedBy WHERE d.project.id = :projectId AND d.folder IS NULL")
+    List<ProjectDoc> findByProjectIdAndFolderIsNull(@Param("projectId") String projectId);
 
-    List<ProjectDoc> findByProjectIdAndFolderId(String projectId, String folderId);
+    @Query("SELECT DISTINCT d FROM ProjectDoc d JOIN FETCH d.createdBy JOIN FETCH d.updatedBy WHERE d.project.id = :projectId AND d.folder.id = :folderId")
+    List<ProjectDoc> findByProjectIdAndFolderId(@Param("projectId") String projectId, @Param("folderId") String folderId);
 
     boolean existsByProjectIdAndFolderIsNullAndTitle(String projectId, String title);
 
     boolean existsByProjectIdAndFolderIdAndTitle(String projectId, String folderId, String title);
+
+    @Query("SELECT d FROM ProjectDoc d JOIN FETCH d.createdBy JOIN FETCH d.updatedBy WHERE d.id = :docId")
+    java.util.Optional<ProjectDoc> findByIdWithUsers(@Param("docId") String docId);
 
     @Query("SELECT d FROM ProjectDoc d WHERE d.project.id = :projectId AND (LOWER(d.title) LIKE LOWER(CONCAT('%', :query, '%')) OR LOWER(d.content) LIKE LOWER(CONCAT('%', :query, '%')))")
     List<ProjectDoc> searchByProjectIdAndQuery(@Param("projectId") String projectId, @Param("query") String query);

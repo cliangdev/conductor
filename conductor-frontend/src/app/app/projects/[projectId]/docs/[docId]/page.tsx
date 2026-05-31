@@ -10,7 +10,7 @@ import { DocViewer } from '@/components/docs/DocViewer'
 import { DocHistoryPanel } from '@/components/docs/DocHistoryPanel'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { History, Pencil } from 'lucide-react'
+import { ChevronLeft, History, Pencil } from 'lucide-react'
 
 export const dynamic = 'force-dynamic'
 
@@ -55,6 +55,13 @@ export default function DocDetailPage() {
       {/* Header */}
       <div className="border-b border-border bg-background px-4 sm:px-6 py-4 shrink-0">
         <div className="flex items-center gap-3">
+          <Link
+            href={`/app/projects/${projectId}/docs`}
+            className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+            title="Back to docs"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Link>
           <h1 className="text-lg sm:text-xl font-semibold text-foreground flex-1 min-w-0 truncate">
             {doc.title}
           </h1>

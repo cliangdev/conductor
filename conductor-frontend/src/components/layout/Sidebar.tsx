@@ -7,6 +7,7 @@ import {
   BookOpenIcon,
   CheckIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
   ChevronRightIcon,
   EyeIcon,
   FileTextIcon,
@@ -35,6 +36,7 @@ import { useSidebar } from '@/contexts/SidebarContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { useOrg } from '@/contexts/OrgContext'
 import { useAuth } from '@/contexts/AuthContext'
+import { useEditorChrome } from '@/contexts/EditorChromeContext'
 import { cn } from '@/lib/utils'
 import type { Org, Project } from '@/types'
 
@@ -423,7 +425,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 // ─── Sidebar Shell ────────────────────────────────────────────────────────────
 
 export function Sidebar() {
-  const { isOpen, closeSidebar, sidebarWidth, setSidebarWidth } = useSidebar()
+  const { isOpen, closeSidebar, sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed } = useSidebar()
+  const { fullscreen } = useEditorChrome()
 
   function startResize(e: React.MouseEvent) {
     e.preventDefault()
@@ -449,19 +452,43 @@ export function Sidebar() {
     window.addEventListener('mouseup', onMouseUp)
   }
 
+  if (fullscreen) return null
+
   return (
     <>
       {/* Desktop sidebar */}
-      <aside
-        style={{ width: sidebarWidth }}
-        className="hidden md:flex flex-col bg-sidebar-bg border-r border-sidebar-border relative shrink-0"
-      >
-        <SidebarContent />
-        <div
-          className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/40 transition-colors"
-          onMouseDown={startResize}
-        />
-      </aside>
+      {sidebarCollapsed ? (
+        <aside className="hidden md:flex w-4 shrink-0 border-r border-sidebar-border bg-sidebar-bg items-center justify-center">
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed(false)}
+            title="Expand navigation"
+            className="h-full w-full flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+          >
+            <ChevronRightIcon className="h-3.5 w-3.5" />
+          </button>
+        </aside>
+      ) : (
+        <aside className="hidden md:flex shrink-0 border-r border-sidebar-border bg-sidebar-bg">
+          {/* Content area with resize handle */}
+          <div style={{ width: sidebarWidth }} className="relative flex flex-col overflow-hidden">
+            <SidebarContent />
+            <div
+              className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/40 transition-colors"
+              onMouseDown={startResize}
+            />
+          </div>
+          {/* Collapse strip */}
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed(true)}
+            title="Collapse navigation"
+            className="w-4 shrink-0 flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+          >
+            <ChevronLeftIcon className="h-3.5 w-3.5" />
+          </button>
+        </aside>
+      )}
 
       {/* Mobile overlay */}
       {isOpen && (
