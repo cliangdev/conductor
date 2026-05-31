@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react'
 import { X, ArrowLeft, RotateCcw } from 'lucide-react'
-import { listVersions, restoreVersion } from '@/lib/docs-api'
+import { listVersions, getDocVersion, restoreVersion } from '@/lib/docs-api'
 import type { DocVersion, ProjectDoc } from '@/lib/docs-api'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { Button } from '@/components/ui/button'
+import { Modal } from '@/components/ui/modal'
 
 export interface DocHistoryPanelProps {
   projectId: string
@@ -37,7 +38,9 @@ export function DocHistoryPanel({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [viewingVersion, setViewingVersion] = useState<DocVersion | null>(null)
+  const [loadingVersion, setLoadingVersion] = useState(false)
   const [restoring, setRestoring] = useState(false)
+  const [confirmVersion, setConfirmVersion] = useState<DocVersion | null>(null)
 
   useEffect(() => {
     listVersions(projectId, docId, token)
@@ -48,15 +51,32 @@ export function DocHistoryPanel({
 
   const maxVersionNumber = versions.length > 0 ? Math.max(...versions.map((v) => v.versionNumber)) : 0
 
-  async function handleRestore(version: DocVersion) {
-    if (!window.confirm('Restore this version?')) return
-    setRestoring(true)
+  async function handleView(version: DocVersion) {
+    setLoadingVersion(true)
     try {
-      const updated = await restoreVersion(projectId, docId, version.id, token)
+      const full = await getDocVersion(projectId, docId, version.id, token)
+      setViewingVersion(full)
+    } catch {
+      setError('Failed to load version content')
+    } finally {
+      setLoadingVersion(false)
+    }
+  }
+
+  async function handleRestore(version: DocVersion) {
+    setConfirmVersion(version)
+  }
+
+  async function confirmRestore() {
+    if (!confirmVersion) return
+    setRestoring(true)
+    setConfirmVersion(null)
+    try {
+      const updated = await restoreVersion(projectId, docId, confirmVersion.id, token)
       onRestored(updated)
       onClose()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to restore version')
+    } catch {
+      setError('Failed to restore version')
     } finally {
       setRestoring(false)
     }
@@ -140,10 +160,11 @@ export function DocHistoryPanel({
               {!isCurrent && (
                 <div className="flex items-center gap-2 mt-1.5">
                   <button
-                    onClick={() => setViewingVersion(version)}
-                    className="text-[11px] text-zinc-400 hover:text-zinc-100 transition-colors"
+                    onClick={() => handleView(version)}
+                    disabled={loadingVersion}
+                    className="text-[11px] text-zinc-400 hover:text-zinc-100 transition-colors disabled:opacity-50"
                   >
-                    View
+                    {loadingVersion ? 'Loading…' : 'View'}
                   </button>
                   <span className="text-zinc-600 text-[11px]">·</span>
                   <button
@@ -159,6 +180,25 @@ export function DocHistoryPanel({
           )
         })}
       </div>
+
+      <Modal
+        open={!!confirmVersion}
+        onOpenChange={(open) => { if (!open) setConfirmVersion(null) }}
+        title="Restore this version?"
+        description={`This will replace the current content with version v${confirmVersion?.versionNumber}.`}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setConfirmVersion(null)} disabled={restoring}>
+              Cancel
+            </Button>
+            <Button onClick={confirmRestore} disabled={restoring}>
+              {restoring ? 'Restoring…' : 'Restore'}
+            </Button>
+          </div>
+        }
+      >
+        <span />
+      </Modal>
     </div>
   )
 }

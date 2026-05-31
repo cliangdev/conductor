@@ -10,6 +10,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { DocFolderDialog } from './DocFolderDialog'
 import { MoveDocDialog } from './MoveDocDialog'
+import { Modal } from '@/components/ui/modal'
+import { Button } from '@/components/ui/button'
 import { getFolders, getDocs, deleteFolder, deleteDoc } from '@/lib/docs-api'
 import type { DocFolder, ProjectDocSummary } from '@/lib/docs-api'
 
@@ -29,6 +31,10 @@ type DialogState =
   | { mode: 'rename-doc'; docId: string; currentName: string }
   | { mode: 'move-doc'; docId: string; docTitle: string; folderId: string | null }
 
+type DeleteRequest =
+  | { type: 'folder'; id: string; name: string }
+  | { type: 'doc'; id: string; title: string }
+
 interface FolderNodeProps {
   folder: DocFolder
   allFolders: DocFolder[]
@@ -38,6 +44,7 @@ interface FolderNodeProps {
   selectedDocId?: string
   onDocSelect: (docId: string) => void
   onOpenDialog: (state: DialogState) => void
+  onRequestDelete: (req: DeleteRequest) => void
   onRefresh: () => void
 }
 
@@ -50,6 +57,7 @@ function FolderNode({
   selectedDocId,
   onDocSelect,
   onOpenDialog,
+  onRequestDelete,
   onRefresh,
 }: FolderNodeProps) {
   const [expanded, setExpanded] = useState(false)
@@ -86,15 +94,8 @@ function FolderNode({
     onRefresh()
   }
 
-  async function handleDeleteFolder() {
-    const confirmed = window.confirm('Delete folder and all its documents?')
-    if (!confirmed) return
-    try {
-      await deleteFolder(projectId, folder.id, token)
-      onRefresh()
-    } catch {
-      // Deletion failed silently
-    }
+  function handleDeleteFolder() {
+    onRequestDelete({ type: 'folder', id: folder.id, name: folder.name })
   }
 
   return (
@@ -171,6 +172,7 @@ function FolderNode({
               selectedDocId={selectedDocId}
               onDocSelect={onDocSelect}
               onOpenDialog={onOpenDialog}
+              onRequestDelete={onRequestDelete}
               onRefresh={refreshChildren}
             />
           ))}
@@ -184,6 +186,7 @@ function FolderNode({
               isSelected={doc.id === selectedDocId}
               onDocSelect={onDocSelect}
               onOpenDialog={onOpenDialog}
+              onRequestDelete={onRequestDelete}
               onRefresh={refreshChildren}
             />
           ))}
@@ -201,6 +204,7 @@ interface DocLeafProps {
   isSelected: boolean
   onDocSelect: (docId: string) => void
   onOpenDialog: (state: DialogState) => void
+  onRequestDelete: (req: DeleteRequest) => void
   onRefresh: () => void
 }
 
@@ -212,22 +216,12 @@ function DocLeaf({
   isSelected,
   onDocSelect,
   onOpenDialog,
+  onRequestDelete,
   onRefresh,
 }: DocLeafProps) {
   const [hovered, setHovered] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const canEdit = userRole === 'ADMIN' || userRole === 'CREATOR'
-
-  async function handleDelete() {
-    const confirmed = window.confirm('Delete this document?')
-    if (!confirmed) return
-    try {
-      await deleteDoc(projectId, doc.id, token)
-      onRefresh()
-    } catch {
-      // Deletion failed silently
-    }
-  }
 
   return (
     <div
@@ -273,7 +267,7 @@ function DocLeaf({
             </DropdownMenuItem>
             <DropdownMenuItem
               className="cursor-pointer text-destructive focus:text-destructive"
-              onClick={handleDelete}
+              onClick={() => onRequestDelete({ type: 'doc', id: doc.id, title: doc.title })}
             >
               Delete
             </DropdownMenuItem>
@@ -297,6 +291,8 @@ export function DocTree({
   const [loading, setLoading] = useState(true)
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [rootDropdownOpen, setRootDropdownOpen] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<DeleteRequest | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const canEdit = userRole === 'ADMIN' || userRole === 'CREATOR'
 
   const fetchTree = useCallback(async () => {
@@ -322,6 +318,24 @@ export function DocTree({
   function handleRefresh() {
     fetchTree()
     onRefresh?.()
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return
+    setDeleting(true)
+    try {
+      if (pendingDelete.type === 'folder') {
+        await deleteFolder(projectId, pendingDelete.id, token)
+      } else {
+        await deleteDoc(projectId, pendingDelete.id, token)
+      }
+      setPendingDelete(null)
+      handleRefresh()
+    } catch {
+      // Deletion failed silently
+    } finally {
+      setDeleting(false)
+    }
   }
 
   const rootFolders = allFolders.filter((f) => f.parentId === null)
@@ -379,6 +393,7 @@ export function DocTree({
             selectedDocId={selectedDocId}
             onDocSelect={onDocSelect}
             onOpenDialog={setDialog}
+            onRequestDelete={setPendingDelete}
             onRefresh={handleRefresh}
           />
         ))}
@@ -392,6 +407,7 @@ export function DocTree({
             isSelected={doc.id === selectedDocId}
             onDocSelect={onDocSelect}
             onOpenDialog={setDialog}
+            onRequestDelete={setPendingDelete}
             onRefresh={handleRefresh}
           />
         ))}
@@ -437,6 +453,29 @@ export function DocTree({
           onClose={() => setDialog(null)}
         />
       )}
+
+      <Modal
+        open={!!pendingDelete}
+        onOpenChange={(open) => { if (!open) setPendingDelete(null) }}
+        title={pendingDelete?.type === 'folder' ? `Delete "${pendingDelete.name}"?` : `Delete "${pendingDelete?.title}"?`}
+        description={
+          pendingDelete?.type === 'folder'
+            ? 'Sub-folders will be deleted. Documents inside will be moved to the root level.'
+            : 'This document will be permanently deleted.'
+        }
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setPendingDelete(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmDelete} disabled={deleting}>
+              {deleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          </div>
+        }
+      >
+        <span />
+      </Modal>
     </div>
   )
 }

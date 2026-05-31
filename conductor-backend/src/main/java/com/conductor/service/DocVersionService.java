@@ -27,7 +27,7 @@ public class DocVersionService {
 
     @Transactional(readOnly = true)
     public DocVersion getVersion(String versionId) {
-        return docVersionRepository.findById(versionId)
+        return docVersionRepository.findByIdWithAuthor(versionId)
                 .orElseThrow(() -> new EntityNotFoundException("Version not found: " + versionId));
     }
 

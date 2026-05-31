@@ -127,6 +127,15 @@ export function listVersions(
   return apiGet<DocVersion[]>(`/api/v1/projects/${projectId}/docs/${docId}/versions`, token)
 }
 
+export function getDocVersion(
+  projectId: string,
+  docId: string,
+  versionId: string,
+  token: string,
+): Promise<DocVersion> {
+  return apiGet<DocVersion>(`/api/v1/projects/${projectId}/docs/${docId}/versions/${versionId}`, token)
+}
+
 export function restoreVersion(
   projectId: string,
   docId: string,
