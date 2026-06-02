@@ -970,7 +970,9 @@ describe('resolveProjectIdForFile', () => {
     expect(resolveProjectIdForFile(filePath, config)).toBe('proj_b')
   })
 
-  it('falls back to config.projectId when file does not match any project', async () => {
+  it('returns null when file matches no project and is outside config.localPath', async () => {
+    // Previously this fell back to config.projectId, which mis-stamped writes to
+    // the active project. It must now refuse to guess.
     const { resolveProjectIdForFile } = await import('../daemon/watcher.js')
     const config = {
       ...mockConfig,
@@ -979,13 +981,20 @@ describe('resolveProjectIdForFile', () => {
       },
     }
     const filePath = '/home/user/unknown-project/.conductor/issues/iss_xyz/prd.md'
-    expect(resolveProjectIdForFile(filePath, config)).toBe('proj_123')
+    expect(resolveProjectIdForFile(filePath, config)).toBeNull()
   })
 
-  it('returns config.projectId when projects map is absent', async () => {
+  it('returns config.projectId for legacy layout when file is under config.localPath', async () => {
     const { resolveProjectIdForFile } = await import('../daemon/watcher.js')
     const filePath = '/home/user/myproject/.conductor/issues/iss_abc/prd.md'
     expect(resolveProjectIdForFile(filePath, mockConfig)).toBe('proj_123')
+  })
+
+  it('returns null when neither projects map nor localPath matches the file', async () => {
+    const { resolveProjectIdForFile } = await import('../daemon/watcher.js')
+    const config = { ...mockConfig, localPath: undefined }
+    const filePath = '/home/user/elsewhere/.conductor/issues/iss_abc/prd.md'
+    expect(resolveProjectIdForFile(filePath, config)).toBeNull()
   })
 })
 
@@ -1024,6 +1033,31 @@ describe('syncFile multi-project routing', () => {
       expect.objectContaining({ method: 'PUT' })
     )
 
+    vi.unstubAllGlobals()
+  })
+
+  it('skips (no request, no queue) when the file is under no known project', async () => {
+    mockFs.readFileSync.mockReturnValue('# PRD content')
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const { syncFile } = await import('../daemon/watcher.js')
+
+    const config = {
+      ...mockConfig,
+      localPath: '/home/user/project-a',
+      projects: {
+        proj_a: { localPath: '/home/user/project-a', projectName: 'Project A' },
+      },
+    }
+    const filePath = '/home/user/stray-project/.conductor/issues/iss_xyz/prd.md'
+    await syncFile(filePath, () => config)
+
+    expect(mockFetch).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('not under any known project'))
+
+    warnSpy.mockRestore()
     vi.unstubAllGlobals()
   })
 })

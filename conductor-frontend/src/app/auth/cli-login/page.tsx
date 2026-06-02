@@ -27,27 +27,46 @@ interface CreateApiKeyResponse {
 function CliLoginContent() {
   const searchParams = useSearchParams()
   const port = searchParams.get('port')
-  const [status, setStatus] = useState<'idle' | 'loading' | 'pick' | 'success' | 'error'>('idle')
+  const [status, setStatus] = useState<'idle' | 'loading' | 'pick' | 'pick-project' | 'success' | 'error'>('idle')
   const [isCreating, setIsCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [existingKeys, setExistingKeys] = useState<UserApiKey[]>([])
   const [accessTokenStore, setAccessTokenStore] = useState<string>('')
+  const [projectChoices, setProjectChoices] = useState<Array<{ id: string; name: string }>>([])
+  const [pendingApiKey, setPendingApiKey] = useState<string>('')
+  const [profileEmail, setProfileEmail] = useState<string>('')
+
+  function redirectToCli(apiKey: string, project: { id: string; name: string }, email: string) {
+    const callbackUrl = new URL(`http://localhost:${port}/oauth/callback`)
+    callbackUrl.searchParams.set('apiKey', apiKey)
+    callbackUrl.searchParams.set('projectId', project.id)
+    callbackUrl.searchParams.set('projectName', project.name)
+    callbackUrl.searchParams.set('email', email)
+    window.location.href = callbackUrl.toString()
+    setStatus('success')
+  }
 
   async function finishWithKey(apiKey: string, accessToken: string) {
     const projects = await apiGet<Array<{ id: string; name: string }>>('/api/v1/projects', accessToken)
     if (projects.length === 0) {
       throw new Error('No projects found — create a project in Conductor first.')
     }
-    const project = projects[0]!
     const profile = await apiGet<{ email: string }>('/api/v1/auth/me', accessToken)
 
-    const callbackUrl = new URL(`http://localhost:${port}/oauth/callback`)
-    callbackUrl.searchParams.set('apiKey', apiKey)
-    callbackUrl.searchParams.set('projectId', project.id)
-    callbackUrl.searchParams.set('projectName', project.name)
-    callbackUrl.searchParams.set('email', profile.email)
-    window.location.href = callbackUrl.toString()
-    setStatus('success')
+    if (projects.length === 1) {
+      redirectToCli(apiKey, projects[0]!, profile.email)
+      return
+    }
+    // Multiple projects — let the user choose which one the CLI starts on rather
+    // than silently binding to the first (which mis-aimed the daemon's syncs).
+    setPendingApiKey(apiKey)
+    setProfileEmail(profile.email)
+    setProjectChoices(projects)
+    setStatus('pick-project')
+  }
+
+  function handlePickProject(project: { id: string; name: string }) {
+    redirectToCli(pendingApiKey, project, profileEmail)
   }
 
   async function handleSignIn() {
@@ -159,6 +178,33 @@ function CliLoginContent() {
           >
             Create a new key
           </button>
+          {error && <p className="mt-3 text-sm text-destructive text-center">{error}</p>}
+        </div>
+      </div>
+    )
+  }
+
+  if (status === 'pick-project') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 shadow-sm">
+          <h1 className="mb-2 text-2xl font-bold text-foreground text-center">Select a project</h1>
+          <p className="mb-5 text-sm text-muted-foreground text-center">
+            Choose which project the CLI should start on. You can switch later with{' '}
+            <code className="font-mono text-xs">conductor init</code>.
+          </p>
+          <div className="space-y-2">
+            {projectChoices.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => handlePickProject(p)}
+                className="w-full flex items-center justify-between rounded-md border border-border bg-background px-3 py-2.5 text-left hover:bg-muted"
+              >
+                <span className="text-sm font-medium text-foreground truncate">{p.name}</span>
+                <span className="ml-3 shrink-0 text-xs text-primary">Use</span>
+              </button>
+            ))}
+          </div>
           {error && <p className="mt-3 text-sm text-destructive text-center">{error}</p>}
         </div>
       </div>

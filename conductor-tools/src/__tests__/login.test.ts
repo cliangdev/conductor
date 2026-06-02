@@ -45,6 +45,104 @@ describe('login command', () => {
   })
 })
 
+describe('buildRefreshedConfig', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  const auth = {
+    apiKey: 'uk_newkey',
+    email: 'user@example.com',
+    projectId: 'payload_proj',
+    projectName: 'Payload Project',
+    apiUrl: 'http://localhost:8080',
+    frontendUrl: 'http://localhost:3000',
+  }
+
+  it('on re-auth, keeps the active project + projects map and only refreshes the credential', async () => {
+    const { buildRefreshedConfig } = await import('../commands/login.js')
+    const existing = {
+      apiKey: 'uk_oldkey',
+      projectId: 'rexcipe',
+      projectName: 'Rexcipe Engineering',
+      email: 'user@example.com',
+      apiUrl: 'http://localhost:8080',
+      localPath: '/home/user/nexus',
+      projects: {
+        rexcipe: { localPath: '/home/user/nexus', projectName: 'Rexcipe Engineering' },
+      },
+    }
+
+    const result = buildRefreshedConfig(existing, auth)
+
+    // Credential refreshed...
+    expect(result.apiKey).toBe('uk_newkey')
+    // ...but the active project and multi-project map are NOT clobbered by the payload.
+    expect(result.projectId).toBe('rexcipe')
+    expect(result.projectName).toBe('Rexcipe Engineering')
+    expect(result.localPath).toBe('/home/user/nexus')
+    expect(result.projects).toEqual(existing.projects)
+  })
+
+  it('on first login, adopts the project returned by the auth flow', async () => {
+    const { buildRefreshedConfig } = await import('../commands/login.js')
+    const result = buildRefreshedConfig(null, auth)
+    expect(result.apiKey).toBe('uk_newkey')
+    expect(result.projectId).toBe('payload_proj')
+    expect(result.projectName).toBe('Payload Project')
+  })
+})
+
+describe('ensureDurableApiKey', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('creates and returns a durable uk_ key when none is reusable', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [] }) // GET list
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ key: 'uk_created' }) }) // POST create
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { ensureDurableApiKey } = await import('../commands/login.js')
+    const key = await ensureDurableApiKey('http://localhost:8080', 'eyJ.jwt.token')
+
+    expect(key).toBe('uk_created')
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'http://localhost:8080/api/v1/api-keys',
+      expect.objectContaining({ method: 'POST' })
+    )
+    vi.unstubAllGlobals()
+  })
+
+  it('reuses an existing retrievable CLI key', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => [{ key: 'uk_existing', label: 'CLI key' }],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { ensureDurableApiKey } = await import('../commands/login.js')
+    const key = await ensureDurableApiKey('http://localhost:8080', 'eyJ.jwt.token')
+
+    expect(key).toBe('uk_existing')
+    expect(fetchMock).toHaveBeenCalledTimes(1) // no POST needed
+    vi.unstubAllGlobals()
+  })
+
+  it('falls back to the JWT when key issuance is unavailable', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { ensureDurableApiKey } = await import('../commands/login.js')
+    const key = await ensureDurableApiKey('http://localhost:8080', 'eyJ.jwt.token')
+
+    expect(key).toBe('eyJ.jwt.token')
+    vi.unstubAllGlobals()
+  })
+})
+
 describe('logout command', () => {
   beforeEach(() => {
     vi.resetModules()

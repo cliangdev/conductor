@@ -74,6 +74,23 @@ describe('config', () => {
       })
     })
 
+    it('backfills projects map from legacy fields when the stored map is empty', async () => {
+      // Regression: an empty {} map must be treated like a missing one, otherwise
+      // file→project resolution falls back to the active projectId and mis-stamps writes.
+      const emptyMapConfig = {
+        ...validConfig,
+        localPath: '/home/user/myproject',
+        projects: {},
+      }
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(emptyMapConfig))
+
+      const { readConfig } = await import('../lib/config.js')
+      const result = readConfig()
+      expect(result?.projects).toEqual({
+        proj_123: { localPath: '/home/user/myproject', projectName: 'Test Project' },
+      })
+    })
+
     it('preserves existing projects map when already present', async () => {
       const configWithProjects = {
         ...validConfig,

@@ -26,8 +26,14 @@ export function readConfig(): Config | null {
     const raw = fs.readFileSync(CONFIG_PATH, 'utf8')
     const parsed = JSON.parse(raw) as unknown
     if (!isConfig(parsed)) return null
-    // Synthesize projects map from legacy single-project fields for backward compat
-    if (!parsed.projects && parsed.projectId && parsed.localPath) {
+    // Synthesize projects map from legacy single-project fields for backward compat.
+    // Treat an empty map the same as a missing one — otherwise file→project
+    // resolution falls back to the mutable active projectId and mis-stamps writes.
+    if (
+      (!parsed.projects || Object.keys(parsed.projects).length === 0) &&
+      parsed.projectId &&
+      parsed.localPath
+    ) {
       parsed.projects = {
         [parsed.projectId]: { localPath: parsed.localPath, projectName: parsed.projectName },
       }

@@ -124,7 +124,13 @@ export function getAllWatchPaths(config: Config): string[] {
   return Array.from(paths)
 }
 
-export function resolveProjectIdForFile(filePath: string, config: Config): string {
+/**
+ * Resolve which project a watched file belongs to from its path. Returns null
+ * when the file is under no known project root — callers must skip rather than
+ * fall back to the active projectId, which would mis-stamp the write to the
+ * wrong project (e.g. queuing a Rexcipe file under Conductor's id).
+ */
+export function resolveProjectIdForFile(filePath: string, config: Config): string | null {
   const normalized = filePath.replace(/\\/g, '/')
   if (config.projects) {
     for (const [projectId, proj] of Object.entries(config.projects)) {
@@ -132,7 +138,13 @@ export function resolveProjectIdForFile(filePath: string, config: Config): strin
       if (normalized.startsWith(prefix)) return projectId
     }
   }
-  return config.projectId
+  // Legacy single-project layout: only attribute to the active project when the
+  // file actually lives under its local path.
+  if (config.localPath) {
+    const prefix = config.localPath.replace(/\\/g, '/') + '/.conductor/issues/'
+    if (normalized.startsWith(prefix)) return config.projectId
+  }
+  return null
 }
 
 async function callApi(
@@ -174,6 +186,10 @@ export async function syncFile(filePath: string, getConfig: () => Config): Promi
 
   const config = getConfig()
   const projectId = resolveProjectIdForFile(filePath, config)
+  if (projectId === null) {
+    console.warn(`Skipping ${filePath}: not under any known project — run conductor init here.`)
+    return
+  }
   const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
   const body = { content, contentType: 'text/markdown' }
 
@@ -195,6 +211,10 @@ export async function deleteFile(filePath: string, getConfig: () => Config): Pro
 
   const config = getConfig()
   const projectId = resolveProjectIdForFile(filePath, config)
+  if (projectId === null) {
+    console.warn(`Skipping delete of ${filePath}: not under any known project.`)
+    return
+  }
   const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
 
   try {
@@ -240,6 +260,10 @@ export async function syncIssueMd(filePath: string, getConfig: () => Config): Pr
 
   const config = getConfig()
   const projectId = resolveProjectIdForFile(filePath, config)
+  if (projectId === null) {
+    console.warn(`Skipping issue.md ${filePath}: not under any known project — run conductor init here.`)
+    return
+  }
   const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}`
 
   try {
@@ -267,6 +291,10 @@ export async function syncTasksJson(filePath: string, getConfig: () => Config): 
   const tasks = JSON.parse(content)
   const config = getConfig()
   const projectId = resolveProjectIdForFile(filePath, config)
+  if (projectId === null) {
+    console.warn(`Skipping tasks.json ${filePath}: not under any known project — run conductor init here.`)
+    return
+  }
   const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/tasks`
 
   try {
