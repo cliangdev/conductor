@@ -31,7 +31,17 @@ export interface QueueEntry {
   path: string
   body?: Record<string, unknown>
   timestamp: string
+  /** Number of failed replay attempts. Entries are abandoned past MAX_REPLAY_ATTEMPTS. */
+  attempts?: number
 }
+
+/**
+ * After this many failed replays an entry is dropped from the queue. Without
+ * this cap, entries targeting resources that can never succeed (e.g. documents
+ * under a local-only issue that was never created server-side) would be
+ * retried forever and the queue would never reach zero.
+ */
+export const MAX_REPLAY_ATTEMPTS = 5
 
 export const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -76,10 +86,29 @@ export function writeQueue(entries: QueueEntry[]): void {
   fs.writeFileSync(SYNC_QUEUE_PATH, JSON.stringify(entries, null, 2), 'utf8')
 }
 
-export function queueChange(entry: Omit<QueueEntry, 'timestamp'>): void {
+export function queueChange(entry: Omit<QueueEntry, 'timestamp' | 'attempts'>): void {
   const entries = readQueue()
-  entries.push({ ...entry, timestamp: new Date().toISOString() })
-  writeQueue(entries)
+  // Collapse to one entry per path: a newer failure supersedes any earlier
+  // queued snapshot for the same resource. Without this the queue grows
+  // unbounded (one entry per failed save) and old snapshots can clobber newer
+  // content on replay.
+  const deduped = entries.filter((e) => e.path !== entry.path)
+  deduped.push({ ...entry, timestamp: new Date().toISOString(), attempts: 0 })
+  writeQueue(deduped)
+}
+
+/**
+ * Drop any pending queue entries for a path once it has synced successfully via
+ * the live watcher. This is what keeps already-synced files from lingering in
+ * the queue: a save that failed (queued) and then succeeded on a later edit
+ * must not leave its stale snapshot behind to be replayed.
+ */
+export function dequeueChange(apiPath: string): void {
+  const entries = readQueue()
+  const remaining = entries.filter((e) => e.path !== apiPath)
+  if (remaining.length !== entries.length) {
+    writeQueue(remaining)
+  }
 }
 
 export function getAllWatchPaths(config: Config): string[] {
@@ -95,7 +124,13 @@ export function getAllWatchPaths(config: Config): string[] {
   return Array.from(paths)
 }
 
-export function resolveProjectIdForFile(filePath: string, config: Config): string {
+/**
+ * Resolve which project a watched file belongs to from its path. Returns null
+ * when the file is under no known project root — callers must skip rather than
+ * fall back to the active projectId, which would mis-stamp the write to the
+ * wrong project (e.g. queuing a Rexcipe file under Conductor's id).
+ */
+export function resolveProjectIdForFile(filePath: string, config: Config): string | null {
   const normalized = filePath.replace(/\\/g, '/')
   if (config.projects) {
     for (const [projectId, proj] of Object.entries(config.projects)) {
@@ -103,7 +138,13 @@ export function resolveProjectIdForFile(filePath: string, config: Config): strin
       if (normalized.startsWith(prefix)) return projectId
     }
   }
-  return config.projectId
+  // Legacy single-project layout: only attribute to the active project when the
+  // file actually lives under its local path.
+  if (config.localPath) {
+    const prefix = config.localPath.replace(/\\/g, '/') + '/.conductor/issues/'
+    if (normalized.startsWith(prefix)) return config.projectId
+  }
+  return null
 }
 
 async function callApi(
@@ -145,11 +186,16 @@ export async function syncFile(filePath: string, getConfig: () => Config): Promi
 
   const config = getConfig()
   const projectId = resolveProjectIdForFile(filePath, config)
+  if (projectId === null) {
+    console.warn(`Skipping ${filePath}: not under any known project — run conductor init here.`)
+    return
+  }
   const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
   const body = { content, contentType: 'text/markdown' }
 
   try {
     await callApi('PUT', apiPath, body, getConfig)
+    dequeueChange(apiPath)
     console.log(`Synced: ${filePath}`)
   } catch (err) {
     console.error(`Sync failed, queuing: ${filePath} — ${(err as Error).message}`)
@@ -165,10 +211,15 @@ export async function deleteFile(filePath: string, getConfig: () => Config): Pro
 
   const config = getConfig()
   const projectId = resolveProjectIdForFile(filePath, config)
+  if (projectId === null) {
+    console.warn(`Skipping delete of ${filePath}: not under any known project.`)
+    return
+  }
   const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
 
   try {
     await callApi('DELETE', apiPath, undefined, getConfig)
+    dequeueChange(apiPath)
     console.log(`Deleted: ${filePath}`)
   } catch (err) {
     console.error(`Delete failed, queuing: ${filePath} — ${(err as Error).message}`)
@@ -209,10 +260,15 @@ export async function syncIssueMd(filePath: string, getConfig: () => Config): Pr
 
   const config = getConfig()
   const projectId = resolveProjectIdForFile(filePath, config)
+  if (projectId === null) {
+    console.warn(`Skipping issue.md ${filePath}: not under any known project — run conductor init here.`)
+    return
+  }
   const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}`
 
   try {
     await callApi('PATCH', apiPath, patchBody, getConfig)
+    dequeueChange(apiPath)
     console.log(`Synced issue.md: ${filePath}`)
   } catch (err) {
     console.error(`Issue sync failed, queuing: ${filePath} — ${(err as Error).message}`)
@@ -235,10 +291,15 @@ export async function syncTasksJson(filePath: string, getConfig: () => Config): 
   const tasks = JSON.parse(content)
   const config = getConfig()
   const projectId = resolveProjectIdForFile(filePath, config)
+  if (projectId === null) {
+    console.warn(`Skipping tasks.json ${filePath}: not under any known project — run conductor init here.`)
+    return
+  }
   const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/tasks`
 
   try {
     await callApi('PUT', apiPath, tasks, getConfig)
+    dequeueChange(apiPath)
     console.log(`Synced tasks.json: ${filePath}`)
   } catch (err) {
     console.error(`Tasks sync failed, queuing: ${filePath} — ${(err as Error).message}`)
@@ -267,28 +328,73 @@ export async function syncExistingTasksFiles(getConfig: () => Config): Promise<v
   }
 }
 
+let replayInFlight = false
+
+function entryKey(e: QueueEntry): string {
+  return `${e.method} ${e.path} ${e.timestamp}`
+}
+
+/**
+ * Drain the offline sync queue. Safe to call repeatedly (idle/active poll
+ * cadence) — a re-entrancy guard prevents overlapping drains.
+ *
+ * Each entry is attempted in turn. On permanent-looking failure the attempt
+ * counter is bumped and the entry is abandoned once it exceeds
+ * MAX_REPLAY_ATTEMPTS, so unsyncable entries can't pin the queue open forever.
+ *
+ * The final write merges decisions against a FRESH read of the queue rather
+ * than overwriting with a stale snapshot, so entries the watcher appended while
+ * a drain was in progress are preserved instead of clobbered.
+ */
 export async function replayQueue(getConfig: () => Config): Promise<void> {
+  if (replayInFlight) return
   const entries = readQueue()
   if (entries.length === 0) return
 
-  console.log(`Replaying ${entries.length} queued item(s)...`)
-  const remaining: QueueEntry[] = []
+  replayInFlight = true
+  try {
+    console.log(`Replaying ${entries.length} queued item(s)...`)
+    // path -> updated entry to keep (with bumped attempts), or 'drop' to remove.
+    const decisions = new Map<string, QueueEntry | 'drop'>()
 
-  for (const entry of entries) {
-    try {
-      await callApi(entry.method, entry.path, entry.body, getConfig)
-      console.log(`Replayed: ${entry.method} ${entry.path}`)
-    } catch (err) {
-      console.error(`Replay failed for ${entry.method} ${entry.path}: ${(err as Error).message}`)
-      remaining.push(entry)
+    for (const entry of entries) {
+      try {
+        await callApi(entry.method, entry.path, entry.body, getConfig)
+        decisions.set(entryKey(entry), 'drop')
+        console.log(`Replayed: ${entry.method} ${entry.path}`)
+      } catch (err) {
+        const attempts = (entry.attempts ?? 0) + 1
+        if (attempts >= MAX_REPLAY_ATTEMPTS) {
+          decisions.set(entryKey(entry), 'drop')
+          console.error(
+            `Abandoning ${entry.method} ${entry.path} after ${attempts} failed attempts: ${(err as Error).message}`
+          )
+        } else {
+          decisions.set(entryKey(entry), { ...entry, attempts })
+          console.error(
+            `Replay failed for ${entry.method} ${entry.path} (attempt ${attempts}/${MAX_REPLAY_ATTEMPTS}): ${(err as Error).message}`
+          )
+        }
+      }
     }
-  }
 
-  writeQueue(remaining)
-  if (remaining.length === 0) {
-    console.log('All queued items replayed successfully.')
-  } else {
-    console.log(`${remaining.length} item(s) still pending.`)
+    // Merge against the current queue so concurrent appends survive.
+    const current = readQueue()
+    const merged: QueueEntry[] = []
+    for (const e of current) {
+      const decision = decisions.get(entryKey(e))
+      if (decision === 'drop') continue
+      merged.push(decision ?? e) // decision carries bumped attempts; else untouched (newly appended)
+    }
+    writeQueue(merged)
+
+    if (merged.length === 0) {
+      console.log('All queued items replayed successfully.')
+    } else {
+      console.log(`${merged.length} item(s) still pending.`)
+    }
+  } finally {
+    replayInFlight = false
   }
 }
 
@@ -377,6 +483,13 @@ if (process.argv[1] === __filename) {
   replayQueue(getConfig).catch(console.error)
   syncExistingTasksFiles(getConfig).catch(console.error)
   startWatcher(getConfig)
+
+  // Drain the offline queue on a cadence, not just at startup. Without this a
+  // transient failure keeps an item queued until the next daemon restart.
+  const REPLAY_INTERVAL_MS = 60_000
+  setInterval(() => {
+    replayQueue(getConfig).catch(console.error)
+  }, REPLAY_INTERVAL_MS)
 
   const runQueue = new RunQueue(getConfig().maxConcurrentRuns ?? 1)
 

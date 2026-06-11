@@ -150,6 +150,38 @@ describe('CliLoginPage', () => {
     })
   })
 
+  it('shows a project picker when the user has multiple projects', async () => {
+    const MULTI_PROJECTS = [
+      { id: 'proj-1', name: 'Rexcipe Engineering' },
+      { id: 'proj-2', name: 'Conductor' },
+    ]
+    vi.mocked(api.apiGet).mockImplementation(async (url: string) => {
+      if (url === '/api/v1/api-keys') return NO_CLI_KEYS
+      if (url === '/api/v1/projects') return MULTI_PROJECTS
+      if (url === '/api/v1/auth/me') return ME
+      return {}
+    })
+
+    render(<CliLoginPage />)
+    await userEvent.click(screen.getByRole('button', { name: /sign in with google/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/select a project/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText('Rexcipe Engineering')).toBeInTheDocument()
+    expect(screen.getByText('Conductor')).toBeInTheDocument()
+
+    // No redirect happened yet — the user must choose.
+    expect(mockWindowLocation.href).toBe('')
+
+    await userEvent.click(screen.getByText('Conductor'))
+
+    await waitFor(() => {
+      expect(mockWindowLocation.href).toContain('projectId=proj-2')
+      expect(mockWindowLocation.href).toContain('apiKey=uk_newkey1234')
+    })
+  })
+
   it('shows error message when sign in fails', async () => {
     vi.mocked(firebaseAuth.signInWithPopup).mockRejectedValue(new Error('Popup closed'))
 

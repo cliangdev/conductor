@@ -737,6 +737,168 @@ describe('queueChange and replayQueue', () => {
 
     vi.unstubAllGlobals()
   })
+
+  it('queueChange collapses duplicate entries for the same path', async () => {
+    const existing = [{
+      method: 'PUT',
+      path: '/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md',
+      body: { content: 'old' },
+      timestamp: '2026-01-01T00:00:00Z',
+      attempts: 0,
+    }]
+    mockFs.readFileSync.mockReturnValue(JSON.stringify(existing))
+    mockFs.mkdirSync.mockReturnValue(undefined)
+    mockFs.writeFileSync.mockReturnValue(undefined)
+
+    const { queueChange } = await import('../daemon/watcher.js')
+    queueChange({
+      method: 'PUT',
+      path: '/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md',
+      body: { content: 'new' },
+    })
+
+    const written = JSON.parse(mockFs.writeFileSync.mock.calls[0][1] as string)
+    // Same path → exactly one entry, carrying the newest body
+    expect(written).toHaveLength(1)
+    expect(written[0].body.content).toBe('new')
+  })
+
+  it('dequeueChange removes pending entries for a synced path', async () => {
+    const queue = [
+      { method: 'PUT', path: '/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md', body: {}, timestamp: 't' },
+      { method: 'PUT', path: '/api/v1/projects/proj_123/issues/iss_xyz/documents/prd.md', body: {}, timestamp: 't' },
+    ]
+    mockFs.readFileSync.mockReturnValue(JSON.stringify(queue))
+    mockFs.mkdirSync.mockReturnValue(undefined)
+    mockFs.writeFileSync.mockReturnValue(undefined)
+
+    const { dequeueChange } = await import('../daemon/watcher.js')
+    dequeueChange('/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md')
+
+    const written = JSON.parse(mockFs.writeFileSync.mock.calls[0][1] as string)
+    expect(written).toHaveLength(1)
+    expect(written[0].path).toContain('iss_xyz')
+  })
+
+  it('successful syncFile dequeues a previously-queued entry for that path', async () => {
+    const apiPath = '/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md'
+    // file read, then queue read inside dequeueChange
+    mockFs.readFileSync
+      .mockReturnValueOnce('# content')
+      .mockReturnValueOnce(JSON.stringify([{ method: 'PUT', path: apiPath, body: {}, timestamp: 't' }]))
+    mockFs.mkdirSync.mockReturnValue(undefined)
+    mockFs.writeFileSync.mockReturnValue(undefined)
+    mockFs.unlinkSync.mockReturnValue(undefined)
+
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { syncFile } = await import('../daemon/watcher.js')
+    await syncFile(path.join('/home/user/myproject', '.conductor', 'issues', 'iss_abc', 'spec.md'), () => mockConfig)
+
+    // Queue became empty → file removed
+    expect(mockFs.unlinkSync).toHaveBeenCalledWith(
+      path.join(os.homedir(), '.conductor', 'sync-queue.json')
+    )
+    vi.unstubAllGlobals()
+  })
+
+  it('replayQueue abandons an entry after MAX_REPLAY_ATTEMPTS', async () => {
+    const deadEntry = {
+      method: 'PUT',
+      path: '/api/v1/projects/proj_123/issues/local_999/documents/prd.md',
+      body: { content: 'x' },
+      timestamp: '2026-01-01T00:00:00Z',
+      attempts: 4, // one below the cap
+    }
+    mockFs.readFileSync.mockReturnValue(JSON.stringify([deadEntry]))
+    mockFs.writeFileSync.mockReturnValue(undefined)
+    mockFs.unlinkSync.mockReturnValue(undefined)
+    mockFs.mkdirSync.mockReturnValue(undefined)
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false, status: 404, text: async () => 'Not Found', statusText: 'Not Found',
+    })
+    vi.stubGlobal('fetch', mockFetch)
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const { replayQueue } = await import('../daemon/watcher.js')
+    await replayQueue(() => mockConfig)
+
+    // attempts hit 5 → dropped → queue empty → unlinked, not rewritten
+    expect(mockFs.unlinkSync).toHaveBeenCalled()
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Abandoning'))
+
+    consoleSpy.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('replayQueue bumps attempts on a recoverable failure instead of abandoning', async () => {
+    const entry = {
+      method: 'PUT',
+      path: '/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      body: { content: 'x' },
+      timestamp: '2026-01-01T00:00:00Z',
+      attempts: 0,
+    }
+    mockFs.readFileSync.mockReturnValue(JSON.stringify([entry]))
+    mockFs.writeFileSync.mockReturnValue(undefined)
+    mockFs.mkdirSync.mockReturnValue(undefined)
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false, status: 503, text: async () => 'Unavailable', statusText: 'Unavailable',
+    })
+    vi.stubGlobal('fetch', mockFetch)
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+    const { replayQueue } = await import('../daemon/watcher.js')
+    await replayQueue(() => mockConfig)
+
+    const written = JSON.parse(mockFs.writeFileSync.mock.calls[0][1] as string)
+    expect(written).toHaveLength(1)
+    expect(written[0].attempts).toBe(1)
+
+    consoleSpy.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('replayQueue preserves entries appended during the drain (race-safe merge)', async () => {
+    const original = {
+      method: 'PUT',
+      path: '/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      body: { content: 'x' },
+      timestamp: '2026-01-01T00:00:00Z',
+      attempts: 0,
+    }
+    const appendedDuringDrain = {
+      method: 'PUT',
+      path: '/api/v1/projects/proj_123/issues/iss_new/documents/prd.md',
+      body: { content: 'y' },
+      timestamp: '2026-01-02T00:00:00Z',
+      attempts: 0,
+    }
+    // First read (drain snapshot) sees only the original; the post-drain merge
+    // read sees a second entry the watcher appended meanwhile.
+    mockFs.readFileSync
+      .mockReturnValueOnce(JSON.stringify([original]))
+      .mockReturnValue(JSON.stringify([original, appendedDuringDrain]))
+    mockFs.writeFileSync.mockReturnValue(undefined)
+    mockFs.unlinkSync.mockReturnValue(undefined)
+    mockFs.mkdirSync.mockReturnValue(undefined)
+
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const { replayQueue } = await import('../daemon/watcher.js')
+    await replayQueue(() => mockConfig)
+
+    // original drained successfully, but the concurrently-appended entry survives
+    const written = JSON.parse(mockFs.writeFileSync.mock.calls.at(-1)![1] as string)
+    expect(written).toHaveLength(1)
+    expect(written[0].path).toContain('iss_new')
+
+    vi.unstubAllGlobals()
+  })
 })
 
 // ─── Multi-project: getAllWatchPaths ──────────────────────────────────────────
@@ -808,7 +970,9 @@ describe('resolveProjectIdForFile', () => {
     expect(resolveProjectIdForFile(filePath, config)).toBe('proj_b')
   })
 
-  it('falls back to config.projectId when file does not match any project', async () => {
+  it('returns null when file matches no project and is outside config.localPath', async () => {
+    // Previously this fell back to config.projectId, which mis-stamped writes to
+    // the active project. It must now refuse to guess.
     const { resolveProjectIdForFile } = await import('../daemon/watcher.js')
     const config = {
       ...mockConfig,
@@ -817,13 +981,20 @@ describe('resolveProjectIdForFile', () => {
       },
     }
     const filePath = '/home/user/unknown-project/.conductor/issues/iss_xyz/prd.md'
-    expect(resolveProjectIdForFile(filePath, config)).toBe('proj_123')
+    expect(resolveProjectIdForFile(filePath, config)).toBeNull()
   })
 
-  it('returns config.projectId when projects map is absent', async () => {
+  it('returns config.projectId for legacy layout when file is under config.localPath', async () => {
     const { resolveProjectIdForFile } = await import('../daemon/watcher.js')
     const filePath = '/home/user/myproject/.conductor/issues/iss_abc/prd.md'
     expect(resolveProjectIdForFile(filePath, mockConfig)).toBe('proj_123')
+  })
+
+  it('returns null when neither projects map nor localPath matches the file', async () => {
+    const { resolveProjectIdForFile } = await import('../daemon/watcher.js')
+    const config = { ...mockConfig, localPath: undefined }
+    const filePath = '/home/user/elsewhere/.conductor/issues/iss_abc/prd.md'
+    expect(resolveProjectIdForFile(filePath, config)).toBeNull()
   })
 })
 
@@ -862,6 +1033,31 @@ describe('syncFile multi-project routing', () => {
       expect.objectContaining({ method: 'PUT' })
     )
 
+    vi.unstubAllGlobals()
+  })
+
+  it('skips (no request, no queue) when the file is under no known project', async () => {
+    mockFs.readFileSync.mockReturnValue('# PRD content')
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', mockFetch)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const { syncFile } = await import('../daemon/watcher.js')
+
+    const config = {
+      ...mockConfig,
+      localPath: '/home/user/project-a',
+      projects: {
+        proj_a: { localPath: '/home/user/project-a', projectName: 'Project A' },
+      },
+    }
+    const filePath = '/home/user/stray-project/.conductor/issues/iss_xyz/prd.md'
+    await syncFile(filePath, () => config)
+
+    expect(mockFetch).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('not under any known project'))
+
+    warnSpy.mockRestore()
     vi.unstubAllGlobals()
   })
 })
