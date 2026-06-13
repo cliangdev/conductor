@@ -1,7 +1,6 @@
+@import 'tailwindcss';
 @import 'highlight.js/styles/github.css';
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@config '../../tailwind.config.ts';
 
 @layer utilities {
   .text-balance {
