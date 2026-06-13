@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { Command } from 'commander'
 import { readConfig } from '../lib/config.js'
+import { lintMermaid } from '../lib/mermaid-lint.js'
 
 const REQUIRED_SECTIONS = [
   'Problem',
@@ -43,7 +44,30 @@ interface IssueLintResult {
   issueId: string
   prd: { ok: boolean; errors: string[] }
   tasks: { ok: boolean; errors: string[] }
+  mermaid: { ok: boolean; errors: string[]; warnings: string[] }
   warnings: string[]
+}
+
+/** Lint every ```mermaid block across all .md docs in an issue directory. */
+function lintIssueMermaid(issueDir: string): { errors: string[]; warnings: string[] } {
+  const errors: string[] = []
+  const warnings: string[] = []
+  if (!fs.existsSync(issueDir)) return { errors, warnings }
+  let files: string[] = []
+  try {
+    files = (fs.readdirSync(issueDir) as unknown as string[]).filter(f => f.endsWith('.md'))
+  } catch {
+    return { errors, warnings }
+  }
+  for (const file of files.sort()) {
+    const content = String(fs.readFileSync(path.join(issueDir, file), 'utf8'))
+    for (const issue of lintMermaid(content)) {
+      const formatted = `${file}:${issue.line}: ${issue.message}`
+      if (issue.level === 'error') errors.push(formatted)
+      else warnings.push(formatted)
+    }
+  }
+  return { errors, warnings }
 }
 
 export function parseFrontmatter(content: string): Record<string, string> | null {
@@ -331,8 +355,15 @@ function lintIssue(localPath: string, issueId: string): IssueLintResult {
     }
   }
 
+  const mermaidFindings = lintIssueMermaid(issueDir)
+  const mermaid = {
+    ok: mermaidFindings.errors.length === 0,
+    errors: mermaidFindings.errors,
+    warnings: mermaidFindings.warnings,
+  }
+
   tasksResult.ok = tasksResult.errors.length === 0
-  return { issueId, prd: prdResult, tasks: tasksResult, warnings }
+  return { issueId, prd: prdResult, tasks: tasksResult, mermaid, warnings }
 }
 
 function listLocalIssues(localPath: string): string[] {
@@ -418,10 +449,11 @@ Examples:
             issueId: r.issueId,
             prd: { ok: r.prd.ok, errors: r.prd.errors },
             tasks: { ok: r.tasks.ok, errors: r.tasks.errors },
+            mermaid: { ok: r.mermaid.ok, errors: r.mermaid.errors, warnings: r.mermaid.warnings },
           })),
         }
         process.stdout.write(JSON.stringify(payload, null, 2) + '\n')
-        const anyError = results.some(r => !r.prd.ok || !r.tasks.ok)
+        const anyError = results.some(r => !r.prd.ok || !r.tasks.ok || !r.mermaid.ok)
         process.exit(anyError ? 1 : 0)
         return
       }
@@ -453,6 +485,20 @@ Examples:
           anyError = true
           for (const e of r.tasks.errors) {
             console.log(e)
+          }
+        }
+
+        for (const w of r.mermaid.warnings) {
+          console.log(`mermaid: ${w}`)
+        }
+        if (r.mermaid.ok) {
+          if (r.mermaid.warnings.length === 0) {
+            console.log('✓ mermaid')
+          }
+        } else {
+          anyError = true
+          for (const e of r.mermaid.errors) {
+            console.log(`mermaid: ${e}`)
           }
         }
       }

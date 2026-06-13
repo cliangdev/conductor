@@ -244,6 +244,19 @@ For each accepted supporting document:
 
 ## Supporting Document Templates
 
+### Mermaid authoring rules (ASCII-safe — follow these to avoid render failures)
+
+Conductor renders Mermaid in the web app, and its parser rejects several characters that are easy to write by reflex. Keep every ```mermaid block ASCII-safe:
+
+- **No `;` inside `sequenceDiagram` message labels** — `;` is a statement separator and splits the line. Use a comma: `A->>B: do x, then y` (not `do x; then y`).
+- **No `#` in labels** — Mermaid treats `#` as an HTML-entity escape. Write `Gate 1`, not `Gate #1`.
+- **No `(`, `)`, or `:` in participant aliases** — `participant Web as Founder` is fine; `participant Web as Web app (Founder)` and `participant S as conductor:video-batch` break the parser. Drop the parens/colon.
+- **No unicode arrows or dashes in labels** — use `->`/`to` and `-`, not `→`, `–`, `—`.
+- **Line breaks in node labels use `<br/>`, never `\n`** — `\n` renders literally. `A["Service<br/>status"]`, not `A["Service\nstatus"]`.
+- **Give subgraphs the `id ["Title"]` form** when you reference them in edges: `subgraph API ["Spring Boot API"]`.
+
+`conductor lint` flags these (errors for `;` / alias chars, warnings for `#` / literal `\n`) — run it after writing supporting docs.
+
 ### Architecture Diagram (architecture.md)
 ```markdown
 ---
