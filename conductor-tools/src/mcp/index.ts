@@ -2,7 +2,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import { getConfig, resolveProjectIdByCwd } from './config.js'
+import { getConfig, resolveProject } from './config.js'
 import { createIssue, updateIssue, setIssueStatus, listIssues, getIssue } from './tools/issues.js'
 import { deleteDocument, scaffoldDocument } from './tools/documents.js'
 import { listIssueComments } from './tools/comments.js'
@@ -158,10 +158,24 @@ export async function runMcpServer(): Promise<void> {
     let config
     try {
       config = getConfig()
-      config.projectId = resolveProjectIdByCwd(config)
     } catch {
       return authErrorResponse()
     }
+
+    // Fail closed: never guess the project. If the cwd is inside a git repo that
+    // is not linked to any configured project, refuse rather than silently
+    // writing to whatever project is "active" (the cross-project mis-stamp bug).
+    const resolution = resolveProject(config)
+    if (resolution.mismatch) {
+      return errorResponse(
+        `Conductor refused to act: the current directory (${process.cwd()}) is a git ` +
+          `repository that is not linked to any configured Conductor project, so targeting ` +
+          `the active project "${config.projectName}" (${config.projectId}) is unsafe. ` +
+          `Run \`conductor init\` in this repository to link it (this also pins the project ` +
+          `in .mcp.json), or set CONDUCTOR_PROJECT_ID.`
+      )
+    }
+    config.projectId = resolution.projectId
 
     const { name, arguments: args } = request.params
     const params = (args ?? {}) as Record<string, unknown>

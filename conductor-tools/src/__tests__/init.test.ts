@@ -160,6 +160,22 @@ describe('init command', () => {
       const result = buildMcpJson(existing)
       expect(result['version']).toBe('1.0')
     })
+
+    it('pins the project via CONDUCTOR_PROJECT_ID env when a projectId is given', async () => {
+      const { buildMcpJson } = await import('../commands/init.js')
+      const result = buildMcpJson({}, 'proj_abc123')
+      expect(result.mcpServers?.['conductor']).toEqual({
+        command: 'conductor',
+        args: ['mcp'],
+        env: { CONDUCTOR_PROJECT_ID: 'proj_abc123' },
+      })
+    })
+
+    it('omits the env binding when no projectId is given', async () => {
+      const { buildMcpJson } = await import('../commands/init.js')
+      const result = buildMcpJson({})
+      expect(result.mcpServers?.['conductor']).not.toHaveProperty('env')
+    })
   })
 
   describe('auth and project selection', () => {
