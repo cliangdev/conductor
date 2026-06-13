@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { resolveProjectIdByCwd } from '../mcp/config.js'
+import { describe, it, expect, afterEach } from 'vitest'
+import { resolveProjectIdByCwd, resolveProject } from '../mcp/config.js'
 import type { Config } from '../mcp/config.js'
 
 const baseConfig: Config = {
@@ -54,5 +54,41 @@ describe('resolveProjectIdByCwd', () => {
   it('uses process.cwd() when no cwd argument is provided', () => {
     // process.cwd() won't match any test project path, so falls back to global
     expect(resolveProjectIdByCwd(configWithProjects)).toBe('proj_global')
+  })
+})
+
+describe('resolveProject (fail-closed resolution)', () => {
+  const notInGit = () => false
+  const inGit = () => true
+
+  afterEach(() => {
+    delete process.env['CONDUCTOR_PROJECT_ID']
+  })
+
+  it('honors CONDUCTOR_PROJECT_ID env above everything else', () => {
+    process.env['CONDUCTOR_PROJECT_ID'] = 'proj_env'
+    // env wins even when cwd would match a different project
+    const r = resolveProject(configWithProjects, '/home/user/nexus', inGit)
+    expect(r).toEqual({ projectId: 'proj_env', source: 'env', mismatch: false })
+  })
+
+  it('resolves by cwd match with no mismatch', () => {
+    const r = resolveProject(configWithProjects, '/home/user/nexus', inGit)
+    expect(r).toEqual({ projectId: 'proj_nexus', source: 'cwd', mismatch: false })
+  })
+
+  it('flags a mismatch when cwd is inside a git repo that matches no project', () => {
+    const r = resolveProject(configWithProjects, '/home/user/unrelated', inGit)
+    expect(r).toEqual({ projectId: 'proj_global', source: 'fallback', mismatch: true })
+  })
+
+  it('does NOT flag a mismatch when cwd is not inside a git repo (escape hatch)', () => {
+    const r = resolveProject(configWithProjects, '/home/user/unrelated', notInGit)
+    expect(r).toEqual({ projectId: 'proj_global', source: 'fallback', mismatch: false })
+  })
+
+  it('never flags a mismatch when there is no projects map (legacy single-project)', () => {
+    const r = resolveProject(baseConfig, '/home/user/anywhere', inGit)
+    expect(r).toEqual({ projectId: 'proj_global', source: 'fallback', mismatch: false })
   })
 })

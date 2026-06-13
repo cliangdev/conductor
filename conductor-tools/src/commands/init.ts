@@ -72,12 +72,18 @@ export function writeMcpJson(workingDir: string, content: McpJson): void {
   fs.writeFileSync(mcpPath, JSON.stringify(content, null, 2) + '\n', 'utf8')
 }
 
-export function buildMcpJson(existing: McpJson): McpJson {
+export function buildMcpJson(existing: McpJson, projectId?: string): McpJson {
+  // Pin the project to this repo via env so the MCP server targets the right
+  // project regardless of the mutable global config. This is the durable
+  // repo→project binding that makes cross-project mis-stamping impossible.
+  const conductor: McpServerEntry = projectId
+    ? { ...CONDUCTOR_MCP_ENTRY, env: { ...CONDUCTOR_MCP_ENTRY.env, CONDUCTOR_PROJECT_ID: projectId } }
+    : { ...CONDUCTOR_MCP_ENTRY }
   return {
     ...existing,
     mcpServers: {
       ...(existing.mcpServers ?? {}),
-      conductor: CONDUCTOR_MCP_ENTRY,
+      conductor,
     },
   }
 }
@@ -289,7 +295,7 @@ Examples:
       }
 
       const existing = readMcpJson(workingDir)
-      writeMcpJson(workingDir, buildMcpJson(existing))
+      writeMcpJson(workingDir, buildMcpJson(existing, config.projectId))
       console.log(chalk.green('✓ Updated .mcp.json'))
 
       const legacyEntry =
