@@ -7,6 +7,8 @@ interface Props {
   onCancel?: () => void
   placeholder?: string
   submitLabel?: string
+  /** Initial textarea height. 'comfortable' for line-comment composing, 'compact' for replies. */
+  size?: 'comfortable' | 'compact'
 }
 
 export function NewCommentForm({
@@ -14,6 +16,7 @@ export function NewCommentForm({
   onCancel,
   placeholder = 'Add a comment...',
   submitLabel = 'Comment',
+  size = 'compact',
 }: Props) {
   const [content, setContent] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -41,8 +44,9 @@ export function NewCommentForm({
         value={content}
         onChange={(e) => setContent(e.target.value)}
         placeholder={placeholder}
-        rows={3}
-        className="w-full text-sm border border-input bg-background text-foreground rounded px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
+        className={`w-full text-sm border border-input bg-background text-foreground rounded px-2 py-1.5 resize-y focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground ${
+          size === 'comfortable' ? 'min-h-[140px]' : 'min-h-[72px]'
+        }`}
         disabled={submitting}
       />
       {error && <p className="text-xs text-destructive">{error}</p>}
