@@ -90,7 +90,7 @@ export function CommentableDocument({
       {/* Popover — anchored to the clicked gutter button */}
       {popover && (
         <div
-          className="fixed z-50 bg-card border border-border rounded-lg shadow-xl p-4 w-80"
+          className="fixed z-50 bg-card border border-border rounded-lg shadow-xl p-4 w-96"
           style={{ top: popover.anchorTop + 6, left: popover.anchorLeft }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -131,6 +131,7 @@ export function CommentableDocument({
               <NewCommentForm
                 onSubmit={handleAddComment}
                 onCancel={() => setPopover(null)}
+                size="comfortable"
               />
             </>
           )}
@@ -158,24 +159,24 @@ export function CommentableDocument({
                 {hasComments ? (
                   <button
                     onClick={(e) => openPopover(e, lineNum, 'thread')}
-                    className={`leading-none transition-all text-primary ${
-                      isActive ? 'scale-110' : 'hover:scale-110'
+                    className={`leading-none rounded p-0.5 transition-colors text-primary hover:bg-muted ${
+                      isActive ? 'bg-muted' : ''
                     }`}
                     title={`${lineComments.length} comment${lineComments.length !== 1 ? 's' : ''} on line ${lineNum} — click to view`}
                   >
-                    <MessageSquare className="h-3.5 w-3.5" />
+                    <MessageSquare className="h-4 w-4" />
                   </button>
                 ) : (
                   <button
                     onClick={(e) => openPopover(e, lineNum, 'compose')}
-                    className={`leading-none transition-opacity duration-150 ${
+                    className={`leading-none rounded p-0.5 transition-opacity duration-150 hover:bg-muted ${
                       isActive
-                        ? 'opacity-100 text-primary'
+                        ? 'opacity-100 text-primary bg-muted'
                         : 'opacity-0 group-hover/gutterrow:opacity-60 hover:!opacity-100 text-muted-foreground hover:text-primary'
                     }`}
                     title="Add comment on this line"
                   >
-                    <MessageSquarePlus className="h-3.5 w-3.5" />
+                    <MessageSquarePlus className="h-4 w-4" />
                   </button>
                 )}
               </div>
