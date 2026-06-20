@@ -120,6 +120,15 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(Exception.class)
+    public ProblemDetail handleUnexpectedException(Exception e) {
+        log.error("Unexpected error", e);
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.INTERNAL_SERVER_ERROR);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail("An unexpected error occurred. Please try again.");
+        return problem;
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ProblemDetail handleValidationException(MethodArgumentNotValidException e) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);

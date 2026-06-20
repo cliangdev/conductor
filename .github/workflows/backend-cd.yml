@@ -34,7 +34,7 @@ jobs:
       service: conductor-backend
       image-name: backend
       build-context: conductor-backend/
-      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}"
+      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }} --memory=1Gi"
       cloudrun-secrets: |
         DATABASE_URL=DATABASE_URL:latest
         DATABASE_USERNAME=DATABASE_USERNAME:latest

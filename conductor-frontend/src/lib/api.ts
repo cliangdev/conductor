@@ -59,82 +59,102 @@ export function listWebhookEvents(projectId: string, token: string): Promise<Web
   return apiGet<WebhookEventSummary[]>(`/api/v1/projects/${projectId}/github/webhook-events`, token)
 }
 
+async function throwApiError(res: Response): Promise<never> {
+  let detail = `Request failed (${res.status})`
+  try {
+    const json = await res.json()
+    if (typeof json.detail === 'string') detail = json.detail
+  } catch { /* ignore parse failures */ }
+  const err = new Error(detail) as Error & { status: number }
+  err.status = res.status
+  throw err
+}
+
+function networkError(): never {
+  throw new Error('Could not reach server — please try again')
+}
+
 export async function apiGet<T>(path: string, token: string): Promise<T> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!res.ok) {
-    if (res.status === 401) onUnauthorized?.()
-    const err = new Error(`API error: ${res.status}`) as Error & { status: number }
-    err.status = res.status
-    throw err
+  let res: Response
+  try {
+    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  } catch { networkError() }
+  if (!res!.ok) {
+    if (res!.status === 401) onUnauthorized?.()
+    await throwApiError(res!)
   }
-  return res.json()
+  return res!.json()
 }
 
 export async function apiPost<T>(path: string, body: unknown, token?: string): Promise<T> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    if (res.status === 401 && token) onUnauthorized?.()
-    const err = new Error(`API error: ${res.status}`) as Error & { status: number }
-    err.status = res.status
-    throw err
+  let res: Response
+  try {
+    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    })
+  } catch { networkError() }
+  if (!res!.ok) {
+    if (res!.status === 401 && token) onUnauthorized?.()
+    await throwApiError(res!)
   }
-  return res.json()
+  return res!.json()
 }
 
 export async function apiPatch<T>(path: string, body: unknown, token: string): Promise<T> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    if (res.status === 401) onUnauthorized?.()
-    const err = new Error(`API error: ${res.status}`) as Error & { status: number }
-    err.status = res.status
-    throw err
+  let res: Response
+  try {
+    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch { networkError() }
+  if (!res!.ok) {
+    if (res!.status === 401) onUnauthorized?.()
+    await throwApiError(res!)
   }
-  return res.json()
+  return res!.json()
 }
 
 export async function apiPut<T>(path: string, body: unknown, token: string): Promise<T> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    if (res.status === 401) onUnauthorized?.()
-    const err = new Error(`API error: ${res.status}`) as Error & { status: number }
-    err.status = res.status
-    throw err
+  let res: Response
+  try {
+    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    })
+  } catch { networkError() }
+  if (!res!.ok) {
+    if (res!.status === 401) onUnauthorized?.()
+    await throwApiError(res!)
   }
-  return res.json()
+  return res!.json()
 }
 
 export async function apiDelete(path: string, token: string): Promise<void> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!res.ok) {
-    if (res.status === 401) onUnauthorized?.()
-    const err = new Error(`API error: ${res.status}`) as Error & { status: number }
-    err.status = res.status
-    throw err
+  let res: Response
+  try {
+    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  } catch { networkError() }
+  if (!res!.ok) {
+    if (res!.status === 401) onUnauthorized?.()
+    await throwApiError(res!)
   }
 }
