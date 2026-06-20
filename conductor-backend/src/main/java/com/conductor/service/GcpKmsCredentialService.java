@@ -42,12 +42,14 @@ public class GcpKmsCredentialService implements CredentialService {
     private final IntegrationCredentialRepository credentialRepository;
     private final IntegrationDataCacheRepository cacheRepository;
     private final ObjectMapper objectMapper;
+    private final KeyManagementServiceClient kmsClient;
     private final String kmsKeyName;
 
     public GcpKmsCredentialService(
             IntegrationCredentialRepository credentialRepository,
             IntegrationDataCacheRepository cacheRepository,
             ObjectMapper objectMapper,
+            KeyManagementServiceClient kmsClient,
             @Value("${GCP_PROJECT_ID:}") String gcpProjectId,
             @Value("${conductor.kms.location:global}") String kmsLocation,
             @Value("${conductor.kms.key-ring:conductor-secrets}") String kmsKeyRing,
@@ -55,6 +57,7 @@ public class GcpKmsCredentialService implements CredentialService {
         this.credentialRepository = credentialRepository;
         this.cacheRepository = cacheRepository;
         this.objectMapper = objectMapper;
+        this.kmsClient = kmsClient;
         this.kmsKeyName = CryptoKeyName.format(gcpProjectId, kmsLocation, kmsKeyRing, kmsKeyName);
     }
 
@@ -87,7 +90,7 @@ public class GcpKmsCredentialService implements CredentialService {
                                   String accessToken, String refreshToken, OffsetDateTime expiresAt,
                                   Map<String, Object> configJson) {
         log.info("Storing credentials for connector={} project={}", connectorId, projectId);
-        try (KeyManagementServiceClient kmsClient = KeyManagementServiceClient.create()) {
+        try {
             // Generate a new DEK
             KeyGenerator keyGen = KeyGenerator.getInstance("AES");
             keyGen.init(256);
@@ -126,7 +129,7 @@ public class GcpKmsCredentialService implements CredentialService {
     public Optional<DecryptedCredentials> getCredentials(String projectId, String connectorId) {
         return credentialRepository.findByProjectIdAndConnectorId(projectId, connectorId)
                 .map(cred -> {
-                    try (KeyManagementServiceClient kmsClient = KeyManagementServiceClient.create()) {
+                    try {
                         byte[] wrappedDek = Base64.getDecoder().decode(cred.getKmsKeyReference());
                         DecryptResponse decryptResponse = kmsClient.decrypt(kmsKeyName, ByteString.copyFrom(wrappedDek));
                         byte[] dek = decryptResponse.getPlaintext().toByteArray();
@@ -151,7 +154,7 @@ public class GcpKmsCredentialService implements CredentialService {
                                    String newAccessToken, OffsetDateTime newExpiresAt) {
         credentialRepository.findByProjectIdAndConnectorId(projectId, connectorId)
                 .ifPresent(cred -> {
-                    try (KeyManagementServiceClient kmsClient = KeyManagementServiceClient.create()) {
+                    try {
                         byte[] wrappedDek = Base64.getDecoder().decode(cred.getKmsKeyReference());
                         DecryptResponse decryptResponse = kmsClient.decrypt(kmsKeyName, ByteString.copyFrom(wrappedDek));
                         byte[] dek = decryptResponse.getPlaintext().toByteArray();

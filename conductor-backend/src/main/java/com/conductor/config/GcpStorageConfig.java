@@ -1,6 +1,8 @@
 package com.conductor.config;
 
 import com.google.auth.oauth2.GoogleCredentials;
+import com.google.cloud.kms.v1.KeyManagementServiceClient;
+import com.google.cloud.kms.v1.KeyManagementServiceSettings;
 import com.google.cloud.storage.Storage;
 import com.google.cloud.storage.StorageOptions;
 import com.google.api.services.storage.StorageScopes;
@@ -44,5 +46,13 @@ public class GcpStorageConfig {
             return StorageOptions.newBuilder().setCredentials(credentials).build().getService();
         }
         return StorageOptions.getDefaultInstance().getService();
+    }
+
+    // HTTP/JSON transport avoids spinning up a gRPC channel for KMS, reducing memory pressure.
+    // Application default credentials (GCP_SERVICE_ACCOUNT_KEY env var) are picked up automatically.
+    @Bean(destroyMethod = "close")
+    public KeyManagementServiceClient kmsClient() throws Exception {
+        KeyManagementServiceSettings settings = KeyManagementServiceSettings.newHttpJsonBuilder().build();
+        return KeyManagementServiceClient.create(settings);
     }
 }
