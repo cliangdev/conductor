@@ -119,6 +119,20 @@
             <version>2.69.0</version>
         </dependency>
 
+        <!-- GCP Cloud KMS -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-kms</artifactId>
+            <version>2.56.0</version>
+        </dependency>
+
+        <!-- GCP BigQuery -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-bigquery</artifactId>
+            <version>2.45.0</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
