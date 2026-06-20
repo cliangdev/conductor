@@ -48,6 +48,8 @@ tags:
     description: Organization management endpoints
   - name: project-docs
     description: Project document and folder management endpoints
+  - name: integrations
+    description: Integration connector management endpoints
 
 paths:
   /health:
@@ -4661,6 +4663,213 @@ paths:
         "403":
           description: Forbidden
 
+  /projects/{projectId}/integrations:
+    get:
+      tags: [integrations]
+      summary: List all connectors with connection status
+      operationId: listIntegrations
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IntegrationListItem'
+
+  /projects/{projectId}/integrations/{connectorId}/credentials:
+    post:
+      tags: [integrations]
+      summary: Connect a connector (save credentials)
+      operationId: connectIntegration
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectIntegrationRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Connected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationStatusResponse'
+        '403':
+          description: Insufficient role
+    patch:
+      tags: [integrations]
+      summary: Update integration credentials
+      operationId: updateIntegrationCredentials
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectIntegrationRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationStatusResponse'
+        '403':
+          description: Insufficient role
+    delete:
+      tags: [integrations]
+      summary: Disconnect a connector
+      operationId: disconnectIntegration
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Disconnected
+        '403':
+          description: Insufficient role
+
+  /projects/{projectId}/integrations/{connectorId}/data:
+    get:
+      tags: [integrations]
+      summary: Get cached integration data (no fetch triggered)
+      operationId: getIntegrationData
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationDataResponse'
+    post:
+      tags: [integrations]
+      summary: Trigger on-demand fetch and return data
+      operationId: fetchIntegrationData
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationDataResponse'
+
+  /projects/{projectId}/integrations/{connectorId}/oauth/authorize:
+    post:
+      tags: [integrations]
+      summary: Start OAuth2 flow (returns authorization URL)
+      operationId: authorizeOAuth
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthAuthorizeResponse'
+        '403':
+          description: Insufficient role
+
+  /projects/{projectId}/integrations/{connectorId}/oauth/callback:
+    get:
+      tags: [integrations]
+      summary: OAuth2 callback from provider (browser redirect)
+      operationId: handleOAuthCallback
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: code
+          in: query
+          required: true
+          schema: {type: string}
+        - name: state
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        '302':
+          description: Redirect to connector page
+          headers:
+            Location:
+              schema: {type: string}
+        '400':
+          description: Invalid state
+
 components:
   responses:
     Forbidden:
@@ -4693,6 +4902,96 @@ components:
       description: API key authentication (Bearer token)
 
   schemas:
+    IntegrationListItem:
+      type: object
+      properties:
+        connectorId:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        authType:
+          type: string
+        description:
+          type: string
+        iconLabel:
+          type: string
+        connected:
+          type: boolean
+        healthStatus:
+          type: string
+          nullable: true
+        fetchedAt:
+          type: string
+          format: date-time
+          nullable: true
+        configFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorConfigFieldDto'
+
+    ConnectorConfigFieldDto:
+      type: object
+      properties:
+        fieldKey:
+          type: string
+        label:
+          type: string
+        hint:
+          type: string
+          nullable: true
+        secret:
+          type: boolean
+
+    ConnectIntegrationRequest:
+      type: object
+      properties:
+        apiKey:
+          type: string
+          nullable: true
+        configJson:
+          type: object
+          additionalProperties: true
+          nullable: true
+
+    IntegrationStatusResponse:
+      type: object
+      properties:
+        connectorId:
+          type: string
+        connected:
+          type: boolean
+        healthStatus:
+          type: string
+          nullable: true
+
+    IntegrationDataResponse:
+      type: object
+      properties:
+        connectorId:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+        healthStatus:
+          type: string
+        fetchedAt:
+          type: string
+          format: date-time
+          nullable: true
+        isStale:
+          type: boolean
+        errorMessage:
+          type: string
+          nullable: true
+
+    OAuthAuthorizeResponse:
+      type: object
+      properties:
+        authorizationUrl:
+          type: string
+
     HealthResponse:
       type: object
       required:
