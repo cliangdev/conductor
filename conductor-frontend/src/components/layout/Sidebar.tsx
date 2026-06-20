@@ -18,6 +18,7 @@ import {
   LogOutIcon,
   MoreHorizontalIcon,
   PlusIcon,
+  PuzzleIcon,
   SettingsIcon,
   UsersIcon,
   UsersRoundIcon,
@@ -335,6 +336,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             >
               Workflows
             </NavItem>
+            <NavItem
+              href={`/app/projects/${currentProject.id}/integrations`}
+              icon={<PuzzleIcon className="h-4 w-4" />}
+              onNavigate={onNavigate}
+            >
+              Integrations
+            </NavItem>
             <NavGroup
               href={`/app/projects/${currentProject.id}/settings`}
               icon={<SettingsIcon className="h-4 w-4" />}
@@ -369,6 +377,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                     onNavigate={onNavigate}
                   >
                     GitHub
+                  </NavItem>
+                  <NavItem
+                    href={`/app/projects/${currentProject.id}/settings/integrations`}
+                    icon={<PuzzleIcon className="h-4 w-4" />}
+                    onNavigate={onNavigate}
+                  >
+                    Integrations
                   </NavItem>
                   <NavItem
                     href={`/app/projects/${currentProject.id}/settings/visibility`}
