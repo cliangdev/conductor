@@ -60,11 +60,16 @@ export function listWebhookEvents(projectId: string, token: string): Promise<Web
 }
 
 async function throwApiError(res: Response): Promise<never> {
-  let detail = `Request failed (${res.status})`
+  let detail = `Server error (${res.status})`
   try {
-    const json = await res.json()
-    if (typeof json.detail === 'string') detail = json.detail
-  } catch { /* ignore parse failures */ }
+    const contentType = res.headers.get('content-type') ?? ''
+    if (contentType.includes('json')) {
+      const json = await res.json()
+      if (typeof json.detail === 'string') detail = json.detail
+      else if (typeof json.message === 'string') detail = json.message
+      else if (typeof json.error === 'string') detail = json.error
+    }
+  } catch { /* non-parseable body — keep default */ }
   const err = new Error(detail) as Error & { status: number }
   err.status = res.status
   throw err

@@ -1,6 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.IntegrationCredential;
+import com.conductor.exception.CredentialEncryptionException;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.DecryptedCredentials;
 import com.conductor.repository.IntegrationCredentialRepository;
@@ -121,7 +122,7 @@ public class GcpKmsCredentialService implements CredentialService {
             }
             credentialRepository.save(cred);
         } catch (Exception e) {
-            throw new RuntimeException("Failed to store credentials securely", e);
+            throw new CredentialEncryptionException("Failed to store credentials securely", e);
         }
     }
 
@@ -143,7 +144,7 @@ public class GcpKmsCredentialService implements CredentialService {
                                 cred.getTokenExpiresAt() != null ? cred.getTokenExpiresAt().toInstant() : null,
                                 configJson);
                     } catch (Exception e) {
-                        throw new RuntimeException("Failed to decrypt credentials", e);
+                        throw new CredentialEncryptionException("Failed to decrypt credentials", e);
                     }
                 });
     }
@@ -164,7 +165,7 @@ public class GcpKmsCredentialService implements CredentialService {
                         cred.setTokenExpiresAt(newExpiresAt);
                         credentialRepository.save(cred);
                     } catch (Exception e) {
-                        throw new RuntimeException("Failed to update access token", e);
+                        throw new CredentialEncryptionException("Failed to update access token", e);
                     }
                 });
     }

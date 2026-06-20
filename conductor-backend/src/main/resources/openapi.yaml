@@ -4684,6 +4684,10 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/IntegrationListItem'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /projects/{projectId}/integrations/{connectorId}/credentials:
     post:
@@ -4714,8 +4718,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IntegrationStatusResponse'
+        '401':
+          description: Unauthenticated
         '403':
-          description: Insufficient role
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
     patch:
       tags: [integrations]
       summary: Update integration credentials
@@ -4744,8 +4754,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IntegrationStatusResponse'
+        '401':
+          description: Unauthenticated
         '403':
-          description: Insufficient role
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
     delete:
       tags: [integrations]
       summary: Disconnect a connector
@@ -4764,8 +4780,12 @@ paths:
       responses:
         '204':
           description: Disconnected
+        '401':
+          description: Unauthenticated
         '403':
-          description: Insufficient role
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /projects/{projectId}/integrations/{connectorId}/data:
     get:
@@ -4790,6 +4810,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IntegrationDataResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     post:
       tags: [integrations]
       summary: Trigger on-demand fetch and return data
@@ -4812,6 +4838,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IntegrationDataResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /projects/{projectId}/integrations/{connectorId}/oauth/authorize:
     post:
@@ -4836,8 +4870,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OAuthAuthorizeResponse'
+        '401':
+          description: Unauthenticated
         '403':
-          description: Insufficient role
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /projects/{projectId}/integrations/{connectorId}/oauth/callback:
     get:
@@ -4868,7 +4906,7 @@ paths:
             Location:
               schema: {type: string}
         '400':
-          description: Invalid state
+          $ref: '#/components/responses/BadRequest'
 
 components:
   responses:
@@ -4888,6 +4926,12 @@ components:
       description: Invalid request
       content:
         application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: External service temporarily unavailable
+      content:
+        application/problem+json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
 

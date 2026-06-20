@@ -120,6 +120,15 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(CredentialEncryptionException.class)
+    public ProblemDetail handleCredentialEncryptionException(CredentialEncryptionException e) {
+        log.error("Credential encryption error", e);
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail("Credential encryption service unavailable. Please try again.");
+        return problem;
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleUnexpectedException(Exception e) {
         log.error("Unexpected error", e);
