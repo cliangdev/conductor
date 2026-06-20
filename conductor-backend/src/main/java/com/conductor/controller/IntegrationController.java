@@ -33,6 +33,8 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
@@ -54,7 +56,6 @@ public class IntegrationController implements IntegrationsApi {
     private final IntegrationDataCacheRepository cacheRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final ObjectMapper objectMapper;
-    private final HttpServletRequest httpRequest;
 
     public IntegrationController(ConnectorRegistry connectorRegistry,
                                 IntegrationFetchService fetchService,
@@ -63,8 +64,7 @@ public class IntegrationController implements IntegrationsApi {
                                 IntegrationCredentialRepository credentialRepository,
                                 IntegrationDataCacheRepository cacheRepository,
                                 ProjectMemberRepository projectMemberRepository,
-                                ObjectMapper objectMapper,
-                                HttpServletRequest httpRequest) {
+                                ObjectMapper objectMapper) {
         this.connectorRegistry = connectorRegistry;
         this.fetchService = fetchService;
         this.credentialService = credentialService;
@@ -73,7 +73,6 @@ public class IntegrationController implements IntegrationsApi {
         this.cacheRepository = cacheRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.objectMapper = objectMapper;
-        this.httpRequest = httpRequest;
     }
 
     @Override
@@ -172,7 +171,8 @@ public class IntegrationController implements IntegrationsApi {
     }
 
     private String oauthRedirectUri(String projectId, String connectorId) {
-        String base = UriComponentsBuilder.fromUriString(httpRequest.getRequestURL().toString())
+        HttpServletRequest req = ((ServletRequestAttributes) RequestContextHolder.currentRequestAttributes()).getRequest();
+        String base = UriComponentsBuilder.fromUriString(req.getRequestURL().toString())
                 .replacePath(null).replaceQuery(null).build().toUriString();
         return base + "/api/v1/projects/" + projectId + "/integrations/" + connectorId + "/oauth/callback";
     }
