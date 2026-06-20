@@ -194,38 +194,46 @@ export default function SettingsIntegrationsPage() {
                 {category}
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {items.map((item) => (
-                  <div
-                    key={item.connectorId}
-                    className="bg-card rounded-lg border border-border p-4 flex items-center gap-4"
-                  >
-                    <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
-                      {item.iconLabel}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm text-foreground">{item.name}</div>
-                      <div className="text-xs text-muted-foreground truncate">{item.description}</div>
-                    </div>
-                    {item.connected ? (
-                      <Link
-                        href={`/app/projects/${projectId}/integrations/${item.connectorId}`}
-                        className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium flex-shrink-0"
-                      >
+                {items.map((item) =>
+                  item.connected ? (
+                    <Link
+                      key={item.connectorId}
+                      href={`/app/projects/${projectId}/integrations/${item.connectorId}`}
+                      className="bg-card rounded-lg border border-border p-4 flex items-center gap-4 hover:border-primary/50 transition-colors"
+                    >
+                      <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
+                        {item.iconLabel}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm text-foreground">{item.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">{item.description}</div>
+                      </div>
+                      <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium flex-shrink-0">
                         <CheckCircleIcon className="h-3.5 w-3.5" />
                         Connected
-                      </Link>
-                    ) : (
-                      <button
-                        onClick={() =>
-                          item.authType === 'OAUTH2' ? handleOAuth(item) : openConnectModal(item)
-                        }
-                        className="text-xs font-medium text-primary hover:underline flex-shrink-0"
-                      >
+                      </span>
+                    </Link>
+                  ) : (
+                    <button
+                      key={item.connectorId}
+                      onClick={() =>
+                        item.authType === 'OAUTH2' ? handleOAuth(item) : openConnectModal(item)
+                      }
+                      className="bg-card rounded-lg border border-border p-4 flex items-center gap-4 text-left hover:border-primary/50 transition-colors cursor-pointer w-full"
+                    >
+                      <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
+                        {item.iconLabel}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm text-foreground">{item.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">{item.description}</div>
+                      </div>
+                      <span className="text-xs font-medium text-primary flex-shrink-0">
                         {item.authType === 'OAUTH2' ? 'Authorize' : 'Add'}
-                      </button>
-                    )}
-                  </div>
-                ))}
+                      </span>
+                    </button>
+                  )
+                )}
               </div>
             </div>
           ))}
@@ -256,8 +264,13 @@ export default function SettingsIntegrationsPage() {
               {connected.map((item) => (
                 <div
                   key={item.connectorId}
-                  className="bg-card rounded-lg border border-border p-4 flex items-center gap-4"
+                  className="relative bg-card rounded-lg border border-border p-4 flex items-center gap-4 hover:border-primary/50 transition-colors"
                 >
+                  <Link
+                    href={`/app/projects/${projectId}/integrations/${item.connectorId}`}
+                    className="absolute inset-0 rounded-lg"
+                    aria-label={`View ${item.name} data`}
+                  />
                   <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
                     {item.iconLabel}
                   </div>
@@ -269,21 +282,13 @@ export default function SettingsIntegrationsPage() {
                         ` · Last synced ${new Date(item.fetchedAt).toLocaleDateString()}`}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <Link
-                      href={`/app/projects/${projectId}/integrations/${item.connectorId}`}
-                      className="text-xs font-medium text-primary hover:underline"
-                    >
-                      View data →
-                    </Link>
-                    <button
-                      onClick={() => handleDisconnect(item.connectorId)}
-                      disabled={disconnecting === item.connectorId}
-                      className="text-xs font-medium text-destructive hover:underline disabled:opacity-50"
-                    >
-                      {disconnecting === item.connectorId ? 'Removing…' : 'Remove'}
-                    </button>
-                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDisconnect(item.connectorId); }}
+                    disabled={disconnecting === item.connectorId}
+                    className="relative z-10 text-xs font-medium text-destructive hover:underline disabled:opacity-50 flex-shrink-0"
+                  >
+                    {disconnecting === item.connectorId ? 'Removing…' : 'Remove'}
+                  </button>
                 </div>
               ))}
             </div>

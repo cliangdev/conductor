@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiPost } from '@/lib/api';
+import { ExternalLink } from 'lucide-react';
 
 interface ServiceCost {
   service: string;
@@ -87,9 +88,20 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   if (health === 'SETUP_REQUIRED' || !response) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-foreground">GCP Billing</h1>
-          <p className="text-sm text-muted-foreground mt-1">Finance · Google Cloud</p>
+        <div className="mb-6 flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">GCP Billing</h1>
+            <p className="text-sm text-muted-foreground mt-1">Finance · Google Cloud</p>
+          </div>
+          <a
+            href="https://console.cloud.google.com/billing"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Open GCP Console
+          </a>
         </div>
         <div className="bg-card rounded-lg border border-border p-8 max-w-lg">
           <h2 className="text-lg font-semibold text-foreground mb-2">Set up GCP Billing</h2>
@@ -155,6 +167,15 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
               Connected
             </span>
           )}
+          <a
+            href="https://console.cloud.google.com/billing"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Open GCP Console
+          </a>
           <button
             onClick={() => fetchData(true)}
             disabled={refreshing}

@@ -5,6 +5,7 @@ import com.conductor.exception.BusinessException;
 import com.conductor.integration.AuthType;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -53,6 +54,16 @@ public class OAuthFlowService {
         this.credentialService = credentialService;
         this.objectMapper = objectMapper;
         this.restTemplate = new RestTemplate();
+    }
+
+    @PostConstruct
+    public void validateConfig() {
+        if (googleClientId == null || googleClientId.isBlank()) {
+            throw new IllegalStateException("GOOGLE_OAUTH_CLIENT_ID is not configured");
+        }
+        if (googleClientSecret == null || googleClientSecret.isBlank()) {
+            throw new IllegalStateException("GOOGLE_OAUTH_CLIENT_SECRET is not configured");
+        }
     }
 
     @Transactional

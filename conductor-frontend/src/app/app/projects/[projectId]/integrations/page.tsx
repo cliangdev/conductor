@@ -78,32 +78,23 @@ export default function IntegrationsPage() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {connected.map((integration) => (
-              <div
+              <Link
                 key={integration.connectorId}
-                className="bg-card rounded-lg border border-border p-5 flex flex-col gap-3"
+                href={`/app/projects/${projectId}/integrations/${integration.connectorId}`}
+                className="bg-card rounded-lg border border-border p-5 flex items-center gap-3 hover:border-primary/50 transition-colors"
               >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground">
-                      {integration.iconLabel}
-                    </div>
-                    <div>
-                      <div className="font-medium text-foreground text-sm">{integration.name}</div>
-                      <div className="text-xs text-muted-foreground">{integration.description}</div>
-                    </div>
-                  </div>
-                  <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium">
-                    <span className="h-1.5 w-1.5 rounded-full bg-green-500 inline-block" />
-                    Connected
-                  </span>
+                <div className="h-9 w-9 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
+                  {integration.iconLabel}
                 </div>
-                <Link
-                  href={`/app/projects/${projectId}/integrations/${integration.connectorId}`}
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline mt-auto"
-                >
-                  View →
-                </Link>
-              </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-foreground text-sm">{integration.name}</div>
+                  <div className="text-xs text-muted-foreground truncate">{integration.description}</div>
+                </div>
+                <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium flex-shrink-0">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 inline-block" />
+                  Connected
+                </span>
+              </Link>
             ))}
           </div>
 

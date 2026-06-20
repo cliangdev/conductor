@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiPost } from '@/lib/api';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { ExternalLink } from 'lucide-react';
 
 interface DataPoint {
   date: string;
@@ -95,9 +96,20 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
   if (health === 'SETUP_REQUIRED' || !response) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-foreground">PostHog</h1>
-          <p className="text-sm text-muted-foreground mt-1">Analytics · API Key</p>
+        <div className="mb-6 flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">PostHog</h1>
+            <p className="text-sm text-muted-foreground mt-1">Analytics · API Key</p>
+          </div>
+          <a
+            href="https://app.posthog.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Open PostHog
+          </a>
         </div>
         <div className="bg-card rounded-lg border border-border p-8 max-w-md">
           <h2 className="text-lg font-semibold text-foreground mb-1">Connect PostHog</h2>
@@ -159,6 +171,15 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
               Connected
             </span>
           )}
+          <a
+            href="https://app.posthog.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Open PostHog
+          </a>
           <button
             onClick={() => fetchData(true)}
             disabled={refreshing}
