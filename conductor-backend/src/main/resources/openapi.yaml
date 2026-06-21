@@ -48,6 +48,8 @@ tags:
     description: Organization management endpoints
   - name: project-docs
     description: Project document and folder management endpoints
+  - name: integrations
+    description: Integration connector management endpoints
 
 paths:
   /health:
@@ -4661,6 +4663,333 @@ paths:
         "403":
           description: Forbidden
 
+  /projects/{projectId}/integrations:
+    get:
+      tags: [integrations]
+      summary: List all connectors with connection status
+      operationId: listIntegrations
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IntegrationListItem'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/integrations/{connectorId}/credentials:
+    post:
+      tags: [integrations]
+      summary: Connect a connector (save credentials)
+      operationId: connectIntegration
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectIntegrationRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Connected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationStatusResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      tags: [integrations]
+      summary: Update integration credentials
+      operationId: updateIntegrationCredentials
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectIntegrationRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationStatusResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [integrations]
+      summary: Disconnect a connector
+      operationId: disconnectIntegration
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Disconnected
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /projects/{projectId}/integrations/{connectorId}/data:
+    get:
+      tags: [integrations]
+      summary: Get cached integration data (no fetch triggered)
+      operationId: getIntegrationData
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationDataResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [integrations]
+      summary: Trigger on-demand fetch and return data
+      operationId: fetchIntegrationData
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationDataResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /projects/{projectId}/integrations/{connectorId}/oauth/authorize:
+    post:
+      tags: [integrations]
+      summary: Start OAuth2 flow (returns authorization URL)
+      operationId: authorizeOAuth
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthAuthorizeRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthAuthorizeResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /projects/{projectId}/integrations/{connectorId}/config:
+    patch:
+      tags: [integrations]
+      summary: Update connector config (e.g. BigQuery dataset after OAuth)
+      operationId: updateIntegrationConfig
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateIntegrationConfigRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Config updated
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /projects/{projectId}/integrations/gcp-billing/gcp-projects:
+    get:
+      tags: [integrations]
+      summary: List GCP projects accessible via stored OAuth token
+      operationId: listGcpProjects
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GcpProjectsResponse'
+        '401':
+          description: Unauthenticated
+        '409':
+          description: No OAuth credentials stored yet
+
+  /projects/{projectId}/integrations/gcp-billing/bq-datasets:
+    get:
+      tags: [integrations]
+      summary: List BigQuery datasets in a GCP project via stored OAuth token
+      operationId: listBqDatasets
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: gcpProjectId
+          in: query
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BqDatasetsResponse'
+        '401':
+          description: Unauthenticated
+        '409':
+          description: No OAuth credentials stored yet
+
+  /oauth/callback:
+    get:
+      tags: [integrations]
+      summary: OAuth2 callback from provider (browser redirect, fixed path for Google registration)
+      operationId: handleOAuthCallback
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema: {type: string}
+        - name: state
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        '302':
+          description: Redirect to connector page
+          headers:
+            Location:
+              schema: {type: string}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
 components:
   responses:
     Forbidden:
@@ -4681,6 +5010,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: External service temporarily unavailable
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
 
   securitySchemes:
     bearerAuth:
@@ -4693,6 +5028,132 @@ components:
       description: API key authentication (Bearer token)
 
   schemas:
+    IntegrationListItem:
+      type: object
+      properties:
+        connectorId:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        authType:
+          type: string
+        description:
+          type: string
+        iconLabel:
+          type: string
+        connected:
+          type: boolean
+        healthStatus:
+          type: string
+          nullable: true
+        fetchedAt:
+          type: string
+          format: date-time
+          nullable: true
+        configFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorConfigFieldDto'
+
+    ConnectorConfigFieldDto:
+      type: object
+      properties:
+        fieldKey:
+          type: string
+        label:
+          type: string
+        hint:
+          type: string
+          nullable: true
+        secret:
+          type: boolean
+
+    ConnectIntegrationRequest:
+      type: object
+      properties:
+        apiKey:
+          type: string
+          nullable: true
+        configJson:
+          type: object
+          additionalProperties: true
+          nullable: true
+
+    IntegrationStatusResponse:
+      type: object
+      properties:
+        connectorId:
+          type: string
+        connected:
+          type: boolean
+        healthStatus:
+          type: string
+          nullable: true
+
+    IntegrationDataResponse:
+      type: object
+      properties:
+        connectorId:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+        healthStatus:
+          type: string
+        fetchedAt:
+          type: string
+          format: date-time
+          nullable: true
+        isStale:
+          type: boolean
+        errorMessage:
+          type: string
+          nullable: true
+
+    OAuthAuthorizeRequest:
+      type: object
+
+    UpdateIntegrationConfigRequest:
+      type: object
+      properties:
+        config:
+          type: object
+          additionalProperties: true
+
+    GcpProjectsResponse:
+      type: object
+      properties:
+        projects:
+          type: array
+          items:
+            type: object
+            properties:
+              projectId:
+                type: string
+              name:
+                type: string
+
+    BqDatasetsResponse:
+      type: object
+      properties:
+        datasets:
+          type: array
+          items:
+            type: object
+            properties:
+              datasetId:
+                type: string
+              location:
+                type: string
+
+    OAuthAuthorizeResponse:
+      type: object
+      properties:
+        authorizationUrl:
+          type: string
+
     HealthResponse:
       type: object
       required:
