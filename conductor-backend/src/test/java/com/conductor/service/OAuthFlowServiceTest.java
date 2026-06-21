@@ -59,7 +59,7 @@ class OAuthFlowServiceTest {
 
     @Test
     void buildAuthorizationUrlPersistsStateAndReturnsUrl() {
-        String url = service.buildAuthorizationUrl(PROJECT_ID, CONNECTOR_ID, REDIRECT_URI);
+        String url = service.buildAuthorizationUrl(PROJECT_ID, CONNECTOR_ID, REDIRECT_URI, Map.of());
 
         ArgumentCaptor<IntegrationOAuthState> captor = ArgumentCaptor.forClass(IntegrationOAuthState.class);
         verify(oAuthStateRepository).deleteByExpiresAtBefore(any(OffsetDateTime.class));
