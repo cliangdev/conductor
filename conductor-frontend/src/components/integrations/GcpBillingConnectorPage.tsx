@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet, apiPatch, apiPost } from '@/lib/api';
+import { apiGet, apiPost } from '@/lib/api';
 import { ExternalLink } from 'lucide-react';
 
 interface ServiceCost {
@@ -109,11 +109,12 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
     if (!accessToken || !selectedGcpProject || !selectedDataset) return;
     setSaving(true);
     try {
-      await apiPatch(
-        `/api/v1/projects/${projectId}/integrations/gcp-billing/config`,
-        { config: { bqProjectId: selectedGcpProject, bqDatasetName: selectedDataset } },
-        accessToken
-      );
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/projects/${projectId}/integrations/gcp-billing/config`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { bqProjectId: selectedGcpProject, bqDatasetName: selectedDataset } }),
+      });
+      if (!res.ok) throw new Error(`Save failed: ${res.status}`);
       await fetchData();
     } catch (e) {
       console.error('Config save failed', e);
