@@ -15,6 +15,7 @@ import {
   GitForkIcon,
   KeyIcon,
   LogOutIcon,
+  MoreHorizontalIcon,
   PlusIcon,
   PuzzleIcon,
   SettingsIcon,
@@ -129,9 +130,7 @@ function WorkspaceSwitcher({
   onNavigate?: () => void
 }) {
   const router = useRouter()
-  const pathname = usePathname()
   const { setActiveProject } = useProject()
-  const { signOut } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
 
   function selectWorkspace(workspace: Project) {
@@ -139,16 +138,6 @@ function WorkspaceSwitcher({
     router.push(`/app/projects/${workspace.id}/issues`)
     onNavigate?.()
   }
-
-  async function handleSignOut() {
-    await signOut()
-    router.push('/login')
-    onNavigate?.()
-  }
-
-  const settingsBase = currentWorkspace
-    ? `/app/projects/${currentWorkspace.id}/settings`
-    : null
 
   return (
     <>
@@ -190,24 +179,57 @@ function WorkspaceSwitcher({
             </>
           )}
 
-          {settingsBase && (
-            <>
-              <DropdownMenuItem onSelect={() => { router.push(`${settingsBase}/general`); onNavigate?.() }}>
-                <SettingsIcon className="h-4 w-4 mr-2" />
-                Workspace settings
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => { router.push(`${settingsBase}/members`); onNavigate?.() }}>
-                <UsersIcon className="h-4 w-4 mr-2" />
-                Invite members
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-            </>
-          )}
-
           <DropdownMenuItem onSelect={() => setShowCreate(true)}>
             <PlusIcon className="h-4 w-4 mr-2" />
             Create workspace
           </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <CreateWorkspaceDialog open={showCreate} onClose={() => setShowCreate(false)} />
+    </>
+  )
+}
+
+// ─── User / Account footer ────────────────────────────────────────────────────
+
+function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
+  const router = useRouter()
+  const { user, signOut } = useAuth()
+
+  const initials = user?.name
+    ? user.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
+    : '?'
+
+  async function handleSignOut() {
+    await signOut()
+    router.push('/login')
+    onNavigate?.()
+  }
+
+  return (
+    <div className="border-t border-sidebar-border">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button className="w-full flex items-center gap-2.5 px-3 py-3 hover:bg-sidebar-hover transition-colors text-left">
+            {user?.avatarUrl
+              ? <img src={user.avatarUrl} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover" />
+              : <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">{initials}</span>
+            }
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-foreground truncate leading-tight">
+                {user?.name ?? 'Account'}
+              </p>
+            </div>
+            <MoreHorizontalIcon className="h-4 w-4 text-muted-foreground shrink-0 opacity-60" />
+          </button>
+        </DropdownMenuTrigger>
+
+        <DropdownMenuContent align="start" side="top" className="w-56 mb-1">
+          <DropdownMenuLabel className="font-normal">
+            <p className="text-xs font-medium text-foreground truncate">{user?.name ?? 'Account'}</p>
+            {user?.email && <p className="text-xs text-muted-foreground truncate">{user.email}</p>}
+          </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={handleSignOut} className="text-destructive focus:text-destructive">
             <LogOutIcon className="h-4 w-4 mr-2" />
@@ -215,9 +237,7 @@ function WorkspaceSwitcher({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <CreateWorkspaceDialog open={showCreate} onClose={() => setShowCreate(false)} />
-    </>
+    </div>
   )
 }
 
@@ -329,6 +349,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         )}
       </div>
+
+      {/* User / account menu pinned at the bottom */}
+      <UserFooter onNavigate={onNavigate} />
     </div>
   )
 }
