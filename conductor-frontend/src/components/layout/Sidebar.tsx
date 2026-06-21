@@ -268,7 +268,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               Workflows
             </NavItem>
             <NavItem
-              href={`/app/projects/${currentWorkspace.id}/settings/integrations`}
+              href={`/app/projects/${currentWorkspace.id}/integrations`}
               icon={<PuzzleIcon className="h-4 w-4" />}
               onNavigate={onNavigate}
             >
@@ -308,13 +308,6 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                     onNavigate={onNavigate}
                   >
                     Notifications
-                  </NavItem>
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/settings/integrations`}
-                    icon={<PuzzleIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    Integrations
                   </NavItem>
                   <NavItem
                     href={`/app/projects/${currentWorkspace.id}/settings/github`}
