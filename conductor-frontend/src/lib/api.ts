@@ -112,7 +112,7 @@ export async function apiPost<T>(path: string, body: unknown, token?: string): P
   return res!.json()
 }
 
-export async function apiPatch<T>(path: string, body: unknown, token: string): Promise<T> {
+export async function apiPatch<T>(path: string, body: unknown, token: string): Promise<T | undefined> {
   let res: Response
   try {
     res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
@@ -128,7 +128,10 @@ export async function apiPatch<T>(path: string, body: unknown, token: string): P
     if (res!.status === 401) onUnauthorized?.()
     await throwApiError(res!)
   }
-  return res!.json()
+  if (res!.status === 204 || res!.headers.get('content-length') === '0') {
+    return undefined as T
+  }
+  return res!.json() as Promise<T>
 }
 
 export async function apiPut<T>(path: string, body: unknown, token: string): Promise<T> {

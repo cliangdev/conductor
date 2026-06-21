@@ -5,7 +5,6 @@ import com.conductor.exception.BusinessException;
 import com.conductor.integration.AuthType;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -59,8 +58,7 @@ public class OAuthFlowService {
         this.restTemplate = new RestTemplate();
     }
 
-    @PostConstruct
-    public void validateConfig() {
+    private void requireOAuthConfig() {
         if (googleClientId == null || googleClientId.isBlank()) {
             throw new IllegalStateException("GOOGLE_OAUTH_CLIENT_ID is not configured");
         }
@@ -75,6 +73,7 @@ public class OAuthFlowService {
 
     @Transactional
     public String buildAuthorizationUrl(String projectId, String connectorId, String redirectUri) {
+        requireOAuthConfig();
         oAuthStateRepository.deleteByExpiresAtBefore(OffsetDateTime.now());
 
         byte[] bytes = new byte[16];
@@ -115,8 +114,6 @@ public class OAuthFlowService {
         String projectId = oauthState.getProjectId();
         String connectorId = oauthState.getConnectorId();
 
-        oAuthStateRepository.delete(oauthState);
-
         Map<String, Object> tokenResponse = exchangeCodeForTokens(code, redirectUri);
 
         String accessToken = (String) tokenResponse.get("access_token");
@@ -129,11 +126,14 @@ public class OAuthFlowService {
         credentialService.storeCredentials(projectId, connectorId, AuthType.OAUTH2,
                 accessToken, refreshToken, expiresAt, Map.of());
 
+        oAuthStateRepository.delete(oauthState);
+
         log.info("OAuth callback completed for connector={} project={}", connectorId, projectId);
         return frontendUrl + "/app/projects/" + projectId + "/integrations/" + connectorId;
     }
 
     public String refreshAccessToken(String projectId, String connectorId, String refreshToken) {
+        requireOAuthConfig();
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
@@ -177,6 +177,10 @@ public class OAuthFlowService {
 
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(params, headers);
         ResponseEntity<Map> response = restTemplate.exchange(GOOGLE_TOKEN_URL, HttpMethod.POST, request, Map.class);
-        return response.getBody();
+        Map<String, Object> body = response.getBody();
+        if (body == null || !body.containsKey("access_token")) {
+            throw new com.conductor.exception.BusinessException("Token exchange failed: no access_token in response");
+        }
+        return body;
     }
 }

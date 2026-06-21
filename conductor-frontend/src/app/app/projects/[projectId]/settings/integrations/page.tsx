@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiDelete, apiPost } from '@/lib/api';
 import Link from 'next/link';
 import { PuzzleIcon, CheckCircleIcon } from 'lucide-react';
+import type { Member } from '@/types';
 
 interface ConnectorConfigField {
   fieldKey: string;
@@ -33,10 +34,11 @@ type Tab = 'browse' | 'connected';
 
 export default function SettingsIntegrationsPage() {
   const { projectId } = useParams<{ projectId: string }>();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
   const [integrations, setIntegrations] = useState<IntegrationListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>('browse');
+  const [members, setMembers] = useState<Member[]>([]);
 
   // Modal state for API key connect
   const [connectModal, setConnectModal] = useState<{ connector: IntegrationListItem } | null>(null);
@@ -62,10 +64,24 @@ export default function SettingsIntegrationsPage() {
     }
   };
 
+  const loadMembers = async () => {
+    if (!accessToken || !projectId) return;
+    try {
+      const data = await apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken);
+      setMembers(data);
+    } catch {
+      // non-fatal
+    }
+  };
+
   useEffect(() => {
     loadIntegrations();
+    loadMembers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, accessToken]);
+
+  const currentUserRole = members.find((m) => m.userId === user?.id)?.role;
+  const canMutate = currentUserRole === 'ADMIN' || currentUserRole === 'CREATOR';
 
   const grouped = integrations.reduce<Record<string, IntegrationListItem[]>>((acc, item) => {
     const cat = item.category || 'Other';
@@ -213,7 +229,7 @@ export default function SettingsIntegrationsPage() {
                         Connected
                       </span>
                     </Link>
-                  ) : (
+                  ) : canMutate ? (
                     <button
                       key={item.connectorId}
                       onClick={() =>
@@ -232,6 +248,19 @@ export default function SettingsIntegrationsPage() {
                         {item.authType === 'OAUTH2' ? 'Authorize' : 'Add'}
                       </span>
                     </button>
+                  ) : (
+                    <div
+                      key={item.connectorId}
+                      className="bg-card rounded-lg border border-border p-4 flex items-center gap-4"
+                    >
+                      <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
+                        {item.iconLabel}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm text-foreground">{item.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">{item.description}</div>
+                      </div>
+                    </div>
                   )
                 )}
               </div>
@@ -282,13 +311,15 @@ export default function SettingsIntegrationsPage() {
                         ` · Last synced ${new Date(item.fetchedAt).toLocaleDateString()}`}
                     </div>
                   </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDisconnect(item.connectorId); }}
-                    disabled={disconnecting === item.connectorId}
-                    className="relative z-10 text-xs font-medium text-destructive hover:underline disabled:opacity-50 flex-shrink-0"
-                  >
-                    {disconnecting === item.connectorId ? 'Removing…' : 'Remove'}
-                  </button>
+                  {canMutate && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDisconnect(item.connectorId); }}
+                      disabled={disconnecting === item.connectorId}
+                      className="relative z-10 text-xs font-medium text-destructive hover:underline disabled:opacity-50 flex-shrink-0"
+                    >
+                      {disconnecting === item.connectorId ? 'Removing…' : 'Remove'}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

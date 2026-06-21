@@ -14,7 +14,6 @@ import com.conductor.generated.model.BqDatasetsResponse;
 import com.conductor.generated.model.GcpProjectsResponse;
 import com.conductor.generated.model.OAuthAuthorizeResponse;
 import com.conductor.generated.model.UpdateIntegrationConfigRequest;
-import com.conductor.integration.connector.GcpBillingConnector;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorMetadata;
@@ -77,6 +76,7 @@ public class IntegrationController implements IntegrationsApi {
 
     @Override
     public ResponseEntity<List<IntegrationListItem>> listIntegrations(String projectId) {
+        requireMember(projectId);
         List<IntegrationListItem> items = new ArrayList<>();
         for (IntegrationConnector connector : connectorRegistry.getAll()) {
             ConnectorMetadata meta = connector.getMetadata();
@@ -110,7 +110,12 @@ public class IntegrationController implements IntegrationsApi {
     public ResponseEntity<IntegrationStatusResponse> connectIntegration(
             String projectId, String connectorId, ConnectIntegrationRequest request) {
         requireAdminOrCreator(projectId);
-        requireConnector(connectorId);
+        IntegrationConnector connector = requireConnector(connectorId);
+        if (connector.getMetadata().authType() != AuthType.API_KEY) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Connector " + connectorId + " uses " + connector.getMetadata().authType() + " auth, not API_KEY");
+        }
         credentialService.storeCredentials(projectId, connectorId, AuthType.API_KEY,
                 request.getApiKey(), null, null, request.getConfigJson());
         return ResponseEntity.status(HttpStatus.CREATED).body(statusResponse(connectorId));
@@ -147,7 +152,7 @@ public class IntegrationController implements IntegrationsApi {
     @Override
     public ResponseEntity<IntegrationDataResponse> fetchIntegrationData(String projectId, String connectorId) {
         requireMember(projectId);
-        ConnectorData data = fetchService.fetchData(projectId, connectorId, false);
+        ConnectorData data = fetchService.fetchData(projectId, connectorId, true);
         return ResponseEntity.ok(connectorDataToResponse(connectorId, data));
     }
 
@@ -181,41 +186,12 @@ public class IntegrationController implements IntegrationsApi {
 
     @Override
     public ResponseEntity<GcpProjectsResponse> listGcpProjects(String projectId) {
-        requireMember(projectId);
-        String accessToken = requireGcpAccessToken(projectId, "gcp-billing");
-        GcpBillingConnector connector = (GcpBillingConnector) requireConnector("gcp-billing");
-        java.util.List<java.util.Map<String, String>> projects = connector.listGcpProjects(accessToken);
-        GcpProjectsResponse response = new GcpProjectsResponse();
-        projects.forEach(p -> response.addProjectsItem(
-                new com.conductor.generated.model.GcpProjectsResponseProjectsInner()
-                        .projectId(p.get("projectId")).name(p.get("name"))));
-        return ResponseEntity.ok(response);
+        throw new UnsupportedOperationException("Handled by GcpBillingController");
     }
 
     @Override
     public ResponseEntity<BqDatasetsResponse> listBqDatasets(String projectId, String gcpProjectId) {
-        requireMember(projectId);
-        String accessToken = requireGcpAccessToken(projectId, "gcp-billing");
-        GcpBillingConnector connector = (GcpBillingConnector) requireConnector("gcp-billing");
-        java.util.List<java.util.Map<String, String>> datasets = connector.listBqDatasets(accessToken, gcpProjectId);
-        BqDatasetsResponse response = new BqDatasetsResponse();
-        datasets.forEach(d -> response.addDatasetsItem(
-                new com.conductor.generated.model.BqDatasetsResponseDatasetsInner()
-                        .datasetId(d.get("datasetId")).location(d.get("location"))));
-        return ResponseEntity.ok(response);
-    }
-
-    private String requireGcpAccessToken(String projectId, String connectorId) {
-        return credentialService.getCredentials(projectId, connectorId)
-                .map(creds -> {
-                    if (creds.expiresAt() != null &&
-                            creds.expiresAt().isBefore(java.time.Instant.now().plusSeconds(60))) {
-                        return oAuthFlowService.refreshAccessToken(projectId, connectorId, creds.refreshToken());
-                    }
-                    return creds.accessToken();
-                })
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
-                        HttpStatus.CONFLICT, "No OAuth credentials stored — complete OAuth first"));
+        throw new UnsupportedOperationException("Handled by GcpBillingController");
     }
 
     private IntegrationConnector requireConnector(String connectorId) {
