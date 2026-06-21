@@ -156,25 +156,23 @@ public class IntegrationController implements IntegrationsApi {
         requireAdminOrCreator(projectId);
         requireConnector(connectorId);
         String authUrl = oAuthFlowService.buildAuthorizationUrl(
-                projectId, connectorId, oauthRedirectUri(projectId, connectorId));
+                projectId, connectorId, fixedOauthCallbackUri());
         return ResponseEntity.ok(new OAuthAuthorizeResponse().authorizationUrl(authUrl));
     }
 
     @Override
-    public ResponseEntity<Void> handleOAuthCallback(
-            String projectId, String connectorId, String code, String state) {
-        String frontendUrl = oAuthFlowService.handleCallback(
-                code, state, oauthRedirectUri(projectId, connectorId));
+    public ResponseEntity<Void> handleOAuthCallback(String code, String state) {
+        String frontendUrl = oAuthFlowService.handleCallback(code, state, fixedOauthCallbackUri());
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(frontendUrl))
                 .build();
     }
 
-    private String oauthRedirectUri(String projectId, String connectorId) {
+    private String fixedOauthCallbackUri() {
         HttpServletRequest req = ((ServletRequestAttributes) RequestContextHolder.currentRequestAttributes()).getRequest();
         String base = UriComponentsBuilder.fromUriString(req.getRequestURL().toString())
                 .replacePath(null).replaceQuery(null).build().toUriString();
-        return base + "/api/v1/projects/" + projectId + "/integrations/" + connectorId + "/oauth/callback";
+        return base + "/api/v1/oauth/callback";
     }
 
     private IntegrationConnector requireConnector(String connectorId) {

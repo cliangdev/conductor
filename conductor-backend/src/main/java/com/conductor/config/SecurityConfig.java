@@ -67,7 +67,7 @@ public class SecurityConfig {
                     "/api/v1/auth/local",
                     "/api/v1/local-files/**",
                     "/api/v1/projects/*/github/webhook",
-                    "/api/v1/projects/*/integrations/*/oauth/callback",
+                    "/api/v1/oauth/callback",
                     "/internal/**",
                     "/swagger-ui.html",
                     "/swagger-ui/**",

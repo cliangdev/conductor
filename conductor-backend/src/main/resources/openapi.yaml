@@ -4877,20 +4877,12 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /projects/{projectId}/integrations/{connectorId}/oauth/callback:
+  /oauth/callback:
     get:
       tags: [integrations]
-      summary: OAuth2 callback from provider (browser redirect)
+      summary: OAuth2 callback from provider (browser redirect, fixed path for Google registration)
       operationId: handleOAuthCallback
       parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema: {type: string}
-        - name: connectorId
-          in: path
-          required: true
-          schema: {type: string}
         - name: code
           in: query
           required: true
