@@ -74,7 +74,8 @@ public class OAuthFlowService {
     }
 
     @Transactional
-    public String buildAuthorizationUrl(String projectId, String connectorId, String redirectUri) {
+    public String buildAuthorizationUrl(String projectId, String connectorId, String redirectUri,
+                                        Map<String, Object> config) {
         oAuthStateRepository.deleteByExpiresAtBefore(OffsetDateTime.now());
 
         byte[] bytes = new byte[16];
@@ -86,6 +87,7 @@ public class OAuthFlowService {
         oauthState.setProjectId(projectId);
         oauthState.setConnectorId(connectorId);
         oauthState.setExpiresAt(OffsetDateTime.now().plusMinutes(10));
+        oauthState.setConfigJson(config != null ? config : Map.of());
         oAuthStateRepository.save(oauthState);
 
         return UriComponentsBuilder.fromUriString(GOOGLE_AUTH_URL)
@@ -123,8 +125,9 @@ public class OAuthFlowService {
                 ? OffsetDateTime.now().plusSeconds(((Number) expiresIn).longValue())
                 : null;
 
+        Map<String, Object> config = oauthState.getConfigJson() != null ? oauthState.getConfigJson() : Map.of();
         credentialService.storeCredentials(projectId, connectorId, AuthType.OAUTH2,
-                accessToken, refreshToken, expiresAt, Map.of());
+                accessToken, refreshToken, expiresAt, config);
 
         log.info("OAuth callback completed for connector={} project={}", connectorId, projectId);
         return frontendUrl + "/app/projects/" + projectId + "/integrations/" + connectorId;

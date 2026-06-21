@@ -4861,6 +4861,12 @@ paths:
           in: path
           required: true
           schema: {type: string}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthAuthorizeRequest'
       security:
         - bearerAuth: []
       responses:
@@ -5021,6 +5027,13 @@ components:
         errorMessage:
           type: string
           nullable: true
+
+    OAuthAuthorizeRequest:
+      type: object
+      properties:
+        config:
+          type: object
+          additionalProperties: true
 
     OAuthAuthorizeResponse:
       type: object

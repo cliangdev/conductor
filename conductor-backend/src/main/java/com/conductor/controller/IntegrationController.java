@@ -10,6 +10,7 @@ import com.conductor.generated.model.ConnectorConfigFieldDto;
 import com.conductor.generated.model.IntegrationDataResponse;
 import com.conductor.generated.model.IntegrationListItem;
 import com.conductor.generated.model.IntegrationStatusResponse;
+import com.conductor.generated.model.OAuthAuthorizeRequest;
 import com.conductor.generated.model.OAuthAuthorizeResponse;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.ConnectorData;
@@ -148,11 +149,14 @@ public class IntegrationController implements IntegrationsApi {
     }
 
     @Override
-    public ResponseEntity<OAuthAuthorizeResponse> authorizeOAuth(String projectId, String connectorId) {
+    public ResponseEntity<OAuthAuthorizeResponse> authorizeOAuth(String projectId, String connectorId,
+                                                                  OAuthAuthorizeRequest body) {
         requireAdminOrCreator(projectId);
         requireConnector(connectorId);
+        java.util.Map<String, Object> config = body != null && body.getConfig() != null
+                ? body.getConfig() : java.util.Map.of();
         String authUrl = oAuthFlowService.buildAuthorizationUrl(
-                projectId, connectorId, oAuthFlowService.oauthCallbackUri());
+                projectId, connectorId, oAuthFlowService.oauthCallbackUri(), config);
         return ResponseEntity.ok(new OAuthAuthorizeResponse().authorizationUrl(authUrl));
     }
 
