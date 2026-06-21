@@ -10,8 +10,11 @@ import com.conductor.generated.model.ConnectorConfigFieldDto;
 import com.conductor.generated.model.IntegrationDataResponse;
 import com.conductor.generated.model.IntegrationListItem;
 import com.conductor.generated.model.IntegrationStatusResponse;
-import com.conductor.generated.model.OAuthAuthorizeRequest;
+import com.conductor.generated.model.BqDatasetsResponse;
+import com.conductor.generated.model.GcpProjectsResponse;
 import com.conductor.generated.model.OAuthAuthorizeResponse;
+import com.conductor.generated.model.UpdateIntegrationConfigRequest;
+import com.conductor.integration.connector.GcpBillingConnector;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorMetadata;
@@ -150,13 +153,11 @@ public class IntegrationController implements IntegrationsApi {
 
     @Override
     public ResponseEntity<OAuthAuthorizeResponse> authorizeOAuth(String projectId, String connectorId,
-                                                                  OAuthAuthorizeRequest body) {
+                                                                  Object body) {
         requireAdminOrCreator(projectId);
         requireConnector(connectorId);
-        java.util.Map<String, Object> config = body != null && body.getConfig() != null
-                ? body.getConfig() : java.util.Map.of();
         String authUrl = oAuthFlowService.buildAuthorizationUrl(
-                projectId, connectorId, oAuthFlowService.oauthCallbackUri(), config);
+                projectId, connectorId, oAuthFlowService.oauthCallbackUri());
         return ResponseEntity.ok(new OAuthAuthorizeResponse().authorizationUrl(authUrl));
     }
 
@@ -166,6 +167,55 @@ public class IntegrationController implements IntegrationsApi {
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(frontendUrl))
                 .build();
+    }
+
+    @Override
+    public ResponseEntity<Void> updateIntegrationConfig(String projectId, String connectorId,
+                                                         UpdateIntegrationConfigRequest body) {
+        requireAdminOrCreator(projectId);
+        java.util.Map<String, Object> config = body != null && body.getConfig() != null
+                ? body.getConfig() : java.util.Map.of();
+        credentialService.updateConfig(projectId, connectorId, config);
+        return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public ResponseEntity<GcpProjectsResponse> listGcpProjects(String projectId) {
+        requireMember(projectId);
+        String accessToken = requireGcpAccessToken(projectId, "gcp-billing");
+        GcpBillingConnector connector = (GcpBillingConnector) requireConnector("gcp-billing");
+        java.util.List<java.util.Map<String, String>> projects = connector.listGcpProjects(accessToken);
+        GcpProjectsResponse response = new GcpProjectsResponse();
+        projects.forEach(p -> response.addProjectsItem(
+                new com.conductor.generated.model.GcpProjectsResponseProjectsInner()
+                        .projectId(p.get("projectId")).name(p.get("name"))));
+        return ResponseEntity.ok(response);
+    }
+
+    @Override
+    public ResponseEntity<BqDatasetsResponse> listBqDatasets(String projectId, String gcpProjectId) {
+        requireMember(projectId);
+        String accessToken = requireGcpAccessToken(projectId, "gcp-billing");
+        GcpBillingConnector connector = (GcpBillingConnector) requireConnector("gcp-billing");
+        java.util.List<java.util.Map<String, String>> datasets = connector.listBqDatasets(accessToken, gcpProjectId);
+        BqDatasetsResponse response = new BqDatasetsResponse();
+        datasets.forEach(d -> response.addDatasetsItem(
+                new com.conductor.generated.model.BqDatasetsResponseDatasetsInner()
+                        .datasetId(d.get("datasetId")).location(d.get("location"))));
+        return ResponseEntity.ok(response);
+    }
+
+    private String requireGcpAccessToken(String projectId, String connectorId) {
+        return credentialService.getCredentials(projectId, connectorId)
+                .map(creds -> {
+                    if (creds.expiresAt() != null &&
+                            creds.expiresAt().isBefore(java.time.Instant.now().plusSeconds(60))) {
+                        return oAuthFlowService.refreshAccessToken(projectId, connectorId, creds.refreshToken());
+                    }
+                    return creds.accessToken();
+                })
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                        HttpStatus.CONFLICT, "No OAuth credentials stored — complete OAuth first"));
     }
 
     private IntegrationConnector requireConnector(String connectorId) {

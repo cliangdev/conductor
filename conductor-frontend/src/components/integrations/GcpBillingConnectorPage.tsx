@@ -19,6 +19,7 @@ interface GcpBillingData {
   momDelta?: number;
   errorMessage?: string;
   datasetConfigured?: boolean;
+  oauthConnected?: boolean;
 }
 
 interface IntegrationDataResponse {
@@ -35,8 +36,13 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [authorizing, setAuthorizing] = useState(false);
-  const [bqProjectId, setBqProjectId] = useState('');
-  const [bqDatasetName, setBqDatasetName] = useState('');
+  const [gcpProjects, setGcpProjects] = useState<{ projectId: string; name: string }[]>([]);
+  const [bqDatasets, setBqDatasets] = useState<{ datasetId: string; location: string }[]>([]);
+  const [selectedGcpProject, setSelectedGcpProject] = useState('');
+  const [selectedDataset, setSelectedDataset] = useState('');
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [loadingDatasets, setLoadingDatasets] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const fetchData = useCallback(async (isRefresh = false) => {
     if (!accessToken) return;
@@ -57,19 +63,62 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  useEffect(() => {
+    if (!accessToken || !response?.data?.oauthConnected) return;
+    setLoadingProjects(true);
+    fetch(`/api/v1/projects/${projectId}/integrations/gcp-billing/gcp-projects`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+      .then(r => r.json())
+      .then(d => setGcpProjects(d.projects ?? []))
+      .catch(console.error)
+      .finally(() => setLoadingProjects(false));
+  }, [projectId, accessToken, response?.data?.oauthConnected]);
+
+  useEffect(() => {
+    if (!accessToken || !selectedGcpProject) return;
+    setLoadingDatasets(true);
+    setBqDatasets([]);
+    setSelectedDataset('');
+    fetch(`/api/v1/projects/${projectId}/integrations/gcp-billing/bq-datasets?gcpProjectId=${selectedGcpProject}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+      .then(r => r.json())
+      .then(d => setBqDatasets(d.datasets ?? []))
+      .catch(console.error)
+      .finally(() => setLoadingDatasets(false));
+  }, [projectId, accessToken, selectedGcpProject]);
+
   const handleAuthorize = async () => {
     if (!accessToken) return;
     setAuthorizing(true);
     try {
       const result = await apiPost<{ authorizationUrl: string }>(
         `/api/v1/projects/${projectId}/integrations/gcp-billing/oauth/authorize`,
-        { config: { bqProjectId: bqProjectId.trim(), bqDatasetName: bqDatasetName.trim() } },
+        {},
         accessToken
       );
       window.location.href = result.authorizationUrl;
     } catch (e) {
       console.error('OAuth initiation failed', e);
       setAuthorizing(false);
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    if (!accessToken || !selectedGcpProject || !selectedDataset) return;
+    setSaving(true);
+    try {
+      await fetch(`/api/v1/projects/${projectId}/integrations/gcp-billing/config`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { bqProjectId: selectedGcpProject, bqDatasetName: selectedDataset } }),
+      });
+      await fetchData();
+    } catch (e) {
+      console.error('Config save failed', e);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -88,6 +137,8 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   const data = response?.data;
 
   if (health === 'SETUP_REQUIRED' || !response) {
+    const oauthConnected = data?.oauthConnected === true;
+
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="mb-6 flex items-start justify-between">
@@ -105,94 +156,99 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
             Open GCP Console
           </a>
         </div>
-        <div className="bg-card rounded-lg border border-border p-8 max-w-lg space-y-6">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground mb-1">Set up GCP Billing</h2>
-            <p className="text-sm text-muted-foreground">
-              Connect your Google Cloud billing export to view spend by service.
-            </p>
-          </div>
 
-          {/* Step 1 */}
-          <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="flex-shrink-0 h-5 w-5 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">1</span>
-              <p className="text-sm font-medium text-foreground">Enable BigQuery billing export</p>
+        {!oauthConnected ? (
+          /* Step 1: OAuth */
+          <div className="bg-card rounded-lg border border-border p-8 max-w-lg space-y-6">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground mb-1">Set up GCP Billing</h2>
+              <p className="text-sm text-muted-foreground">
+                Connect your Google Cloud account to view spend by service.
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground ml-7">
-              In GCP Console, go to Billing → Billing export → BigQuery export and enable it.{' '}
-              <a
-                href="https://console.cloud.google.com/billing"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                Open GCP Console →
-              </a>
-            </p>
-          </div>
-
-          {/* Step 2 */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="flex-shrink-0 h-5 w-5 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">2</span>
-              <p className="text-sm font-medium text-foreground">Enter your BigQuery export details</p>
-            </div>
-            <div className="ml-7 space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-foreground mb-1">
-                  GCP Project ID
-                </label>
-                <input
-                  type="text"
-                  value={bqProjectId}
-                  onChange={e => setBqProjectId(e.target.value)}
-                  placeholder="my-gcp-project"
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
-                <p className="text-xs text-muted-foreground mt-1">The GCP project where your billing export lives.</p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex-shrink-0 h-5 w-5 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">1</span>
+                <p className="text-sm font-medium text-foreground">Enable BigQuery billing export</p>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-foreground mb-1">
-                  BigQuery Dataset Name
-                </label>
-                <input
-                  type="text"
-                  value={bqDatasetName}
-                  onChange={e => setBqDatasetName(e.target.value)}
-                  placeholder="billing_export"
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
-                <p className="text-xs text-muted-foreground mt-1">The dataset name you configured in the billing export.</p>
+              <p className="text-xs text-muted-foreground ml-7">
+                In GCP Console, go to Billing → Billing export → BigQuery export and enable Standard export.{' '}
+                <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                  Open GCP Console →
+                </a>
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="flex-shrink-0 h-5 w-5 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">2</span>
+                <p className="text-sm font-medium text-foreground">Connect your Google account</p>
+              </div>
+              <div className="ml-7">
+                <button
+                  onClick={handleAuthorize}
+                  disabled={authorizing}
+                  className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {authorizing ? 'Redirecting to Google…' : 'Connect with Google'}
+                </button>
               </div>
             </div>
           </div>
-
-          {/* Step 3 */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="flex-shrink-0 h-5 w-5 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">3</span>
-              <p className="text-sm font-medium text-foreground">Connect your Google account</p>
+        ) : (
+          /* Step 2: Select project + dataset */
+          <div className="bg-card rounded-lg border border-border p-8 max-w-lg space-y-6">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground mb-1">Almost there!</h2>
+              <p className="text-sm text-muted-foreground">
+                Select the BigQuery dataset where your billing export is stored.
+              </p>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-foreground mb-1">GCP Project</label>
+                <select
+                  value={selectedGcpProject}
+                  onChange={e => setSelectedGcpProject(e.target.value)}
+                  disabled={loadingProjects}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
+                >
+                  <option value="">{loadingProjects ? 'Loading projects…' : 'Select a project'}</option>
+                  {gcpProjects.map(p => (
+                    <option key={p.projectId} value={p.projectId}>{p.name} ({p.projectId})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-foreground mb-1">BigQuery Dataset</label>
+                <select
+                  value={selectedDataset}
+                  onChange={e => setSelectedDataset(e.target.value)}
+                  disabled={!selectedGcpProject || loadingDatasets}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
+                >
+                  <option value="">
+                    {!selectedGcpProject ? 'Select a project first' : loadingDatasets ? 'Loading datasets…' : bqDatasets.length === 0 ? 'No datasets found' : 'Select a dataset'}
+                  </option>
+                  {bqDatasets.map(d => (
+                    <option key={d.datasetId} value={d.datasetId}>{d.datasetId}{d.location ? ` (${d.location})` : ''}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             {data?.errorMessage && (
-              <div className="ml-7 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
                 <p className="text-xs text-yellow-700 dark:text-yellow-400">{data.errorMessage}</p>
               </div>
             )}
-            <div className="ml-7">
-              <button
-                onClick={handleAuthorize}
-                disabled={authorizing || !bqProjectId.trim() || !bqDatasetName.trim()}
-                className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {authorizing ? 'Redirecting to Google…' : 'Connect with Google'}
-              </button>
-              <p className="text-xs text-muted-foreground mt-2 text-center">
-                Fill in your BigQuery details above to continue.
-              </p>
-            </div>
+            <button
+              onClick={handleSaveConfig}
+              disabled={saving || !selectedGcpProject || !selectedDataset}
+              className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {saving ? 'Saving…' : 'Save & Connect'}
+            </button>
           </div>
-        </div>
+        )}
       </div>
     );
   }

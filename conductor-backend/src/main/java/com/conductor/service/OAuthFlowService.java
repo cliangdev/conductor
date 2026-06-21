@@ -74,8 +74,7 @@ public class OAuthFlowService {
     }
 
     @Transactional
-    public String buildAuthorizationUrl(String projectId, String connectorId, String redirectUri,
-                                        Map<String, Object> config) {
+    public String buildAuthorizationUrl(String projectId, String connectorId, String redirectUri) {
         oAuthStateRepository.deleteByExpiresAtBefore(OffsetDateTime.now());
 
         byte[] bytes = new byte[16];
@@ -87,14 +86,16 @@ public class OAuthFlowService {
         oauthState.setProjectId(projectId);
         oauthState.setConnectorId(connectorId);
         oauthState.setExpiresAt(OffsetDateTime.now().plusMinutes(10));
-        oauthState.setConfigJson(config != null ? config : Map.of());
+        oauthState.setConfigJson(Map.of());
         oAuthStateRepository.save(oauthState);
 
+        String scopes = "https://www.googleapis.com/auth/bigquery.readonly" +
+                " https://www.googleapis.com/auth/cloudplatformprojects.readonly";
         return UriComponentsBuilder.fromUriString(GOOGLE_AUTH_URL)
                 .queryParam("client_id", googleClientId)
                 .queryParam("redirect_uri", redirectUri)
                 .queryParam("response_type", "code")
-                .queryParam("scope", "https://www.googleapis.com/auth/bigquery.readonly")
+                .queryParam("scope", scopes)
                 .queryParam("access_type", "offline")
                 .queryParam("prompt", "consent")
                 .queryParam("state", state)
@@ -125,9 +126,8 @@ public class OAuthFlowService {
                 ? OffsetDateTime.now().plusSeconds(((Number) expiresIn).longValue())
                 : null;
 
-        Map<String, Object> config = oauthState.getConfigJson() != null ? oauthState.getConfigJson() : Map.of();
         credentialService.storeCredentials(projectId, connectorId, AuthType.OAUTH2,
-                accessToken, refreshToken, expiresAt, config);
+                accessToken, refreshToken, expiresAt, Map.of());
 
         log.info("OAuth callback completed for connector={} project={}", connectorId, projectId);
         return frontendUrl + "/app/projects/" + projectId + "/integrations/" + connectorId;

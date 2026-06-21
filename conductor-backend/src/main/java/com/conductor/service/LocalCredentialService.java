@@ -141,6 +141,22 @@ public class LocalCredentialService implements CredentialService {
 
     @Override
     @Transactional
+    public void updateConfig(String projectId, String connectorId, Map<String, Object> config) {
+        credentialRepository.findByProjectIdAndConnectorId(projectId, connectorId)
+                .ifPresent(cred -> {
+                    try {
+                        Map<String, Object> existing = parseConfigJson(cred.getConfigJson());
+                        existing.putAll(config);
+                        cred.setConfigJson(objectMapper.writeValueAsString(existing));
+                        credentialRepository.save(cred);
+                    } catch (Exception e) {
+                        throw new RuntimeException("Failed to update config", e);
+                    }
+                });
+    }
+
+    @Override
+    @Transactional
     public void deleteCredentials(String projectId, String connectorId) {
         credentialRepository.deleteByProjectIdAndConnectorId(projectId, connectorId);
         cacheRepository.deleteByProjectIdAndConnectorId(projectId, connectorId);

@@ -7,7 +7,12 @@ import com.google.cloud.bigquery.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
 import java.util.Date;
@@ -34,6 +39,44 @@ public class GcpBillingConnector implements IntegrationConnector {
         return List.of();
     }
 
+    @SuppressWarnings("unchecked")
+    public List<Map<String, String>> listGcpProjects(String accessToken) {
+        RestTemplate rest = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+        ResponseEntity<Map> response = rest.exchange(
+                "https://cloudresourcemanager.googleapis.com/v1/projects?filter=lifecycleState:ACTIVE",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        List<Map<String, Object>> projects = response.getBody() != null
+                ? (List<Map<String, Object>>) response.getBody().getOrDefault("projects", List.of())
+                : List.of();
+        return projects.stream()
+                .map(p -> Map.of("projectId", String.valueOf(p.get("projectId")),
+                        "name", String.valueOf(p.get("name"))))
+                .toList();
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<Map<String, String>> listBqDatasets(String accessToken, String gcpProjectId) {
+        RestTemplate rest = new RestTemplate();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+        ResponseEntity<Map> response = rest.exchange(
+                "https://bigquery.googleapis.com/bigquery/v2/projects/" + gcpProjectId + "/datasets",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        List<Map<String, Object>> datasets = response.getBody() != null
+                ? (List<Map<String, Object>>) response.getBody().getOrDefault("datasets", List.of())
+                : List.of();
+        return datasets.stream()
+                .map(d -> {
+                    Map<String, Object> ref = (Map<String, Object>) d.get("datasetReference");
+                    String datasetId = ref != null ? String.valueOf(ref.get("datasetId")) : "";
+                    String location = String.valueOf(d.getOrDefault("location", ""));
+                    return Map.of("datasetId", datasetId, "location", location);
+                })
+                .toList();
+    }
+
     @Override
     @SuppressWarnings("unchecked")
     public ConnectorData fetchData(DecryptedCredentials credentials) {
@@ -46,7 +89,8 @@ public class GcpBillingConnector implements IntegrationConnector {
 
         if (bqProjectId == null || bqProjectId.isBlank()
                 || bqDatasetName == null || bqDatasetName.isBlank()) {
-            return ConnectorData.setupRequired("Configure BigQuery dataset first");
+            return ConnectorData.setupRequired("Configure BigQuery dataset first",
+                    Map.of("oauthConnected", true));
         }
 
         List<String> selectedProjectIds = config.get("selectedProjectIds") instanceof List

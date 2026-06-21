@@ -17,5 +17,7 @@ public interface CredentialService {
     void updateAccessToken(String projectId, String connectorId,
                            String newAccessToken, OffsetDateTime newExpiresAt);
 
+    void updateConfig(String projectId, String connectorId, Map<String, Object> config);
+
     void deleteCredentials(String projectId, String connectorId);
 }

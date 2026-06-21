@@ -13,4 +13,7 @@ public record ConnectorData(Map<String, Object> data, ConnectorHealth healthStat
     public static ConnectorData setupRequired(String errorMessage) {
         return new ConnectorData(Map.of(), ConnectorHealth.SETUP_REQUIRED, Instant.now(), errorMessage);
     }
+    public static ConnectorData setupRequired(String errorMessage, Map<String, Object> data) {
+        return new ConnectorData(data, ConnectorHealth.SETUP_REQUIRED, Instant.now(), errorMessage);
+    }
 }
