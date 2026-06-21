@@ -43,12 +43,6 @@ class ProjectServiceTest {
     @Mock
     private ProjectSecurityService projectSecurityService;
 
-    @Mock
-    private com.conductor.repository.OrgMemberRepository orgMemberRepository;
-
-    @Mock
-    private com.conductor.repository.TeamMemberRepository teamMemberRepository;
-
     @InjectMocks
     private ProjectService projectService;
 
@@ -111,10 +105,7 @@ class ProjectServiceTest {
 
     @Test
     void listProjectsReturnsOnlyCallerProjects() {
-        testProject.setOrgId("org-abc");
         when(projectRepository.findProjectsByMemberUserId("creator-id")).thenReturn(List.of(testProject));
-        when(orgMemberRepository.findByUserId("creator-id")).thenReturn(List.of());
-        when(teamMemberRepository.findByUserId("creator-id")).thenReturn(List.of());
         when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "creator-id"))
                 .thenReturn(Optional.of(adminMember));
         when(projectMemberRepository.findByProjectId("proj-1")).thenReturn(List.of(adminMember));
@@ -125,17 +116,12 @@ class ProjectServiceTest {
         assertThat(projects.get(0).getId()).isEqualTo("proj-1");
         assertThat(projects.get(0).getRole()).isEqualTo("ADMIN");
         assertThat(projects.get(0).getMemberCount()).isEqualTo(1);
-        // orgId is required so the frontend sidebar can sync active org from the URL's project
-        assertThat(projects.get(0).getOrgId()).isEqualTo("org-abc");
     }
 
     @Test
-    void getProjectReturnsForbiddenForNonMemberPrivateProject() {
-        testProject.setOrgId("org-1");
-        testProject.setVisibility(com.conductor.entity.ProjectVisibility.PRIVATE);
-
+    void getProjectReturnsForbiddenForNonMember() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(testProject));
-        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "creator-id")).thenReturn(false);
+        when(projectSecurityService.isProjectMember("proj-1", "creator-id")).thenReturn(false);
 
         assertThatThrownBy(() -> projectService.getProject("proj-1", creator))
                 .isInstanceOf(com.conductor.exception.ForbiddenException.class);
@@ -203,7 +189,7 @@ class ProjectServiceTest {
 
     @Test
     void removeLastAdminThrowsBusinessException() {
-        when(projectSecurityService.isProjectAdmin("proj-1", "creator-id")).thenReturn(true);
+        // A member removing themselves (leave) still cannot drop the last admin.
         when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "creator-id"))
                 .thenReturn(Optional.of(adminMember));
         when(projectMemberRepository.countByProjectIdAndRole("proj-1", MemberRole.ADMIN)).thenReturn(1L);

@@ -13,7 +13,7 @@ export default function ApiKeysPage() {
       <div>
         <h1 className="text-2xl font-semibold">API Keys</h1>
         <p className="text-muted-foreground mt-1">
-          Manage your personal API keys for CLI and integrations.
+          Personal API keys for the Conductor CLI and integrations. These are tied to your account, not the workspace.
         </p>
       </div>
       <ApiKeySection accessToken={accessToken} />

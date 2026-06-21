@@ -27,16 +27,19 @@ public class ReviewerService {
 
     private final IssueReviewerRepository issueReviewerRepository;
     private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectSecurityService projectSecurityService;
     private final UserRepository userRepository;
     private final NotificationDispatcher notificationDispatcher;
 
     public ReviewerService(
             IssueReviewerRepository issueReviewerRepository,
             ProjectMemberRepository projectMemberRepository,
+            ProjectSecurityService projectSecurityService,
             UserRepository userRepository,
             NotificationDispatcher notificationDispatcher) {
         this.issueReviewerRepository = issueReviewerRepository;
         this.projectMemberRepository = projectMemberRepository;
+        this.projectSecurityService = projectSecurityService;
         this.userRepository = userRepository;
         this.notificationDispatcher = notificationDispatcher;
     }
@@ -94,10 +97,7 @@ public class ReviewerService {
     }
 
     private void verifyCallerCanManageReviewers(String projectId, String callerId) {
-        ProjectMember callerMember = projectMemberRepository.findByProjectIdAndUserId(projectId, callerId)
-                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
-
-        if (callerMember.getRole() != MemberRole.ADMIN && callerMember.getRole() != MemberRole.CREATOR) {
+        if (!projectSecurityService.isAdminOrCreator(projectId, callerId)) {
             throw new ForbiddenException("Only ADMIN or CREATOR can manage reviewers");
         }
     }

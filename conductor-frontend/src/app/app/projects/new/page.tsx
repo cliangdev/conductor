@@ -7,26 +7,15 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
-import { useOrg } from '@/contexts/OrgContext'
 import { apiPost } from '@/lib/api'
 import type { Project } from '@/types'
 
 const NAME_MAX_LENGTH = 100
 
-interface CreateProjectResponse {
-  id: string
-  name: string
-  description: string | null
-  orgId: string | null
-  createdBy: string
-  createdAt: string
-}
-
-export default function NewProjectPage() {
+export default function NewWorkspacePage() {
   const router = useRouter()
   const { accessToken } = useAuth()
   const { addProject, setActiveProject } = useProject()
-  const { activeOrg } = useOrg()
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -35,8 +24,8 @@ export default function NewProjectPage() {
   const [serverError, setServerError] = useState<string | null>(null)
 
   function validateName(value: string): string | null {
-    if (!value.trim()) return 'Project name is required'
-    if (value.length > NAME_MAX_LENGTH) return `Project name must be ${NAME_MAX_LENGTH} characters or fewer`
+    if (!value.trim()) return 'Workspace name is required'
+    if (value.length > NAME_MAX_LENGTH) return `Workspace name must be ${NAME_MAX_LENGTH} characters or fewer`
     return null
   }
 
@@ -62,26 +51,17 @@ export default function NewProjectPage() {
 
     setSubmitting(true)
     try {
-      const created = await apiPost<CreateProjectResponse>(
+      const project = await apiPost<Project>(
         '/api/v1/projects',
-        { name: name.trim(), description: description.trim() || undefined, orgId: activeOrg?.id },
+        { name: name.trim(), description: description.trim() || undefined },
         accessToken,
       )
-
-      const project: Project = {
-        id: created.id,
-        name: created.name,
-        description: created.description,
-        orgId: created.orgId,
-        createdAt: created.createdAt,
-        updatedAt: created.createdAt,
-      }
 
       addProject(project)
       setActiveProject(project)
       router.push(`/app/projects/${project.id}/issues`)
     } catch {
-      setServerError('Failed to create project. Please try again.')
+      setServerError('Failed to create workspace. Please try again.')
     } finally {
       setSubmitting(false)
     }
@@ -89,20 +69,20 @@ export default function NewProjectPage() {
 
   return (
     <div className="max-w-lg mx-auto mt-16 px-4">
-      <h1 className="text-2xl font-bold text-foreground mb-6">Create a new project</h1>
+      <h1 className="text-2xl font-bold text-foreground mb-6">Create a new workspace</h1>
 
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
         <div>
-          <label htmlFor="project-name" className="block text-sm font-medium text-foreground mb-1">
-            Project name <span className="text-destructive">*</span>
+          <label htmlFor="workspace-name" className="block text-sm font-medium text-foreground mb-1">
+            Workspace name <span className="text-destructive">*</span>
           </label>
           <input
-            id="project-name"
+            id="workspace-name"
             type="text"
             value={name}
             onChange={handleNameChange}
             onBlur={() => setNameError(validateName(name))}
-            placeholder="My project"
+            placeholder="My workspace"
             maxLength={NAME_MAX_LENGTH + 50}
             className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
             aria-describedby={nameError ? 'name-error' : undefined}
@@ -116,14 +96,14 @@ export default function NewProjectPage() {
         </div>
 
         <div>
-          <label htmlFor="project-description" className="block text-sm font-medium text-foreground mb-1">
+          <label htmlFor="workspace-description" className="block text-sm font-medium text-foreground mb-1">
             Description <span className="text-foreground-subtle font-normal">(optional)</span>
           </label>
           <textarea
-            id="project-description"
+            id="workspace-description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="What is this project about?"
+            placeholder="What is this workspace about?"
             rows={3}
             className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent resize-none"
           />
@@ -137,7 +117,7 @@ export default function NewProjectPage() {
 
         <div className="flex gap-3 pt-2">
           <Button type="submit" disabled={submitting}>
-            {submitting ? 'Creating…' : 'Create Project'}
+            {submitting ? 'Creating…' : 'Create workspace'}
           </Button>
           <Button
             type="button"

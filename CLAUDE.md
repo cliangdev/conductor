@@ -138,12 +138,16 @@ src/
 
 ## Data Model (key tables)
 
+A **`project` is the single top-level "Workspace"** — "Workspace" is the user-facing name; the table/entity/route stay `project(s)` internally. Membership in `project_members` is the *only* access gate (always check via `ProjectSecurityService`). There is intentionally no org/team layer above projects.
+
 `users` → `project_members` (ADMIN/CREATOR/REVIEWER) → `projects`  
 `issues` → `documents` (GCP-backed, signed URLs)  
 `issue_reviewers` → `reviews` (APPROVED/CHANGES_REQUESTED/COMMENTED)  
 `comments` + `comment_replies` (line-level or selection-based anchors)  
 `project_settings` (Discord webhook URL)  
 `invites`, `api_keys`
+
+**Future eng/marketing grouping** should be done with **labels + saved views** (or a nullable `group` tag on `project_members`), *not* by reintroducing a nested container above projects — that two-level org→project model was deliberately removed for simplicity.
 
 ## Fetching Cloud Run Logs
 

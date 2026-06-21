@@ -10,7 +10,7 @@ vi.mock('@/contexts/AuthContext', () => ({
 }))
 
 vi.mock('@/contexts/ProjectContext', () => ({
-  useProject: () => ({ activeProject: { id: 'proj-1', name: 'Test Project', orgId: 'org-1' } }),
+  useProject: () => ({ activeProject: { id: 'proj-1', name: 'Test Workspace' } }),
 }))
 
 vi.mock('@/components/ui/toast', () => ({
@@ -57,18 +57,24 @@ const regularMember = {
   joinedAt: '2024-01-15T00:00:00Z',
 }
 
-const orgOnlyMember = {
-  userId: 'user-org-only',
-  name: 'Org Member',
-  email: 'orgmember@example.com',
-  role: 'MEMBER',
-  joinedAt: '2024-01-01T00:00:00Z',
+const pendingInvite = {
+  id: 'invite-1',
+  email: 'pending@example.com',
+  role: 'REVIEWER',
+  expiresAt: '2024-02-01T00:00:00Z',
 }
 
 let mockAuthContext = {
   user: { id: 'user-admin', name: 'Admin User', email: 'admin@example.com', avatarUrl: null, displayName: null },
   accessToken: 'test-token',
   loading: false,
+}
+
+function mockApiGet(invites = [pendingInvite]) {
+  vi.mocked(api.apiGet).mockImplementation((path: string) => {
+    if (path.includes('/invites')) return Promise.resolve(invites)
+    return Promise.resolve([adminMember, regularMember])
+  })
 }
 
 describe('MembersPage', () => {
@@ -79,10 +85,7 @@ describe('MembersPage', () => {
       accessToken: 'test-token',
       loading: false,
     }
-    vi.mocked(api.apiGet).mockImplementation((path: string) => {
-      if (path.includes('/orgs/')) return Promise.resolve([adminMember, regularMember, orgOnlyMember])
-      return Promise.resolve([adminMember, regularMember])
-    })
+    mockApiGet()
   })
 
   it('renders member list', async () => {
@@ -98,7 +101,7 @@ describe('MembersPage', () => {
     expect(screen.getByRole('button', { name: /remove creator user/i })).toBeInTheDocument()
   })
 
-  it('non-admin user does not see role dropdown or remove button', async () => {
+  it('non-admin user does not see role dropdown or invite button', async () => {
     mockAuthContext = {
       user: { id: 'user-creator', name: 'Creator User', email: 'creator@example.com', avatarUrl: null, displayName: null },
       accessToken: 'test-token',
@@ -107,7 +110,7 @@ describe('MembersPage', () => {
     render(<MembersPage />)
     await screen.findByText('Admin User')
     expect(screen.queryByLabelText(/role for/i)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /invite member/i })).not.toBeInTheDocument()
   })
 
   it('role change calls PATCH endpoint and updates UI', async () => {
@@ -127,126 +130,84 @@ describe('MembersPage', () => {
         'test-token',
       )
     })
-
     expect(mockShowToast).toHaveBeenCalledWith('Role updated successfully')
   })
 
-  it('shows error toast when role change returns 403', async () => {
-    const err = Object.assign(new Error('API error: 403'), { status: 403 })
-    vi.mocked(api.apiPatch).mockRejectedValue(err)
-
+  it('admin sees Invite member button', async () => {
     render(<MembersPage />)
     await screen.findByText('Creator User')
+    expect(screen.getByRole('button', { name: /invite member/i })).toBeInTheDocument()
+  })
 
-    const roleSelect = screen.getByLabelText(/role for creator user/i)
-    fireEvent.change(roleSelect, { target: { value: 'REVIEWER' } })
+  it('renders pending invitations list for admins', async () => {
+    render(<MembersPage />)
+    expect(await screen.findByText('pending@example.com')).toBeInTheDocument()
+    expect(screen.getByText(/pending invitations/i)).toBeInTheDocument()
+  })
 
-    await waitFor(() => {
-      expect(mockShowToast).toHaveBeenCalledWith(
-        'You do not have permission to change roles.',
-        'error',
-      )
+  it('email invite posts to invites endpoint and shows shareable link', async () => {
+    vi.mocked(api.apiPost).mockResolvedValue({
+      id: 'invite-2',
+      email: 'new@example.com',
+      role: 'CREATOR',
+      expiresAt: '2024-02-01T00:00:00Z',
+      token: 'tok-abc',
     })
-  })
-
-  it('admin sees Add Member button', async () => {
-    render(<MembersPage />)
-    await screen.findByText('Creator User')
-    expect(screen.getByRole('button', { name: /add member/i })).toBeInTheDocument()
-  })
-
-  it('non-admin does not see Add Member button', async () => {
-    mockAuthContext = {
-      user: { id: 'user-creator', name: 'Creator User', email: 'creator@example.com', avatarUrl: null, displayName: null },
-      accessToken: 'test-token',
-      loading: false,
-    }
-    render(<MembersPage />)
-    await screen.findByText('Admin User')
-    expect(screen.queryByRole('button', { name: /add member/i })).not.toBeInTheDocument()
-  })
-
-  it('Add Member modal shows org members not already in project', async () => {
-    render(<MembersPage />)
-    await screen.findByText('Creator User')
-
-    fireEvent.click(screen.getByRole('button', { name: /add member/i }))
-
-    const modal = await screen.findByTestId('modal')
-    await waitFor(() => {
-      expect(within(modal).getByText(/org member \(orgmember@example\.com\)/i)).toBeInTheDocument()
-    })
-    expect(within(modal).queryByText(/admin user/i)).not.toBeInTheDocument()
-    expect(within(modal).queryByText(/creator user/i)).not.toBeInTheDocument()
-  })
-
-  it('successful add member posts to members endpoint and shows toast', async () => {
-    vi.mocked(api.apiPost).mockResolvedValue({})
 
     render(<MembersPage />)
     await screen.findByText('Creator User')
 
-    fireEvent.click(screen.getByRole('button', { name: /add member/i }))
+    fireEvent.click(screen.getByRole('button', { name: /invite member/i }))
     const modal = await screen.findByTestId('modal')
 
-    await waitFor(() => {
-      expect(within(modal).getByRole('option', { name: /org member/i })).toBeInTheDocument()
-    })
-
-    const select = within(modal).getByLabelText(/org member/i)
-    fireEvent.change(select, { target: { value: 'user-org-only' } })
-
-    fireEvent.click(within(modal).getByRole('button', { name: /^add member$/i }))
+    const emailInput = within(modal).getByLabelText(/email/i)
+    fireEvent.change(emailInput, { target: { value: 'new@example.com' } })
+    fireEvent.click(within(modal).getByRole('button', { name: /send invite/i }))
 
     await waitFor(() => {
       expect(api.apiPost).toHaveBeenCalledWith(
-        '/api/v1/projects/proj-1/members',
-        { userId: 'user-org-only', role: 'CREATOR' },
+        '/api/v1/projects/proj-1/invites',
+        { email: 'new@example.com', role: 'CREATOR' },
         'test-token',
       )
     })
-    expect(mockShowToast).toHaveBeenCalledWith('Member added')
+
+    expect(await within(modal).findByDisplayValue(/\/invites\/tok-abc\/accept$/)).toBeInTheDocument()
+    expect(mockShowToast).toHaveBeenCalledWith('Invitation sent')
   })
 
-  it('shows 409 error when user is already a project member', async () => {
+  it('shows 409 error when invitee is already a member or invited', async () => {
     const err = Object.assign(new Error('API error: 409'), { status: 409 })
     vi.mocked(api.apiPost).mockRejectedValue(err)
 
     render(<MembersPage />)
     await screen.findByText('Creator User')
 
-    fireEvent.click(screen.getByRole('button', { name: /add member/i }))
+    fireEvent.click(screen.getByRole('button', { name: /invite member/i }))
     const modal = await screen.findByTestId('modal')
 
-    await waitFor(() => {
-      expect(within(modal).getByRole('option', { name: /org member/i })).toBeInTheDocument()
-    })
+    fireEvent.change(within(modal).getByLabelText(/email/i), { target: { value: 'dup@example.com' } })
+    fireEvent.click(within(modal).getByRole('button', { name: /send invite/i }))
 
-    const select = within(modal).getByLabelText(/org member/i)
-    fireEvent.change(select, { target: { value: 'user-org-only' } })
-    fireEvent.click(within(modal).getByRole('button', { name: /^add member$/i }))
-
-    expect(await screen.findByText(/user is already a project member/i)).toBeInTheDocument()
+    expect(await screen.findByText(/already a member or has a pending invite/i)).toBeInTheDocument()
   })
 
-  it('shows 403 error when caller is not a project admin', async () => {
-    const err = Object.assign(new Error('API error: 403'), { status: 403 })
-    vi.mocked(api.apiPost).mockRejectedValue(err)
+  it('cancelling a pending invite calls DELETE and removes it', async () => {
+    vi.mocked(api.apiDelete).mockResolvedValue(undefined)
 
     render(<MembersPage />)
-    await screen.findByText('Creator User')
+    await screen.findByText('pending@example.com')
 
-    fireEvent.click(screen.getByRole('button', { name: /add member/i }))
-    const modal = await screen.findByTestId('modal')
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
 
     await waitFor(() => {
-      expect(within(modal).getByRole('option', { name: /org member/i })).toBeInTheDocument()
+      expect(api.apiDelete).toHaveBeenCalledWith(
+        '/api/v1/projects/proj-1/invites/invite-1',
+        'test-token',
+      )
     })
-
-    const select = within(modal).getByLabelText(/org member/i)
-    fireEvent.change(select, { target: { value: 'user-org-only' } })
-    fireEvent.click(within(modal).getByRole('button', { name: /^add member$/i }))
-
-    expect(await screen.findByText(/only project admins can add members/i)).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.queryByText('pending@example.com')).not.toBeInTheDocument()
+    })
   })
 })

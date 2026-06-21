@@ -3,10 +3,8 @@ package com.conductor.service;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
-import com.conductor.entity.ProjectVisibility;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
-import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.CreateProjectRequest;
 import com.conductor.generated.model.MemberResponse;
@@ -15,66 +13,66 @@ import com.conductor.generated.model.ProjectResponse;
 import com.conductor.generated.model.ProjectSummary;
 import com.conductor.generated.model.UpdateMemberRoleRequest;
 import com.conductor.generated.model.UpdateProjectRequest;
-import com.conductor.repository.OrgMemberRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
-import com.conductor.repository.TeamMemberRepository;
-import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 
+/**
+ * Workspace (Project) business logic. A Project is the single top-level
+ * container ("Workspace" in the UI); membership in {@link ProjectMember} is the
+ * sole access gate.
+ */
 @Service
 public class ProjectService {
 
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectSecurityService projectSecurityService;
-    private final OrgMemberRepository orgMemberRepository;
-    private final TeamMemberRepository teamMemberRepository;
-    private final UserRepository userRepository;
 
     public ProjectService(
             ProjectRepository projectRepository,
             ProjectMemberRepository projectMemberRepository,
-            ProjectSecurityService projectSecurityService,
-            OrgMemberRepository orgMemberRepository,
-            TeamMemberRepository teamMemberRepository,
-            UserRepository userRepository) {
+            ProjectSecurityService projectSecurityService) {
         this.projectRepository = projectRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.projectSecurityService = projectSecurityService;
-        this.orgMemberRepository = orgMemberRepository;
-        this.teamMemberRepository = teamMemberRepository;
-        this.userRepository = userRepository;
     }
 
     @Transactional
     public ProjectResponse createProject(CreateProjectRequest request, User creator) {
-        Project project = new Project();
-        project.setName(request.getName());
-        project.setDescription(request.getDescription());
-        project.setCreatedBy(creator);
-        project.setKey(resolveUniqueKey(request.getName()));
-        project.setVisibility(ProjectVisibility.ORG);
+        Project project = createWorkspace(request.getName(), request.getDescription(), creator);
+        return toProjectResponse(project);
+    }
 
-        if (request.getOrgId() != null) {
-            orgMemberRepository.findByOrgIdAndUserId(request.getOrgId(), creator.getId())
-                    .orElseThrow(() -> new ForbiddenException("You are not a member of the specified org"));
-            project.setOrgId(request.getOrgId());
-        } else {
-            List<com.conductor.entity.OrgMember> memberships = orgMemberRepository.findByUserId(creator.getId());
-            if (memberships.size() == 1) {
-                project.setOrgId(memberships.get(0).getOrg().getId());
-            }
+    /**
+     * Ensures the user has at least one workspace; called at signup so a new
+     * user always lands inside a working workspace. Idempotent.
+     */
+    @Transactional
+    public void ensureDefaultWorkspace(User user) {
+        if (!projectMemberRepository.findByUserId(user.getId()).isEmpty()) {
+            return;
         }
+        String displayName = user.getDisplayName() != null ? user.getDisplayName() : user.getName();
+        String name = (displayName != null && !displayName.isBlank())
+                ? displayName + "'s Workspace"
+                : "My Workspace";
+        createWorkspace(name, null, user);
+    }
 
+    private Project createWorkspace(String name, String description, User creator) {
+        Project project = new Project();
+        project.setName(name);
+        project.setDescription(description);
+        project.setCreatedBy(creator);
+        project.setKey(resolveUniqueKey(name));
         projectRepository.save(project);
 
         ProjectMember adminMember = new ProjectMember();
@@ -83,61 +81,12 @@ public class ProjectService {
         adminMember.setRole(MemberRole.ADMIN);
         projectMemberRepository.save(adminMember);
 
-        return toProjectResponse(project);
-    }
-
-    @Transactional(readOnly = true)
-    public List<ProjectSummary> listOrgProjects(String orgId, User caller) {
-        if (orgMemberRepository.findByOrgIdAndUserId(orgId, caller.getId()).isEmpty()) {
-            throw new ForbiddenException("You are not a member of this org");
-        }
-
-        return projectRepository.findByOrgId(orgId).stream()
-                .filter(p -> canUserAccessProject(caller.getId(), p))
-                .map(project -> {
-                    String roleStr = projectMemberRepository
-                            .findByProjectIdAndUserId(project.getId(), caller.getId())
-                            .map(m -> m.getRole().name())
-                            .orElse(null);
-                    long memberCount = projectMemberRepository.findByProjectId(project.getId()).size();
-                    return toProjectSummary(project, roleStr, (int) memberCount);
-                })
-                .toList();
+        return project;
     }
 
     @Transactional(readOnly = true)
     public List<ProjectSummary> listProjects(User caller) {
-        List<Project> explicitProjects = projectRepository.findProjectsByMemberUserId(caller.getId());
-
-        List<Project> accessibleProjects = new ArrayList<>(explicitProjects);
-
-        // Include ORG-visible projects for orgs user belongs to
-        List<String> orgIds = orgMemberRepository.findByUserId(caller.getId()).stream()
-                .map(om -> om.getOrg().getId())
-                .toList();
-        for (String orgId : orgIds) {
-            List<Project> orgProjects = projectRepository.findByOrgIdAndVisibility(orgId, ProjectVisibility.ORG);
-            for (Project p : orgProjects) {
-                if (accessibleProjects.stream().noneMatch(ep -> ep.getId().equals(p.getId()))) {
-                    accessibleProjects.add(p);
-                }
-            }
-        }
-
-        // Include TEAM-visible projects for teams user belongs to
-        List<String> teamIds = teamMemberRepository.findByUserId(caller.getId()).stream()
-                .map(tm -> tm.getTeam().getId())
-                .toList();
-        for (String teamId : teamIds) {
-            List<Project> teamProjects = projectRepository.findByTeamIdAndVisibility(teamId, ProjectVisibility.TEAM);
-            for (Project p : teamProjects) {
-                if (accessibleProjects.stream().noneMatch(ep -> ep.getId().equals(p.getId()))) {
-                    accessibleProjects.add(p);
-                }
-            }
-        }
-
-        return accessibleProjects.stream()
+        return projectRepository.findProjectsByMemberUserId(caller.getId()).stream()
                 .map(project -> {
                     String roleStr = projectMemberRepository
                             .findByProjectIdAndUserId(project.getId(), caller.getId())
@@ -154,7 +103,7 @@ public class ProjectService {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
 
-        if (!canUserAccessProject(caller.getId(), project)) {
+        if (!projectSecurityService.isProjectMember(projectId, caller.getId())) {
             throw new ForbiddenException("You do not have access to this project");
         }
 
@@ -165,10 +114,10 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public List<MemberResponse> listMembers(String projectId, User caller) {
-        Project project = projectRepository.findById(projectId)
+        projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
 
-        if (!canUserAccessProject(caller.getId(), project)) {
+        if (!projectSecurityService.isProjectMember(projectId, caller.getId())) {
             throw new ForbiddenException("You do not have access to this project");
         }
 
@@ -192,17 +141,6 @@ public class ProjectService {
         if (request.getDescription() != null) {
             project.setDescription(request.getDescription());
         }
-        if (request.getVisibility() != null) {
-            ProjectVisibility newVisibility = ProjectVisibility.valueOf(request.getVisibility().getValue());
-            if (newVisibility == ProjectVisibility.TEAM && project.getTeamId() == null
-                    && request.getTeamId() == null) {
-                throw new BusinessException("teamId is required when visibility is TEAM");
-            }
-            project.setVisibility(newVisibility);
-        }
-        if (request.getTeamId() != null) {
-            project.setTeamId(request.getTeamId());
-        }
 
         projectRepository.save(project);
         return toProjectResponse(project);
@@ -220,10 +158,7 @@ public class ProjectService {
         MemberRole newRole = parseMemberRole(request.getRole());
 
         if (member.getRole() == MemberRole.ADMIN && newRole != MemberRole.ADMIN) {
-            long adminCount = projectMemberRepository.countByProjectIdAndRole(projectId, MemberRole.ADMIN);
-            if (adminCount <= 1) {
-                throw new BusinessException("Cannot remove the last project admin");
-            }
+            assertNotLastAdmin(projectId);
         }
 
         member.setRole(newRole);
@@ -234,7 +169,9 @@ public class ProjectService {
 
     @Transactional
     public void removeMember(String projectId, String userId, User caller) {
-        if (!projectSecurityService.isProjectAdmin(projectId, caller.getId())) {
+        // Members may remove themselves (leave workspace); otherwise admin only.
+        boolean isSelf = userId.equals(caller.getId());
+        if (!isSelf && !projectSecurityService.isProjectAdmin(projectId, caller.getId())) {
             throw new AccessDeniedException("Only project admins can remove members");
         }
 
@@ -242,77 +179,22 @@ public class ProjectService {
                 .orElseThrow(() -> new EntityNotFoundException("Member not found"));
 
         if (member.getRole() == MemberRole.ADMIN) {
-            long adminCount = projectMemberRepository.countByProjectIdAndRole(projectId, MemberRole.ADMIN);
-            if (adminCount <= 1) {
-                throw new BusinessException("Cannot remove the last project admin");
-            }
+            assertNotLastAdmin(projectId);
         }
 
         projectMemberRepository.delete(member);
     }
 
     /**
-     * Returns true if the user can read the given project based on its visibility.
-     * - null orgId (legacy): only explicit project members
-     * - PRIVATE: only explicit project members
-     * - ORG: explicit project member OR org member
-     * - TEAM: explicit project member OR team member
-     * - PUBLIC: any authenticated user
+     * Guards the hard invariant that a workspace always retains at least one
+     * admin (there is no org-level fallback). Applies to both role changes and
+     * member removal, including a member leaving.
      */
-    public boolean canUserAccessProject(String userId, Project project) {
-        boolean isExplicitMember = projectMemberRepository.existsByProjectIdAndUserId(project.getId(), userId);
-
-        if (project.getOrgId() == null) {
-            return isExplicitMember;
+    private void assertNotLastAdmin(String projectId) {
+        long adminCount = projectMemberRepository.countByProjectIdAndRole(projectId, MemberRole.ADMIN);
+        if (adminCount <= 1) {
+            throw new BusinessException("Cannot remove the last project admin");
         }
-
-        ProjectVisibility visibility = project.getVisibility() != null
-                ? project.getVisibility()
-                : ProjectVisibility.PRIVATE;
-
-        return switch (visibility) {
-            case PRIVATE -> isExplicitMember;
-            case ORG -> isExplicitMember
-                    || orgMemberRepository.findByOrgIdAndUserId(project.getOrgId(), userId).isPresent();
-            case TEAM -> isExplicitMember
-                    || (project.getTeamId() != null
-                        && teamMemberRepository.findByTeamIdAndUserId(project.getTeamId(), userId).isPresent());
-            case PUBLIC -> true;
-        };
-    }
-
-    @Transactional
-    public MemberResponse addMember(String projectId, String userId, String roleStr, User caller) {
-        if (!projectSecurityService.isProjectAdmin(projectId, caller.getId())) {
-            throw new AccessDeniedException("Only project admins can add members");
-        }
-
-        Project project = projectRepository.findById(projectId)
-                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
-
-        if (project.getOrgId() == null) {
-            throw new BusinessException("This project does not belong to an org");
-        }
-
-        orgMemberRepository.findByOrgIdAndUserId(project.getOrgId(), userId)
-                .orElseThrow(() -> new ForbiddenException("User is not a member of this project's org"));
-
-        if (projectMemberRepository.findByProjectIdAndUserId(projectId, userId).isPresent()) {
-            throw new ConflictException("User is already a member of this project");
-        }
-
-        User targetUser = userRepository.findById(userId)
-                .orElseThrow(() -> new EntityNotFoundException("User not found"));
-
-        MemberRole role = parseMemberRole(roleStr);
-
-        ProjectMember member = new ProjectMember();
-        member.setProject(project);
-        member.setUser(targetUser);
-        member.setRole(role);
-        projectMemberRepository.save(member);
-
-        return toMemberResponse(member);
     }
 
     private MemberRole parseMemberRole(String role) {
@@ -358,11 +240,7 @@ public class ProjectService {
                 project.getKey(),
                 project.getCreatedBy().getId(),
                 project.getCreatedAt())
-                .description(project.getDescription())
-                .visibility(project.getVisibility() != null
-                        ? ProjectResponse.VisibilityEnum.fromValue(project.getVisibility().name())
-                        : null)
-                .teamId(project.getTeamId());
+                .description(project.getDescription());
     }
 
     private ProjectSummary toProjectSummary(Project project, String role, int memberCount) {
@@ -373,11 +251,7 @@ public class ProjectService {
                 memberCount,
                 project.getCreatedAt())
                 .description(project.getDescription())
-                .role(role)
-                .visibility(project.getVisibility() != null
-                        ? ProjectSummary.VisibilityEnum.fromValue(project.getVisibility().name())
-                        : null)
-                .orgId(project.getOrgId());
+                .role(role);
     }
 
     private ProjectDetail toProjectDetail(Project project, int memberCount) {
@@ -388,11 +262,7 @@ public class ProjectService {
                 project.getCreatedBy().getId(),
                 memberCount,
                 project.getCreatedAt())
-                .description(project.getDescription())
-                .visibility(project.getVisibility() != null
-                        ? ProjectDetail.VisibilityEnum.fromValue(project.getVisibility().name())
-                        : null)
-                .teamId(project.getTeamId());
+                .description(project.getDescription());
     }
 
     private MemberResponse toMemberResponse(ProjectMember member) {

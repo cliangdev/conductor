@@ -1,8 +1,6 @@
 package com.conductor.service;
 
-import com.conductor.entity.MemberRole;
 import com.conductor.entity.NotificationChannelConfig;
-import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
@@ -13,7 +11,6 @@ import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.notification.ProviderType;
 import com.conductor.repository.NotificationChannelConfigRepository;
-import com.conductor.repository.ProjectMemberRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,15 +28,15 @@ public class NotificationChannelService {
 
     private final NotificationChannelConfigRepository channelConfigRepository;
     private final NotificationDispatcher notificationDispatcher;
-    private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectSecurityService projectSecurityService;
 
     public NotificationChannelService(
             NotificationChannelConfigRepository channelConfigRepository,
             NotificationDispatcher notificationDispatcher,
-            ProjectMemberRepository projectMemberRepository) {
+            ProjectSecurityService projectSecurityService) {
         this.channelConfigRepository = channelConfigRepository;
         this.notificationDispatcher = notificationDispatcher;
-        this.projectMemberRepository = projectMemberRepository;
+        this.projectSecurityService = projectSecurityService;
     }
 
     @Transactional(readOnly = true)
@@ -138,10 +135,7 @@ public class NotificationChannelService {
     }
 
     private void verifyAdmin(String projectId, String userId) {
-        ProjectMember member = projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
-                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
-
-        if (member.getRole() != MemberRole.ADMIN) {
+        if (!projectSecurityService.isProjectAdmin(projectId, userId)) {
             throw new ForbiddenException("Only ADMIN can manage notification channels");
         }
     }

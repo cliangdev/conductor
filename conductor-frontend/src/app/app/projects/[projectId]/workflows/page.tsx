@@ -124,6 +124,7 @@ export default function WorkflowsPage() {
       { enabled: !workflow.enabled },
       accessToken
     );
+    if (!updated) return;
     setWorkflows(prev => prev.map(w => w.id === updated.id ? updated : w));
   };
 

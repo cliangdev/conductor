@@ -4,7 +4,6 @@ import com.conductor.entity.Comment;
 import com.conductor.entity.CommentReply;
 import com.conductor.entity.Document;
 import com.conductor.entity.Issue;
-import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
@@ -41,10 +40,10 @@ public class CommentService {
     private final IssueRepository issueRepository;
     private final DocumentRepository documentRepository;
     private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
     private final NotificationDispatcher notificationDispatcher;
     private final ProjectRepository projectRepository;
-    private final ProjectService projectService;
 
     public CommentService(
             CommentRepository commentRepository,
@@ -52,19 +51,19 @@ public class CommentService {
             IssueRepository issueRepository,
             DocumentRepository documentRepository,
             ProjectMemberRepository projectMemberRepository,
+            ProjectSecurityService projectSecurityService,
             StorageService storageService,
             NotificationDispatcher notificationDispatcher,
-            ProjectRepository projectRepository,
-            ProjectService projectService) {
+            ProjectRepository projectRepository) {
         this.commentRepository = commentRepository;
         this.commentReplyRepository = commentReplyRepository;
         this.issueRepository = issueRepository;
         this.documentRepository = documentRepository;
         this.projectMemberRepository = projectMemberRepository;
+        this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
         this.notificationDispatcher = notificationDispatcher;
         this.projectRepository = projectRepository;
-        this.projectService = projectService;
     }
 
     @Transactional
@@ -207,9 +206,7 @@ public class CommentService {
         Comment comment = findCommentInIssue(issueId, commentId);
 
         boolean isAuthor = comment.getAuthor().getId().equals(caller.getId());
-        boolean isAdmin = projectMemberRepository.findByProjectIdAndUserId(projectId, caller.getId())
-                .map(member -> member.getRole() == MemberRole.ADMIN || member.getRole() == MemberRole.CREATOR)
-                .orElse(false);
+        boolean isAdmin = projectSecurityService.isAdminOrCreator(projectId, caller.getId());
 
         if (!isAuthor && !isAdmin) {
             throw new ForbiddenException("Only the comment author or a project admin can delete this comment");
@@ -235,9 +232,9 @@ public class CommentService {
     }
 
     private void verifyReadAccess(String projectId, String userId) {
-        Project project = projectRepository.findById(projectId)
+        projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
-        if (!projectService.canUserAccessProject(userId, project)) {
+        if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, userId)) {
             throw new ForbiddenException("You do not have access to this project");
         }
     }

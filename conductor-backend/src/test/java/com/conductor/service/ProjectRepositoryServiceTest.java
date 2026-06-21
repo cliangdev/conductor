@@ -1,14 +1,9 @@
 package com.conductor.service;
 
-import com.conductor.entity.MemberRole;
-import com.conductor.entity.Project;
-import com.conductor.entity.ProjectMember;
 import com.conductor.entity.ProjectRepository;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepositoryRepository;
 import jakarta.persistence.EntityNotFoundException;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -34,7 +29,7 @@ class ProjectRepositoryServiceTest {
     private ProjectRepositoryRepository projectRepositoryRepository;
 
     @Mock
-    private ProjectMemberRepository projectMemberRepository;
+    private ProjectSecurityService projectSecurityService;
 
     @InjectMocks
     private ProjectRepositoryService projectRepositoryService;
@@ -44,27 +39,11 @@ class ProjectRepositoryServiceTest {
     private static final String REVIEWER_USER_ID = "reviewer-1";
     private static final String REPO_URL = "https://github.com/owner/repo";
 
-    private ProjectMember adminMember;
-    private ProjectMember reviewerMember;
-
-    @BeforeEach
-    void setUp() {
-        Project project = new Project();
-        project.setId(PROJECT_ID);
-
-        adminMember = new ProjectMember();
-        adminMember.setRole(MemberRole.ADMIN);
-
-        reviewerMember = new ProjectMember();
-        reviewerMember.setRole(MemberRole.REVIEWER);
-    }
-
     // --- addRepository tests ---
 
     @Test
     void addRepositoryHappyPathSavesAndReturnsEntity() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, ADMIN_USER_ID))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, ADMIN_USER_ID)).thenReturn(true);
         when(projectRepositoryRepository.save(any(ProjectRepository.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
 
@@ -85,8 +64,7 @@ class ProjectRepositoryServiceTest {
 
     @Test
     void addRepositoryNonAdminThrowsForbidden() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, REVIEWER_USER_ID))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, REVIEWER_USER_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> projectRepositoryService.addRepository(
                 PROJECT_ID, "My Repo", REPO_URL, "secret", REVIEWER_USER_ID))
@@ -97,13 +75,12 @@ class ProjectRepositoryServiceTest {
     }
 
     @Test
-    void addRepositoryUnknownUserThrowsNotFound() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "unknown"))
-                .thenReturn(Optional.empty());
+    void addRepositoryNonMemberThrowsForbidden() {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "unknown")).thenReturn(false);
 
         assertThatThrownBy(() -> projectRepositoryService.addRepository(
                 PROJECT_ID, "My Repo", REPO_URL, "secret", "unknown"))
-                .isInstanceOf(EntityNotFoundException.class);
+                .isInstanceOf(ForbiddenException.class);
     }
 
     // --- listRepositories tests ---
@@ -133,8 +110,7 @@ class ProjectRepositoryServiceTest {
     @Test
     void deleteRepositoryHappyPathDeletesEntity() {
         ProjectRepository repo = repoWithId("repo-1", PROJECT_ID);
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, ADMIN_USER_ID))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, ADMIN_USER_ID)).thenReturn(true);
         when(projectRepositoryRepository.findById("repo-1")).thenReturn(Optional.of(repo));
 
         projectRepositoryService.deleteRepository(PROJECT_ID, "repo-1", ADMIN_USER_ID);
@@ -144,8 +120,7 @@ class ProjectRepositoryServiceTest {
 
     @Test
     void deleteRepositoryNotFoundThrowsEntityNotFoundException() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, ADMIN_USER_ID))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, ADMIN_USER_ID)).thenReturn(true);
         when(projectRepositoryRepository.findById("missing")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> projectRepositoryService.deleteRepository(PROJECT_ID, "missing", ADMIN_USER_ID))
@@ -156,8 +131,7 @@ class ProjectRepositoryServiceTest {
     @Test
     void deleteRepositoryWrongProjectThrowsEntityNotFoundException() {
         ProjectRepository repo = repoWithId("repo-1", "other-project");
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, ADMIN_USER_ID))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, ADMIN_USER_ID)).thenReturn(true);
         when(projectRepositoryRepository.findById("repo-1")).thenReturn(Optional.of(repo));
 
         assertThatThrownBy(() -> projectRepositoryService.deleteRepository(PROJECT_ID, "repo-1", ADMIN_USER_ID))
@@ -169,8 +143,7 @@ class ProjectRepositoryServiceTest {
 
     @Test
     void deleteRepositoryNonAdminThrowsForbidden() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, REVIEWER_USER_ID))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, REVIEWER_USER_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> projectRepositoryService.deleteRepository(PROJECT_ID, "repo-1", REVIEWER_USER_ID))
                 .isInstanceOf(ForbiddenException.class)

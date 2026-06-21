@@ -1,7 +1,5 @@
 package com.conductor.service;
 
-import com.conductor.entity.MemberRole;
-import com.conductor.entity.ProjectMember;
 import com.conductor.entity.ProjectSettings;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
@@ -9,9 +7,7 @@ import com.conductor.exception.DiscordWebhookException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.DiscordTestResponse;
 import com.conductor.generated.model.ProjectSettingsResponse;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectSettingsRepository;
-import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
@@ -29,15 +25,15 @@ public class ProjectSettingsService {
     private static final String DISCORD_WEBHOOK_PREFIX = "https://discord.com/api/webhooks/";
 
     private final ProjectSettingsRepository projectSettingsRepository;
-    private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectSecurityService projectSecurityService;
     private final RestTemplate restTemplate;
 
     public ProjectSettingsService(
             ProjectSettingsRepository projectSettingsRepository,
-            ProjectMemberRepository projectMemberRepository,
+            ProjectSecurityService projectSecurityService,
             RestTemplate restTemplate) {
         this.projectSettingsRepository = projectSettingsRepository;
-        this.projectMemberRepository = projectMemberRepository;
+        this.projectSecurityService = projectSecurityService;
         this.restTemplate = restTemplate;
     }
 
@@ -122,10 +118,7 @@ public class ProjectSettingsService {
     }
 
     private void verifyAdmin(String projectId, String userId) {
-        ProjectMember member = projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
-                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
-
-        if (member.getRole() != MemberRole.ADMIN) {
+        if (!projectSecurityService.isProjectAdmin(projectId, userId)) {
             throw new ForbiddenException("Only ADMIN can manage project settings");
         }
     }

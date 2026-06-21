@@ -11,13 +11,18 @@ import { MemberRow } from '@/components/members/MemberRow'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api'
-import type { Member, MemberRole, OrgMember } from '@/types'
+import type { Invite, Member, MemberRole } from '@/types'
 
 interface ApiError extends Error {
   status?: number
 }
 
-const ADDABLE_ROLES: MemberRole[] = ['CREATOR', 'REVIEWER']
+const INVITE_ROLES: MemberRole[] = ['CREATOR', 'REVIEWER']
+
+function inviteLink(token: string): string {
+  const origin = typeof window !== 'undefined' ? window.location.origin : ''
+  return `${origin}/invites/${token}/accept`
+}
 
 export default function MembersPage() {
   const params = useParams()
@@ -30,13 +35,15 @@ export default function MembersPage() {
   const [membersLoading, setMembersLoading] = useState(true)
   const [membersError, setMembersError] = useState<string | null>(null)
 
-  const [addOpen, setAddOpen] = useState(false)
-  const [orgMembers, setOrgMembers] = useState<OrgMember[]>([])
-  const [orgMembersLoading, setOrgMembersLoading] = useState(false)
-  const [addUserId, setAddUserId] = useState('')
-  const [addRole, setAddRole] = useState<MemberRole>('CREATOR')
-  const [addError, setAddError] = useState<string | null>(null)
-  const [addSubmitting, setAddSubmitting] = useState(false)
+  const [invites, setInvites] = useState<Invite[]>([])
+
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteRole, setInviteRole] = useState<MemberRole>('CREATOR')
+  const [inviteError, setInviteError] = useState<string | null>(null)
+  const [inviteSubmitting, setInviteSubmitting] = useState(false)
+  const [createdLink, setCreatedLink] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const [removeConfirm, setRemoveConfirm] = useState<{ userId: string; name: string } | null>(null)
   const [removeError, setRemoveError] = useState<string | null>(null)
@@ -54,12 +61,27 @@ export default function MembersPage() {
     }
   }, [accessToken, projectId])
 
+  const fetchInvites = useCallback(async () => {
+    if (!accessToken) return
+    try {
+      const data = await apiGet<Invite[]>(`/api/v1/projects/${projectId}/invites`, accessToken)
+      setInvites(data)
+    } catch {
+      // Non-admins may not have access — leave invites empty
+      setInvites([])
+    }
+  }, [accessToken, projectId])
+
   useEffect(() => {
     fetchMembers()
   }, [fetchMembers])
 
   const currentUserRole = members.find((m) => m.userId === user?.id)?.role
   const isAdmin = currentUserRole === 'ADMIN'
+
+  useEffect(() => {
+    if (isAdmin) fetchInvites()
+  }, [isAdmin, fetchInvites])
 
   async function handleRoleChange(userId: string, role: MemberRole) {
     if (!accessToken) return
@@ -69,7 +91,7 @@ export default function MembersPage() {
         { role },
         accessToken,
       )
-      setMembers((prev) => prev.map((m) => (m.userId === userId ? { ...m, role: updated.role } : m)))
+      setMembers((prev) => prev.map((m) => (m.userId === userId ? { ...m, role: updated?.role ?? role } : m)))
       showToast('Role updated successfully')
     } catch (err) {
       const apiErr = err as ApiError
@@ -98,81 +120,81 @@ export default function MembersPage() {
     } catch (err) {
       const apiErr = err as ApiError
       if (apiErr.status === 400) {
-        setRemoveError('Cannot remove the last admin from the project.')
+        setRemoveError('Cannot remove the last admin from the workspace.')
       } else {
         setRemoveError('Failed to remove member. Please try again.')
       }
     }
   }
 
-  async function openAddModal() {
-    setAddUserId('')
-    setAddRole('CREATOR')
-    setAddError(null)
-    setAddOpen(true)
-
-    const orgId = activeProject?.orgId
-    if (!orgId || !accessToken) return
-
-    setOrgMembersLoading(true)
-    try {
-      const data = await apiGet<OrgMember[]>(`/api/v1/orgs/${orgId}/members`, accessToken)
-      setOrgMembers(data)
-    } catch {
-      setAddError('Failed to load org members.')
-    } finally {
-      setOrgMembersLoading(false)
-    }
+  function openInviteModal() {
+    setInviteEmail('')
+    setInviteRole('CREATOR')
+    setInviteError(null)
+    setCreatedLink(null)
+    setCopied(false)
+    setInviteOpen(true)
   }
 
-  function closeAddModal() {
-    setAddOpen(false)
-  }
-
-  const memberUserIds = new Set(members.map((m) => m.userId))
-  const candidates = orgMembers.filter((om) => !memberUserIds.has(om.userId))
-
-  async function handleAddSubmit(e: React.FormEvent) {
+  async function handleInviteSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!accessToken || !addUserId) {
-      setAddError('Please select a member to add.')
+    if (!accessToken || !inviteEmail.trim()) {
+      setInviteError('Please enter an email address.')
       return
     }
 
-    setAddSubmitting(true)
-    setAddError(null)
+    setInviteSubmitting(true)
+    setInviteError(null)
     try {
-      await apiPost(
-        `/api/v1/projects/${projectId}/members`,
-        { userId: addUserId, role: addRole },
+      const invite = await apiPost<Invite>(
+        `/api/v1/projects/${projectId}/invites`,
+        { email: inviteEmail.trim(), role: inviteRole },
         accessToken,
       )
-      await fetchMembers()
-      closeAddModal()
-      showToast('Member added')
+      if (invite.token) setCreatedLink(inviteLink(invite.token))
+      await fetchInvites()
+      showToast('Invitation sent')
     } catch (err) {
       const apiErr = err as ApiError
       if (apiErr.status === 403) {
-        setAddError('Only project admins can add members.')
+        setInviteError('Only admins can invite members.')
       } else if (apiErr.status === 409) {
-        setAddError('User is already a project member.')
+        setInviteError('That person is already a member or has a pending invite.')
       } else {
-        setAddError('Failed to add member.')
+        setInviteError('Failed to send invitation.')
       }
     } finally {
-      setAddSubmitting(false)
+      setInviteSubmitting(false)
     }
   }
 
-  const projectName = activeProject?.name ?? 'this project'
+  function copyLink() {
+    if (!createdLink) return
+    navigator.clipboard.writeText(createdLink).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  async function handleCancelInvite(inviteId: string) {
+    if (!accessToken) return
+    try {
+      await apiDelete(`/api/v1/projects/${projectId}/invites/${inviteId}`, accessToken)
+      setInvites((prev) => prev.filter((i) => i.id !== inviteId))
+    } catch {
+      showToast('Failed to cancel invitation.', 'error')
+    }
+  }
+
+  const workspaceName = activeProject?.name ?? 'this workspace'
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-foreground">Members</h1>
         {isAdmin && (
-          <Button onClick={openAddModal} size="sm">
-            Add Member
+          <Button onClick={openInviteModal} size="sm">
+            Invite member
           </Button>
         )}
       </div>
@@ -206,80 +228,118 @@ export default function MembersPage() {
         </div>
       )}
 
-      {/* Add member modal */}
+      {isAdmin && invites.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-sm font-semibold text-foreground mb-3">Pending invitations</h2>
+          <div className="bg-card rounded-lg border border-border divide-y divide-border">
+            {invites.map((invite) => (
+              <div key={invite.id} className="flex items-center justify-between px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-foreground truncate">{invite.email}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {invite.role.charAt(0) + invite.role.slice(1).toLowerCase()}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleCancelInvite(invite.id)}
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                >
+                  Cancel
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Invite member modal */}
       <Modal
-        open={addOpen}
-        onOpenChange={(open) => { if (!open) closeAddModal() }}
-        title="Add a member"
-        description={`Add an org member to ${projectName}`}
+        open={inviteOpen}
+        onOpenChange={(open) => { if (!open) setInviteOpen(false) }}
+        title="Invite a member"
+        description={`Invite someone to ${workspaceName} by email.`}
       >
-        <form onSubmit={handleAddSubmit} noValidate className="space-y-4">
-          <div>
-            <label htmlFor="add-user" className="block text-sm font-medium text-foreground mb-1">
-              Org member <span className="text-destructive">*</span>
-            </label>
-            {orgMembersLoading ? (
-              <p className="text-sm text-muted-foreground">Loading org members…</p>
-            ) : (
+        {createdLink ? (
+          <div className="space-y-4">
+            <p className="text-sm text-foreground">
+              Invitation sent. Share this link so they can join:
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={createdLink}
+                className="flex-1 rounded-md border border-input bg-muted text-foreground px-3 py-2 text-xs font-mono focus:outline-none"
+              />
+              <Button type="button" size="sm" variant="outline" onClick={copyLink}>
+                {copied ? 'Copied!' : 'Copy'}
+              </Button>
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button type="button" variant="outline" onClick={() => { setCreatedLink(null); setInviteEmail('') }}>
+                Invite another
+              </Button>
+              <Button type="button" onClick={() => setInviteOpen(false)}>
+                Done
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleInviteSubmit} noValidate className="space-y-4">
+            <div>
+              <label htmlFor="invite-email" className="block text-sm font-medium text-foreground mb-1">
+                Email <span className="text-destructive">*</span>
+              </label>
+              <input
+                id="invite-email"
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="teammate@example.com"
+                className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="invite-role" className="block text-sm font-medium text-foreground mb-1">
+                Role
+              </label>
               <select
-                id="add-user"
-                value={addUserId}
-                onChange={(e) => setAddUserId(e.target.value)}
+                id="invite-role"
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as MemberRole)}
                 className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               >
-                <option value="">Select a member…</option>
-                {candidates.map((om) => (
-                  <option key={om.userId} value={om.userId}>
-                    {om.name} ({om.email})
+                {INVITE_ROLES.map((role) => (
+                  <option key={role} value={role}>
+                    {role.charAt(0) + role.slice(1).toLowerCase()}
                   </option>
                 ))}
               </select>
-            )}
-            {!orgMembersLoading && candidates.length === 0 && !addError && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                All org members are already in this project.
+            </div>
+
+            {inviteError && (
+              <p className="text-sm text-destructive" role="alert">
+                {inviteError}
               </p>
             )}
-          </div>
 
-          <div>
-            <label htmlFor="add-role" className="block text-sm font-medium text-foreground mb-1">
-              Role
-            </label>
-            <select
-              id="add-role"
-              value={addRole}
-              onChange={(e) => setAddRole(e.target.value as MemberRole)}
-              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              {ADDABLE_ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {role.charAt(0) + role.slice(1).toLowerCase()}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {addError && (
-            <p className="text-sm text-destructive" role="alert">
-              {addError}
-            </p>
-          )}
-
-          <div className="flex gap-3 pt-2">
-            <Button type="submit" disabled={addSubmitting || orgMembersLoading || candidates.length === 0}>
-              {addSubmitting ? 'Adding…' : 'Add Member'}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={closeAddModal}
-              disabled={addSubmitting}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
+            <div className="flex gap-3 pt-2">
+              <Button type="submit" disabled={inviteSubmitting || !inviteEmail.trim()}>
+                {inviteSubmitting ? 'Sending…' : 'Send invite'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setInviteOpen(false)}
+                disabled={inviteSubmitting}
+              >
+                Cancel
+              </Button>
+            </div>
+          </form>
+        )}
       </Modal>
 
       {/* Remove confirm modal */}
@@ -289,7 +349,7 @@ export default function MembersPage() {
         title="Remove member"
       >
         <p className="text-sm text-foreground">
-          Remove <strong>{removeConfirm?.name}</strong> from {projectName}?
+          Remove <strong>{removeConfirm?.name}</strong> from {workspaceName}?
         </p>
         {removeError && (
           <p className="mt-2 text-sm text-destructive" role="alert">{removeError}</p>
