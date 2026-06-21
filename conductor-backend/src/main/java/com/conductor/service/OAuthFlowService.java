@@ -47,6 +47,9 @@ public class OAuthFlowService {
     @Value("${FRONTEND_URL:http://localhost:3000}")
     private String frontendUrl;
 
+    @Value("${BACKEND_URL:}")
+    private String backendUrl;
+
     public OAuthFlowService(IntegrationOAuthStateRepository oAuthStateRepository,
                             CredentialService credentialService,
                             ObjectMapper objectMapper) {
@@ -64,6 +67,10 @@ public class OAuthFlowService {
         if (googleClientSecret == null || googleClientSecret.isBlank()) {
             throw new IllegalStateException("GOOGLE_OAUTH_CLIENT_SECRET is not configured");
         }
+    }
+
+    public String oauthCallbackUri() {
+        return backendUrl + "/api/v1/oauth/callback";
     }
 
     @Transactional

@@ -26,16 +26,12 @@ import com.conductor.integration.ConnectorRegistry;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
 import java.time.Duration;
@@ -156,23 +152,16 @@ public class IntegrationController implements IntegrationsApi {
         requireAdminOrCreator(projectId);
         requireConnector(connectorId);
         String authUrl = oAuthFlowService.buildAuthorizationUrl(
-                projectId, connectorId, fixedOauthCallbackUri());
+                projectId, connectorId, oAuthFlowService.oauthCallbackUri());
         return ResponseEntity.ok(new OAuthAuthorizeResponse().authorizationUrl(authUrl));
     }
 
     @Override
     public ResponseEntity<Void> handleOAuthCallback(String code, String state) {
-        String frontendUrl = oAuthFlowService.handleCallback(code, state, fixedOauthCallbackUri());
+        String frontendUrl = oAuthFlowService.handleCallback(code, state, oAuthFlowService.oauthCallbackUri());
         return ResponseEntity.status(HttpStatus.FOUND)
                 .location(URI.create(frontendUrl))
                 .build();
-    }
-
-    private String fixedOauthCallbackUri() {
-        HttpServletRequest req = ((ServletRequestAttributes) RequestContextHolder.currentRequestAttributes()).getRequest();
-        String base = UriComponentsBuilder.fromUriString(req.getRequestURL().toString())
-                .replacePath(null).replaceQuery(null).build().toUriString();
-        return base + "/api/v1/oauth/callback";
     }
 
     private IntegrationConnector requireConnector(String connectorId) {
