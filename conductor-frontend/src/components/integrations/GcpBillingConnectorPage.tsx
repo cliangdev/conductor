@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiPost } from '@/lib/api';
+import { apiGet, apiPatch, apiPost } from '@/lib/api';
 import { ExternalLink } from 'lucide-react';
 
 interface ServiceCost {
@@ -66,10 +66,10 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   useEffect(() => {
     if (!accessToken || !response?.data?.oauthConnected) return;
     setLoadingProjects(true);
-    fetch(`/api/v1/projects/${projectId}/integrations/gcp-billing/gcp-projects`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
-      .then(r => r.json())
+    apiGet<{ projects: { projectId: string; name: string }[] }>(
+      `/api/v1/projects/${projectId}/integrations/gcp-billing/gcp-projects`,
+      accessToken
+    )
       .then(d => setGcpProjects(d.projects ?? []))
       .catch(console.error)
       .finally(() => setLoadingProjects(false));
@@ -80,10 +80,10 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
     setLoadingDatasets(true);
     setBqDatasets([]);
     setSelectedDataset('');
-    fetch(`/api/v1/projects/${projectId}/integrations/gcp-billing/bq-datasets?gcpProjectId=${selectedGcpProject}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
-      .then(r => r.json())
+    apiGet<{ datasets: { datasetId: string; location: string }[] }>(
+      `/api/v1/projects/${projectId}/integrations/gcp-billing/bq-datasets?gcpProjectId=${selectedGcpProject}`,
+      accessToken
+    )
       .then(d => setBqDatasets(d.datasets ?? []))
       .catch(console.error)
       .finally(() => setLoadingDatasets(false));
@@ -109,11 +109,11 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
     if (!accessToken || !selectedGcpProject || !selectedDataset) return;
     setSaving(true);
     try {
-      await fetch(`/api/v1/projects/${projectId}/integrations/gcp-billing/config`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: { bqProjectId: selectedGcpProject, bqDatasetName: selectedDataset } }),
-      });
+      await apiPatch(
+        `/api/v1/projects/${projectId}/integrations/gcp-billing/config`,
+        { config: { bqProjectId: selectedGcpProject, bqDatasetName: selectedDataset } },
+        accessToken
+      );
       await fetchData();
     } catch (e) {
       console.error('Config save failed', e);
@@ -223,7 +223,7 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
                 <select
                   value={selectedDataset}
                   onChange={e => setSelectedDataset(e.target.value)}
-                  disabled={!selectedGcpProject || loadingDatasets}
+                  disabled={!selectedGcpProject || loadingDatasets || bqDatasets.length === 0}
                   className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50"
                 >
                   <option value="">
@@ -233,6 +233,18 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
                     <option key={d.datasetId} value={d.datasetId}>{d.datasetId}{d.location ? ` (${d.location})` : ''}</option>
                   ))}
                 </select>
+                {selectedGcpProject && !loadingDatasets && bqDatasets.length === 0 && (
+                  <div className="mt-2 rounded-md bg-muted/50 border border-border p-3 text-xs text-muted-foreground space-y-1">
+                    <p className="font-medium text-foreground">No BigQuery datasets found in this project.</p>
+                    <p>You need to enable billing export first:</p>
+                    <ol className="list-decimal list-inside space-y-0.5 pl-1">
+                      <li>Go to <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">GCP Console → Billing</a></li>
+                      <li>Click <strong>Billing export</strong> → <strong>BigQuery export</strong></li>
+                      <li>Enable <strong>Standard usage cost</strong> and select a dataset (or create one)</li>
+                      <li>Come back here and refresh</li>
+                    </ol>
+                  </div>
+                )}
               </div>
             </div>
             {data?.errorMessage && (
