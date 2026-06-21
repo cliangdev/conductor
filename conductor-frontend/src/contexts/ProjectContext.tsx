@@ -12,6 +12,8 @@ interface ProjectContextValue {
   activeProject: Project | null
   setActiveProject: (project: Project) => void
   addProject: (project: Project) => void
+  updateProject: (project: Project) => void
+  removeProject: (projectId: string) => void
   loading: boolean
 }
 
@@ -66,8 +68,21 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     setProjects((prev) => [...prev, project])
   }, [])
 
+  const updateProject = useCallback((project: Project) => {
+    setProjects((prev) => prev.map((p) => (p.id === project.id ? project : p)))
+    setActiveProjectState((prev) => (prev?.id === project.id ? project : prev))
+  }, [])
+
+  const removeProject = useCallback((projectId: string) => {
+    setProjects((prev) => prev.filter((p) => p.id !== projectId))
+    setActiveProjectState((prev) => (prev?.id === projectId ? null : prev))
+    if (localStorage.getItem(ACTIVE_PROJECT_KEY) === projectId) {
+      localStorage.removeItem(ACTIVE_PROJECT_KEY)
+    }
+  }, [])
+
   return (
-    <ProjectContext.Provider value={{ projects, activeProject, setActiveProject, addProject, loading }}>
+    <ProjectContext.Provider value={{ projects, activeProject, setActiveProject, addProject, updateProject, removeProject, loading }}>
       {children}
     </ProjectContext.Provider>
   )

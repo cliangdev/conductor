@@ -13,7 +13,6 @@ import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.InviteService;
 import com.conductor.service.JwtService;
-import com.conductor.service.OrgInviteService;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,9 +48,6 @@ class InviteControllerTest {
 
     @MockitoBean
     private InviteService inviteService;
-
-    @MockitoBean
-    private OrgInviteService orgInviteService;
 
     @MockitoBean
     private JwtService jwtService;

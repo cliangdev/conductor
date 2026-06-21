@@ -6,25 +6,23 @@ import {
   BellIcon,
   BookOpenIcon,
   CheckIcon,
-  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  EyeIcon,
+  ChevronsUpDownIcon,
   FileTextIcon,
   FolderIcon,
   GitBranchIcon,
   GitForkIcon,
   KeyIcon,
   LogOutIcon,
-  MoreHorizontalIcon,
   PlusIcon,
   PuzzleIcon,
   SettingsIcon,
+  SlidersHorizontalIcon,
   UsersIcon,
-  UsersRoundIcon,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { CreateOrgDialog } from '@/components/layout/CreateOrgDialog'
+import { CreateWorkspaceDialog } from '@/components/layout/CreateWorkspaceDialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,21 +33,12 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useSidebar } from '@/contexts/SidebarContext'
 import { useProject } from '@/contexts/ProjectContext'
-import { useOrg } from '@/contexts/OrgContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useEditorChrome } from '@/contexts/EditorChromeContext'
 import { cn } from '@/lib/utils'
-import type { Org, Project } from '@/types'
+import type { Project } from '@/types'
 
 // ─── Primitives ───────────────────────────────────────────────────────────────
-
-function SidebarSectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="px-3 pt-4 pb-1 text-xs font-semibold text-muted-foreground tracking-wide select-none truncate">
-      {children}
-    </p>
-  )
-}
 
 function NavItem({
   href,
@@ -128,103 +117,28 @@ function NavGroup({
   )
 }
 
-// ─── Project Switcher ─────────────────────────────────────────────────────────
+// ─── Workspace Switcher ───────────────────────────────────────────────────────
 
-function ProjectSwitcher({
-  projects,
-  currentProject,
+function WorkspaceSwitcher({
+  workspaces,
+  currentWorkspace,
   onNavigate,
 }: {
-  projects: Project[]
-  currentProject: Project | null
+  workspaces: Project[]
+  currentWorkspace: Project | null
   onNavigate?: () => void
 }) {
   const router = useRouter()
-  const { setActiveProject } = useProject()
-
-  function selectProject(project: Project) {
-    setActiveProject(project)
-    router.push(`/app/projects/${project.id}/issues`)
-    onNavigate?.()
-  }
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-sidebar-hover transition-colors text-left group">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-primary/15 text-primary">
-            <FolderIcon className="h-3.5 w-3.5" />
-          </span>
-          <span className="flex-1 truncate text-sm font-semibold text-foreground">
-            {currentProject ? currentProject.name : 'Select a project'}
-          </span>
-          <ChevronDownIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0 opacity-60 group-hover:opacity-100 transition-opacity" />
-        </button>
-      </DropdownMenuTrigger>
-
-      <DropdownMenuContent align="start" className="w-56">
-        {projects.length > 0 && (
-          <>
-            <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
-              Switch project
-            </DropdownMenuLabel>
-            <div className="max-h-52 overflow-y-auto">
-              {projects.map((project) => (
-                <DropdownMenuItem
-                  key={project.id}
-                  onSelect={() => selectProject(project)}
-                  className="flex items-center gap-2"
-                >
-                  {currentProject?.id === project.id
-                    ? <CheckIcon className="h-3.5 w-3.5 shrink-0" />
-                    : <span className="h-3.5 w-3.5 shrink-0" />
-                  }
-                  <span className="truncate">{project.name}</span>
-                </DropdownMenuItem>
-              ))}
-            </div>
-            <DropdownMenuSeparator />
-          </>
-        )}
-        <DropdownMenuItem onSelect={() => { router.push('/app/projects/new'); onNavigate?.() }}>
-          <PlusIcon className="h-4 w-4 mr-2" />
-          New project
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-// ─── User Footer ─────────────────────────────────────────────────────────────
-
-function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
-  const router = useRouter()
   const pathname = usePathname()
-  const { user, signOut } = useAuth()
-  const { orgs, activeOrg, setActiveOrg } = useOrg()
-  const { projects } = useProject()
-  const [showCreateOrg, setShowCreateOrg] = useState(false)
+  const { setActiveProject } = useProject()
+  const { signOut } = useAuth()
+  const [showCreate, setShowCreate] = useState(false)
 
-  function handleOrgSwitch(org: Org) {
-    if (activeOrg?.id === org.id) {
-      onNavigate?.()
-      return
-    }
-    setActiveOrg(org)
-    if (pathname.startsWith('/app/projects/')) {
-      const orgProjects = projects.filter((p) => p.orgId === org.id)
-      router.push(
-        orgProjects.length > 0
-          ? `/app/projects/${orgProjects[0].id}/issues`
-          : '/app/org/members'
-      )
-    }
+  function selectWorkspace(workspace: Project) {
+    setActiveProject(workspace)
+    router.push(`/app/projects/${workspace.id}/issues`)
     onNavigate?.()
   }
-
-  const initials = user?.name
-    ? user.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
-    : '?'
 
   async function handleSignOut() {
     await signOut()
@@ -232,45 +146,68 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
     onNavigate?.()
   }
 
+  const settingsBase = currentWorkspace
+    ? `/app/projects/${currentWorkspace.id}/settings`
+    : null
+
   return (
-    <div className="border-t border-sidebar-border">
+    <>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button className="w-full flex items-center gap-2.5 px-3 py-3 hover:bg-sidebar-hover transition-colors text-left">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
-              {initials}
+          <button className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-sidebar-hover transition-colors text-left group">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-primary/15 text-primary">
+              <FolderIcon className="h-3.5 w-3.5" />
             </span>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-foreground truncate leading-tight">
-                {user?.name ?? 'Account'}
-              </p>
-            </div>
-            <MoreHorizontalIcon className="h-4 w-4 text-muted-foreground shrink-0 opacity-60" />
+            <span className="flex-1 truncate text-sm font-semibold text-foreground">
+              {currentWorkspace ? currentWorkspace.name : 'Workspace'}
+            </span>
+            <ChevronsUpDownIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0 opacity-50 group-hover:opacity-100 transition-opacity" />
           </button>
         </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start" side="top" className="w-56 mb-1">
-          <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-            Organizations
-          </DropdownMenuLabel>
-          {orgs.map((org) => (
-            <DropdownMenuItem
-              key={org.id}
-              onSelect={() => handleOrgSwitch(org)}
-              className="flex items-center gap-2"
-            >
-              {activeOrg?.id === org.id
-                ? <CheckIcon className="h-3.5 w-3.5 shrink-0" />
-                : <span className="h-3.5 w-3.5 shrink-0" />
-              }
-              <span className="truncate">{org.name}</span>
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuItem onSelect={() => setShowCreateOrg(true)} className="flex items-center gap-2">
-            <PlusIcon className="h-3.5 w-3.5 shrink-0" />
-            Create organization
-          </DropdownMenuItem>
+        <DropdownMenuContent align="start" className="w-56">
+          {workspaces.length > 1 && (
+            <>
+              <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+                Switch workspace
+              </DropdownMenuLabel>
+              <div className="max-h-52 overflow-y-auto">
+                {workspaces.map((workspace) => (
+                  <DropdownMenuItem
+                    key={workspace.id}
+                    onSelect={() => selectWorkspace(workspace)}
+                    className="flex items-center gap-2"
+                  >
+                    {currentWorkspace?.id === workspace.id
+                      ? <CheckIcon className="h-3.5 w-3.5 shrink-0" />
+                      : <span className="h-3.5 w-3.5 shrink-0" />
+                    }
+                    <span className="truncate">{workspace.name}</span>
+                  </DropdownMenuItem>
+                ))}
+              </div>
+              <DropdownMenuSeparator />
+            </>
+          )}
 
+          {settingsBase && (
+            <>
+              <DropdownMenuItem onSelect={() => { router.push(`${settingsBase}/general`); onNavigate?.() }}>
+                <SettingsIcon className="h-4 w-4 mr-2" />
+                Workspace settings
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => { router.push(`${settingsBase}/members`); onNavigate?.() }}>
+                <UsersIcon className="h-4 w-4 mr-2" />
+                Invite members
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
+
+          <DropdownMenuItem onSelect={() => setShowCreate(true)}>
+            <PlusIcon className="h-4 w-4 mr-2" />
+            Create workspace
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={handleSignOut} className="text-destructive focus:text-destructive">
             <LogOutIcon className="h-4 w-4 mr-2" />
@@ -279,8 +216,8 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <CreateOrgDialog open={showCreateOrg} onClose={() => setShowCreateOrg(false)} />
-    </div>
+      <CreateWorkspaceDialog open={showCreate} onClose={() => setShowCreate(false)} />
+    </>
   )
 }
 
@@ -289,150 +226,109 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const { projects, activeProject } = useProject()
-  const { activeOrg, teams } = useOrg()
 
-  // Determine current project from URL path
+  // Determine current workspace from URL path
   const projectIdFromPath = pathname.match(/\/app\/projects\/([^/]+)/)?.[1]
-  const currentProject = projects.find((p) => p.id === projectIdFromPath) ?? activeProject
-
-  // Only show projects belonging to the active org
-  const orgProjects = activeOrg
-    ? projects.filter((p) => p.orgId === activeOrg.id)
-    : projects
-
-  // Only show project nav when on a project page within the active org
-  const showProjectNav = currentProject && (!activeOrg || currentProject.orgId === activeOrg.id)
+  const currentWorkspace = projects.find((p) => p.id === projectIdFromPath) ?? activeProject
 
   return (
     <div className="flex flex-col h-full">
-      {/* Project switcher at top */}
+      {/* Workspace switcher at top */}
       <div className="border-b border-sidebar-border">
-        <ProjectSwitcher projects={orgProjects} currentProject={showProjectNav ? currentProject : null} onNavigate={onNavigate} />
+        <WorkspaceSwitcher
+          workspaces={projects}
+          currentWorkspace={currentWorkspace}
+          onNavigate={onNavigate}
+        />
       </div>
 
-      {/* Scrollable middle content */}
+      {/* Scrollable nav */}
       <div className="flex-1 overflow-y-auto py-1">
-        {/* Project nav — only when on a project page within the active org */}
-        {showProjectNav && currentProject && (
+        {currentWorkspace && (
           <div className="space-y-0.5 px-2 py-1">
             <NavItem
-              href={`/app/projects/${currentProject.id}/issues`}
+              href={`/app/projects/${currentWorkspace.id}/issues`}
               icon={<FileTextIcon className="h-4 w-4" />}
               onNavigate={onNavigate}
             >
               Issues
             </NavItem>
             <NavItem
-              href={`/app/projects/${currentProject.id}/docs`}
+              href={`/app/projects/${currentWorkspace.id}/docs`}
               icon={<BookOpenIcon className="h-4 w-4" />}
               onNavigate={onNavigate}
             >
               Docs
             </NavItem>
             <NavItem
-              href={`/app/projects/${currentProject.id}/workflows`}
+              href={`/app/projects/${currentWorkspace.id}/workflows`}
               icon={<GitBranchIcon className="h-4 w-4" />}
               onNavigate={onNavigate}
             >
               Workflows
             </NavItem>
             <NavItem
-              href={`/app/projects/${currentProject.id}/integrations`}
+              href={`/app/projects/${currentWorkspace.id}/settings/integrations`}
               icon={<PuzzleIcon className="h-4 w-4" />}
               onNavigate={onNavigate}
             >
               Integrations
             </NavItem>
             <NavGroup
-              href={`/app/projects/${currentProject.id}/settings`}
+              href={`/app/projects/${currentWorkspace.id}/settings`}
               icon={<SettingsIcon className="h-4 w-4" />}
               label="Settings"
               onNavigate={onNavigate}
               subLinks={
                 <>
                   <NavItem
-                    href={`/app/projects/${currentProject.id}/settings/members`}
+                    href={`/app/projects/${currentWorkspace.id}/settings/general`}
+                    icon={<SlidersHorizontalIcon className="h-4 w-4" />}
+                    onNavigate={onNavigate}
+                  >
+                    General
+                  </NavItem>
+                  <NavItem
+                    href={`/app/projects/${currentWorkspace.id}/settings/members`}
                     icon={<UsersIcon className="h-4 w-4" />}
                     onNavigate={onNavigate}
                   >
                     Members
                   </NavItem>
                   <NavItem
-                    href="/app/settings/api-keys"
+                    href={`/app/projects/${currentWorkspace.id}/settings/api-keys`}
                     icon={<KeyIcon className="h-4 w-4" />}
                     onNavigate={onNavigate}
                   >
                     API Keys
                   </NavItem>
                   <NavItem
-                    href={`/app/projects/${currentProject.id}/settings/notifications`}
+                    href={`/app/projects/${currentWorkspace.id}/settings/notifications`}
                     icon={<BellIcon className="h-4 w-4" />}
                     onNavigate={onNavigate}
                   >
                     Notifications
                   </NavItem>
                   <NavItem
-                    href={`/app/projects/${currentProject.id}/settings/github`}
-                    icon={<GitForkIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    GitHub
-                  </NavItem>
-                  <NavItem
-                    href={`/app/projects/${currentProject.id}/settings/integrations`}
+                    href={`/app/projects/${currentWorkspace.id}/settings/integrations`}
                     icon={<PuzzleIcon className="h-4 w-4" />}
                     onNavigate={onNavigate}
                   >
                     Integrations
                   </NavItem>
                   <NavItem
-                    href={`/app/projects/${currentProject.id}/settings/visibility`}
-                    icon={<EyeIcon className="h-4 w-4" />}
+                    href={`/app/projects/${currentWorkspace.id}/settings/github`}
+                    icon={<GitForkIcon className="h-4 w-4" />}
                     onNavigate={onNavigate}
                   >
-                    Visibility
+                    GitHub
                   </NavItem>
                 </>
               }
             />
           </div>
         )}
-
-        {/* Org section — labeled with the actual org name */}
-        {activeOrg && (
-          <>
-            <SidebarSectionLabel>{activeOrg.name}</SidebarSectionLabel>
-            <div className="space-y-0.5 px-2">
-              <NavItem
-                href="/app/org/members"
-                icon={<UsersIcon className="h-4 w-4" />}
-                onNavigate={onNavigate}
-              >
-                Members
-              </NavItem>
-              {teams.length > 0 && (
-                <NavItem
-                  href="/app/org/teams"
-                  icon={<UsersRoundIcon className="h-4 w-4" />}
-                  onNavigate={onNavigate}
-                >
-                  Teams
-                </NavItem>
-              )}
-              <NavItem
-                href="/app/org/settings"
-                icon={<SettingsIcon className="h-4 w-4" />}
-                onNavigate={onNavigate}
-              >
-                Settings
-              </NavItem>
-            </div>
-          </>
-        )}
       </div>
-
-      {/* User footer pinned at bottom */}
-      <UserFooter onNavigate={onNavigate} />
     </div>
   )
 }

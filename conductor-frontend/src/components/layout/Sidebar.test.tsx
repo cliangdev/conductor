@@ -12,26 +12,16 @@ vi.mock('@/contexts/SidebarContext', () => ({
     closeSidebar: vi.fn(),
     sidebarWidth: 240,
     setSidebarWidth: vi.fn(),
+    sidebarCollapsed: false,
+    setSidebarCollapsed: vi.fn(),
   }),
 }))
 
 vi.mock('@/contexts/ProjectContext', () => ({
   useProject: () => ({
-    projects: [{ id: 'proj-1', name: 'Test Project', orgId: 'org-1' }],
-    activeProject: { id: 'proj-1', name: 'Test Project', orgId: 'org-1' },
+    projects: [{ id: 'proj-1', name: 'Test Workspace' }],
+    activeProject: { id: 'proj-1', name: 'Test Workspace' },
     setActiveProject: vi.fn(),
-  }),
-}))
-
-vi.mock('@/contexts/OrgContext', () => ({
-  useOrg: () => ({
-    activeOrg: { id: 'org-1', name: 'Test Org', slug: 'test-org', createdAt: '2024-01-01' },
-    orgs: [{ id: 'org-1', name: 'Test Org', slug: 'test-org', createdAt: '2024-01-01' }],
-    teams: [],
-    loading: false,
-    needsOnboarding: false,
-    refetch: vi.fn(),
-    setActiveOrg: vi.fn(),
   }),
 }))
 
@@ -57,57 +47,71 @@ vi.mock('@/contexts/AuthContext', () => ({
 import { Sidebar } from './Sidebar'
 
 describe('Sidebar', () => {
-  it('renders the active project name in the project switcher', () => {
+  it('renders the active workspace name in the quiet switcher', () => {
     render(<Sidebar />)
-    expect(screen.getByText('Test Project')).toBeInTheDocument()
+    expect(screen.getByText('Test Workspace')).toBeInTheDocument()
   })
 
-  it('renders Settings group when on a project settings page', () => {
+  it('renders the workspace nav links', () => {
+    render(<Sidebar />)
+    expect(screen.getByRole('link', { name: /issues/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /docs/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /workflows/i })).toBeInTheDocument()
+  })
+
+  it('renders Settings group when on a workspace settings page', () => {
     render(<Sidebar />)
     expect(screen.getAllByText('Settings').length).toBeGreaterThanOrEqual(1)
   })
 
-  it('renders Members link under project Settings pointing to settings/members', () => {
+  it('renders General link under Settings pointing to settings/general', () => {
+    render(<Sidebar />)
+    const generalLink = screen.getByRole('link', { name: /general/i })
+    expect(generalLink).toHaveAttribute('href', '/app/projects/proj-1/settings/general')
+  })
+
+  it('renders Members link under Settings pointing to settings/members', () => {
     render(<Sidebar />)
     const membersLinks = screen.getAllByRole('link', { name: /members/i })
     const settingsMembersLink = membersLinks.find((l) =>
       l.getAttribute('href')?.includes('settings/members')
     )
-    expect(settingsMembersLink).toBeInTheDocument()
     expect(settingsMembersLink).toHaveAttribute('href', '/app/projects/proj-1/settings/members')
   })
 
-  it('renders API Keys link under Settings pointing to /app/settings/api-keys', () => {
+  it('renders API Keys link pointing to workspace settings/api-keys', () => {
     render(<Sidebar />)
     const apiKeysLink = screen.getByRole('link', { name: /api keys/i })
-    expect(apiKeysLink).toBeInTheDocument()
-    expect(apiKeysLink).toHaveAttribute('href', '/app/settings/api-keys')
+    expect(apiKeysLink).toHaveAttribute('href', '/app/projects/proj-1/settings/api-keys')
   })
 
   it('renders Notifications link under Settings', () => {
     render(<Sidebar />)
     const notificationsLink = screen.getByRole('link', { name: /notifications/i })
-    expect(notificationsLink).toBeInTheDocument()
     expect(notificationsLink).toHaveAttribute('href', '/app/projects/proj-1/settings/notifications')
   })
 
-  it('renders org section using org name as label with Members link', () => {
+  it('renders GitHub link under Settings', () => {
     render(<Sidebar />)
-    expect(screen.getByText('Test Org')).toBeInTheDocument()
-    const allMembersLinks = screen.getAllByRole('link', { name: /members/i })
-    const workspaceMembersLink = allMembersLinks.find((l) => l.getAttribute('href') === '/app/org/members')
-    expect(workspaceMembersLink).toBeInTheDocument()
+    const githubLink = screen.getByRole('link', { name: /github/i })
+    expect(githubLink).toHaveAttribute('href', '/app/projects/proj-1/settings/github')
   })
 
-  it('does not render Teams link in Workspace when org has no teams', () => {
+  it('does not render a Teams link', () => {
     render(<Sidebar />)
-    // Only check within workspace - no teams link should exist since teams=[]
-    const teamsLinks = screen.queryAllByRole('link', { name: /^teams$/i })
-    expect(teamsLinks).toHaveLength(0)
+    expect(screen.queryByRole('link', { name: /^teams$/i })).not.toBeInTheDocument()
   })
 
-  it('renders user name in footer', () => {
+  it('does not render a Visibility link', () => {
     render(<Sidebar />)
-    expect(screen.getByText('Test User')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /visibility/i })).not.toBeInTheDocument()
+  })
+
+  it('does not link to any /app/org route', () => {
+    render(<Sidebar />)
+    const orgLinks = screen.queryAllByRole('link').filter((l) =>
+      l.getAttribute('href')?.startsWith('/app/org')
+    )
+    expect(orgLinks).toHaveLength(0)
   })
 })

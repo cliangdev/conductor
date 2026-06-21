@@ -1,8 +1,6 @@
 package com.conductor.service;
 
-import com.conductor.entity.MemberRole;
 import com.conductor.entity.NotificationGroupConfig;
-import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
@@ -11,7 +9,6 @@ import com.conductor.notification.ChannelGroup;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.ProviderType;
 import com.conductor.repository.NotificationGroupConfigRepository;
-import com.conductor.repository.ProjectMemberRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -28,6 +25,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,24 +39,19 @@ class NotificationGroupServiceTest {
     private NotificationDispatcher notificationDispatcher;
 
     @Mock
-    private ProjectMemberRepository projectMemberRepository;
+    private ProjectSecurityService projectSecurityService;
 
     @InjectMocks
     private NotificationGroupService service;
 
     private User adminUser;
-    private ProjectMember adminMember;
 
     @BeforeEach
     void setUp() {
         adminUser = new User();
         adminUser.setId("user-1");
 
-        adminMember = new ProjectMember();
-        adminMember.setRole(MemberRole.ADMIN);
-
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
-                .thenReturn(Optional.of(adminMember));
+        lenient().when(projectSecurityService.isProjectAdmin("proj-1", "user-1")).thenReturn(true);
     }
 
     @Test
@@ -74,7 +67,7 @@ class NotificationGroupServiceTest {
 
     @Test
     void getGroupsThrowsForNonAdmin() {
-        adminMember.setRole(MemberRole.REVIEWER);
+        when(projectSecurityService.isProjectAdmin("proj-1", "user-1")).thenReturn(false);
 
         assertThatThrownBy(() -> service.getGroups("proj-1", adminUser))
                 .isInstanceOf(ForbiddenException.class);

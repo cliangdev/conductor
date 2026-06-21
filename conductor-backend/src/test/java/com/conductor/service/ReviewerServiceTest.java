@@ -48,6 +48,9 @@ class ReviewerServiceTest {
     @Mock
     private NotificationDispatcher notificationDispatcher;
 
+    @Mock
+    private ProjectSecurityService projectSecurityService;
+
     @InjectMocks
     private ReviewerService reviewerService;
 
@@ -89,8 +92,7 @@ class ReviewerServiceTest {
 
     @Test
     void assignReviewerSuccessCase() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerMember));
         when(issueReviewerRepository.findByIssueIdAndUserId(ISSUE_ID, reviewerUser.getId()))
@@ -118,8 +120,7 @@ class ReviewerServiceTest {
 
     @Test
     void assignReviewerAlreadyAssignedThrows409() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerMember));
 
@@ -141,8 +142,7 @@ class ReviewerServiceTest {
         creatorMember.setRole(MemberRole.CREATOR);
         creatorMember.setUser(reviewerUser);
 
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(creatorMember));
 
@@ -154,8 +154,7 @@ class ReviewerServiceTest {
 
     @Test
     void assignReviewerNonMemberTargetThrows400() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.empty());
 
@@ -167,8 +166,7 @@ class ReviewerServiceTest {
 
     @Test
     void assignReviewerByReviewerRoleThrows403() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, reviewerUser.getId())).thenReturn(false);
 
         assertThatThrownBy(() -> reviewerService.assignReviewer(
                 PROJECT_ID, ISSUE_ID, "some-user", reviewerUser))
@@ -201,8 +199,7 @@ class ReviewerServiceTest {
 
     @Test
     void unassignReviewerSuccess() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
 
         IssueReviewer existing = new IssueReviewer();
         existing.setIssueId(ISSUE_ID);
@@ -217,8 +214,7 @@ class ReviewerServiceTest {
 
     @Test
     void unassignReviewerNotFoundThrows404() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(issueReviewerRepository.findByIssueIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.empty());
 

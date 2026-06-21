@@ -1,14 +1,10 @@
 package com.conductor.service;
 
-import com.conductor.entity.MemberRole;
-import com.conductor.entity.Project;
-import com.conductor.entity.ProjectMember;
 import com.conductor.entity.ProjectSettings;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.ProjectSettingsResponse;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectSettingsRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,7 +30,7 @@ class ProjectSettingsServiceTest {
     private ProjectSettingsRepository projectSettingsRepository;
 
     @Mock
-    private ProjectMemberRepository projectMemberRepository;
+    private ProjectSecurityService projectSecurityService;
 
     @Mock
     private RestTemplate restTemplate;
@@ -47,14 +43,9 @@ class ProjectSettingsServiceTest {
 
     private User adminUser;
     private User reviewerUser;
-    private ProjectMember adminMember;
-    private ProjectMember reviewerMember;
 
     @BeforeEach
     void setUp() {
-        Project project = new Project();
-        project.setId(PROJECT_ID);
-
         adminUser = new User();
         adminUser.setId("admin-1");
         adminUser.setEmail("admin@example.com");
@@ -62,22 +53,11 @@ class ProjectSettingsServiceTest {
         reviewerUser = new User();
         reviewerUser.setId("reviewer-1");
         reviewerUser.setEmail("reviewer@example.com");
-
-        adminMember = new ProjectMember();
-        adminMember.setProject(project);
-        adminMember.setUser(adminUser);
-        adminMember.setRole(MemberRole.ADMIN);
-
-        reviewerMember = new ProjectMember();
-        reviewerMember.setProject(project);
-        reviewerMember.setUser(reviewerUser);
-        reviewerMember.setRole(MemberRole.REVIEWER);
     }
 
     @Test
     void updateSettingsSavesWebhookUrl() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -95,8 +75,7 @@ class ProjectSettingsServiceTest {
         settings.setProjectId(PROJECT_ID);
         settings.setDiscordWebhookUrl(VALID_WEBHOOK);
 
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.of(settings));
 
         ProjectSettingsResponse response = projectSettingsService.getSettings(PROJECT_ID, adminUser);
@@ -108,8 +87,7 @@ class ProjectSettingsServiceTest {
 
     @Test
     void updateSettingsWithNonDiscordUrlThrowsBusinessException() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
                 PROJECT_ID, "https://example.com/webhook", null, null, null, adminUser))
@@ -119,8 +97,7 @@ class ProjectSettingsServiceTest {
 
     @Test
     void updateSettingsNonAdminThrowsForbidden() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, reviewerUser.getId())).thenReturn(false);
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
                 PROJECT_ID, VALID_WEBHOOK, null, null, null, reviewerUser))
@@ -130,8 +107,7 @@ class ProjectSettingsServiceTest {
 
     @Test
     void updateSettingsWithRunTokenTtlHoursOutOfRangeThrowsBusinessException() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
                 PROJECT_ID, null, 0, null, null, adminUser))
@@ -146,8 +122,7 @@ class ProjectSettingsServiceTest {
 
     @Test
     void updateSettingsPersistsRunTokenTtlHoursWhenValid() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 

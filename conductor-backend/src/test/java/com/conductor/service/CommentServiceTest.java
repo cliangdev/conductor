@@ -74,7 +74,7 @@ class CommentServiceTest {
     private com.conductor.repository.ProjectRepository projectRepository;
 
     @Mock
-    private ProjectService projectService;
+    private ProjectSecurityService projectSecurityService;
 
     @InjectMocks
     private CommentService commentService;
@@ -271,7 +271,6 @@ class CommentServiceTest {
     @Test
     void listCommentsReturnsRepliesNested() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
 
         CommentReply reply = new CommentReply();
@@ -332,8 +331,6 @@ class CommentServiceTest {
     @Test
     void deleteCommentByAuthorSucceeds() {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
-                .thenReturn(Optional.empty());
 
         commentService.deleteComment("proj-1", "issue-1", "comment-1", author);
 
@@ -343,11 +340,7 @@ class CommentServiceTest {
     @Test
     void deleteCommentByNonAuthorNonAdminThrows403() {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
-
-        ProjectMember reviewerMember = new ProjectMember();
-        reviewerMember.setRole(MemberRole.REVIEWER);
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-2"))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-2")).thenReturn(false);
 
         assertThatThrownBy(() -> commentService.deleteComment("proj-1", "issue-1", "comment-1", otherUser))
                 .isInstanceOf(ForbiddenException.class);
@@ -356,11 +349,7 @@ class CommentServiceTest {
     @Test
     void deleteCommentByAdminSucceeds() {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
-
-        ProjectMember adminMember = new ProjectMember();
-        adminMember.setRole(MemberRole.ADMIN);
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-2"))
-                .thenReturn(Optional.of(adminMember));
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-2")).thenReturn(true);
 
         commentService.deleteComment("proj-1", "issue-1", "comment-1", otherUser);
 
@@ -372,7 +361,6 @@ class CommentServiceTest {
     @Test
     void listCommentsNullResolvedReturnsAll() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 
@@ -396,7 +384,6 @@ class CommentServiceTest {
         resolvedComment.setUpdatedAt(OffsetDateTime.now());
 
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(commentRepository.findAllByIssueIdAndResolvedAtIsNotNull("issue-1"))
                 .thenReturn(List.of(resolvedComment));
         when(commentReplyRepository.findAllByCommentId("comment-resolved")).thenReturn(List.of());
@@ -411,7 +398,6 @@ class CommentServiceTest {
     @Test
     void listCommentsResolvedFalseReturnsOnlyUnresolvedComments() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(commentRepository.findAllByIssueIdAndResolvedAtIsNull("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 
@@ -429,7 +415,6 @@ class CommentServiceTest {
         comment.setLineStale(true);
 
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
         when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 

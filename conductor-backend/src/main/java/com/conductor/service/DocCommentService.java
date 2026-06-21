@@ -2,13 +2,11 @@ package com.conductor.service;
 
 import com.conductor.entity.DocComment;
 import com.conductor.entity.DocCommentReply;
-import com.conductor.entity.MemberRole;
 import com.conductor.entity.ProjectDoc;
 import com.conductor.entity.User;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.repository.DocCommentRepository;
 import com.conductor.repository.DocCommentReplyRepository;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
@@ -24,19 +22,19 @@ public class DocCommentService {
     private final DocCommentReplyRepository docCommentReplyRepository;
     private final UserRepository userRepository;
     private final ProjectDocService projectDocService;
-    private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectSecurityService projectSecurityService;
 
     public DocCommentService(
             DocCommentRepository docCommentRepository,
             DocCommentReplyRepository docCommentReplyRepository,
             UserRepository userRepository,
             ProjectDocService projectDocService,
-            ProjectMemberRepository projectMemberRepository) {
+            ProjectSecurityService projectSecurityService) {
         this.docCommentRepository = docCommentRepository;
         this.docCommentReplyRepository = docCommentReplyRepository;
         this.userRepository = userRepository;
         this.projectDocService = projectDocService;
-        this.projectMemberRepository = projectMemberRepository;
+        this.projectSecurityService = projectSecurityService;
     }
 
     @Transactional
@@ -69,9 +67,7 @@ public class DocCommentService {
         boolean isAuthor = comment.getAuthor().getId().equals(userId);
 
         String projectId = comment.getDoc().getProject().getId();
-        boolean isAdmin = projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
-                .map(member -> member.getRole() == MemberRole.ADMIN || member.getRole() == MemberRole.CREATOR)
-                .orElse(false);
+        boolean isAdmin = projectSecurityService.isAdminOrCreator(projectId, userId);
 
         if (!isAuthor && !isAdmin) {
             throw new ForbiddenException("Only the comment author or a project admin can delete this comment");

@@ -12,9 +12,6 @@ export interface Project {
   description: string | null
   createdAt: string
   updatedAt: string
-  visibility?: 'PRIVATE' | 'ORG' | 'TEAM' | 'PUBLIC'
-  teamId?: string | null
-  orgId?: string | null
 }
 
 export interface AuthResponse {
@@ -56,36 +53,3 @@ export interface CreateApiKeyResponse {
   createdAt: string
 }
 
-export interface Org {
-  id: string
-  name: string
-  slug: string
-  createdAt: string
-}
-
-export type OrgMemberRole = 'ADMIN' | 'MEMBER'
-
-export interface OrgMember {
-  userId: string
-  name: string
-  email: string
-  role: OrgMemberRole
-  joinedAt: string
-}
-
-export interface Team {
-  id: string
-  orgId: string
-  name: string
-  createdAt: string
-}
-
-export type TeamMemberRole = 'LEAD' | 'MEMBER'
-
-export interface TeamMember {
-  userId: string
-  name: string
-  email: string
-  role: TeamMemberRole
-  joinedAt: string
-}

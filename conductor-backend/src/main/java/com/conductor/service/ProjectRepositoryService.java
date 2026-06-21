@@ -1,10 +1,7 @@
 package com.conductor.service;
 
-import com.conductor.entity.MemberRole;
-import com.conductor.entity.ProjectMember;
 import com.conductor.entity.ProjectRepository;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepositoryRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
@@ -16,13 +13,13 @@ import java.util.List;
 public class ProjectRepositoryService {
 
     private final ProjectRepositoryRepository projectRepositoryRepository;
-    private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectSecurityService projectSecurityService;
 
     public ProjectRepositoryService(
             ProjectRepositoryRepository projectRepositoryRepository,
-            ProjectMemberRepository projectMemberRepository) {
+            ProjectSecurityService projectSecurityService) {
         this.projectRepositoryRepository = projectRepositoryRepository;
-        this.projectMemberRepository = projectMemberRepository;
+        this.projectSecurityService = projectSecurityService;
     }
 
     @Transactional
@@ -83,10 +80,7 @@ public class ProjectRepositoryService {
     }
 
     private void verifyAdmin(String projectId, String userId) {
-        ProjectMember member = projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
-                .orElseThrow(() -> new EntityNotFoundException("Project not found"));
-
-        if (member.getRole() != MemberRole.ADMIN) {
+        if (!projectSecurityService.isProjectAdmin(projectId, userId)) {
             throw new ForbiddenException("Only ADMIN can manage project repositories");
         }
     }

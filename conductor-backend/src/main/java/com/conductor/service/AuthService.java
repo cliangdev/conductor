@@ -22,19 +22,19 @@ public class AuthService {
     private final JwtService jwtService;
     private final UserRepository userRepository;
     private final TransactionTemplate transactionTemplate;
-    private final OrgService orgService;
+    private final ProjectService projectService;
 
     public AuthService(
             FirebaseTokenVerifier firebaseTokenVerifier,
             JwtService jwtService,
             UserRepository userRepository,
             TransactionTemplate transactionTemplate,
-            OrgService orgService) {
+            ProjectService projectService) {
         this.firebaseTokenVerifier = firebaseTokenVerifier;
         this.jwtService = jwtService;
         this.userRepository = userRepository;
         this.transactionTemplate = transactionTemplate;
-        this.orgService = orgService;
+        this.projectService = projectService;
     }
 
     public AuthResponse authenticateWithFirebase(String idToken) throws FirebaseAuthException {
@@ -48,9 +48,9 @@ public class AuthService {
         });
 
         try {
-            orgService.getOrCreatePersonalOrg(user.getId(), user.getDisplayName(), user.getEmail());
+            projectService.ensureDefaultWorkspace(user);
         } catch (Exception e) {
-            log.error("Failed to auto-create personal org for user {}: {}", user.getId(), e.getMessage(), e);
+            log.error("Failed to auto-create default workspace for user {}: {}", user.getId(), e.getMessage(), e);
         }
 
         String accessToken = jwtService.generateToken(user.getId());

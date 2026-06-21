@@ -64,9 +64,6 @@ class IssueServiceTest {
     @Mock
     private UserRepository userRepository;
 
-    @Mock
-    private ProjectService projectService;
-
     @InjectMocks
     private IssueService issueService;
 
@@ -141,7 +138,7 @@ class IssueServiceTest {
     @Test
     void listIssuesFiltersByType() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(issueRepository.findByProjectIdAndType("proj-1", IssueType.PRD))
                 .thenReturn(List.of(testIssue));
 
@@ -158,7 +155,7 @@ class IssueServiceTest {
     @Test
     void listIssuesFiltersByStatus() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(issueRepository.findByProjectIdAndStatus("proj-1", IssueStatus.DRAFT))
                 .thenReturn(List.of(testIssue));
 
@@ -175,7 +172,7 @@ class IssueServiceTest {
     @Test
     void listIssuesFiltersByTypeAndStatus() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(projectService.canUserAccessProject("user-1", project)).thenReturn(true);
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(issueRepository.findByProjectIdAndTypeAndStatus("proj-1", IssueType.PRD, IssueStatus.DRAFT))
                 .thenReturn(List.of(testIssue));
 

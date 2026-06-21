@@ -77,7 +77,7 @@ export function renameFolder(
   name: string,
   token: string,
 ): Promise<DocFolder> {
-  return apiPatch<DocFolder>(`/api/v1/projects/${projectId}/docs/folders/${folderId}`, { name }, token)
+  return apiPatch<DocFolder>(`/api/v1/projects/${projectId}/docs/folders/${folderId}`, { name }, token) as Promise<DocFolder>
 }
 
 export function deleteFolder(projectId: string, folderId: string, token: string): Promise<void> {

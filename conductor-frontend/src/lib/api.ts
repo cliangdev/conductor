@@ -34,7 +34,7 @@ export function updateProjectRepository(
     `/api/v1/projects/${projectId}/repositories/${repositoryId}`,
     body,
     token,
-  )
+  ) as Promise<ProjectRepository>
 }
 
 export function deleteProjectRepository(

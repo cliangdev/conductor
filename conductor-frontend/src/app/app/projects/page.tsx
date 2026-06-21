@@ -29,12 +29,12 @@ export default function ProjectsPage() {
       <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-muted mb-6">
         <FolderPlusIcon className="w-8 h-8 text-muted-foreground" />
       </div>
-      <h1 className="text-2xl font-semibold text-foreground mb-2">Create your first project</h1>
+      <h1 className="text-2xl font-semibold text-foreground mb-2">Create your first workspace</h1>
       <p className="text-muted-foreground max-w-sm mb-8">
-        Projects organize your PRDs, issues, and team reviews in one place.
+        A workspace keeps your PRDs, issues, and reviews together for the whole team.
       </p>
       <Button size="lg" onClick={() => router.push('/app/projects/new')}>
-        Create project
+        Create workspace
       </Button>
     </div>
   )

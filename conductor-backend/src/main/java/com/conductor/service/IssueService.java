@@ -51,7 +51,6 @@ public class IssueService {
     private final NotificationDispatcher notificationDispatcher;
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
-    private final ProjectService projectService;
 
     public IssueService(
             IssueRepository issueRepository,
@@ -60,8 +59,7 @@ public class IssueService {
             ProjectMemberRepository projectMemberRepository,
             NotificationDispatcher notificationDispatcher,
             CommentRepository commentRepository,
-            UserRepository userRepository,
-            ProjectService projectService) {
+            UserRepository userRepository) {
         this.issueRepository = issueRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
@@ -69,7 +67,6 @@ public class IssueService {
         this.notificationDispatcher = notificationDispatcher;
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
-        this.projectService = projectService;
     }
 
     @Transactional
@@ -248,9 +245,9 @@ public class IssueService {
     }
 
     private void verifyReadAccess(String projectId, String userId) {
-        Project project = projectRepository.findById(projectId)
+        projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
-        if (!projectService.canUserAccessProject(userId, project)) {
+        if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new ForbiddenException("You do not have access to this project");
         }
     }
