@@ -127,6 +127,47 @@ export function fetchConnectionData(
     : apiGet<ConnectionDataResponse>(path, token)
 }
 
+// ── GitHub App (install via GitHub, repos selected on GitHub) ───────────────
+
+export interface GitHubInstallResponse {
+  /** github.com URL to redirect the browser to so the user installs the app + picks repos. */
+  installUrl: string
+}
+
+export interface GitHubRepository {
+  fullName: string
+  private: boolean
+}
+
+export interface GitHubRepositoriesResponse {
+  repositories: GitHubRepository[]
+  /** GitHub installation-settings URL — deep-link for adding/removing repositories. */
+  installationHtmlUrl: string
+  accountLogin: string
+  repositorySelection: string
+}
+
+/** Begin a GitHub App installation for this project; returns the URL to redirect to. */
+export function installGitHubApp(projectId: string, token: string): Promise<GitHubInstallResponse> {
+  return apiPost<GitHubInstallResponse>(
+    `/api/v1/projects/${projectId}/integrations/github/installations`,
+    {},
+    token,
+  )
+}
+
+/** List the repositories an installation can access (read live from GitHub). */
+export function listGitHubRepositories(
+  projectId: string,
+  connectionId: string,
+  token: string,
+): Promise<GitHubRepositoriesResponse> {
+  return apiGet<GitHubRepositoriesResponse>(
+    `/api/v1/projects/${projectId}/integrations/github/connections/${connectionId}/repositories`,
+    token,
+  )
+}
+
 async function throwApiError(res: Response): Promise<never> {
   let detail = `Server error (${res.status})`
   try {

@@ -26,7 +26,7 @@ interface IntegrationListItem {
   connectorId: string;
   name: string;
   category: string;
-  authType: 'NONE' | 'API_KEY' | 'BASIC' | 'OAUTH2' | 'WEBHOOK';
+  authType: 'NONE' | 'API_KEY' | 'BASIC' | 'OAUTH2' | 'WEBHOOK' | 'APP';
   capabilities: string[];
   singleInstance: boolean;
   description: string;

@@ -2,17 +2,17 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Modal } from '@/components/ui/modal';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   apiGet,
   listConnections,
-  createConnection,
   deleteConnection,
   listConnectionWebhookEvents,
+  installGitHubApp,
+  listGitHubRepositories,
 } from '@/lib/api';
-import type { ConnectionSummary, ConnectionResponse, WebhookEventSummary } from '@/lib/api';
+import type { ConnectionSummary, WebhookEventSummary, GitHubRepositoriesResponse } from '@/lib/api';
 import type { Member } from '@/types';
 
 interface ApiError extends Error {
@@ -20,10 +20,6 @@ interface ApiError extends Error {
 }
 
 const CONNECTOR_ID = 'github';
-
-function webhookUrlFor(connectionId: string): string {
-  return `${process.env.NEXT_PUBLIC_API_URL}/api/v1/webhooks/${CONNECTOR_ID}/${connectionId}`;
-}
 
 export default function GitHubConnectorPage({ projectId }: { projectId: string }) {
   const { accessToken, user } = useAuth();
@@ -35,19 +31,14 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
   const [connections, setConnections] = useState<ConnectionSummary[]>([]);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
   const [connectionsError, setConnectionsError] = useState<string | null>(null);
+  const [repos, setRepos] = useState<Record<string, GitHubRepositoriesResponse | null>>({});
 
   const [events, setEvents] = useState<WebhookEventSummary[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
 
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-
-  // Add-repository modal
-  const [addOpen, setAddOpen] = useState(false);
-  const [addRepoFullName, setAddRepoFullName] = useState('');
-  const [addLabel, setAddLabel] = useState('');
-  const [addError, setAddError] = useState<string | null>(null);
-  const [addSubmitting, setAddSubmitting] = useState(false);
-  const [created, setCreated] = useState<ConnectionResponse | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
 
   const fetchMembers = useCallback(async () => {
     if (!accessToken) return;
@@ -64,12 +55,22 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
   const fetchConnections = useCallback(async () => {
     if (!accessToken) return;
     try {
-      const data = await listConnections(projectId, CONNECTOR_ID, accessToken);
-      setConnections(data);
+      const conns = await listConnections(projectId, CONNECTOR_ID, accessToken);
+      setConnections(conns);
       setConnectionsError(null);
+      const entries = await Promise.all(
+        conns.map(async (c) => {
+          try {
+            return [c.id, await listGitHubRepositories(projectId, c.id, accessToken)] as const;
+          } catch {
+            return [c.id, null] as const;
+          }
+        })
+      );
+      setRepos(Object.fromEntries(entries));
     } catch (err) {
       const apiErr = err as ApiError;
-      setConnectionsError(apiErr.status === 403 ? 'access_denied' : 'Failed to load repositories.');
+      setConnectionsError(apiErr.status === 403 ? 'access_denied' : 'Failed to load GitHub connection.');
     } finally {
       setConnectionsLoading(false);
     }
@@ -104,75 +105,49 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
   useEffect(() => { if (!connectionsLoading) fetchEvents(connections); }, [connectionsLoading, connections, fetchEvents]);
 
   const currentUserRole = members.find((m) => m.userId === user?.id)?.role;
-  const isAdmin = currentUserRole === 'ADMIN';
+  const canMutate = currentUserRole === 'ADMIN' || currentUserRole === 'CREATOR';
 
-  async function copy(text: string, key: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 2000);
-    } catch {
-      showToast('Failed to copy to clipboard', 'error');
-    }
-  }
-
-  function openAddModal() {
-    setAddRepoFullName('');
-    setAddLabel('');
-    setAddError(null);
-    setCreated(null);
-    setAddOpen(true);
-  }
-
-  async function handleAddSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleInstall() {
     if (!accessToken) return;
-
-    const repoFullName = addRepoFullName.trim();
-    if (!repoFullName) {
-      setAddError('Repository (owner/name) is required.');
-      return;
-    }
-
-    setAddSubmitting(true);
-    setAddError(null);
+    setInstalling(true);
+    setInstallError(null);
     try {
-      const result = await createConnection(
-        projectId,
-        CONNECTOR_ID,
-        { label: addLabel.trim() || repoFullName, configJson: { repoFullName } },
-        accessToken
-      );
-      setCreated(result);
-      await fetchConnections();
-      showToast('Repository added.');
+      const { installUrl } = await installGitHubApp(projectId, accessToken);
+      window.location.href = installUrl;
     } catch (err) {
       const apiErr = err as ApiError;
-      if (apiErr.status === 403) {
-        setAddError('You do not have permission to add repositories.');
-      } else if (apiErr.status === 409) {
-        setAddError('This repository is already registered.');
-      } else {
-        setAddError('Failed to add repository. Please try again.');
-      }
-    } finally {
-      setAddSubmitting(false);
+      setInstallError(
+        apiErr.status === 503
+          ? 'The GitHub App isn’t configured on the server yet. Please try again later.'
+          : apiErr.status === 403
+            ? 'You do not have permission to connect GitHub.'
+            : 'Could not start the GitHub installation. Please try again.'
+      );
+      setInstalling(false);
     }
   }
 
-  async function handleDelete(connectionId: string) {
+  async function handleDisconnect(connectionId: string) {
     if (!accessToken) return;
+    setDisconnecting(connectionId);
     try {
       await deleteConnection(projectId, CONNECTOR_ID, connectionId, accessToken);
       setConnections((prev) => prev.filter((c) => c.id !== connectionId));
+      setRepos((prev) => {
+        const next = { ...prev };
+        delete next[connectionId];
+        return next;
+      });
     } catch (err) {
       const apiErr = err as ApiError;
       showToast(
         apiErr.status === 403
-          ? 'You do not have permission to remove repositories.'
-          : 'Failed to remove repository. Please try again.',
+          ? 'You do not have permission to disconnect GitHub.'
+          : 'Failed to disconnect. Please try again.',
         'error'
       );
+    } finally {
+      setDisconnecting(null);
     }
   }
 
@@ -180,16 +155,6 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <p className="text-sm text-muted-foreground">Loading…</p>
-      </div>
-    );
-  }
-
-  if (!isAdmin) {
-    return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <p className="text-sm text-muted-foreground">
-          You don&apos;t have permission to manage GitHub settings.
-        </p>
       </div>
     );
   }
@@ -213,75 +178,113 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
+    <div className="max-w-4xl mx-auto px-4 py-8">
       <h1 className="text-2xl font-bold text-foreground mb-1">GitHub</h1>
       <p className="text-sm text-muted-foreground mb-6">
-        Register repositories to receive pull-request webhooks. When a PR whose body contains{' '}
-        <code className="font-mono text-xs">closes conductor/KEY-123</code> is merged, the matching issue
-        moves to Done.
+        Install the Conductor GitHub App and choose which repositories it can access. When a pull request
+        whose body contains <code className="font-mono text-xs">closes conductor/KEY-123</code> is merged, the
+        matching issue moves to Done.
       </p>
 
-      {/* Repositories (connections) */}
-      <div className="bg-card rounded-lg border border-border p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-base font-semibold text-foreground">Repositories</h2>
-          <Button type="button" size="sm" onClick={openAddModal}>
-            Add Repository
-          </Button>
+      {connections.length === 0 ? (
+        /* Not connected — install CTA */
+        <div className="bg-card rounded-lg border border-border p-8 text-center">
+          <h2 className="text-base font-semibold text-foreground mb-1">Connect GitHub</h2>
+          <p className="text-sm text-muted-foreground mb-5 max-w-md mx-auto">
+            Install the Conductor app on your GitHub account or organization and pick the repositories to
+            connect — no webhook URLs or secrets to copy.
+          </p>
+          {canMutate ? (
+            <>
+              <Button type="button" onClick={handleInstall} disabled={installing}>
+                {installing ? 'Redirecting…' : 'Install on GitHub'}
+              </Button>
+              {installError && (
+                <p className="mt-3 text-sm text-destructive" role="alert">{installError}</p>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Ask a project admin to connect GitHub.
+            </p>
+          )}
         </div>
-
-        {connections.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No repositories registered yet.</p>
-        ) : (
-          <div className="divide-y divide-border">
-            {connections.map((conn) => (
-              <div
-                key={conn.id}
-                className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3 first:pt-0 last:pb-0"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground truncate">{conn.label || conn.id}</p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {conn.status === 'NEEDS_SETUP'
-                      ? 'Webhook not yet registered in GitHub'
-                      : 'Pull-request webhook'}
-                  </p>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  {conn.status === 'ACTIVE' ? (
-                    <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 mr-1">
-                      <span aria-hidden="true">✓</span> Configured
-                    </span>
-                  ) : conn.status === 'NEEDS_SETUP' ? (
-                    <span className="text-xs text-yellow-600 dark:text-yellow-400 mr-1">Needs setup</span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground mr-1">{conn.status}</span>
+      ) : (
+        /* Connected — one card per installation */
+        <div className="space-y-6">
+          {connections.map((conn) => {
+            const data = repos[conn.id];
+            return (
+              <div key={conn.id} className="bg-card rounded-lg border border-border p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <div className="min-w-0">
+                    <h2 className="text-base font-semibold text-foreground truncate">
+                      {conn.label || data?.accountLogin || 'GitHub installation'}
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      {data?.repositorySelection === 'all'
+                        ? 'All repositories'
+                        : `${data?.repositories.length ?? 0} ${(data?.repositories.length ?? 0) === 1 ? 'repository' : 'repositories'}`}
+                    </p>
+                  </div>
+                  {canMutate && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      {data?.installationHtmlUrl && (
+                        <a href={data.installationHtmlUrl} target="_blank" rel="noopener noreferrer">
+                          <Button type="button" size="sm" variant="outline">
+                            Add or remove repositories
+                          </Button>
+                        </a>
+                      )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleDisconnect(conn.id)}
+                        disabled={disconnecting === conn.id}
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                      >
+                        {disconnecting === conn.id ? 'Disconnecting…' : 'Disconnect'}
+                      </Button>
+                    </div>
                   )}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Copy webhook URL for ${conn.label || conn.id}`}
-                    onClick={() => copy(webhookUrlFor(conn.id), `url-${conn.id}`)}
-                  >
-                    {copiedKey === `url-${conn.id}` ? 'Copied!' : 'Copy URL'}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Delete ${conn.label || conn.id}`}
-                    onClick={() => handleDelete(conn.id)}
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                  >
-                    Delete
-                  </Button>
                 </div>
+
+                {data === undefined ? (
+                  <p className="text-sm text-muted-foreground">Loading repositories…</p>
+                ) : data === null ? (
+                  <p className="text-sm text-muted-foreground">Couldn’t load repositories from GitHub.</p>
+                ) : data.repositories.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No repositories selected yet.{' '}
+                    {canMutate && data.installationHtmlUrl && (
+                      <a
+                        href={data.installationHtmlUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline"
+                      >
+                        Add some on GitHub →
+                      </a>
+                    )}
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-border">
+                    {data.repositories.map((repo) => (
+                      <li key={repo.fullName} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                        <span className="text-sm font-mono text-foreground truncate">{repo.fullName}</span>
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {repo.private ? 'Private' : 'Public'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Recent Webhook Events */}
       <div className="bg-card rounded-lg border border-border p-6 mt-6">
@@ -327,99 +330,6 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
           </div>
         )}
       </div>
-
-      {/* Add Repository modal */}
-      <Modal
-        open={addOpen}
-        onOpenChange={(open) => { if (!open) setAddOpen(false); }}
-        title="Add Repository"
-        description="Register a GitHub repository to receive webhook events."
-      >
-        {created ? (
-          <div className="space-y-4">
-            <div className="rounded-md bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3">
-              <p className="text-xs text-yellow-700 dark:text-yellow-400">
-                Copy the signing secret now — it won&apos;t be shown again. Add a webhook in your repo at{' '}
-                <strong>Settings → Webhooks → Add webhook</strong>, paste the URL and secret, set content type to{' '}
-                <strong>application/json</strong>, and select <strong>Pull requests</strong> events.
-              </p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Webhook URL</label>
-              <div className="flex items-center gap-2">
-                <input
-                  readOnly
-                  value={created.webhookUrl ?? webhookUrlFor(created.id)}
-                  className="flex-1 rounded-md border border-input bg-muted text-foreground px-3 py-2 text-sm font-mono focus:outline-none"
-                  onFocus={(e) => e.target.select()}
-                />
-                <Button type="button" variant="outline" size="sm"
-                  onClick={() => copy(created.webhookUrl ?? webhookUrlFor(created.id), 'new-url')}>
-                  {copiedKey === 'new-url' ? 'Copied!' : 'Copy'}
-                </Button>
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Signing Secret</label>
-              <div className="flex items-center gap-2">
-                <input
-                  readOnly
-                  value={created.webhookSecret ?? ''}
-                  className="flex-1 rounded-md border border-input bg-muted text-foreground px-3 py-2 text-sm font-mono focus:outline-none"
-                  onFocus={(e) => e.target.select()}
-                />
-                <Button type="button" variant="outline" size="sm"
-                  onClick={() => copy(created.webhookSecret ?? '', 'new-secret')}>
-                  {copiedKey === 'new-secret' ? 'Copied!' : 'Copy'}
-                </Button>
-              </div>
-            </div>
-            <div className="flex pt-2">
-              <Button type="button" onClick={() => setAddOpen(false)}>Done</Button>
-            </div>
-          </div>
-        ) : (
-          <form onSubmit={handleAddSubmit} noValidate className="space-y-4">
-            <div>
-              <label htmlFor="add-repo-fullname" className="block text-sm font-medium text-foreground mb-1">
-                Repository <span className="text-destructive">*</span>
-              </label>
-              <input
-                id="add-repo-fullname"
-                type="text"
-                value={addRepoFullName}
-                onChange={(e) => setAddRepoFullName(e.target.value)}
-                placeholder="owner/repo"
-                className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent font-mono"
-              />
-            </div>
-            <div>
-              <label htmlFor="add-repo-label" className="block text-sm font-medium text-foreground mb-1">
-                Label <span className="text-muted-foreground font-normal">(optional)</span>
-              </label>
-              <input
-                id="add-repo-label"
-                type="text"
-                value={addLabel}
-                onChange={(e) => setAddLabel(e.target.value)}
-                placeholder="e.g. Frontend"
-                className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent"
-              />
-            </div>
-
-            {addError && <p className="text-sm text-destructive" role="alert">{addError}</p>}
-
-            <div className="flex gap-3 pt-2">
-              <Button type="submit" disabled={addSubmitting}>
-                {addSubmitting ? 'Saving…' : 'Add'}
-              </Button>
-              <Button type="button" variant="outline" onClick={() => setAddOpen(false)} disabled={addSubmitting}>
-                Cancel
-              </Button>
-            </div>
-          </form>
-        )}
-      </Modal>
     </div>
   );
 }
