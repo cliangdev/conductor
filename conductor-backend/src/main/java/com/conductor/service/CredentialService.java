@@ -1,23 +1,26 @@
 package com.conductor.service;
 
-import com.conductor.integration.AuthType;
+import com.conductor.entity.Connection;
 import com.conductor.integration.DecryptedCredentials;
 
 import java.time.OffsetDateTime;
-import java.util.Map;
-import java.util.Optional;
 
+/**
+ * Pure crypto over a {@link Connection} entity. One per-connection DEK (wrapped in
+ * {@code kmsKeyReference}) encrypts all secrets on the row. These methods mutate the entity in
+ * memory; persistence is the caller's responsibility (see {@code ConnectionService}).
+ */
 public interface CredentialService {
-    void storeCredentials(String projectId, String connectorId, AuthType authType,
-                          String accessToken, String refreshToken, OffsetDateTime expiresAt,
-                          Map<String, Object> configJson);
 
-    Optional<DecryptedCredentials> getCredentials(String projectId, String connectorId);
+    /** Encrypt access/refresh tokens into the connection (generates the DEK on first use). */
+    void putTokens(Connection c, String accessToken, String refreshToken, OffsetDateTime expiresAt);
 
-    void updateAccessToken(String projectId, String connectorId,
-                           String newAccessToken, OffsetDateTime newExpiresAt);
+    /** Encrypt the webhook signing secret into the connection (reuses the same DEK). */
+    void putWebhookSecret(Connection c, String secret);
 
-    void updateConfig(String projectId, String connectorId, Map<String, Object> config);
+    /** Decrypt access/refresh tokens + parse config_json. Returns null tokens if none stored. */
+    DecryptedCredentials decryptTokens(Connection c);
 
-    void deleteCredentials(String projectId, String connectorId);
+    /** Decrypt the webhook signing secret, or null if none stored. */
+    String decryptWebhookSecret(Connection c);
 }

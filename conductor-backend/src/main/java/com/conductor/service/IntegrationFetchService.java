@@ -1,14 +1,14 @@
 package com.conductor.service;
 
-import com.conductor.entity.IntegrationDataCache;
+import com.conductor.entity.Connection;
+import com.conductor.entity.ConnectionDataCache;
 import com.conductor.integration.AuthType;
+import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorHealth;
 import com.conductor.integration.ConnectorRegistry;
-import com.conductor.integration.DecryptedCredentials;
-import com.conductor.integration.IntegrationConnector;
-import com.conductor.repository.IntegrationCredentialRepository;
-import com.conductor.repository.IntegrationDataCacheRepository;
+import com.conductor.integration.FetchConnector;
+import com.conductor.repository.ConnectionDataCacheRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -26,6 +26,11 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+/**
+ * Pull pipeline keyed by connection. Returns cached data if fresh; otherwise runs the connector's
+ * fetch on a bounded thread (timeout → DEGRADED with stale data) and upserts the per-connection cache.
+ * Never throws on fetch failure.
+ */
 @Service
 public class IntegrationFetchService {
 
@@ -34,74 +39,70 @@ public class IntegrationFetchService {
     private static final int TOKEN_REFRESH_BUFFER_MINUTES = 5;
 
     private final ConnectorRegistry connectorRegistry;
-    private final CredentialService credentialService;
+    private final ConnectionService connectionService;
     private final OAuthFlowService oAuthFlowService;
-    private final IntegrationDataCacheRepository cacheRepository;
-    private final IntegrationCredentialRepository credentialRepository;
+    private final ConnectionDataCacheRepository cacheRepository;
     private final ObjectMapper objectMapper;
     private final ExecutorService fetchExecutor;
 
     public IntegrationFetchService(
             ConnectorRegistry connectorRegistry,
-            CredentialService credentialService,
+            ConnectionService connectionService,
             OAuthFlowService oAuthFlowService,
-            IntegrationDataCacheRepository cacheRepository,
-            IntegrationCredentialRepository credentialRepository,
+            ConnectionDataCacheRepository cacheRepository,
             ObjectMapper objectMapper,
             @Qualifier("integrationFetchExecutor") ExecutorService fetchExecutor) {
         this.connectorRegistry = connectorRegistry;
-        this.credentialService = credentialService;
+        this.connectionService = connectionService;
         this.oAuthFlowService = oAuthFlowService;
         this.cacheRepository = cacheRepository;
-        this.credentialRepository = credentialRepository;
         this.objectMapper = objectMapper;
         this.fetchExecutor = fetchExecutor;
     }
 
-    /**
-     * Fetches integration data. Returns cached data if fresh; otherwise triggers an on-demand fetch.
-     * Never throws on fetch failure — returns ConnectorData, possibly DEGRADED with stale data.
-     */
-    public ConnectorData fetchData(String projectId, String connectorId, boolean forceRefresh) {
-        IntegrationConnector connector = connectorRegistry.getById(connectorId)
-                .orElseThrow(() -> new EntityNotFoundException("Connector not found: " + connectorId));
+    /** Fetches data for a single connection. Never throws — returns ConnectorData (possibly DEGRADED). */
+    public ConnectorData fetchData(String connectionId, boolean forceRefresh) {
+        Connection conn = connectionService.getById(connectionId)
+                .orElseThrow(() -> new EntityNotFoundException("Connection not found: " + connectionId));
+        FetchConnector connector = connectorRegistry.findFetch(conn.getConnectorId())
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Connector does not support fetch: " + conn.getConnectorId()));
 
-        Optional<IntegrationDataCache> cached =
-                cacheRepository.findByProjectIdAndConnectorId(projectId, connectorId);
+        Optional<ConnectionDataCache> cached = cacheRepository.findByConnectionId(connectionId);
 
         if (!forceRefresh && cached.isPresent()) {
-            IntegrationDataCache cache = cached.get();
+            ConnectionDataCache cache = cached.get();
             OffsetDateTime maxAge = cache.getFetchedAt().plus(connector.getMaxCacheAge());
             if (OffsetDateTime.now().isBefore(maxAge)) {
-                log.debug("Returning fresh cache for connector={} project={}", connectorId, projectId);
+                log.debug("Returning fresh cache for connection={}", connectionId);
                 return cacheToConnectorData(cache);
             }
         }
 
-        Optional<DecryptedCredentials> credsOpt = credentialService.getCredentials(projectId, connectorId);
-        if (credsOpt.isEmpty()) {
+        ConnectionContext ctx = connectionService.toContext(conn);
+        if (ctx.accessToken() == null && AuthType.WEBHOOK.name().equals(conn.getAuthType()) == false) {
             return ConnectorData.setupRequired("Integration not connected — add credentials in Settings");
         }
-        DecryptedCredentials creds = maybeRefreshToken(projectId, connectorId, credsOpt.get());
+        ctx = maybeRefreshToken(conn, ctx);
 
-        final DecryptedCredentials finalCreds = creds;
+        final ConnectionContext finalCtx = ctx;
         ConnectorData result;
         try {
-            Future<ConnectorData> future = fetchExecutor.submit(() -> connector.fetchData(finalCreds));
+            Future<ConnectorData> future = fetchExecutor.submit(() -> connector.fetchData(finalCtx));
             result = future.get(FETCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
-            log.warn("Fetch timeout for connector={} project={}", connectorId, projectId);
+            log.warn("Fetch timeout for connection={}", connectionId);
             result = ConnectorData.degraded("Fetch timed out after " + FETCH_TIMEOUT_SECONDS + "s",
                     extractStaleData(cached));
         } catch (Exception e) {
-            log.warn("Fetch failed for connector={} project={}: {}", connectorId, projectId, e.getMessage());
+            log.warn("Fetch failed for connection={}: {}", connectionId, e.getMessage());
             result = ConnectorData.degraded("Fetch failed: " + e.getMessage(), extractStaleData(cached));
         }
 
         if (result.healthStatus() == ConnectorHealth.HEALTHY) {
-            upsertCache(projectId, connectorId, result, cached.orElse(null));
+            upsertCache(connectionId, result, cached.orElse(null));
         } else if (result.healthStatus() == ConnectorHealth.DEGRADED && cached.isPresent()) {
-            IntegrationDataCache cache = cached.get();
+            ConnectionDataCache cache = cached.get();
             cache.setHealthStatus(result.healthStatus().name());
             cacheRepository.save(cache);
         }
@@ -109,29 +110,27 @@ public class IntegrationFetchService {
         return result;
     }
 
-    private DecryptedCredentials maybeRefreshToken(String projectId, String connectorId,
-                                                   DecryptedCredentials creds) {
-        boolean isOAuth = AuthType.OAUTH2.name().equals(getAuthType(projectId, connectorId));
-        if (!isOAuth || creds.expiresAt() == null) {
-            return creds;
+    private ConnectionContext maybeRefreshToken(Connection conn, ConnectionContext ctx) {
+        boolean isOAuth = AuthType.OAUTH2.name().equals(conn.getAuthType());
+        if (!isOAuth || ctx.expiresAt() == null) {
+            return ctx;
         }
-        OffsetDateTime expiresAt = OffsetDateTime.ofInstant(creds.expiresAt(), ZoneOffset.UTC);
+        OffsetDateTime expiresAt = OffsetDateTime.ofInstant(ctx.expiresAt(), ZoneOffset.UTC);
         if (OffsetDateTime.now().plusMinutes(TOKEN_REFRESH_BUFFER_MINUTES).isAfter(expiresAt)) {
             try {
-                String newToken = oAuthFlowService.refreshAccessToken(projectId, connectorId, creds.refreshToken());
-                return new DecryptedCredentials(newToken, creds.refreshToken(), creds.expiresAt(), creds.configJson());
+                String newToken = oAuthFlowService.refreshAccessToken(conn, ctx.refreshToken());
+                return new ConnectionContext(ctx.projectId(), ctx.connectorId(), ctx.connectionId(),
+                        newToken, ctx.refreshToken(), ctx.expiresAt(), ctx.config(), ctx.webhookSecret());
             } catch (Exception e) {
-                log.warn("Token refresh failed for connector={}: {}", connectorId, e.getMessage());
+                log.warn("Token refresh failed for connection={}: {}", conn.getId(), e.getMessage());
             }
         }
-        return creds;
+        return ctx;
     }
 
-    private void upsertCache(String projectId, String connectorId, ConnectorData data,
-                             IntegrationDataCache existing) {
-        IntegrationDataCache cache = existing != null ? existing : new IntegrationDataCache();
-        cache.setProjectId(projectId);
-        cache.setConnectorId(connectorId);
+    private void upsertCache(String connectionId, ConnectorData data, ConnectionDataCache existing) {
+        ConnectionDataCache cache = existing != null ? existing : new ConnectionDataCache();
+        cache.setConnectionId(connectionId);
         try {
             cache.setDataJson(objectMapper.writeValueAsString(data.data()));
         } catch (Exception e) {
@@ -142,13 +141,13 @@ public class IntegrationFetchService {
         cacheRepository.save(cache);
     }
 
-    private ConnectorData cacheToConnectorData(IntegrationDataCache cache) {
+    private ConnectorData cacheToConnectorData(ConnectionDataCache cache) {
         Map<String, Object> data = parseJson(cache.getDataJson());
         ConnectorHealth health = ConnectorHealth.valueOf(cache.getHealthStatus());
         return new ConnectorData(data, health, cache.getFetchedAt().toInstant(), null);
     }
 
-    private Map<String, Object> extractStaleData(Optional<IntegrationDataCache> cached) {
+    private Map<String, Object> extractStaleData(Optional<ConnectionDataCache> cached) {
         return cached.map(c -> parseJson(c.getDataJson())).orElse(Map.of());
     }
 
@@ -161,11 +160,5 @@ public class IntegrationFetchService {
         } catch (Exception e) {
             return Map.of();
         }
-    }
-
-    private String getAuthType(String projectId, String connectorId) {
-        return credentialRepository.findByProjectIdAndConnectorId(projectId, connectorId)
-                .map(c -> c.getAuthType())
-                .orElse("");
     }
 }

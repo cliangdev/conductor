@@ -1,8 +1,8 @@
 package com.conductor.integration.connector;
 
+import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorHealth;
-import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.connector.local.LocalPostHogConnector;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
@@ -22,8 +22,8 @@ import static org.mockito.Mockito.when;
 
 class PostHogConnectorTest {
 
-    private static final DecryptedCredentials CREDS = new DecryptedCredentials(
-            "ph-key", null, null, Map.of("projectId", "123"));
+    private static final ConnectionContext CREDS = new ConnectionContext(
+            "proj", "posthog", "conn", "ph-key", null, null, Map.of("projectId", "123"), null);
 
     @Test
     void localConnectorReturnsThirtyElementHealthySeriesWithNoHttpCalls() {
@@ -60,7 +60,7 @@ class PostHogConnectorTest {
         PostHogConnector connector = new PostHogConnector(mock(RestTemplate.class));
 
         ConnectorData result = connector.fetchData(
-                new DecryptedCredentials("ph-key", null, null, Map.of()));
+                new ConnectionContext("proj", "posthog", "conn", "ph-key", null, null, Map.of(), null));
 
         assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
     }

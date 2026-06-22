@@ -1,8 +1,8 @@
 package com.conductor.integration.connector;
 
+import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorHealth;
-import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.connector.local.LocalGcpBillingConnector;
 import org.junit.jupiter.api.Test;
 
@@ -18,7 +18,7 @@ class GcpBillingConnectorTest {
         LocalGcpBillingConnector connector = new LocalGcpBillingConnector();
 
         ConnectorData result = connector.fetchData(
-                new DecryptedCredentials("token", null, null, Map.of()));
+                new ConnectionContext("proj", "gcp-billing", "conn", "token", null, null, Map.of(), null));
 
         assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.HEALTHY);
         @SuppressWarnings("unchecked")
@@ -33,7 +33,7 @@ class GcpBillingConnectorTest {
         GcpBillingConnector connector = new GcpBillingConnector();
 
         ConnectorData result = connector.fetchData(
-                new DecryptedCredentials("token", null, null, Map.of()));
+                new ConnectionContext("proj", "gcp-billing", "conn", "token", null, null, Map.of(), null));
 
         assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
     }

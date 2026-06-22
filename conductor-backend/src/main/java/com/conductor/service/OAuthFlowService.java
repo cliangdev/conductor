@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.entity.Connection;
 import com.conductor.entity.IntegrationOAuthState;
 import com.conductor.exception.BusinessException;
 import com.conductor.integration.AuthType;
@@ -33,7 +34,7 @@ public class OAuthFlowService {
     private static final String GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
     private final IntegrationOAuthStateRepository oAuthStateRepository;
-    private final CredentialService credentialService;
+    private final ConnectionService connectionService;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
@@ -50,10 +51,10 @@ public class OAuthFlowService {
     private String backendUrl;
 
     public OAuthFlowService(IntegrationOAuthStateRepository oAuthStateRepository,
-                            CredentialService credentialService,
+                            ConnectionService connectionService,
                             ObjectMapper objectMapper) {
         this.oAuthStateRepository = oAuthStateRepository;
-        this.credentialService = credentialService;
+        this.connectionService = connectionService;
         this.objectMapper = objectMapper;
         this.restTemplate = new RestTemplate();
     }
@@ -123,8 +124,8 @@ public class OAuthFlowService {
                 ? OffsetDateTime.now().plusSeconds(((Number) expiresIn).longValue())
                 : null;
 
-        credentialService.storeCredentials(projectId, connectorId, AuthType.OAUTH2,
-                accessToken, refreshToken, expiresAt, Map.of());
+        Connection conn = connectionService.getOrCreateSingle(projectId, connectorId, AuthType.OAUTH2);
+        connectionService.storeTokens(conn, accessToken, refreshToken, expiresAt);
 
         oAuthStateRepository.delete(oauthState);
 
@@ -132,7 +133,7 @@ public class OAuthFlowService {
         return frontendUrl + "/app/projects/" + projectId + "/integrations/" + connectorId;
     }
 
-    public String refreshAccessToken(String projectId, String connectorId, String refreshToken) {
+    public String refreshAccessToken(Connection conn, String refreshToken) {
         requireOAuthConfig();
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
@@ -158,8 +159,8 @@ public class OAuthFlowService {
                 ? OffsetDateTime.now().plusSeconds(((Number) expiresIn).longValue())
                 : null;
 
-        credentialService.updateAccessToken(projectId, connectorId, newAccessToken, newExpiresAt);
-        log.info("Access token refreshed for connector={} project={}", connectorId, projectId);
+        connectionService.updateAccessToken(conn, newAccessToken, newExpiresAt);
+        log.info("Access token refreshed for connection={}", conn.getId());
         return newAccessToken;
     }
 

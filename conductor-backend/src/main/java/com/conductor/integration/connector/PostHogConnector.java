@@ -14,7 +14,7 @@ import java.util.*;
 
 @Component
 @Profile("!local")
-public class PostHogConnector implements IntegrationConnector {
+public class PostHogConnector implements FetchConnector {
 
     private static final Logger log = LoggerFactory.getLogger(PostHogConnector.class);
 
@@ -38,28 +38,27 @@ public class PostHogConnector implements IntegrationConnector {
     @Override
     public ConnectorMetadata getMetadata() {
         return new ConnectorMetadata("posthog", "PostHog", ConnectorCategory.ANALYTICS,
-                AuthType.API_KEY, "Web analytics and product insights", "PH");
+                "Web analytics and product insights", "PH");
     }
 
     @Override
-    public List<ConnectorConfigField> getConfigFields() {
-        return List.of(
-            new ConnectorConfigField("apiKey", "Personal API Key",
-                "PostHog → Settings → Personal API Keys", true),
-            new ConnectorConfigField("projectId", "PostHog Project ID",
-                "Found in your PostHog project URL", false)
-        );
+    public ConnectorSpec getSpec() {
+        return ConnectorSpec.apiKey(true, List.of(
+            ConnectorConfigField.userInput("apiKey", "Personal API Key",
+                "PostHog → Settings → Personal API Keys", FieldType.SECRET, true),
+            ConnectorConfigField.userInput("projectId", "PostHog Project ID",
+                "Found in your PostHog project URL", FieldType.STRING, false)
+        ));
     }
 
     @Override
     public Duration getMaxCacheAge() { return Duration.ofMinutes(30); }
 
     @Override
-    public ConnectorData fetchData(DecryptedCredentials credentials) {
+    public ConnectorData fetchData(ConnectionContext ctx) {
         try {
-            String apiKey = credentials.accessToken();
-            Object projectIdObj = credentials.configJson() != null
-                ? credentials.configJson().get("projectId") : null;
+            String apiKey = ctx.accessToken();
+            Object projectIdObj = ctx.configValue("projectId");
             if (projectIdObj == null) {
                 return ConnectorData.setupRequired("PostHog Project ID not configured");
             }
@@ -131,14 +130,13 @@ public class PostHogConnector implements IntegrationConnector {
     }
 
     @Override
-    public ConnectorHealth checkHealth(DecryptedCredentials credentials) {
+    public ConnectorHealth checkHealth(ConnectionContext ctx) {
         try {
-            Object projectIdObj = credentials.configJson() != null
-                ? credentials.configJson().get("projectId") : null;
+            Object projectIdObj = ctx.configValue("projectId");
             if (projectIdObj == null) return ConnectorHealth.SETUP_REQUIRED;
 
             HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(credentials.accessToken());
+            headers.setBearerAuth(ctx.accessToken());
             HttpEntity<Void> request = new HttpEntity<>(headers);
 
             String url = "https://app.posthog.com/api/projects/" + projectIdObj + "/";

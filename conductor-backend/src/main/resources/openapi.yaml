@@ -38,16 +38,14 @@ tags:
     description: Workflow management endpoints
   - name: workflow-secrets
     description: Workflow secret management endpoints
-  - name: github
-    description: GitHub integration endpoints
   - name: daemon
     description: Daemon event polling endpoints
-  - name: repositories
-    description: Project repository registry endpoints
   - name: project-docs
     description: Project document and folder management endpoints
   - name: integrations
     description: Integration connector management endpoints
+  - name: webhooks
+    description: Generic inbound webhook receiver
 
 paths:
   /health:
@@ -2821,72 +2819,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /projects/{projectId}/github/webhook-events:
-    get:
-      tags:
-        - github
-      summary: List recent GitHub webhook events (Admin only)
-      operationId: listGitHubWebhookEvents
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Recent webhook events
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/WebhookEventSummary"
-        "403":
-          description: Access denied
-
-  /projects/{projectId}/github/webhook:
-    post:
-      tags:
-        - github
-      summary: GitHub webhook receiver
-      operationId: receiveGitHubWebhook
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: X-Hub-Signature-256
-          in: header
-          required: false
-          schema:
-            type: string
-        - name: X-GitHub-Event
-          in: header
-          required: false
-          schema:
-            type: string
-        - name: X-GitHub-Delivery
-          in: header
-          required: false
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: string
-      responses:
-        "200":
-          description: Webhook accepted
-        "401":
-          description: Invalid or missing signature
-      security: []
-
   /projects/{projectId}/notifications/channels:
     get:
       tags:
@@ -3633,165 +3565,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/WorkflowRunDetailDto"
 
-  /projects/{projectId}/repositories:
-    post:
-      tags:
-        - repositories
-      summary: Add a repository to the project (Admin only)
-      operationId: addRepository
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AddRepositoryRequest"
-      responses:
-        "201":
-          description: Repository added successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProjectRepositoryResponse"
-        "401":
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "403":
-          description: Caller is not a project admin
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-    get:
-      tags:
-        - repositories
-      summary: List repositories for a project
-      operationId: listRepositories
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: List of repositories
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ProjectRepositoryResponse"
-        "401":
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /projects/{projectId}/repositories/{repositoryId}:
-    patch:
-      tags:
-        - repositories
-      summary: Update a repository's label or webhook secret (Admin only)
-      operationId: updateRepository
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: repositoryId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateRepositoryRequest"
-      responses:
-        "200":
-          description: Repository updated successfully
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProjectRepositoryResponse"
-        "401":
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "403":
-          description: Caller is not a project admin
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Repository not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-    delete:
-      tags:
-        - repositories
-      summary: Remove a repository from the project (Admin only)
-      operationId: deleteRepository
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: repositoryId
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "204":
-          description: Repository deleted successfully
-        "401":
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "403":
-          description: Caller is not a project admin
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Repository not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
   /projects/{projectId}/daemon/events:
     get:
       tags:
@@ -3936,11 +3709,39 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
-  /projects/{projectId}/integrations/{connectorId}/credentials:
+  /projects/{projectId}/integrations/{connectorId}/connections:
+    get:
+      tags: [integrations]
+      summary: List connected instances for a connector
+      operationId: listConnections
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ConnectionSummary'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       tags: [integrations]
-      summary: Connect a connector (save credentials)
-      operationId: connectIntegration
+      summary: Create a connection (single-instance connect, or add an instance)
+      operationId: createConnection
       parameters:
         - name: projectId
           in: path
@@ -3951,20 +3752,20 @@ paths:
           required: true
           schema: {type: string}
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ConnectIntegrationRequest'
+              $ref: '#/components/schemas/CreateConnectionRequest'
       security:
         - bearerAuth: []
       responses:
         '201':
-          description: Connected
+          description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IntegrationStatusResponse'
+                $ref: '#/components/schemas/ConnectionResponse'
         '401':
           description: Unauthenticated
         '403':
@@ -3973,10 +3774,12 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+
+  /projects/{projectId}/integrations/{connectorId}/connections/{connectionId}:
     patch:
       tags: [integrations]
-      summary: Update integration credentials
-      operationId: updateIntegrationCredentials
+      summary: Update a connection (label and/or config)
+      operationId: updateConnection
       parameters:
         - name: projectId
           in: path
@@ -3986,12 +3789,16 @@ paths:
           in: path
           required: true
           schema: {type: string}
+        - name: connectionId
+          in: path
+          required: true
+          schema: {type: string}
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ConnectIntegrationRequest'
+              $ref: '#/components/schemas/UpdateConnectionRequest'
       security:
         - bearerAuth: []
       responses:
@@ -4000,25 +3807,27 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IntegrationStatusResponse'
+                $ref: '#/components/schemas/ConnectionResponse'
         '401':
           description: Unauthenticated
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
     delete:
       tags: [integrations]
-      summary: Disconnect a connector
-      operationId: disconnectIntegration
+      summary: Delete a connection
+      operationId: deleteConnection
       parameters:
         - name: projectId
           in: path
           required: true
           schema: {type: string}
         - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectionId
           in: path
           required: true
           schema: {type: string}
@@ -4026,7 +3835,7 @@ paths:
         - bearerAuth: []
       responses:
         '204':
-          description: Disconnected
+          description: Deleted
         '401':
           description: Unauthenticated
         '403':
@@ -4034,17 +3843,21 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /projects/{projectId}/integrations/{connectorId}/data:
+  /projects/{projectId}/integrations/{connectorId}/connections/{connectionId}/data:
     get:
       tags: [integrations]
-      summary: Get cached integration data (no fetch triggered)
-      operationId: getIntegrationData
+      summary: Get cached connection data (no fetch triggered)
+      operationId: getConnectionData
       parameters:
         - name: projectId
           in: path
           required: true
           schema: {type: string}
         - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectionId
           in: path
           required: true
           schema: {type: string}
@@ -4056,7 +3869,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IntegrationDataResponse'
+                $ref: '#/components/schemas/ConnectionDataResponse'
         '401':
           description: Unauthenticated
         '403':
@@ -4065,14 +3878,18 @@ paths:
           $ref: '#/components/responses/NotFound'
     post:
       tags: [integrations]
-      summary: Trigger on-demand fetch and return data
-      operationId: fetchIntegrationData
+      summary: Trigger on-demand fetch for a connection and return data
+      operationId: fetchConnectionData
       parameters:
         - name: projectId
           in: path
           required: true
           schema: {type: string}
         - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectionId
           in: path
           required: true
           schema: {type: string}
@@ -4084,7 +3901,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IntegrationDataResponse'
+                $ref: '#/components/schemas/ConnectionDataResponse'
         '401':
           description: Unauthenticated
         '403':
@@ -4093,6 +3910,40 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+
+  /projects/{projectId}/integrations/{connectorId}/connections/{connectionId}/webhook-events:
+    get:
+      tags: [integrations]
+      summary: List recent inbound webhook events for a connection
+      operationId: listConnectionWebhookEvents
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectionId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WebhookEventSummary'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /projects/{projectId}/integrations/{connectorId}/oauth/authorize:
     post:
@@ -4123,38 +3974,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/OAuthAuthorizeResponse'
-        '401':
-          description: Unauthenticated
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /projects/{projectId}/integrations/{connectorId}/config:
-    patch:
-      tags: [integrations]
-      summary: Update connector config (e.g. BigQuery dataset after OAuth)
-      operationId: updateIntegrationConfig
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema: {type: string}
-        - name: connectorId
-          in: path
-          required: true
-          schema: {type: string}
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateIntegrationConfigRequest'
-      security:
-        - bearerAuth: []
-      responses:
-        '204':
-          description: Config updated
         '401':
           description: Unauthenticated
         '403':
@@ -4237,6 +4056,34 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
+  /webhooks/{connectorId}/{connectionId}:
+    post:
+      tags: [webhooks]
+      summary: Generic inbound webhook receiver (URL routes to connector + connection)
+      operationId: receiveWebhook
+      parameters:
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectionId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: string}
+      security: []
+      responses:
+        '200':
+          description: Accepted (or duplicate delivery ignored)
+        '401':
+          description: Invalid signature
+        '404':
+          description: Unknown connector or connection
+
 components:
   responses:
     Forbidden:
@@ -4286,12 +4133,56 @@ components:
           type: string
         authType:
           type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        singleInstance:
+          type: boolean
         description:
           type: string
         iconLabel:
           type: string
         connected:
           type: boolean
+        configFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorConfigFieldDto'
+        connections:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectionSummary'
+
+    ConnectorConfigFieldDto:
+      type: object
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        hint:
+          type: string
+          nullable: true
+        type:
+          type: string
+        source:
+          type: string
+        required:
+          type: boolean
+        secret:
+          type: boolean
+
+    ConnectionSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+          nullable: true
+        status:
+          type: string
         healthStatus:
           type: string
           nullable: true
@@ -4299,27 +4190,13 @@ components:
           type: string
           format: date-time
           nullable: true
-        configFields:
-          type: array
-          items:
-            $ref: '#/components/schemas/ConnectorConfigFieldDto'
 
-    ConnectorConfigFieldDto:
+    CreateConnectionRequest:
       type: object
       properties:
-        fieldKey:
-          type: string
         label:
           type: string
-        hint:
-          type: string
           nullable: true
-        secret:
-          type: boolean
-
-    ConnectIntegrationRequest:
-      type: object
-      properties:
         apiKey:
           type: string
           nullable: true
@@ -4328,20 +4205,47 @@ components:
           additionalProperties: true
           nullable: true
 
-    IntegrationStatusResponse:
+    UpdateConnectionRequest:
       type: object
       properties:
-        connectorId:
-          type: string
-        connected:
-          type: boolean
-        healthStatus:
+        label:
           type: string
           nullable: true
+        config:
+          type: object
+          additionalProperties: true
+          nullable: true
 
-    IntegrationDataResponse:
+    ConnectionResponse:
       type: object
       properties:
+        id:
+          type: string
+        connectorId:
+          type: string
+        label:
+          type: string
+          nullable: true
+        status:
+          type: string
+        authType:
+          type: string
+        webhookUrl:
+          type: string
+          nullable: true
+        webhookSecret:
+          type: string
+          nullable: true
+        connectedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ConnectionDataResponse:
+      type: object
+      properties:
+        connectionId:
+          type: string
         connectorId:
           type: string
         data:
@@ -4361,13 +4265,6 @@ components:
 
     OAuthAuthorizeRequest:
       type: object
-
-    UpdateIntegrationConfigRequest:
-      type: object
-      properties:
-        config:
-          type: object
-          additionalProperties: true
 
     GcpProjectsResponse:
       type: object
@@ -5553,64 +5450,6 @@ components:
             type: string
           description: List of event IDs to acknowledge
 
-    UpdateRepositoryRequest:
-      type: object
-      properties:
-        label:
-          type: string
-          maxLength: 100
-          description: Updated human-readable label (omit to keep existing)
-        webhookSecret:
-          type: string
-          maxLength: 255
-          description: Updated webhook secret (omit to keep existing)
-
-    AddRepositoryRequest:
-      type: object
-      required:
-        - label
-        - repoUrl
-        - webhookSecret
-      properties:
-        label:
-          type: string
-          maxLength: 100
-          description: Human-readable label for this repository connection
-        repoUrl:
-          type: string
-          maxLength: 512
-          description: Full GitHub repository URL (e.g. https://github.com/owner/repo)
-        webhookSecret:
-          type: string
-          maxLength: 255
-          description: Shared secret for HMAC webhook signature verification
-
-    ProjectRepositoryResponse:
-      type: object
-      required:
-        - id
-        - label
-        - repoUrl
-        - repoFullName
-        - webhookSecretConfigured
-        - connectedAt
-      properties:
-        id:
-          type: string
-        label:
-          type: string
-        repoUrl:
-          type: string
-        repoFullName:
-          type: string
-          description: Parsed owner/repo from the URL (e.g. owner/repo)
-        webhookSecretConfigured:
-          type: boolean
-          description: True if a webhook secret is set (value is never returned)
-        connectedAt:
-          type: string
-          format: date-time
-
     WebhookEventSummary:
       type: object
       required:
@@ -5618,7 +5457,7 @@ components:
         - eventType
         - status
         - attempts
-        - createdAt
+        - receivedAt
       properties:
         id:
           type: string
@@ -5633,7 +5472,7 @@ components:
           type: integer
         errorMessage:
           type: string
-        createdAt:
+        receivedAt:
           type: string
           format: date-time
 

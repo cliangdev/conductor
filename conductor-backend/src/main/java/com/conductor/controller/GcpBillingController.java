@@ -7,9 +7,11 @@ import com.conductor.generated.model.BqDatasetsResponse;
 import com.conductor.generated.model.BqDatasetsResponseDatasetsInner;
 import com.conductor.generated.model.GcpProjectsResponse;
 import com.conductor.generated.model.GcpProjectsResponseProjectsInner;
+import com.conductor.entity.Connection;
+import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.connector.GcpBillingConnector;
 import com.conductor.repository.ProjectMemberRepository;
-import com.conductor.service.CredentialService;
+import com.conductor.service.ConnectionService;
 import com.conductor.service.OAuthFlowService;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
@@ -31,16 +33,16 @@ import java.util.Map;
 public class GcpBillingController {
 
     private final GcpBillingConnector gcpBillingConnector;
-    private final CredentialService credentialService;
+    private final ConnectionService connectionService;
     private final OAuthFlowService oAuthFlowService;
     private final ProjectMemberRepository projectMemberRepository;
 
     public GcpBillingController(GcpBillingConnector gcpBillingConnector,
-                                 CredentialService credentialService,
+                                 ConnectionService connectionService,
                                  OAuthFlowService oAuthFlowService,
                                  ProjectMemberRepository projectMemberRepository) {
         this.gcpBillingConnector = gcpBillingConnector;
-        this.credentialService = credentialService;
+        this.connectionService = connectionService;
         this.oAuthFlowService = oAuthFlowService;
         this.projectMemberRepository = projectMemberRepository;
     }
@@ -76,16 +78,19 @@ public class GcpBillingController {
     }
 
     private String requireGcpAccessToken(String projectId, String connectorId) {
-        return credentialService.getCredentials(projectId, connectorId)
-                .map(creds -> {
-                    if (creds.expiresAt() != null &&
-                            creds.expiresAt().isBefore(java.time.Instant.now().plusSeconds(60))) {
-                        return oAuthFlowService.refreshAccessToken(projectId, connectorId, creds.refreshToken());
-                    }
-                    return creds.accessToken();
-                })
+        Connection conn = connectionService.findSingle(projectId, connectorId)
                 .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
                         HttpStatus.CONFLICT, "No OAuth credentials stored — complete OAuth first"));
+        DecryptedCredentials creds = connectionService.decrypt(conn);
+        if (creds.accessToken() == null) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    HttpStatus.CONFLICT, "No OAuth credentials stored — complete OAuth first");
+        }
+        if (creds.expiresAt() != null &&
+                creds.expiresAt().isBefore(java.time.Instant.now().plusSeconds(60))) {
+            return oAuthFlowService.refreshAccessToken(conn, creds.refreshToken());
+        }
+        return creds.accessToken();
     }
 
     private void requireMember(String projectId) {

@@ -11,58 +11,70 @@ import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
+/** Generic inbound webhook event log row (idempotency + retry/dead-letter), connector-agnostic. */
 @Entity
-@Table(name = "github_webhook_events")
-public class GitHubWebhookEvent {
+@Table(name = "webhook_event")
+public class WebhookEvent {
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
     private String id;
 
-    @Column(name = "project_id", length = 36, nullable = false)
-    private String projectId;
+    @Column(name = "connector_id", length = 64, nullable = false)
+    private String connectorId;
 
-    @Column(name = "github_delivery_id", length = 255, unique = true)
-    private String githubDeliveryId;
+    @Column(name = "connection_id", length = 36, nullable = false)
+    private String connectionId;
 
-    @Column(name = "event_type", length = 100, nullable = false)
+    @Column(name = "delivery_id", length = 255)
+    private String deliveryId;
+
+    @Column(name = "event_type", length = 100)
     private String eventType;
 
-    @Column(name = "payload", nullable = false, columnDefinition = "jsonb")
+    @Column(name = "payload", columnDefinition = "TEXT")
     private String payload;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, length = 20)
+    @Column(name = "status", length = 20, nullable = false)
     private WebhookEventStatus status;
 
     @Column(name = "attempts", nullable = false)
-    private int attempts = 0;
+    private int attempts;
 
     @Column(name = "last_attempted_at")
     private OffsetDateTime lastAttemptedAt;
 
-    @Column(name = "error_message", columnDefinition = "text")
+    @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private OffsetDateTime createdAt;
+    @Column(name = "received_at", nullable = false, updatable = false)
+    private OffsetDateTime receivedAt;
 
     @PrePersist
     protected void onCreate() {
         if (id == null) {
             id = UUID.randomUUID().toString();
         }
-        createdAt = OffsetDateTime.now();
+        if (status == null) {
+            status = WebhookEventStatus.PENDING;
+        }
+        if (receivedAt == null) {
+            receivedAt = OffsetDateTime.now();
+        }
     }
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
-    public String getProjectId() { return projectId; }
-    public void setProjectId(String projectId) { this.projectId = projectId; }
+    public String getConnectorId() { return connectorId; }
+    public void setConnectorId(String connectorId) { this.connectorId = connectorId; }
 
-    public String getGithubDeliveryId() { return githubDeliveryId; }
-    public void setGithubDeliveryId(String githubDeliveryId) { this.githubDeliveryId = githubDeliveryId; }
+    public String getConnectionId() { return connectionId; }
+    public void setConnectionId(String connectionId) { this.connectionId = connectionId; }
+
+    public String getDeliveryId() { return deliveryId; }
+    public void setDeliveryId(String deliveryId) { this.deliveryId = deliveryId; }
 
     public String getEventType() { return eventType; }
     public void setEventType(String eventType) { this.eventType = eventType; }
@@ -82,6 +94,6 @@ public class GitHubWebhookEvent {
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
 
-    public OffsetDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
+    public OffsetDateTime getReceivedAt() { return receivedAt; }
+    public void setReceivedAt(OffsetDateTime receivedAt) { this.receivedAt = receivedAt; }
 }

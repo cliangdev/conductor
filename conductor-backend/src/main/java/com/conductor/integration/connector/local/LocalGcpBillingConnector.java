@@ -11,7 +11,7 @@ import java.util.Map;
 @Component
 @Profile("local")
 @Primary
-public class LocalGcpBillingConnector implements IntegrationConnector {
+public class LocalGcpBillingConnector implements FetchConnector {
 
     @Override
     public String getId() { return "gcp-billing"; }
@@ -19,16 +19,23 @@ public class LocalGcpBillingConnector implements IntegrationConnector {
     @Override
     public ConnectorMetadata getMetadata() {
         return new ConnectorMetadata("gcp-billing", "GCP Billing", ConnectorCategory.FINANCE,
-                AuthType.OAUTH2, "Cloud spend by service from BigQuery billing export", "GCP");
+                "Cloud spend by service from BigQuery billing export", "GCP");
     }
 
     @Override
-    public List<ConnectorConfigField> getConfigFields() {
-        return List.of();
+    public ConnectorSpec getSpec() {
+        return ConnectorSpec.oauth2(true, List.of(
+            ConnectorConfigField.userInput("bqProjectId", "BigQuery Project",
+                "GCP project holding the billing export", FieldType.SELECT, true),
+            ConnectorConfigField.userInput("bqDatasetName", "BigQuery Dataset",
+                "Dataset containing gcp_billing_export tables", FieldType.SELECT, true),
+            ConnectorConfigField.userInput("selectedProjectIds", "Projects to include",
+                "Limit costs to these GCP projects (optional)", FieldType.MULTISELECT, false)
+        ));
     }
 
     @Override
-    public ConnectorData fetchData(DecryptedCredentials credentials) {
+    public ConnectorData fetchData(ConnectionContext ctx) {
         List<Map<String, Object>> services = List.of(
                 Map.of("service", "Cloud Run", "cost", 487.20, "currency", "USD"),
                 Map.of("service", "Cloud SQL", "cost", 301.10, "currency", "USD"),
@@ -46,7 +53,7 @@ public class LocalGcpBillingConnector implements IntegrationConnector {
     }
 
     @Override
-    public ConnectorHealth checkHealth(DecryptedCredentials credentials) {
+    public ConnectorHealth checkHealth(ConnectionContext ctx) {
         return ConnectorHealth.HEALTHY;
     }
 }

@@ -21,7 +21,7 @@ import java.util.Map;
 
 @Component
 @Profile("!local")
-public class GcpBillingConnector implements IntegrationConnector {
+public class GcpBillingConnector implements FetchConnector {
 
     private static final Logger log = LoggerFactory.getLogger(GcpBillingConnector.class);
 
@@ -31,12 +31,20 @@ public class GcpBillingConnector implements IntegrationConnector {
     @Override
     public ConnectorMetadata getMetadata() {
         return new ConnectorMetadata("gcp-billing", "GCP Billing", ConnectorCategory.FINANCE,
-                AuthType.OAUTH2, "Cloud spend by service from BigQuery billing export", "GCP");
+                "Cloud spend by service from BigQuery billing export", "GCP");
     }
 
     @Override
-    public List<ConnectorConfigField> getConfigFields() {
-        return List.of();
+    public ConnectorSpec getSpec() {
+        // OAuth captures the token; these are populated post-auth via the dataset picker (config PATCH).
+        return ConnectorSpec.oauth2(true, List.of(
+            ConnectorConfigField.userInput("bqProjectId", "BigQuery Project",
+                "GCP project holding the billing export", FieldType.SELECT, true),
+            ConnectorConfigField.userInput("bqDatasetName", "BigQuery Dataset",
+                "Dataset containing gcp_billing_export tables", FieldType.SELECT, true),
+            ConnectorConfigField.userInput("selectedProjectIds", "Projects to include",
+                "Limit costs to these GCP projects (optional)", FieldType.MULTISELECT, false)
+        ));
     }
 
     @SuppressWarnings("unchecked")
@@ -79,8 +87,8 @@ public class GcpBillingConnector implements IntegrationConnector {
 
     @Override
     @SuppressWarnings("unchecked")
-    public ConnectorData fetchData(DecryptedCredentials credentials) {
-        Map<String, Object> config = credentials.configJson();
+    public ConnectorData fetchData(ConnectionContext ctx) {
+        Map<String, Object> config = ctx.config();
         Object bqProjectIdObj = config != null ? config.get("bqProjectId") : null;
         Object bqDatasetNameObj = config != null ? config.get("bqDatasetName") : null;
 
@@ -98,8 +106,8 @@ public class GcpBillingConnector implements IntegrationConnector {
 
         try {
             GoogleCredentials creds = GoogleCredentials.create(
-                    new AccessToken(credentials.accessToken(),
-                            credentials.expiresAt() != null ? Date.from(credentials.expiresAt()) : null));
+                    new AccessToken(ctx.accessToken(),
+                            ctx.expiresAt() != null ? Date.from(ctx.expiresAt()) : null));
             BigQuery bigquery = BigQueryOptions.newBuilder()
                     .setProjectId(bqProjectId)
                     .setCredentials(creds)
@@ -187,16 +195,16 @@ public class GcpBillingConnector implements IntegrationConnector {
     }
 
     @Override
-    public ConnectorHealth checkHealth(DecryptedCredentials credentials) {
-        Map<String, Object> config = credentials.configJson();
+    public ConnectorHealth checkHealth(ConnectionContext ctx) {
+        Map<String, Object> config = ctx.config();
         Object bqProjectIdObj = config != null ? config.get("bqProjectId") : null;
         if (bqProjectIdObj == null || bqProjectIdObj.toString().isBlank()) {
             return ConnectorHealth.SETUP_REQUIRED;
         }
         try {
             GoogleCredentials creds = GoogleCredentials.create(
-                    new AccessToken(credentials.accessToken(),
-                            credentials.expiresAt() != null ? Date.from(credentials.expiresAt()) : null));
+                    new AccessToken(ctx.accessToken(),
+                            ctx.expiresAt() != null ? Date.from(ctx.expiresAt()) : null));
             BigQuery bigquery = BigQueryOptions.newBuilder()
                     .setProjectId(bqProjectIdObj.toString())
                     .setCredentials(creds)
