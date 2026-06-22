@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 
@@ -21,9 +22,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * GitHub as a push connector. Each connection is one repository (multi-instance). The framework owns
- * receive/log/dedup/retry; this connector owns the HMAC-SHA256 signature scheme, delivery-id/event-type
- * extraction, and the domain mapping: a merged PR whose body says "closes conductor/KEY-N" → issue DONE.
+ * GitHub App connector. Connections are GitHub App installations (multi-instance, keyed by installation
+ * id in {@code config_json}); repos are selected on GitHub and listed live. The single app-level webhook
+ * endpoint verifies with the app's webhook secret; this connector owns the HMAC-SHA256 signature scheme,
+ * delivery-id/event-type extraction, and the domain mapping: a merged PR whose body says
+ * "closes conductor/KEY-N" → issue DONE. Install/callback/repo-listing live in {@link GitHubAppController}.
  */
 @Component
 public class GitHubConnector implements WebhookConnector {
@@ -35,10 +38,14 @@ public class GitHubConnector implements WebhookConnector {
 
     private final IssueRepository issueRepository;
     private final ObjectMapper objectMapper;
+    /** App-level webhook signing secret (one per GitHub App, not per connection). */
+    private final String appWebhookSecret;
 
-    public GitHubConnector(IssueRepository issueRepository, ObjectMapper objectMapper) {
+    public GitHubConnector(IssueRepository issueRepository, ObjectMapper objectMapper,
+                           @Value("${GITHUB_APP_WEBHOOK_SECRET:}") String appWebhookSecret) {
         this.issueRepository = issueRepository;
         this.objectMapper = objectMapper;
+        this.appWebhookSecret = appWebhookSecret;
     }
 
     @Override
@@ -47,28 +54,22 @@ public class GitHubConnector implements WebhookConnector {
     @Override
     public ConnectorMetadata getMetadata() {
         return new ConnectorMetadata("github", "GitHub", ConnectorCategory.DEVELOPER,
-                "Auto-update issue status when a linked pull request merges", "GH");
+                "Install the Conductor GitHub App to auto-update issues when linked pull requests merge", "GH");
     }
 
     @Override
     public ConnectorSpec getSpec() {
-        return ConnectorSpec.webhook(false, List.of(
-                ConnectorConfigField.userInput("repoFullName", "Repository", "owner/name",
-                        FieldType.STRING, true),
-                ConnectorConfigField.generated("webhookUrl", "Webhook URL",
-                        "Add this URL under the repo's Settings → Webhooks (Pull request events)",
-                        FieldType.URL_READONLY),
-                ConnectorConfigField.generated("webhookSecret", "Webhook Secret",
-                        "Paste as the webhook secret. Shown once — copy it now.", FieldType.SECRET)
-        ));
+        // App connector: no user-entered fields — the user installs the app on GitHub and picks repos there.
+        return ConnectorSpec.app(false, List.of());
     }
 
     @Override
     public WebhookVerification verify(byte[] rawBody, HttpHeaders headers, ConnectionContext ctx) {
         String signatureHeader = headers.getFirst("X-Hub-Signature-256");
-        String secret = ctx.webhookSecret();
+        // GitHub App: one app-level webhook secret for all installations (not per-connection).
+        String secret = appWebhookSecret;
         if (secret == null || secret.isBlank()) {
-            return WebhookVerification.fail("No webhook secret configured for this connection");
+            return WebhookVerification.fail("GitHub App webhook secret is not configured");
         }
         if (signatureHeader == null || !signatureHeader.startsWith("sha256=")) {
             return WebhookVerification.fail("Missing or malformed X-Hub-Signature-256");

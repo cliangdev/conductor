@@ -22,4 +22,8 @@ public record ConnectorSpec(AuthType authType, boolean singleInstance, List<Conn
     public static ConnectorSpec webhook(boolean singleInstance, List<ConnectorConfigField> fields) {
         return new ConnectorSpec(AuthType.WEBHOOK, singleInstance, fields);
     }
+
+    public static ConnectorSpec app(boolean singleInstance, List<ConnectorConfigField> fields) {
+        return new ConnectorSpec(AuthType.APP, singleInstance, fields);
+    }
 }

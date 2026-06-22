@@ -14,6 +14,9 @@ public enum AuthType {
     BASIC,
     /** Redirect-based delegated auth with token refresh (GCP Billing, Slack). */
     OAUTH2,
-    /** Inbound push; the "credential" is a platform-generated signing secret (GitHub). */
-    WEBHOOK
+    /** Inbound push; the "credential" is a platform-generated signing secret (GitHub repo webhook). */
+    WEBHOOK,
+    /** Installed app (e.g. GitHub App): the user installs a vendor-owned app and picks resources on the
+     *  provider; the app authenticates with its own key, and the connection stores an installation id. */
+    APP
 }

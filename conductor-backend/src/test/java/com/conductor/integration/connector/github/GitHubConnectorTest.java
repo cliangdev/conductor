@@ -38,7 +38,7 @@ class GitHubConnectorTest {
 
     @BeforeEach
     void setUp() {
-        connector = new GitHubConnector(issueRepository, new ObjectMapper());
+        connector = new GitHubConnector(issueRepository, new ObjectMapper(), SECRET);
     }
 
     private ConnectionContext ctx() {
