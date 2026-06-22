@@ -12,7 +12,11 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
@@ -36,6 +40,15 @@ public class ConnectionService {
     private final CredentialService credentialService;
     private final ConnectorRegistry connectorRegistry;
     private final ObjectMapper objectMapper;
+
+    /**
+     * Self-reference (via the Spring proxy) so {@link #createSingleInNewTx} actually runs in a
+     * {@code REQUIRES_NEW} transaction. Calling {@code this.createSingleInNewTx(...)} directly would
+     * be a self-invocation that bypasses the proxy and the propagation advice.
+     */
+    @Autowired
+    @Lazy
+    private ConnectionService self;
 
     public ConnectionService(ConnectionRepository connectionRepository,
                              ConnectionDataCacheRepository cacheRepository,
@@ -76,11 +89,34 @@ public class ConnectionService {
                 .orElse(true);
     }
 
-    /** Get the existing single connection or create a fresh one (single-instance connect flow). */
-    @Transactional
+    /**
+     * Get the existing single connection or create a fresh one (single-instance connect flow).
+     *
+     * <p>Race-safe: the real guarantee is the partial unique index
+     * {@code uq_connection_single_instance}. The fast-path read avoids the insert in the common
+     * case; if two requests race past it, exactly one INSERT wins and the loser's
+     * {@link DataIntegrityViolationException} is caught and resolved by re-reading the winning row.
+     *
+     * <p>Intentionally NOT {@code @Transactional}: the insert runs in its own
+     * {@code REQUIRES_NEW} transaction ({@link #createSingleInNewTx}) so that a constraint
+     * violation rolls back only that inner tx, leaving this method free to re-read. A catch inside
+     * the same transaction would see a rollback-only tx and could not recover.
+     */
     public Connection getOrCreateSingle(String projectId, String connectorId, AuthType authType) {
-        return findSingle(projectId, connectorId).orElseGet(() ->
-                create(projectId, connectorId, authType, connectorId, null));
+        return findSingle(projectId, connectorId).orElseGet(() -> {
+            try {
+                return self.createSingleInNewTx(projectId, connectorId, authType);
+            } catch (DataIntegrityViolationException e) {
+                // Lost the insert race against a concurrent caller — the winning row now exists.
+                return findSingle(projectId, connectorId).orElseThrow(() -> e);
+            }
+        });
+    }
+
+    /** Insert in an isolated tx so a unique-index violation rolls back only this insert. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Connection createSingleInNewTx(String projectId, String connectorId, AuthType authType) {
+        return create(projectId, connectorId, authType, connectorId, null);
     }
 
     @Transactional
@@ -93,6 +129,7 @@ public class ConnectionService {
         c.setDisplayLabel(displayLabel);
         c.setConnectedBy(connectedBy);
         c.setStatus("ACTIVE");
+        c.setSingleInstance(isSingleInstance(connectorId));
         return connectionRepository.save(c);
     }
 

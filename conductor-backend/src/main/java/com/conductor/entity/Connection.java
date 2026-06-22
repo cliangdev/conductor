@@ -14,8 +14,9 @@ import java.util.UUID;
 
 /**
  * A single connected instance of a connector for a project. Many rows per (project, connector)
- * are allowed — multi-instance (e.g. one GitHub repo per row). Single-instance is enforced in
- * service code via {@code ConnectorSpec.singleInstance()}, not a DB constraint.
+ * are allowed — multi-instance (e.g. one GitHub repo per row). Single-instance connectors carry
+ * {@code singleInstance = true} and are constrained to one row per (project, connector) by the
+ * partial unique index {@code uq_connection_single_instance}.
  *
  * <p>One per-connection DEK (wrapped in {@code kmsKeyReference}) encrypts all secrets on the row:
  * access token, refresh token, and webhook signing secret.
@@ -42,6 +43,14 @@ public class Connection {
 
     @Column(name = "status", length = 20, nullable = false)
     private String status;
+
+    /**
+     * True for single-instance connectors (one row per project/connector). Backs the partial
+     * unique index {@code uq_connection_single_instance}, which is the real guarantee against
+     * concurrent duplicate inserts. Set from {@code ConnectorSpec.singleInstance()} at create.
+     */
+    @Column(name = "single_instance", nullable = false)
+    private boolean singleInstance;
 
     @JsonIgnore
     @Column(name = "encrypted_access_token", columnDefinition = "TEXT")
@@ -120,6 +129,9 @@ public class Connection {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+
+    public boolean isSingleInstance() { return singleInstance; }
+    public void setSingleInstance(boolean singleInstance) { this.singleInstance = singleInstance; }
 
     public String getEncryptedAccessToken() { return encryptedAccessToken; }
     public void setEncryptedAccessToken(String encryptedAccessToken) { this.encryptedAccessToken = encryptedAccessToken; }
