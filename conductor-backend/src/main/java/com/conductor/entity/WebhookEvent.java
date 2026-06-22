@@ -5,15 +5,27 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-/** Generic inbound webhook event log row (idempotency + retry/dead-letter), connector-agnostic. */
+/**
+ * Generic inbound webhook event log row (idempotency + retry/dead-letter), connector-agnostic.
+ *
+ * <p>Idempotency is scoped to (connection_id, delivery_id): one provider delivery fans out to N target
+ * connections (one row each), so dedup must be per-connection — see V57. The matching DB index is a
+ * partial unique on the same pair (delivery_id IS NOT NULL).
+ */
 @Entity
-@Table(name = "webhook_event")
+@Table(name = "webhook_event",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uq_webhook_event_connection_delivery",
+                columnNames = {"connection_id", "delivery_id"}),
+        indexes = @Index(name = "idx_webhook_event_status", columnList = "status, last_attempted_at"))
 public class WebhookEvent {
 
     @Id

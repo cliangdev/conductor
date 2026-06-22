@@ -219,6 +219,65 @@ public class IssueService {
         return toIssueResponse(issue).unresolvedCommentCount((int) count);
     }
 
+    /**
+     * System-initiated completion of an issue when its linked pull request merges (GitHub webhook
+     * automation). There is intentionally NO {@code User caller} and NO
+     * {@link #verifyCallerCanChangeStatus} / {@link #validateTransition} check: this is an automated,
+     * system action, not a human status edit.
+     *
+     * <p><b>Transition policy:</b> a merged PR marks the issue DONE regardless of its current status
+     * (DONE is allowed here from ANY non-terminal state, not only CODE_REVIEW as the human
+     * {@link #patchIssue} flow enforces). This deliberately preserves the pre-refactor real-world
+     * behavior — the old GitHub connector force-set DONE from any state — so that merging a PR is never
+     * silently rejected because the issue skipped CODE_REVIEW. Issues already DONE or CLOSED are left
+     * untouched (CLOSED is terminal and must not be reopened/overwritten by automation).
+     *
+     * <p>Fires the same DONE notifications {@link #patchIssue} fires for a DONE transition
+     * ({@link EventType#ISSUE_COMPLETED} + {@link EventType#ISSUE_STATUS_CHANGED}).
+     *
+     * @param projectId     the project the connection belongs to (cross-project guard already applied by caller)
+     * @param projectKey    the issue's project key (from the PR body "closes conductor/KEY-N")
+     * @param sequenceNumber the issue sequence number
+     * @param pullRequestUrl the merged PR's html_url (may be null/blank → not stored)
+     */
+    @Transactional
+    public void completeFromPullRequest(String projectId, String projectKey, int sequenceNumber,
+                                        String pullRequestUrl) {
+        Issue issue = issueRepository.findByProjectKeyAndSequenceNumber(projectKey, sequenceNumber)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No issue found for " + projectKey + "-" + sequenceNumber));
+        if (!issue.getProject().getId().equals(projectId)) {
+            throw new EntityNotFoundException(
+                    projectKey + "-" + sequenceNumber + " does not belong to project " + projectId);
+        }
+
+        if (pullRequestUrl != null && !pullRequestUrl.isBlank()) {
+            issue.setGithubPrUrl(pullRequestUrl);
+        }
+
+        IssueStatus previousStatus = issue.getStatus();
+        boolean alreadyTerminal = previousStatus == IssueStatus.DONE || previousStatus == IssueStatus.CLOSED;
+        if (!alreadyTerminal) {
+            issue.setStatus(IssueStatus.DONE);
+        }
+        issueRepository.save(issue);
+
+        if (!alreadyTerminal) {
+            notificationDispatcher.dispatch(NotificationEvent.of(
+                    EventType.ISSUE_COMPLETED, projectId,
+                    Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
+            notificationDispatcher.dispatch(NotificationEvent.of(
+                    EventType.ISSUE_STATUS_CHANGED, projectId,
+                    Map.of(
+                            "issueId", issue.getId(),
+                            "issueTitle", issue.getTitle(),
+                            "projectId", projectId,
+                            "fromStatus", previousStatus.name(),
+                            "toStatus", IssueStatus.DONE.name()
+                    )));
+        }
+    }
+
     @Transactional
     public void saveIssueTasks(String issueId, JsonNode tasks) {
         Issue issue = issueRepository.findById(issueId)

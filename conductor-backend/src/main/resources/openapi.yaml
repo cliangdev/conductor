@@ -4056,10 +4056,44 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
 
+  # NOTE: Both webhook paths are implemented by a hand-rolled @RestController
+  # (controller/WebhookReceiverController), NOT the generated WebhooksApi interface. HMAC verification
+  # requires the EXACT raw request bytes and arbitrary provider headers (X-Hub-Signature-256,
+  # X-GitHub-Event, X-GitHub-Delivery); binding the body to a generated model would break byte-exact
+  # HMAC and hide those headers. These declarations exist for documentation/contract only.
+  /webhooks/{connectorId}:
+    post:
+      tags: [webhooks]
+      summary: App-level inbound webhook receiver (one shared endpoint + secret; routes by payload)
+      description: >-
+        App-level webhook model (e.g. a GitHub App): one endpoint receives all events for all
+        installations. The connector verifies with its own app secret and resolves the target
+        connection(s) from the payload (e.g. installation.id), fanning out to every connection that
+        connected that installation — possibly across multiple projects.
+      operationId: receiveAppWebhook
+      parameters:
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: string}
+      security: []
+      responses:
+        '200':
+          description: Accepted (or duplicate delivery / lifecycle / unrouted event ignored)
+        '401':
+          description: Invalid signature
+        '404':
+          description: Unknown connector
+
   /webhooks/{connectorId}/{connectionId}:
     post:
       tags: [webhooks]
-      summary: Generic inbound webhook receiver (URL routes to connector + connection)
+      summary: Per-connection inbound webhook receiver (URL routes to connector + connection)
       operationId: receiveWebhook
       parameters:
         - name: connectorId

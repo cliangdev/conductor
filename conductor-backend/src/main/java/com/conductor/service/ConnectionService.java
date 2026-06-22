@@ -53,7 +53,7 @@ public class ConnectionService {
     public ConnectionService(ConnectionRepository connectionRepository,
                              ConnectionDataCacheRepository cacheRepository,
                              CredentialService credentialService,
-                             ConnectorRegistry connectorRegistry,
+                             @Lazy ConnectorRegistry connectorRegistry,
                              ObjectMapper objectMapper) {
         this.connectionRepository = connectionRepository;
         this.cacheRepository = cacheRepository;

@@ -1,9 +1,9 @@
 package com.conductor.integration.connector.github;
 
-import com.conductor.entity.Issue;
-import com.conductor.entity.IssueStatus;
 import com.conductor.integration.*;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.ConnectionRepository;
+import com.conductor.service.ConnectionService;
+import com.conductor.service.IssueService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -22,34 +22,52 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * GitHub App connector. Connections are GitHub App installations (multi-instance, keyed by installation
- * id in {@code config_json}); repos are selected on GitHub and listed live. The single app-level webhook
- * endpoint verifies with the app's webhook secret; this connector owns the HMAC-SHA256 signature scheme,
- * delivery-id/event-type extraction, and the domain mapping: a merged PR whose body says
- * "closes conductor/KEY-N" → issue DONE. Install/callback/repo-listing live in {@link GitHubAppController}.
+ * GitHub App connector — an APP-LEVEL webhook connector behind the generic receiver
+ * ({@code POST /api/v1/webhooks/github}). A GitHub App delivers ALL events for ALL installations to one
+ * endpoint, so:
+ * <ul>
+ *   <li>{@link #verify} uses the app's single webhook secret (ignores the per-connection ctx).</li>
+ *   <li>{@link #route} resolves target connection(s) from the payload's {@code installation.id} — the
+ *       receiver fans out to every connection (possibly across projects) that connected that installation.</li>
+ *   <li>{@link #handleLifecycle} keeps connections in sync (install deleted → delete matching connections;
+ *       installation_repositories is a no-op — repos are listed live).</li>
+ *   <li>{@link #handleEvent} maps a merged PR whose body says "closes conductor/KEY-N" → issue DONE,
+ *       delegating the aggregate mutation + notifications to {@link IssueService}.</li>
+ * </ul>
+ * Install/callback/repo-listing live in {@link GitHubAppController}.
  */
 @Component
 public class GitHubConnector implements WebhookConnector {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubConnector.class);
 
+    private static final String CONNECTOR_ID = "github";
+    private static final String INSTALLATION_ID_KEY = "installationId";
+
     private static final Pattern CLOSES_PATTERN =
             Pattern.compile("closes\\s+conductor/([A-Z]+-\\d+)", Pattern.CASE_INSENSITIVE);
 
-    private final IssueRepository issueRepository;
+    private final IssueService issueService;
+    private final ConnectionRepository connectionRepository;
+    private final ConnectionService connectionService;
     private final ObjectMapper objectMapper;
     /** App-level webhook signing secret (one per GitHub App, not per connection). */
     private final String appWebhookSecret;
 
-    public GitHubConnector(IssueRepository issueRepository, ObjectMapper objectMapper,
+    public GitHubConnector(IssueService issueService,
+                           ConnectionRepository connectionRepository,
+                           ConnectionService connectionService,
+                           ObjectMapper objectMapper,
                            @Value("${GITHUB_APP_WEBHOOK_SECRET:}") String appWebhookSecret) {
-        this.issueRepository = issueRepository;
+        this.issueService = issueService;
+        this.connectionRepository = connectionRepository;
+        this.connectionService = connectionService;
         this.objectMapper = objectMapper;
         this.appWebhookSecret = appWebhookSecret;
     }
 
     @Override
-    public String getId() { return "github"; }
+    public String getId() { return CONNECTOR_ID; }
 
     @Override
     public ConnectorMetadata getMetadata() {
@@ -66,7 +84,7 @@ public class GitHubConnector implements WebhookConnector {
     @Override
     public WebhookVerification verify(byte[] rawBody, HttpHeaders headers, ConnectionContext ctx) {
         String signatureHeader = headers.getFirst("X-Hub-Signature-256");
-        // GitHub App: one app-level webhook secret for all installations (not per-connection).
+        // GitHub App: one app-level webhook secret for all installations (the per-connection ctx is ignored).
         String secret = appWebhookSecret;
         if (secret == null || secret.isBlank()) {
             return WebhookVerification.fail("GitHub App webhook secret is not configured");
@@ -100,6 +118,43 @@ public class GitHubConnector implements WebhookConnector {
         return type != null ? type : "unknown";
     }
 
+    /**
+     * App-level routing: resolve target connections by {@code installation.id} in the payload. Returns
+     * {@code null} (no fan-out) when there is no installation id — e.g. {@code ping}, or an unparseable
+     * body — so the receiver accepts-and-ignores it.
+     */
+    @Override
+    public WebhookRouting route(byte[] rawBody, HttpHeaders headers) {
+        String installationId = installationId(rawBody);
+        return installationId != null ? WebhookRouting.configSelector(INSTALLATION_ID_KEY, installationId) : null;
+    }
+
+    /**
+     * App-level lifecycle: keep connections in sync.
+     * <ul>
+     *   <li>{@code installation} (action=deleted) → delete every connection bound to that installation.</li>
+     *   <li>{@code installation_repositories} → no-op (repos are listed live, nothing to persist).</li>
+     * </ul>
+     * Both are fully consumed (returns true) so the receiver skips routing + dispatch.
+     */
+    @Override
+    public boolean handleLifecycle(byte[] rawBody, HttpHeaders headers, String eventType) {
+        if ("installation".equals(eventType)) {
+            JsonNode root = tryParse(rawBody);
+            String action = root != null ? root.path("action").asText("") : "";
+            String installationId = root != null ? nodeText(root.path("installation").path("id")) : null;
+            if ("deleted".equals(action) && installationId != null) {
+                connectionRepository.findByConnectorIdAndConfigValue(CONNECTOR_ID, INSTALLATION_ID_KEY, installationId)
+                        .forEach(c -> connectionService.delete(c.getId()));
+            }
+            return true;
+        }
+        if ("installation_repositories".equals(eventType)) {
+            return true; // repos are listed live — nothing to sync
+        }
+        return false;
+    }
+
     @Override
     public void handleEvent(InboundEvent event, ConnectionContext ctx) {
         if (!"pull_request".equals(event.eventType())) {
@@ -113,10 +168,9 @@ public class GitHubConnector implements WebhookConnector {
             String action = root.path("action").asText("");
             boolean merged = root.path("pull_request").path("merged").asBoolean(false);
 
-            boolean isOpenEvent = "opened".equals(action) || "reopened".equals(action) || "synchronize".equals(action);
             boolean isMergeEvent = "closed".equals(action) && merged;
-            if (!isOpenEvent && !isMergeEvent) {
-                log.info("Skipping event {} - action='{}' merged={} is not an open or merge event",
+            if (!isMergeEvent) {
+                log.info("Skipping event {} - action='{}' merged={} is not a merge event",
                         event.deliveryId(), action, merged);
                 return;
             }
@@ -135,29 +189,36 @@ public class GitHubConnector implements WebhookConnector {
             String projectKey = parts[0];
             int sequenceNumber = Integer.parseInt(parts[1]);
 
-            Issue issue = issueRepository.findByProjectKeyAndSequenceNumber(projectKey, sequenceNumber).orElse(null);
-            if (issue == null) {
-                log.warn("Skipping event {} - no issue found for key {}-{}",
-                        event.deliveryId(), projectKey, sequenceNumber);
-                return;
+            // Aggregate mutation + DONE notifications live in the domain service. The cross-project guard
+            // (issue must belong to this connection's project) is enforced there via projectId.
+            try {
+                issueService.completeFromPullRequest(ctx.projectId(), projectKey, sequenceNumber, prUrl);
+                log.info("Event {} - issue {}-{} completed from merged PR {}",
+                        event.deliveryId(), projectKey, sequenceNumber, prUrl);
+            } catch (jakarta.persistence.EntityNotFoundException notFound) {
+                // No such issue, or it belongs to another project sharing this installation — skip quietly.
+                log.warn("Skipping event {} - {}", event.deliveryId(), notFound.getMessage());
             }
-            if (!issue.getProject().getId().equals(ctx.projectId())) {
-                log.warn("Skipping event {} - issue {}-{} belongs to project {} but connection is for project {}",
-                        event.deliveryId(), projectKey, sequenceNumber, issue.getProject().getId(), ctx.projectId());
-                return;
-            }
-
-            issue.setGithubPrUrl(prUrl.isBlank() ? null : prUrl);
-
-            if (isMergeEvent && issue.getStatus() != IssueStatus.DONE && issue.getStatus() != IssueStatus.CLOSED) {
-                issue.setStatus(IssueStatus.DONE);
-                log.info("Event {} - issue {}-{} transitioned to DONE", event.deliveryId(), projectKey, sequenceNumber);
-            }
-
-            issueRepository.save(issue);
         } catch (Exception e) {
             // Surface to the dispatcher so the event is marked FAILED and retried.
             throw new RuntimeException("Failed to process GitHub event: " + e.getMessage(), e);
         }
+    }
+
+    private String installationId(byte[] rawBody) {
+        JsonNode root = tryParse(rawBody);
+        return root != null ? nodeText(root.path("installation").path("id")) : null;
+    }
+
+    private JsonNode tryParse(byte[] rawBody) {
+        try {
+            return objectMapper.readTree(rawBody);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String nodeText(JsonNode node) {
+        return node.isMissingNode() || node.isNull() ? null : node.asText();
     }
 }
