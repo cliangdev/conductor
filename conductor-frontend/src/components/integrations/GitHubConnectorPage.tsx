@@ -178,7 +178,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
 
   if (membersLoading || connectionsLoading) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-8">
+      <div className="max-w-4xl mx-auto px-4 py-8">
         <p className="text-sm text-muted-foreground">Loading…</p>
       </div>
     );
@@ -186,7 +186,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
 
   if (!isAdmin) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-8">
+      <div className="max-w-4xl mx-auto px-4 py-8">
         <p className="text-sm text-muted-foreground">
           You don&apos;t have permission to manage GitHub settings.
         </p>
@@ -196,7 +196,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
 
   if (connectionsError === 'access_denied') {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-8">
+      <div className="max-w-4xl mx-auto px-4 py-8">
         <p className="text-sm text-destructive" role="alert">
           Access denied. You do not have permission to view this integration.
         </p>
@@ -206,7 +206,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
 
   if (connectionsError) {
     return (
-      <div className="max-w-2xl mx-auto px-4 py-8">
+      <div className="max-w-4xl mx-auto px-4 py-8">
         <p className="text-sm text-destructive" role="alert">{connectionsError}</p>
       </div>
     );
@@ -235,28 +235,37 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
         ) : (
           <div className="divide-y divide-border">
             {connections.map((conn) => (
-              <div key={conn.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+              <div
+                key={conn.id}
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3 first:pt-0 last:pb-0"
+              >
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-foreground truncate">{conn.label || conn.id}</p>
-                  <button
-                    type="button"
-                    onClick={() => copy(webhookUrlFor(conn.id), `url-${conn.id}`)}
-                    className="text-xs text-muted-foreground hover:text-foreground truncate block font-mono text-left"
-                    title="Copy webhook URL"
-                  >
-                    {copiedKey === `url-${conn.id}` ? 'Copied webhook URL!' : webhookUrlFor(conn.id)}
-                  </button>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {conn.status === 'NEEDS_SETUP'
+                      ? 'Webhook not yet registered in GitHub'
+                      : 'Pull-request webhook'}
+                  </p>
                 </div>
-                <div className="flex items-center gap-3 ml-4 shrink-0">
+                <div className="flex items-center gap-1 shrink-0">
                   {conn.status === 'ACTIVE' ? (
-                    <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                    <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 mr-1">
                       <span aria-hidden="true">✓</span> Configured
                     </span>
                   ) : conn.status === 'NEEDS_SETUP' ? (
-                    <span className="text-xs text-yellow-600 dark:text-yellow-400">Needs setup</span>
+                    <span className="text-xs text-yellow-600 dark:text-yellow-400 mr-1">Needs setup</span>
                   ) : (
-                    <span className="text-xs text-muted-foreground">{conn.status}</span>
+                    <span className="text-xs text-muted-foreground mr-1">{conn.status}</span>
                   )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Copy webhook URL for ${conn.label || conn.id}`}
+                    onClick={() => copy(webhookUrlFor(conn.id), `url-${conn.id}`)}
+                  >
+                    {copiedKey === `url-${conn.id}` ? 'Copied!' : 'Copy URL'}
+                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
