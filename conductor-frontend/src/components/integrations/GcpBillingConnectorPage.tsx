@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet, apiPost } from '@/lib/api';
+import { apiGet, apiPost, listConnections, fetchConnectionData, patchConnection } from '@/lib/api';
 import { ExternalLink } from 'lucide-react';
 
 interface ServiceCost {
@@ -33,6 +33,7 @@ interface IntegrationDataResponse {
 export default function GcpBillingConnectorPage({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth();
   const [response, setResponse] = useState<IntegrationDataResponse | null>(null);
+  const [connectionId, setConnectionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [authorizing, setAuthorizing] = useState(false);
@@ -44,16 +45,16 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   const [loadingDatasets, setLoadingDatasets] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const fetchData = useCallback(async (isRefresh = false) => {
+  const loadData = useCallback(async (isRefresh = false) => {
     if (!accessToken) return;
     if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
-      const data = await apiPost<IntegrationDataResponse>(
-        `/api/v1/projects/${projectId}/integrations/gcp-billing/data`,
-        {},
-        accessToken
-      );
-      setResponse(data);
+      const conns = await listConnections(projectId, 'gcp-billing', accessToken);
+      const connId = conns[0]?.id ?? null;
+      setConnectionId(connId);
+      if (!connId) { setResponse(null); return; }
+      const data = await fetchConnectionData(projectId, 'gcp-billing', connId, accessToken, isRefresh);
+      setResponse(data as unknown as IntegrationDataResponse);
     } catch (e) {
       console.error(e);
     } finally {
@@ -61,10 +62,11 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
     }
   }, [projectId, accessToken]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   useEffect(() => {
-    if (!accessToken || !response?.data?.oauthConnected) return;
+    // Once a connection exists (OAuth complete), load the GCP projects for the dataset picker.
+    if (!accessToken || !connectionId || response?.healthStatus !== 'SETUP_REQUIRED') return;
     setLoadingProjects(true);
     apiGet<{ projects: { projectId: string; name: string }[] }>(
       `/api/v1/projects/${projectId}/integrations/gcp-billing/gcp-projects`,
@@ -73,7 +75,7 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
       .then(d => setGcpProjects(d.projects ?? []))
       .catch(console.error)
       .finally(() => setLoadingProjects(false));
-  }, [projectId, accessToken, response?.data?.oauthConnected]);
+  }, [projectId, accessToken, connectionId, response?.healthStatus]);
 
   useEffect(() => {
     if (!accessToken || !selectedGcpProject) return;
@@ -106,16 +108,17 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   };
 
   const handleSaveConfig = async () => {
-    if (!accessToken || !selectedGcpProject || !selectedDataset) return;
+    if (!accessToken || !connectionId || !selectedGcpProject || !selectedDataset) return;
     setSaving(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/projects/${projectId}/integrations/gcp-billing/config`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config: { bqProjectId: selectedGcpProject, bqDatasetName: selectedDataset } }),
-      });
-      if (!res.ok) throw new Error(`Save failed: ${res.status}`);
-      await fetchData();
+      await patchConnection(
+        projectId,
+        'gcp-billing',
+        connectionId,
+        { config: { bqProjectId: selectedGcpProject, bqDatasetName: selectedDataset } },
+        accessToken
+      );
+      await loadData();
     } catch (e) {
       console.error('Config save failed', e);
     } finally {
@@ -138,7 +141,7 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   const data = response?.data;
 
   if (health === 'SETUP_REQUIRED' || !response) {
-    const oauthConnected = data?.oauthConnected === true;
+    const oauthConnected = connectionId != null;
 
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
@@ -304,7 +307,7 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
             Open GCP Console
           </a>
           <button
-            onClick={() => fetchData(true)}
+            onClick={() => loadData(true)}
             disabled={refreshing}
             className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
           >

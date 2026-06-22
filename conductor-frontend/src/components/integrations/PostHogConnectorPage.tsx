@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiPost } from '@/lib/api';
+import { listConnections, createConnection, fetchConnectionData } from '@/lib/api';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { ExternalLink } from 'lucide-react';
 
@@ -39,16 +39,15 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
 
-  const fetchData = useCallback(async (isRefresh = false) => {
+  const loadData = useCallback(async (isRefresh = false) => {
     if (!accessToken) return;
     if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
-      const data = await apiPost<IntegrationDataResponse>(
-        `/api/v1/projects/${projectId}/integrations/posthog/data`,
-        {},
-        accessToken
-      );
-      setResponse(data);
+      const conns = await listConnections(projectId, 'posthog', accessToken);
+      const connId = conns[0]?.id ?? null;
+      if (!connId) { setResponse(null); return; }
+      const data = await fetchConnectionData(projectId, 'posthog', connId, accessToken, isRefresh);
+      setResponse(data as unknown as IntegrationDataResponse);
     } catch (e) {
       console.error(e);
     } finally {
@@ -56,7 +55,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
     }
   }, [projectId, accessToken]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,12 +63,14 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
     setConnecting(true);
     setConnectError(null);
     try {
-      await apiPost(
-        `/api/v1/projects/${projectId}/integrations/posthog/credentials`,
+      const created = await createConnection(
+        projectId,
+        'posthog',
         { apiKey: connectForm.apiKey, configJson: { projectId: connectForm.posthogProjectId } },
         accessToken
       );
-      await fetchData();
+      const data = await fetchConnectionData(projectId, 'posthog', created.id, accessToken, true);
+      setResponse(data as unknown as IntegrationDataResponse);
     } catch (err: unknown) {
       setConnectError(err instanceof Error ? err.message : 'Connection failed');
     } finally {
@@ -181,7 +182,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
             Open PostHog
           </a>
           <button
-            onClick={() => fetchData(true)}
+            onClick={() => loadData(true)}
             disabled={refreshing}
             className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
           >

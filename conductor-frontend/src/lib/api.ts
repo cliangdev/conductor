@@ -3,60 +3,128 @@ export function setOnUnauthorized(cb: () => void) {
   onUnauthorized = cb
 }
 
-export interface ProjectRepository {
+// ── Integration connections (unified connector framework) ──────────────────
+//
+// A "connection" is one configured instance of a connector for a project:
+// a single API-key/OAuth connection for pull connectors (PostHog, GCP Billing),
+// or one row per repository for the GitHub webhook connector.
+
+export type ConnectionStatus = 'ACTIVE' | 'NEEDS_SETUP' | 'ERROR' | 'DISABLED'
+
+export interface ConnectionSummary {
   id: string
-  label: string
-  repoUrl: string
-  repoFullName: string
-  webhookSecretConfigured: boolean
-  connectedAt: string
+  label?: string | null
+  status: ConnectionStatus
+  healthStatus?: string | null
+  fetchedAt?: string | null
 }
 
-export function listProjectRepositories(projectId: string, token: string): Promise<ProjectRepository[]> {
-  return apiGet<ProjectRepository[]>(`/api/v1/projects/${projectId}/repositories`, token)
-}
-
-export function addProjectRepository(
-  projectId: string,
-  body: { label: string; repoUrl: string; webhookSecret: string },
-  token: string,
-): Promise<ProjectRepository> {
-  return apiPost<ProjectRepository>(`/api/v1/projects/${projectId}/repositories`, body, token)
-}
-
-export function updateProjectRepository(
-  projectId: string,
-  repositoryId: string,
-  body: { label?: string; webhookSecret?: string },
-  token: string,
-): Promise<ProjectRepository> {
-  return apiPatch<ProjectRepository>(
-    `/api/v1/projects/${projectId}/repositories/${repositoryId}`,
-    body,
-    token,
-  ) as Promise<ProjectRepository>
-}
-
-export function deleteProjectRepository(
-  projectId: string,
-  repositoryId: string,
-  token: string,
-): Promise<void> {
-  return apiDelete(`/api/v1/projects/${projectId}/repositories/${repositoryId}`, token)
+export interface ConnectionResponse {
+  id: string
+  connectorId: string
+  label?: string | null
+  status: ConnectionStatus
+  authType: string
+  /** Only returned for webhook connectors at creation — the URL to paste into GitHub. */
+  webhookUrl?: string | null
+  /** Only returned ONCE at creation — never surfaced again. */
+  webhookSecret?: string | null
+  connectedAt?: string | null
 }
 
 export interface WebhookEventSummary {
   id: string
-  deliveryId?: string
+  deliveryId?: string | null
   eventType: string
   status: 'PENDING' | 'PROCESSED' | 'FAILED' | 'DEAD'
   attempts: number
-  errorMessage?: string
-  createdAt: string
+  errorMessage?: string | null
+  receivedAt: string
 }
 
-export function listWebhookEvents(projectId: string, token: string): Promise<WebhookEventSummary[]> {
-  return apiGet<WebhookEventSummary[]>(`/api/v1/projects/${projectId}/github/webhook-events`, token)
+export interface ConnectionDataResponse {
+  connectionId: string
+  connectorId: string
+  data: Record<string, unknown> | null
+  healthStatus: 'HEALTHY' | 'DEGRADED' | 'SETUP_REQUIRED'
+  fetchedAt?: string | null
+  isStale?: boolean
+  errorMessage?: string | null
+}
+
+export function listConnections(
+  projectId: string,
+  connectorId: string,
+  token: string,
+): Promise<ConnectionSummary[]> {
+  return apiGet<ConnectionSummary[]>(
+    `/api/v1/projects/${projectId}/integrations/${connectorId}/connections`,
+    token,
+  )
+}
+
+export function createConnection(
+  projectId: string,
+  connectorId: string,
+  body: { label?: string; apiKey?: string; configJson?: Record<string, unknown> },
+  token: string,
+): Promise<ConnectionResponse> {
+  return apiPost<ConnectionResponse>(
+    `/api/v1/projects/${projectId}/integrations/${connectorId}/connections`,
+    body,
+    token,
+  )
+}
+
+export function patchConnection(
+  projectId: string,
+  connectorId: string,
+  connectionId: string,
+  body: { label?: string; config?: Record<string, unknown> },
+  token: string,
+): Promise<ConnectionResponse> {
+  return apiPatch<ConnectionResponse>(
+    `/api/v1/projects/${projectId}/integrations/${connectorId}/connections/${connectionId}`,
+    body,
+    token,
+  ) as Promise<ConnectionResponse>
+}
+
+export function deleteConnection(
+  projectId: string,
+  connectorId: string,
+  connectionId: string,
+  token: string,
+): Promise<void> {
+  return apiDelete(
+    `/api/v1/projects/${projectId}/integrations/${connectorId}/connections/${connectionId}`,
+    token,
+  )
+}
+
+export function listConnectionWebhookEvents(
+  projectId: string,
+  connectorId: string,
+  connectionId: string,
+  token: string,
+): Promise<WebhookEventSummary[]> {
+  return apiGet<WebhookEventSummary[]>(
+    `/api/v1/projects/${projectId}/integrations/${connectorId}/connections/${connectionId}/webhook-events`,
+    token,
+  )
+}
+
+export function fetchConnectionData(
+  projectId: string,
+  connectorId: string,
+  connectionId: string,
+  token: string,
+  force = false,
+): Promise<ConnectionDataResponse> {
+  const path = `/api/v1/projects/${projectId}/integrations/${connectorId}/connections/${connectionId}/data`
+  return force
+    ? apiPost<ConnectionDataResponse>(path, {}, token)
+    : apiGet<ConnectionDataResponse>(path, token)
 }
 
 async function throwApiError(res: Response): Promise<never> {

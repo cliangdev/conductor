@@ -5,15 +5,20 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet, apiDelete, apiPost } from '@/lib/api';
+import { apiGet, createConnection, deleteConnection } from '@/lib/api';
+import type { ConnectionSummary } from '@/lib/api';
+import { apiPost } from '@/lib/api';
 import Link from 'next/link';
 import { PuzzleIcon, CheckCircleIcon } from 'lucide-react';
 import type { Member } from '@/types';
 
 interface ConnectorConfigField {
-  fieldKey: string;
+  key: string;
   label: string;
   hint: string | null;
+  type: 'STRING' | 'SECRET' | 'SELECT' | 'MULTISELECT' | 'BOOLEAN' | 'URL_READONLY';
+  source: 'USER_INPUT' | 'GENERATED';
+  required: boolean;
   secret: boolean;
 }
 
@@ -21,13 +26,14 @@ interface IntegrationListItem {
   connectorId: string;
   name: string;
   category: string;
-  authType: string;
+  authType: 'NONE' | 'API_KEY' | 'BASIC' | 'OAUTH2' | 'WEBHOOK';
+  capabilities: string[];
+  singleInstance: boolean;
   description: string;
   iconLabel: string;
   connected: boolean;
-  healthStatus: string | null;
-  fetchedAt: string | null;
   configFields: ConnectorConfigField[];
+  connections: ConnectionSummary[];
 }
 
 type Tab = 'browse' | 'connected';
@@ -40,7 +46,7 @@ export default function SettingsIntegrationsPage() {
   const [activeTab, setActiveTab] = useState<Tab>('browse');
   const [members, setMembers] = useState<Member[]>([]);
 
-  // Modal state for API key connect
+  // Modal state for API key connect (single-instance API_KEY/BASIC connectors)
   const [connectModal, setConnectModal] = useState<{ connector: IntegrationListItem } | null>(null);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [connecting, setConnecting] = useState(false);
@@ -92,6 +98,10 @@ export default function SettingsIntegrationsPage() {
 
   const connected = integrations.filter((i) => i.connected);
 
+  // A connector is managed on its own detail page when it holds multiple instances
+  // (e.g. GitHub repos) or is already connected. Single-instance connectors connect inline.
+  const usesDetailPage = (item: IntegrationListItem) => item.connected || !item.singleInstance;
+
   const openConnectModal = (connector: IntegrationListItem) => {
     setConnectModal({ connector });
     setFormValues({});
@@ -105,18 +115,20 @@ export default function SettingsIntegrationsPage() {
     setConnectError(null);
 
     const { connector } = connectModal;
-    const secretField = connector.configFields.find((f) => f.secret);
-    const apiKey = formValues['apiKey'] || formValues[secretField?.fieldKey || ''];
+    const inputFields = connector.configFields.filter((f) => f.source === 'USER_INPUT');
+    const secretField = inputFields.find((f) => f.secret);
+    const apiKey = formValues[secretField?.key || 'apiKey'] || formValues['apiKey'];
     const configJson: Record<string, string> = {};
-    connector.configFields
+    inputFields
       .filter((f) => !f.secret)
       .forEach((f) => {
-        if (formValues[f.fieldKey]) configJson[f.fieldKey] = formValues[f.fieldKey];
+        if (formValues[f.key]) configJson[f.key] = formValues[f.key];
       });
 
     try {
-      await apiPost(
-        `/api/v1/projects/${projectId}/integrations/${connector.connectorId}/credentials`,
+      await createConnection(
+        projectId,
+        connector.connectorId,
         { apiKey, configJson },
         accessToken
       );
@@ -143,14 +155,13 @@ export default function SettingsIntegrationsPage() {
     }
   };
 
-  const handleDisconnect = async (connectorId: string) => {
+  const handleDisconnect = async (item: IntegrationListItem) => {
     if (!accessToken) return;
-    setDisconnecting(connectorId);
+    const connectionId = item.connections[0]?.id;
+    if (!connectionId) return;
+    setDisconnecting(item.connectorId);
     try {
-      await apiDelete(
-        `/api/v1/projects/${projectId}/integrations/${connectorId}/credentials`,
-        accessToken
-      );
+      await deleteConnection(projectId, item.connectorId, connectionId, accessToken);
       await loadIntegrations();
     } catch (e) {
       console.error(e);
@@ -158,6 +169,12 @@ export default function SettingsIntegrationsPage() {
       setDisconnecting(null);
     }
   };
+
+  const Icon = ({ item }: { item: IntegrationListItem }) => (
+    <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
+      {item.iconLabel}
+    </div>
+  );
 
   if (loading) {
     return (
@@ -179,7 +196,7 @@ export default function SettingsIntegrationsPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-foreground">Integrations</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Connect third-party tools to view live metrics in Conductor.
+          Connect third-party tools to view live metrics and automate workflows in Conductor.
         </p>
       </div>
 
@@ -211,23 +228,27 @@ export default function SettingsIntegrationsPage() {
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {items.map((item) =>
-                  item.connected ? (
+                  usesDetailPage(item) ? (
                     <Link
                       key={item.connectorId}
                       href={`/app/projects/${projectId}/integrations/${item.connectorId}`}
                       className="bg-card rounded-lg border border-border p-4 flex items-center gap-4 hover:border-primary/50 transition-colors"
                     >
-                      <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
-                        {item.iconLabel}
-                      </div>
+                      <Icon item={item} />
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-sm text-foreground">{item.name}</div>
                         <div className="text-xs text-muted-foreground truncate">{item.description}</div>
                       </div>
-                      <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium flex-shrink-0">
-                        <CheckCircleIcon className="h-3.5 w-3.5" />
-                        Connected
-                      </span>
+                      {item.connected ? (
+                        <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium flex-shrink-0">
+                          <CheckCircleIcon className="h-3.5 w-3.5" />
+                          {!item.singleInstance && item.connections.length > 0
+                            ? `${item.connections.length} connected`
+                            : 'Connected'}
+                        </span>
+                      ) : (
+                        <span className="text-xs font-medium text-primary flex-shrink-0">Manage</span>
+                      )}
                     </Link>
                   ) : canMutate ? (
                     <button
@@ -237,9 +258,7 @@ export default function SettingsIntegrationsPage() {
                       }
                       className="bg-card rounded-lg border border-border p-4 flex items-center gap-4 text-left hover:border-primary/50 transition-colors cursor-pointer w-full"
                     >
-                      <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
-                        {item.iconLabel}
-                      </div>
+                      <Icon item={item} />
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-sm text-foreground">{item.name}</div>
                         <div className="text-xs text-muted-foreground truncate">{item.description}</div>
@@ -253,9 +272,7 @@ export default function SettingsIntegrationsPage() {
                       key={item.connectorId}
                       className="bg-card rounded-lg border border-border p-4 flex items-center gap-4"
                     >
-                      <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
-                        {item.iconLabel}
-                      </div>
+                      <Icon item={item} />
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-sm text-foreground">{item.name}</div>
                         <div className="text-xs text-muted-foreground truncate">{item.description}</div>
@@ -298,22 +315,25 @@ export default function SettingsIntegrationsPage() {
                   <Link
                     href={`/app/projects/${projectId}/integrations/${item.connectorId}`}
                     className="absolute inset-0 rounded-lg"
-                    aria-label={`View ${item.name} data`}
+                    aria-label={`View ${item.name}`}
                   />
-                  <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
-                    {item.iconLabel}
-                  </div>
+                  <Icon item={item} />
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm text-foreground">{item.name}</div>
                     <div className="text-xs text-muted-foreground">
-                      {item.authType === 'API_KEY' ? '••••••• (API Key)' : 'OAuth2 token'}
-                      {item.fetchedAt &&
-                        ` · Last synced ${new Date(item.fetchedAt).toLocaleDateString()}`}
+                      {!item.singleInstance
+                        ? `${item.connections.length} ${item.connections.length === 1 ? 'connection' : 'connections'}`
+                        : item.authType === 'API_KEY'
+                          ? '••••••• (API Key)'
+                          : item.authType === 'WEBHOOK'
+                            ? 'Webhook'
+                            : 'OAuth2'}
                     </div>
                   </div>
-                  {canMutate && (
+                  {/* Single-instance connectors can be removed inline; multi-instance are managed on the detail page. */}
+                  {canMutate && item.singleInstance && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleDisconnect(item.connectorId); }}
+                      onClick={(e) => { e.stopPropagation(); handleDisconnect(item); }}
                       disabled={disconnecting === item.connectorId}
                       className="relative z-10 text-xs font-medium text-destructive hover:underline disabled:opacity-50 flex-shrink-0"
                     >
@@ -327,7 +347,7 @@ export default function SettingsIntegrationsPage() {
         </div>
       )}
 
-      {/* Connect Modal (API Key) */}
+      {/* Connect Modal (API Key / Basic) */}
       {connectModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-card rounded-xl border border-border shadow-xl p-6 w-full max-w-md mx-4">
@@ -336,23 +356,25 @@ export default function SettingsIntegrationsPage() {
             </h2>
             <p className="text-sm text-muted-foreground mb-5">{connectModal.connector.description}</p>
             <form onSubmit={handleConnect} className="space-y-4">
-              {connectModal.connector.configFields.map((field) => (
-                <div key={field.fieldKey}>
-                  <label className="block text-sm font-medium text-foreground mb-1">
-                    {field.label}
-                  </label>
-                  <input
-                    type={field.secret ? 'password' : 'text'}
-                    value={formValues[field.fieldKey] || ''}
-                    onChange={(e) =>
-                      setFormValues((prev) => ({ ...prev, [field.fieldKey]: e.target.value }))
-                    }
-                    placeholder={field.hint || ''}
-                    required
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
-                </div>
-              ))}
+              {connectModal.connector.configFields
+                .filter((field) => field.source === 'USER_INPUT')
+                .map((field) => (
+                  <div key={field.key}>
+                    <label className="block text-sm font-medium text-foreground mb-1">
+                      {field.label}
+                    </label>
+                    <input
+                      type={field.secret ? 'password' : 'text'}
+                      value={formValues[field.key] || ''}
+                      onChange={(e) =>
+                        setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))
+                      }
+                      placeholder={field.hint || ''}
+                      required={field.required}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
+                ))}
               {connectError && <p className="text-sm text-destructive">{connectError}</p>}
               <div className="flex gap-3 pt-1">
                 <button

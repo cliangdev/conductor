@@ -12,7 +12,6 @@ import {
   FileTextIcon,
   FolderIcon,
   GitBranchIcon,
-  GitForkIcon,
   KeyIcon,
   LogOutIcon,
   MoreHorizontalIcon,
@@ -335,13 +334,6 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                     onNavigate={onNavigate}
                   >
                     Integrations
-                  </NavItem>
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/settings/github`}
-                    icon={<GitForkIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    GitHub
                   </NavItem>
                 </>
               }

@@ -91,10 +91,9 @@ describe('Sidebar', () => {
     expect(notificationsLink).toHaveAttribute('href', '/app/projects/proj-1/settings/notifications')
   })
 
-  it('renders GitHub link under Settings', () => {
+  it('does not render a standalone GitHub settings link (folded into Integrations hub)', () => {
     render(<Sidebar />)
-    const githubLink = screen.getByRole('link', { name: /github/i })
-    expect(githubLink).toHaveAttribute('href', '/app/projects/proj-1/settings/github')
+    expect(screen.queryByRole('link', { name: /github/i })).not.toBeInTheDocument()
   })
 
   it('does not render a Teams link', () => {
