@@ -1,6 +1,7 @@
 package com.conductor.integration.connector.github;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Jwts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +39,7 @@ public class GitHubAppService {
     private static final String API_VERSION = "2022-11-28";
 
     private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
     private final String appId;
     private final String appSlug;
     private final String privateKeyPem;
@@ -45,10 +47,12 @@ public class GitHubAppService {
     private final Map<String, CachedToken> tokenCache = new ConcurrentHashMap<>();
 
     public GitHubAppService(RestTemplate restTemplate,
+                            ObjectMapper objectMapper,
                             @Value("${GITHUB_APP_ID:}") String appId,
                             @Value("${GITHUB_APP_SLUG:}") String appSlug,
                             @Value("${GITHUB_APP_PRIVATE_KEY:}") String privateKeyPem) {
         this.restTemplate = restTemplate;
+        this.objectMapper = objectMapper;
         this.appId = appId;
         this.appSlug = appSlug;
         this.privateKeyPem = privateKeyPem;
@@ -156,10 +160,14 @@ public class GitHubAppService {
 
     private JsonNode exchangeJson(HttpMethod method, String url, HttpHeaders headers, Object body) {
         try {
-            ResponseEntity<JsonNode> resp = restTemplate.exchange(
-                    url, method, new HttpEntity<>(body, headers), JsonNode.class);
-            return resp.getBody() != null ? resp.getBody()
-                    : com.fasterxml.jackson.databind.node.NullNode.getInstance();
+            // Read as String (StringHttpMessageConverter is always present and content-type agnostic),
+            // then parse with our ObjectMapper — avoids depending on a JsonNode message converter.
+            ResponseEntity<String> resp = restTemplate.exchange(
+                    url, method, new HttpEntity<>(body, headers), String.class);
+            String payload = resp.getBody();
+            return (payload == null || payload.isBlank())
+                    ? com.fasterxml.jackson.databind.node.NullNode.getInstance()
+                    : objectMapper.readTree(payload);
         } catch (Exception e) {
             log.warn("GitHub API call failed: {} {} — {}", method, url, e.getMessage());
             throw new RuntimeException("GitHub API call failed: " + e.getMessage(), e);

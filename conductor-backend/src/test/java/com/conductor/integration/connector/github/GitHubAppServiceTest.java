@@ -44,7 +44,7 @@ class GitHubAppServiceTest {
         String pem = "-----BEGIN PRIVATE KEY-----\n"
                 + Base64.getMimeEncoder().encodeToString(keyPair.getPrivate().getEncoded())
                 + "\n-----END PRIVATE KEY-----";
-        service = new GitHubAppService(restTemplate, "12345", "conductor", pem);
+        service = new GitHubAppService(restTemplate, new ObjectMapper(), "12345", "conductor", pem);
     }
 
     @Test
@@ -67,15 +67,14 @@ class GitHubAppServiceTest {
     void installationToken_isCachedAndNotRefetchedWhileFresh() throws Exception {
         String body = "{\"token\":\"ghs_abc\",\"expires_at\":\""
                 + Instant.now().plusSeconds(3600) + "\"}";
-        JsonNode node = new ObjectMapper().readTree(body);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class)))
-                .thenReturn(ResponseEntity.ok(node));
+        when(restTemplate.exchange(any(String.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.ok(body));
 
         assertThat(service.installationToken("42")).isEqualTo("ghs_abc");
         assertThat(service.installationToken("42")).isEqualTo("ghs_abc"); // served from cache
 
         verify(restTemplate, times(1))
-                .exchange(any(String.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(JsonNode.class));
+                .exchange(any(String.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class));
     }
 
     @Test
