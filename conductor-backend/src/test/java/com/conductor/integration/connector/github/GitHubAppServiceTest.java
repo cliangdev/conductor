@@ -78,6 +78,26 @@ class GitHubAppServiceTest {
     }
 
     @Test
+    void evictInstallationToken_removesCachedEntry_forcingARefetch() throws Exception {
+        String body = "{\"token\":\"ghs_abc\",\"expires_at\":\""
+                + Instant.now().plusSeconds(3600) + "\"}";
+        when(restTemplate.exchange(any(String.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.ok(body));
+
+        assertThat(service.installationToken("42")).isEqualTo("ghs_abc"); // populates cache (1 call)
+        service.evictInstallationToken("42");                             // drops the entry
+        assertThat(service.installationToken("42")).isEqualTo("ghs_abc"); // must refetch (2nd call)
+
+        verify(restTemplate, times(2))
+                .exchange(any(String.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class));
+    }
+
+    @Test
+    void evictInstallationToken_nullId_isNoOp() {
+        service.evictInstallationToken(null); // does not throw
+    }
+
+    @Test
     void parsePrivateKey_rejectsGarbageWithHelpfulMessage() {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> GitHubAppService.parsePrivateKey("not-a-key"))
                 .isInstanceOf(IllegalStateException.class)

@@ -43,13 +43,14 @@ class GitHubConnectorTest {
     @Mock private IssueService issueService;
     @Mock private ConnectionRepository connectionRepository;
     @Mock private ConnectionService connectionService;
+    @Mock private GitHubAppService gitHubAppService;
 
     private GitHubConnector connector;
 
     @BeforeEach
     void setUp() {
         connector = new GitHubConnector(issueService, connectionRepository, connectionService,
-                new ObjectMapper(), APP_SECRET);
+                gitHubAppService, new ObjectMapper(), APP_SECRET);
     }
 
     private ConnectionContext ctx() {
@@ -87,7 +88,7 @@ class GitHubConnectorTest {
     @Test
     void verify_failsWhenAppSecretNotConfigured() throws Exception {
         GitHubConnector noSecret = new GitHubConnector(issueService, connectionRepository, connectionService,
-                new ObjectMapper(), "");
+                gitHubAppService, new ObjectMapper(), "");
         byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
         assertThat(noSecret.verify(body, signedHeaders(body), ctx()).valid()).isFalse();
     }
@@ -128,6 +129,8 @@ class GitHubConnectorTest {
 
         assertThat(consumed).isTrue();
         verify(connectionService).delete("conn-1");
+        // Uninstall must also evict the installation's cached access token (#15).
+        verify(gitHubAppService).evictInstallationToken("42");
     }
 
     @Test

@@ -50,6 +50,7 @@ public class GitHubConnector implements WebhookConnector {
     private final IssueService issueService;
     private final ConnectionRepository connectionRepository;
     private final ConnectionService connectionService;
+    private final GitHubAppService gitHubAppService;
     private final ObjectMapper objectMapper;
     /** App-level webhook signing secret (one per GitHub App, not per connection). */
     private final String appWebhookSecret;
@@ -57,11 +58,13 @@ public class GitHubConnector implements WebhookConnector {
     public GitHubConnector(IssueService issueService,
                            ConnectionRepository connectionRepository,
                            ConnectionService connectionService,
+                           GitHubAppService gitHubAppService,
                            ObjectMapper objectMapper,
                            @Value("${GITHUB_APP_WEBHOOK_SECRET:}") String appWebhookSecret) {
         this.issueService = issueService;
         this.connectionRepository = connectionRepository;
         this.connectionService = connectionService;
+        this.gitHubAppService = gitHubAppService;
         this.objectMapper = objectMapper;
         this.appWebhookSecret = appWebhookSecret;
     }
@@ -146,6 +149,8 @@ public class GitHubConnector implements WebhookConnector {
             if ("deleted".equals(action) && installationId != null) {
                 connectionRepository.findByConnectorIdAndConfigValue(CONNECTOR_ID, INSTALLATION_ID_KEY, installationId)
                         .forEach(c -> connectionService.delete(c.getId()));
+                // Drop the now-dead installation's cached access token so the cache doesn't grow unbounded.
+                gitHubAppService.evictInstallationToken(installationId);
             }
             return true;
         }

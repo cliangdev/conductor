@@ -62,7 +62,9 @@ class WebhookReceiverControllerTest {
     /** Register a REAL GitHub connector so verify/route/handleLifecycle run for "github". */
     private void registerGitHub() {
         GitHubConnector connector = new GitHubConnector(
-                issueService, connectionRepository, connectionService, new ObjectMapper(), SECRET);
+                issueService, connectionRepository, connectionService,
+                org.mockito.Mockito.mock(com.conductor.integration.connector.github.GitHubAppService.class),
+                new ObjectMapper(), SECRET);
         when(connectorRegistry.findWebhook("github")).thenReturn(Optional.of(connector));
     }
 

@@ -114,8 +114,25 @@ public class GitHubAppService {
         String token = root.path("token").asText(null);
         String expiresAt = root.path("expires_at").asText(null);
         Instant expiry = expiresAt != null ? Instant.parse(expiresAt) : Instant.now().plusSeconds(3300);
+        purgeExpired();
         tokenCache.put(installationId, new CachedToken(token, expiry));
         return token;
+    }
+
+    /**
+     * Drop a cached installation token. Called when an installation is uninstalled so its entry doesn't
+     * linger in the cache forever.
+     */
+    public void evictInstallationToken(String installationId) {
+        if (installationId != null) {
+            tokenCache.remove(installationId);
+        }
+    }
+
+    /** Bound cache growth: remove entries whose GitHub token has already expired. */
+    private void purgeExpired() {
+        Instant now = Instant.now();
+        tokenCache.values().removeIf(c -> !now.isBefore(c.expiresAt()));
     }
 
     /** Build an app JWT (RS256): iss=App ID, iat=now-60s (clock skew), exp=now+9min. */
