@@ -151,12 +151,20 @@ public class GitHubAppController {
         Connection conn = connectionService.getById(connectionId, CONNECTOR_ID)
                 .filter(c -> c.getProjectId().equals(projectId))
                 .orElseThrow(() -> new EntityNotFoundException("Connection not found: " + connectionId));
-        String installationId = String.valueOf(parseConfig(conn.getConfigJson()).get("installationId"));
+        Map<String, Object> config = parseConfig(conn.getConfigJson());
+        String installationId = String.valueOf(config.get("installationId"));
         List<Map<String, Object>> repositories = gitHubAppService
                 .listInstallationRepositories(installationId).stream()
                 .map(r -> Map.<String, Object>of("fullName", r.fullName(), "private", r.isPrivate()))
                 .toList();
-        return ResponseEntity.ok(Map.of("repositories", repositories));
+        Map<String, Object> response = new HashMap<>();
+        response.put("repositories", repositories);
+        // The GitHub-side management page for this installation — the frontend's "Add/Remove
+        // repositories" buttons deep-link here (GitHub's recommended pattern).
+        response.put("installationHtmlUrl", config.get("installationHtmlUrl"));
+        response.put("accountLogin", config.get("accountLogin"));
+        response.put("repositorySelection", config.get("repositorySelection"));
+        return ResponseEntity.ok(response);
     }
 
     // ---- helpers ----
