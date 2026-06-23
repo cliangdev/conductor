@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "skills": [
+    {
+      "id": "conductor:prd",
+      "label": "Write PRD",
+      "description": "Drives PRD discovery, research, and writing; opens a Work Item's loop by creating it and authoring the prd.md Document.",
+      "producesAssetTypes": [],
+      "supportsBlocking": true
+    },
+    {
+      "id": "conductor:implement",
+      "label": "Implement",
+      "description": "Takes a Work Item to a green PR: writes tasks, branches, spawns coding subagents, opens a PR, and reports back via MCP. Stops at CODE_REVIEW for the human gate.",
+      "producesAssetTypes": ["github_pr"],
+      "supportsBlocking": true
+    }
+  ]
+}

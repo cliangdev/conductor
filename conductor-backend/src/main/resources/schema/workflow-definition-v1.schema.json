@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conductor.dev/schema/workflow-definition-v1.schema.json",
+  "title": "Conductor Workflow Definition (schemaVersion 1)",
+  "description": "Canonical contract for a Workflow definition — the single versioned JSONB document stored in workflow_definitions.definition and validated in Java. Every consumer (WorkflowEngine, WorkflowDefinitionValidator, the no-code Builder, the MCP/CLI surface, and authoring skills) reads/writes THIS shape. This schema enforces STRUCTURAL rules (field types, enums, required keys, hard caps that are expressible per-array). SEMANTIC rules that span the document are enforced by WorkflowDefinitionValidator in Java and are listed under x-semantic-rules below; they are NOT expressible in JSON Schema alone.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "area", "version", "state", "schemaVersion", "noun", "default_view", "types", "statuses", "transitions"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of THIS schema the definition targets. The validator routes on it. v1 only for now.",
+      "const": 1
+    },
+    "id": {
+      "description": "Stable, human-readable slug — the reference used everywhere (MCP, skills, seeds). Never a UUID. e.g. ENGINEERING, CONTENT_REVIEW.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "area": {
+      "description": "Nav grouping slug. A single-Workflow Area renders flat (no double-nesting). A string on the definition, not a join table — adding an Area is a data change.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$",
+      "minLength": 2,
+      "maxLength": 64
+    },
+    "version": {
+      "description": "Monotonic version. In-flight Work Items pin to the version they started on; new Work Items bind the latest PUBLISHED.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "state": {
+      "description": "Lifecycle state. Only a PUBLISHED version is bindable by Work Items; Builder edits accumulate in a DRAFT.",
+      "type": "string",
+      "enum": ["DRAFT", "PUBLISHED"]
+    },
+    "noun": {
+      "description": "Display noun for this Workflow's Work Items (e.g. Issue, Post, Campaign). 'Work Item' is the system default.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "default_view": {
+      "description": "Default rendering of the Work Item list.",
+      "type": "string",
+      "enum": ["list", "board", "calendar"]
+    },
+    "types": {
+      "description": "Allowed Work Item types (strings validated against this list, not a DB enum). e.g. PRD, FEATURE_REQUEST, BUG_REPORT.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    },
+    "asset_types": {
+      "description": "Allowed produced-output Asset types (e.g. github_pr, published_url, file). Extensible with zero schema change. Omit/empty if the Workflow produces no Assets.",
+      "type": "array",
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    },
+    "metric": {
+      "description": "Optional Outcome Metric kept as a time series. null/absent means the Workflow opts out (e.g. Engineering).",
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/metric" }
+      ]
+    },
+    "statuses": {
+      "description": "Ordered stages. Hard cap: <= 10 (P0-2). Semantic: exactly one initial, >= 1 terminal, all non-terminal reach a terminal.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/status" }
+    },
+    "transitions": {
+      "description": "Allowed moves between statuses. Semantic caps: <= 5 transitions per source status, <= 3 review-gated transitions total.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/transition" }
+    },
+    "triggers": {
+      "description": "What starts/advances Work Items on this Workflow. Reuses the existing automation engine's trigger types. Omit for a purely human-driven Workflow.",
+      "type": "array",
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/trigger" }
+    }
+  },
+  "$defs": {
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "minLength": 2,
+          "maxLength": 48
+        },
+        "category": {
+          "description": "Lane grouping. 'terminal' statuses end the Work Item.",
+          "type": "string",
+          "enum": ["open", "in_progress", "terminal"]
+        },
+        "initial": {
+          "description": "Exactly one status across the definition must set this true (Java-enforced).",
+          "type": "boolean"
+        },
+        "terminal": {
+          "description": "True for an end state. At least one required (Java-enforced). Must agree with category=terminal.",
+          "type": "boolean"
+        }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to", "label"],
+      "properties": {
+        "from": {
+          "description": "Source status id; must exist in statuses[] (Java-enforced).",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "to": {
+          "description": "Target status id; must exist in statuses[] (Java-enforced).",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "label": {
+          "description": "Human-readable action label shown to the doer (e.g. 'Submit for review').",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "requiresReview": {
+          "description": "When true, the engine BLOCKS this transition until a Review is recorded (P0-1.3 / P0-6). The one true behavior change vs. today's advisory reviews.",
+          "type": "boolean"
+        },
+        "reviewOutcomes": {
+          "description": "Required when requiresReview is true: the allowed review verdicts (>= 2). Conditionally enforced below.",
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["approve", "request_changes", "comment"] }
+        },
+        "reviewerRole": {
+          "description": "Which existing project role approves this gate. No per-Workflow custom roles in v1.",
+          "type": "string",
+          "enum": ["ADMIN", "CREATOR", "REVIEWER"]
+        },
+        "steps": {
+          "description": "Automated actions on this transition. Hard cap: <= 3 per transition (P0-2).",
+          "type": "array",
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/step" }
+        }
+      },
+      "allOf": [
+        {
+          "description": "requiresReview=true forces reviewOutcomes to be present (>= 2 outcomes).",
+          "if": { "properties": { "requiresReview": { "const": true } }, "required": ["requiresReview"] },
+          "then": { "required": ["reviewOutcomes"] }
+        }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "mode"],
+      "properties": {
+        "kind": {
+          "description": "Step type. skill = run a Claude Code skill (driven locally, reported via MCP); http/notify/set_field/create_sub_items run on the existing automation engine. connector_fetch/connector_action are the post-v1 integration seam and are rejected by the v1 validator until implemented.",
+          "type": "string",
+          "enum": ["skill", "http", "notify", "set_field", "create_sub_items"]
+        },
+        "mode": {
+          "description": "BLOCKING holds the transition until the step is done; ASYNC is fire-and-forget. For a skill step, BLOCKING is an advisory convention the local driver honors (the engine does not run the skill).",
+          "type": "string",
+          "enum": ["BLOCKING", "ASYNC"]
+        },
+        "type_version": {
+          "description": "Executor contract version, so an existing Workflow never breaks when a step type changes (n8n pattern).",
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        },
+        "skill": {
+          "description": "For kind=skill: the bindable skill id. Must exist in the skill registry (AC-P0-2.5, Java-enforced). e.g. conductor:implement.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "config": {
+          "description": "Kind-specific configuration (e.g. http url/method, notify channel, set_field key/value, create_sub_items source list + concurrency cap). Shape validated per-kind by the executor.",
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "description": "kind=skill requires a skill id.",
+          "if": { "properties": { "kind": { "const": "skill" } }, "required": ["kind"] },
+          "then": { "required": ["skill"] }
+        }
+      ]
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "description": "manual (Run Now), schedule (cron), status_changed, or webhook. connector_event is the post-v1 integration seam.",
+          "type": "string",
+          "enum": ["manual", "schedule", "status_changed", "webhook"]
+        },
+        "cron": {
+          "description": "Required for type=schedule: a 5-field cron expression (parsed by Spring CronExpression).",
+          "type": "string"
+        },
+        "timezone": {
+          "description": "Optional IANA timezone for a schedule trigger.",
+          "type": "string"
+        },
+        "fromStatus": {
+          "description": "Optional filter for type=status_changed.",
+          "type": "string"
+        },
+        "toStatus": {
+          "description": "Optional filter for type=status_changed.",
+          "type": "string"
+        }
+      },
+      "allOf": [
+        {
+          "description": "type=schedule requires a cron expression.",
+          "if": { "properties": { "type": { "const": "schedule" } }, "required": ["type"] },
+          "then": { "required": ["cron"] }
+        }
+      ]
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "direction"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "unit": { "type": "string", "maxLength": 32 },
+        "direction": {
+          "description": "Whether higher or lower observed values are better — drives top-performer/regression queries.",
+          "type": "string",
+          "enum": ["higher_better", "lower_better"]
+        }
+      }
+    }
+  },
+  "x-semantic-rules": [
+    "Exactly one status has initial=true.",
+    "At least one status is terminal (terminal=true and category=terminal).",
+    "Every non-terminal status can reach some terminal status via transitions (no dead-ends / unreachable statuses).",
+    "Every transition.from and transition.to references an id present in statuses[].",
+    "At most 5 transitions share the same from status.",
+    "At most 3 transitions set requiresReview=true.",
+    "Every step with kind=skill references a skill id present in the skill registry.",
+    "Only a state=PUBLISHED version is bindable by Work Items; DRAFT is editable but not bound.",
+    "schemaVersion routes validation; unknown schemaVersion is rejected.",
+    "connector_fetch/connector_action step kinds and connector_event triggers are reserved for post-v1 and rejected by the v1 validator."
+  ]
+}

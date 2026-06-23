@@ -38,6 +38,8 @@ tags:
     description: Workflow management endpoints
   - name: workflow-secrets
     description: Workflow secret management endpoints
+  - name: assets
+    description: Produced-output Assets on a Work Item (COND-18)
   - name: daemon
     description: Daemon event polling endpoints
   - name: project-docs
@@ -3117,6 +3119,289 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/issues/{issueId}/available-transitions:
+    get:
+      tags:
+        - issues
+      summary: List the valid next transitions for a Work Item (doer projection)
+      description: >-
+        Returns only the transitions the calling actor may take from the Work Item's
+        current status, computed server-side from the active (PUBLISHED) Workflow
+        definition. This is the doer projection — it never exposes the raw statechart,
+        gate conditions, or bound Steps. A Review-gated transition does not appear here
+        until its Review is satisfied. (COND-18 P0-1.)
+      operationId: listAvailableTransitions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The valid next transitions for this actor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvailableTransitionsResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/issues/{issueId}/assets:
+    get:
+      tags:
+        - assets
+      summary: List Assets (produced outputs) on a Work Item
+      operationId: listAssets
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Work Item's Assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssetResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - assets
+      summary: Record an Asset (produced output) on a Work Item
+      description: >-
+        Adds a typed produced output (e.g. github_pr, published_url, file). The type
+        is validated against the active Workflow definition's asset_types. Supersedes
+        the legacy Issue.githubPrUrl column. (COND-18 P0-4.)
+      operationId: createAsset
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAssetRequest"
+      responses:
+        "201":
+          description: Asset recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetResponse"
+        "400":
+          description: Validation error (e.g. asset type not allowed by the Workflow)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/issues/{issueId}/assets/{assetId}:
+    patch:
+      tags:
+        - assets
+      summary: Update an Asset
+      operationId: patchAsset
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchAssetRequest"
+      responses:
+        "200":
+          description: Asset updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Asset or issue not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - assets
+      summary: Delete an Asset
+      operationId: deleteAsset
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Asset deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Asset or issue not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/workflows/{workflowId}/publish:
+    post:
+      tags:
+        - workflows
+      summary: Publish a DRAFT Workflow definition
+      description: >-
+        Promotes the Workflow's DRAFT definition to PUBLISHED after validation. Only a
+        PUBLISHED version is bindable by Work Items; in-flight Work Items stay pinned to
+        the version they started on. (COND-18 P0-1/P0-2; the impact preview is computed
+        client-side from this and the runs/work-item queries.)
+      operationId: publishWorkflow
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Workflow published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowDefinitionDto"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN/CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Workflow not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Definition failed semantic validation (unreachable status, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/workflows:
     get:
       tags: [workflows]
@@ -4837,6 +5122,12 @@ components:
           maxLength: 255
         description:
           type: string
+        workflow:
+          type: string
+          description: >-
+            Optional Workflow definition id (slug, e.g. ENGINEERING) this Work Item runs
+            on. When omitted, defaults to the project's Engineering Workflow. `type` is
+            validated against the chosen Workflow's allowed types. (COND-18 P0-1.)
 
     PatchIssueRequest:
       type: object
@@ -5384,6 +5675,119 @@ components:
           type: string
           format: date-time
 
+    WorkflowState:
+      type: string
+      description: Lifecycle state of a Workflow definition. Only PUBLISHED is bindable by Work Items.
+      enum:
+        - DRAFT
+        - PUBLISHED
+
+    AvailableTransition:
+      type: object
+      required:
+        - toStatus
+        - label
+      properties:
+        toStatus:
+          type: string
+          description: The status this transition moves the Work Item to.
+        label:
+          type: string
+          description: Human-readable action label (e.g. "Submit for review").
+        requiresReview:
+          type: boolean
+          description: Whether taking this transition will open a Review gate.
+
+    AvailableTransitionsResponse:
+      type: object
+      required:
+        - workflow
+        - currentStatus
+        - transitions
+      properties:
+        workflow:
+          type: string
+          description: The Work Item's Workflow definition id (slug).
+        currentStatus:
+          type: string
+        noun:
+          type: string
+          description: The Workflow's display noun (e.g. Issue, Post).
+        transitions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AvailableTransition"
+
+    AssetResponse:
+      type: object
+      required:
+        - id
+        - issueId
+        - type
+        - kind
+        - ref
+        - done
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        issueId:
+          type: string
+        type:
+          type: string
+          description: Asset type validated against the Workflow's asset_types (e.g. github_pr).
+        label:
+          type: string
+        kind:
+          type: string
+          enum:
+            - link
+            - file
+        ref:
+          type: string
+          description: A URL (kind=link) or a stored-file reference (kind=file).
+        done:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateAssetRequest:
+      type: object
+      required:
+        - type
+        - kind
+        - ref
+      properties:
+        type:
+          type: string
+        label:
+          type: string
+        kind:
+          type: string
+          enum:
+            - link
+            - file
+        ref:
+          type: string
+        done:
+          type: boolean
+          default: false
+
+    PatchAssetRequest:
+      type: object
+      properties:
+        label:
+          type: string
+        ref:
+          type: string
+        done:
+          type: boolean
+
     WorkflowDefinitionDto:
       type: object
       properties:
@@ -5395,10 +5799,33 @@ components:
           type: string
         yaml:
           type: string
+          description: >-
+            Legacy automation source. Deprecated by COND-18 in favor of `definition`;
+            existing YAML automations migrate to a no-status `definition`.
+          deprecated: true
         enabled:
           type: boolean
         webhookToken:
           type: string
+        version:
+          type: integer
+          description: Monotonic version; in-flight Work Items pin to their version. (COND-18)
+        state:
+          $ref: "#/components/schemas/WorkflowState"
+        area:
+          type: string
+          description: Nav-grouping slug; single-Workflow Areas render flat. (COND-18)
+        schemaVersion:
+          type: integer
+          description: Version of the workflow-definition schema this definition targets. (COND-18)
+        definition:
+          type: object
+          additionalProperties: true
+          description: >-
+            The versioned statechart (statuses, transitions, reviews, steps, triggers,
+            types, asset_types, metric, noun, default_view). Authoritative shape:
+            conductor-backend/src/main/resources/schema/workflow-definition-v1.schema.json,
+            validated in Java by WorkflowDefinitionValidator. (COND-18 P0-1.)
         warnings:
           type: array
           items:

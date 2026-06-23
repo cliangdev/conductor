@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conductor.dev/schema/skill-registry-v1.schema.json",
+  "title": "Conductor Skill Registry (schemaVersion 1)",
+  "description": "The set of bindable Claude Code skill ids the WorkflowDefinitionValidator checks a `skill` Step against (COND-18 AC-P0-2.5), and the metadata the Builder shows when binding one. A Workflow definition's `steps[].skill` must reference an `id` present here, or Publish is blocked. Skills run locally (Claude Code drives, MCP reports); this registry is the backend's knowledge of which skill ids are valid — it does NOT execute them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "skills"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "skills": {
+      "type": "array",
+      "minItems": 0,
+      "items": { "$ref": "#/$defs/skill" }
+    }
+  },
+  "$defs": {
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "description"],
+      "properties": {
+        "id": {
+          "description": "The bindable skill id referenced by a definition's steps[].skill (e.g. conductor:implement).",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$",
+          "maxLength": 128
+        },
+        "label": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 280 },
+        "producesAssetTypes": {
+          "description": "Asset types this skill may record (advisory; helps the Builder warn if a bound Workflow lacks the asset_type).",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        },
+        "supportsBlocking": {
+          "description": "Whether BLOCKING is a meaningful mode for this skill. For a skill Step, BLOCKING is an advisory convention the local driver honors (the engine never runs the skill).",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    }
+  }
+}

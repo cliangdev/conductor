@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "ENGINEERING",
+  "area": "ENGINEERING",
+  "version": 1,
+  "state": "PUBLISHED",
+  "noun": "Issue",
+  "default_view": "list",
+  "types": ["PRD", "FEATURE_REQUEST", "BUG_REPORT"],
+  "asset_types": ["github_pr"],
+  "metric": null,
+  "statuses": [
+    { "id": "DRAFT", "category": "open", "initial": true },
+    { "id": "IN_REVIEW", "category": "in_progress" },
+    { "id": "READY_FOR_DEVELOPMENT", "category": "in_progress" },
+    { "id": "IN_PROGRESS", "category": "in_progress" },
+    { "id": "CODE_REVIEW", "category": "in_progress" },
+    { "id": "DONE", "category": "terminal", "terminal": true },
+    { "id": "CLOSED", "category": "terminal", "terminal": true }
+  ],
+  "transitions": [
+    { "from": "DRAFT", "to": "IN_REVIEW", "label": "Submit for review" },
+    { "from": "DRAFT", "to": "CLOSED", "label": "Close" },
+    { "from": "IN_REVIEW", "to": "READY_FOR_DEVELOPMENT", "label": "Approve spec" },
+    { "from": "IN_REVIEW", "to": "DRAFT", "label": "Send back to draft" },
+    { "from": "IN_REVIEW", "to": "CLOSED", "label": "Close" },
+    {
+      "from": "READY_FOR_DEVELOPMENT",
+      "to": "IN_PROGRESS",
+      "label": "Start work",
+      "steps": [
+        { "kind": "skill", "mode": "BLOCKING", "skill": "conductor:implement" }
+      ]
+    },
+    { "from": "READY_FOR_DEVELOPMENT", "to": "CLOSED", "label": "Close" },
+    { "from": "IN_PROGRESS", "to": "CODE_REVIEW", "label": "Open PR" },
+    { "from": "IN_PROGRESS", "to": "CLOSED", "label": "Close" },
+    { "from": "CODE_REVIEW", "to": "DONE", "label": "Merge" },
+    { "from": "CODE_REVIEW", "to": "CLOSED", "label": "Close" }
+  ]
+}
