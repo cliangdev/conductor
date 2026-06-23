@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 
@@ -17,7 +18,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import org.mockito.ArgumentCaptor;
 
 class GscConnectorTest {
 
@@ -80,13 +83,22 @@ class GscConnectorTest {
         ResponseEntity<Map> devices = rowsResponse(List.of(Map.of(
                 "keys", List.of("DESKTOP"), "clicks", 280.0)));
 
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.POST), any(), eq(Map.class)))
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(), eq(Map.class)))
                 .thenReturn(trend, queries, branded, pages, countries, devices);
 
         GscConnector connector = new GscConnector(restTemplate);
         ConnectorData result = connector.fetchData(ctx(CONFIG));
 
         assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.HEALTHY);
+
+        // The property must reach RestTemplate as a URI, single-encoded (sc-domain%3A…). Passing a
+        // String would let RestTemplate re-encode the '%' to %253A — Google 404s that. See queryUri.
+        ArgumentCaptor<URI> uriCaptor = ArgumentCaptor.forClass(URI.class);
+        verify(restTemplate, org.mockito.Mockito.atLeastOnce())
+                .exchange(uriCaptor.capture(), eq(HttpMethod.POST), any(), eq(Map.class));
+        assertThat(uriCaptor.getValue().toString())
+                .contains("sites/sc-domain%3Aexample.com/searchAnalytics")
+                .doesNotContain("%253A");
 
         List<Map<String, Object>> trendOut = (List<Map<String, Object>>) result.data().get("trend");
         assertThat(trendOut).hasSize(1);
@@ -113,7 +125,7 @@ class GscConnectorTest {
     @Test
     void notFoundPropertyRoutesBackToSetup() {
         RestTemplate restTemplate = mock(RestTemplate.class);
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.POST), any(), eq(Map.class)))
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(), eq(Map.class)))
                 .thenThrow(HttpClientErrorException.create(
                         HttpStatus.NOT_FOUND, "Not Found", null, null, null));
 

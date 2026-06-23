@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -106,7 +107,7 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
         String breakdownStart = endDate.minusDays(BREAKDOWN_DAYS).format(iso);
 
         try {
-            String url = queryUrl(siteUrl);
+            URI url = queryUri(siteUrl);
 
             // 1. Daily trend (~90d).
             List<Map<String, Object>> trend = new ArrayList<>();
@@ -265,7 +266,9 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             if (status == 429) {
                 return ConnectorData.degraded("Rate limited — try again later", Map.of());
             }
-            log.warn("GSC API error: {}", e.getStatusCode());
+            // Log Google's response body too — the bare status code wasn't enough to diagnose past
+            // issues (e.g. a double-encoded property URL surfaced only as a generic 404).
+            log.warn("GSC API error {}: {}", e.getStatusCode(), e.getResponseBodyAsString());
             return ConnectorData.degraded("Search Console API error: " + e.getStatusCode(), Map.of());
         } catch (Exception e) {
             log.warn("GSC fetch failed: {}", e.getMessage());
@@ -282,7 +285,7 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
         try {
             DateTimeFormatter iso = DateTimeFormatter.ISO_LOCAL_DATE;
             LocalDate endDate = LocalDate.now().minusDays(LAG_DAYS);
-            queryRows(queryUrl(siteUrl), ctx.accessToken(), Map.of(
+            queryRows(queryUri(siteUrl), ctx.accessToken(), Map.of(
                     "startDate", endDate.minusDays(BREAKDOWN_DAYS).format(iso),
                     "endDate", endDate.format(iso),
                     "dimensions", List.of("date"), "rowLimit", 1));
@@ -300,13 +303,19 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
         }
     }
 
-    private String queryUrl(String siteUrl) {
+    /**
+     * Builds the searchAnalytics URI with the property pre-encoded as a single path segment, and
+     * returns a {@link URI} (not a String). Passing a URI to RestTemplate bypasses its String-URL
+     * handler, which would otherwise re-encode the '%' and turn {@code sc-domain%3A…} into
+     * {@code sc-domain%253A…} — Google then 404s the (now non-existent) property.
+     */
+    private URI queryUri(String siteUrl) {
         String encoded = URLEncoder.encode(siteUrl, StandardCharsets.UTF_8);
-        return "https://searchconsole.googleapis.com/v1/sites/" + encoded + "/searchAnalytics/query";
+        return URI.create("https://searchconsole.googleapis.com/v1/sites/" + encoded + "/searchAnalytics/query");
     }
 
     @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> queryRows(String url, String accessToken, Map<String, Object> body) {
+    private List<Map<String, Object>> queryRows(URI url, String accessToken, Map<String, Object> body) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
