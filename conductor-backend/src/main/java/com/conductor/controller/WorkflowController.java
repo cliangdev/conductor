@@ -91,6 +91,13 @@ public class WorkflowController implements WorkflowsApi {
         this.objectMapper = objectMapper;
     }
 
+    // TODO(COND-18 E1): implement Draft->Publish promotion (validate definition, flip state to PUBLISHED).
+    // Contract authored ahead of the validator/engine; returns 501 until the definition lifecycle lands.
+    @Override
+    public ResponseEntity<WorkflowDefinitionDto> publishWorkflow(String projectId, String workflowId) {
+        return ResponseEntity.status(501).build();
+    }
+
     @Override
     public ResponseEntity<List<WorkflowDefinitionDto>> listWorkflows(String projectId) {
         List<WorkflowDefinitionDto> dtos = workflowService.listWorkflows(projectId)
