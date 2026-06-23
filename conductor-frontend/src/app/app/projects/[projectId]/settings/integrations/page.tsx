@@ -10,6 +10,7 @@ import type { ConnectionSummary } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
 import { PuzzleIcon, CheckCircleIcon } from 'lucide-react';
+import { ConnectorIcon } from '@/components/integrations/ConnectorIcon';
 import type { Member } from '@/types';
 
 interface ConnectorConfigField {
@@ -172,9 +173,7 @@ export default function SettingsIntegrationsPage() {
   };
 
   const Icon = ({ item }: { item: IntegrationListItem }) => (
-    <div className="h-10 w-10 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
-      {item.iconLabel}
-    </div>
+    <ConnectorIcon connectorId={item.connectorId} iconLabel={item.iconLabel} className="h-10 w-10" />
   );
 
   if (loading) {

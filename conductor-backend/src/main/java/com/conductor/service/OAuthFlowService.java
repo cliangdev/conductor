@@ -4,6 +4,8 @@ import com.conductor.entity.Connection;
 import com.conductor.entity.IntegrationOAuthState;
 import com.conductor.exception.BusinessException;
 import com.conductor.integration.AuthType;
+import com.conductor.integration.ConnectorRegistry;
+import com.conductor.integration.OAuth2Connector;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -24,6 +26,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 
 @Service
@@ -33,8 +36,14 @@ public class OAuthFlowService {
     private static final String GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
     private static final String GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
+    /** Fallback scopes when a connector predates the {@link OAuth2Connector} scope declaration. */
+    private static final List<String> DEFAULT_GOOGLE_SCOPES = List.of(
+            "https://www.googleapis.com/auth/bigquery.readonly",
+            "https://www.googleapis.com/auth/cloudplatformprojects.readonly");
+
     private final IntegrationOAuthStateRepository oAuthStateRepository;
     private final ConnectionService connectionService;
+    private final ConnectorRegistry connectorRegistry;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
@@ -52,11 +61,21 @@ public class OAuthFlowService {
 
     public OAuthFlowService(IntegrationOAuthStateRepository oAuthStateRepository,
                             ConnectionService connectionService,
+                            ConnectorRegistry connectorRegistry,
                             ObjectMapper objectMapper) {
         this.oAuthStateRepository = oAuthStateRepository;
         this.connectionService = connectionService;
+        this.connectorRegistry = connectorRegistry;
         this.objectMapper = objectMapper;
         this.restTemplate = new RestTemplate();
+    }
+
+    /** Scopes for the consent URL: the connector's own declaration, else the legacy default. */
+    private List<String> scopesFor(String connectorId) {
+        return connectorRegistry.findOAuth2(connectorId)
+                .map(OAuth2Connector::oauthScopes)
+                .filter(scopes -> !scopes.isEmpty())
+                .orElse(DEFAULT_GOOGLE_SCOPES);
     }
 
     private void requireOAuthConfig() {
@@ -89,8 +108,7 @@ public class OAuthFlowService {
         oauthState.setConfigJson(Map.of());
         oAuthStateRepository.save(oauthState);
 
-        String scopes = "https://www.googleapis.com/auth/bigquery.readonly" +
-                " https://www.googleapis.com/auth/cloudplatformprojects.readonly";
+        String scopes = String.join(" ", scopesFor(connectorId));
         return UriComponentsBuilder.fromUriString(GOOGLE_AUTH_URL)
                 .queryParam("client_id", googleClientId)
                 .queryParam("redirect_uri", redirectUri)

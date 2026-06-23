@@ -14,6 +14,8 @@ import com.conductor.generated.model.ConnectorConfigFieldDto;
 import com.conductor.generated.model.CreateConnectionRequest;
 import com.conductor.generated.model.GcpProjectsResponse;
 import com.conductor.generated.model.GcpProjectsResponseProjectsInner;
+import com.conductor.generated.model.GscSitesResponse;
+import com.conductor.generated.model.GscSitesResponseSitesInner;
 import com.conductor.generated.model.IntegrationListItem;
 import com.conductor.generated.model.OAuthAuthorizeResponse;
 import com.conductor.generated.model.UpdateConnectionRequest;
@@ -29,6 +31,7 @@ import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.FetchConnector;
 import com.conductor.integration.connector.GcpBillingConnector;
+import com.conductor.integration.connector.gsc.GscConnector;
 import com.conductor.repository.ConnectionDataCacheRepository;
 import com.conductor.repository.WebhookEventRepository;
 import com.conductor.service.ConnectionService;
@@ -74,6 +77,8 @@ public class IntegrationController implements IntegrationsApi {
      * GcpBillingController that served these two endpoints.
      */
     private final Optional<GcpBillingConnector> gcpBillingConnector;
+    /** Present only outside the {@code local} profile (the real {@link GscConnector} is {@code @Profile("!local")}). */
+    private final Optional<GscConnector> gscConnector;
 
     @Value("${BACKEND_URL:}")
     private String backendUrl;
@@ -86,6 +91,7 @@ public class IntegrationController implements IntegrationsApi {
                                 WebhookEventRepository webhookEventRepository,
                                 ProjectSecurityService projectSecurityService,
                                 Optional<GcpBillingConnector> gcpBillingConnector,
+                                Optional<GscConnector> gscConnector,
                                 ObjectMapper objectMapper) {
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
@@ -95,6 +101,7 @@ public class IntegrationController implements IntegrationsApi {
         this.webhookEventRepository = webhookEventRepository;
         this.projectSecurityService = projectSecurityService;
         this.gcpBillingConnector = gcpBillingConnector;
+        this.gscConnector = gscConnector;
         this.objectMapper = objectMapper;
     }
 
@@ -271,9 +278,27 @@ public class IntegrationController implements IntegrationsApi {
         return ResponseEntity.ok(response);
     }
 
+    @Override
+    public ResponseEntity<GscSitesResponse> listGscSites(String projectId) {
+        requireMember(projectId);
+        GscConnector connector = requireGscConnector();
+        String accessToken = requireGcpAccessToken(projectId, "gsc");
+        List<Map<String, String>> sites = connector.listSites(accessToken);
+        GscSitesResponse response = new GscSitesResponse();
+        sites.forEach(s -> response.addSitesItem(
+                new GscSitesResponseSitesInner()
+                        .siteUrl(s.get("siteUrl")).permissionLevel(s.get("permissionLevel"))));
+        return ResponseEntity.ok(response);
+    }
+
     private GcpBillingConnector requireGcpBillingConnector() {
         return gcpBillingConnector.orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.SERVICE_UNAVAILABLE, "GCP Billing connector is not available"));
+    }
+
+    private GscConnector requireGscConnector() {
+        return gscConnector.orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.SERVICE_UNAVAILABLE, "Search Console connector is not available"));
     }
 
     /** Resolves a usable GCP OAuth access token for the project's single gcp-billing connection,

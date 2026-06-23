@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet } from '@/lib/api';
 import Link from 'next/link';
 import { PuzzleIcon } from 'lucide-react';
+import { ConnectorIcon } from '@/components/integrations/ConnectorIcon';
 
 interface IntegrationListItem {
   connectorId: string;
@@ -83,9 +84,11 @@ export default function IntegrationsPage() {
                 href={`/app/projects/${projectId}/integrations/${integration.connectorId}`}
                 className="bg-card rounded-lg border border-border p-5 flex items-center gap-3 hover:border-primary/50 transition-colors"
               >
-                <div className="h-9 w-9 rounded-md bg-muted flex items-center justify-center text-sm font-bold text-foreground flex-shrink-0">
-                  {integration.iconLabel}
-                </div>
+                <ConnectorIcon
+                  connectorId={integration.connectorId}
+                  iconLabel={integration.iconLabel}
+                  className="h-9 w-9"
+                />
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-foreground text-sm">{integration.name}</div>
                   <div className="text-xs text-muted-foreground truncate">{integration.description}</div>

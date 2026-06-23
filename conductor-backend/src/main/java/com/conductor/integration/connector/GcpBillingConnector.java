@@ -20,12 +20,18 @@ import java.util.Map;
 
 @Component
 @Profile("!local")
-public class GcpBillingConnector implements FetchConnector {
+public class GcpBillingConnector implements FetchConnector, OAuth2Connector {
 
     private static final Logger log = LoggerFactory.getLogger(GcpBillingConnector.class);
 
     @Override
     public String getId() { return "gcp-billing"; }
+
+    @Override
+    public List<String> oauthScopes() {
+        return List.of("https://www.googleapis.com/auth/bigquery.readonly",
+                "https://www.googleapis.com/auth/cloudplatformprojects.readonly");
+    }
 
     @Override
     public ConnectorMetadata getMetadata() {
