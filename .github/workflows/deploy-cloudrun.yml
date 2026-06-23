@@ -30,6 +30,11 @@ on:
         type: string
         required: false
         default: ''
+      health-path:
+        description: 'Path to smoke-test on the deployed service (e.g. /api/v1/health). Empty = skip.'
+        type: string
+        required: false
+        default: ''
 
 jobs:
   deploy-to-cloud-run:
@@ -62,9 +67,61 @@ jobs:
           docker push $IMAGE
           echo "IMAGE=$IMAGE" >> $GITHUB_ENV
       - uses: google-github-actions/deploy-cloudrun@v3
+        id: deploy
         with:
           service: ${{ inputs.service }}
           region: ${{ vars.GCP_REGION }}
           image: ${{ env.IMAGE }}
           flags: ${{ inputs.cloudrun-flags }}
           secrets: ${{ inputs.cloudrun-secrets }}
+
+      # Verify the new revision actually serves traffic — a container that boots
+      # but errors (bad migration, missing secret) would otherwise pass as a
+      # successful deploy. A non-200 fails this job, which surfaces as ❌ on the
+      # PR comment and triggers the Discord alert below.
+      - name: Health check
+        if: inputs.health-path != ''
+        run: |
+          URL="${{ steps.deploy.outputs.url }}${{ inputs.health-path }}"
+          echo "Probing $URL"
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$URL" || echo 000)
+            if [ "$code" = "200" ]; then echo "Healthy (200)"; exit 0; fi
+            echo "Attempt $i: HTTP $code — retrying in 10s"
+            sleep 10
+          done
+          echo "::error::Health check failed for $URL"
+          exit 1
+
+      # Alert Discord on any failure in this job (build, push, deploy, or health
+      # check). No-ops cleanly when the DISCORD_WEBHOOK secret is not configured.
+      - name: Discord alert on failure
+        if: failure() && github.repository == 'cliangdev/conductor'
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK" ]; then
+            echo "No DISCORD_WEBHOOK secret configured; skipping alert."
+            exit 0
+          fi
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          payload=$(jq -n \
+            --arg svc  "${{ inputs.service }}" \
+            --arg ref  "${{ github.ref_name }}" \
+            --arg sha  "$SHORT_SHA" \
+            --arg curl "$COMMIT_URL" \
+            --arg run  "$RUN_URL" \
+            --arg evt  "${{ github.event_name }}" \
+            '{embeds:[{
+              title: ("❌ Deploy failed: " + $svc),
+              description: ("Branch **" + $ref + "** · triggered by `" + $evt + "`"),
+              color: 15158332,
+              fields: [
+                {name:"Service", value:$svc, inline:true},
+                {name:"Commit",  value:("[`" + $sha + "`](" + $curl + ")"), inline:true},
+                {name:"Logs",    value:("[View run](" + $run + ")"), inline:true}
+              ]
+            }]}')
+          curl -s -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"

@@ -34,6 +34,7 @@ jobs:
       service: conductor-backend
       image-name: backend
       build-context: conductor-backend/
+      health-path: /api/v1/health
       cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }} --memory=1Gi"
       cloudrun-secrets: |
         DATABASE_URL=DATABASE_URL:latest

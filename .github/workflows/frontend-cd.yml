@@ -36,5 +36,6 @@ jobs:
       image-name: frontend
       build-context: conductor-frontend/
       is-frontend: true
+      health-path: /api/health
       cloudrun-flags: --allow-unauthenticated
     secrets: inherit
