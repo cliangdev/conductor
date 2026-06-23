@@ -135,8 +135,11 @@ public class IntegrationFetchService {
         if (OffsetDateTime.now().plusMinutes(TOKEN_REFRESH_BUFFER_MINUTES).isAfter(expiresAt)) {
             try {
                 String newToken = oAuthFlowService.refreshAccessToken(conn, ctx.refreshToken());
+                // The fresh token's real expiry is persisted to the connection by refreshAccessToken;
+                // pass null here rather than the now-stale ctx.expiresAt() so downstream consumers don't
+                // treat the new token as already expired.
                 return new ConnectionContext(ctx.projectId(), ctx.connectorId(), ctx.connectionId(),
-                        newToken, ctx.refreshToken(), ctx.expiresAt(), ctx.config(), ctx.webhookSecret());
+                        newToken, ctx.refreshToken(), null, ctx.config(), ctx.webhookSecret());
             } catch (Exception e) {
                 log.warn("Token refresh failed for connection={}: {}", conn.getId(), e.getMessage());
             }
