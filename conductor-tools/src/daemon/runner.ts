@@ -32,7 +32,7 @@ export interface WorkflowTriggerEvent {
 
 async function streamLogChunk(runId: string, chunk: string, config: Config): Promise<void> {
   try {
-    await fetch(`${config.apiUrl}/internal/workflow-runs/${runId}/log-chunk`, {
+    await fetch(`${config.apiUrl}/internal/v1/workflow-runs/${runId}/log-chunk`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

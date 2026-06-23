@@ -1,0 +1,127 @@
+openapi: "3.0.3"
+info:
+  title: Conductor Internal API
+  description: >
+    Internal control-plane for the workflow execution engine. These endpoints are NOT part of the
+    public API contract: they are called by the worker VM / daemon / DockerStepExecutor to stream
+    logs and report job outcomes back to the backend, authenticated by a per-run bearer token
+    (RunTokenService), not the app JWT. Served under /internal/v1 (the prefix is supplied centrally
+    by ApiPathConfig; method paths below are bare).
+  version: "1.0.0"
+servers:
+  - url: /internal/v1
+    description: Internal control-plane, v1
+
+tags:
+  - name: workflow-internal
+    description: Workflow run worker callbacks (logs, outputs, job failures)
+
+paths:
+  /workflow-runs/{runId}/log-chunk:
+    post:
+      tags: [workflow-internal]
+      summary: Append a chunk of log lines for a running workflow run
+      operationId: appendWorkflowRunLogChunk
+      security:
+        - runToken: []
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogChunkRequest"
+      responses:
+        "200":
+          description: Chunk accepted
+        "401":
+          description: Missing or invalid run token
+
+  /workflow-runs/{runId}/outputs:
+    post:
+      tags: [workflow-internal]
+      summary: Report step outputs for a worker job
+      operationId: reportWorkflowRunOutputs
+      security:
+        - runToken: []
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OutputsRequest"
+      responses:
+        "200":
+          description: Outputs recorded (idempotent; unknown job is a no-op)
+        "401":
+          description: Missing or invalid run token
+
+  /workflow-runs/{runId}/job-failed:
+    post:
+      tags: [workflow-internal]
+      summary: Report that a worker job failed
+      operationId: reportWorkflowRunJobFailed
+      security:
+        - runToken: []
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobFailedRequest"
+      responses:
+        "200":
+          description: Failure recorded
+        "400":
+          description: Missing jobId
+        "401":
+          description: Missing or invalid run token
+
+components:
+  parameters:
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+  securitySchemes:
+    runToken:
+      type: http
+      scheme: bearer
+      description: Per-run ephemeral token minted by RunTokenService
+  schemas:
+    LogChunkRequest:
+      type: object
+      properties:
+        workerJobId:
+          type: string
+        lines:
+          type: array
+          items:
+            type: string
+        timestamp:
+          type: string
+    OutputsRequest:
+      type: object
+      properties:
+        workerJobId:
+          type: string
+        outputs:
+          type: object
+          additionalProperties:
+            type: string
+    JobFailedRequest:
+      type: object
+      properties:
+        jobId:
+          type: string
+        exitCode:
+          type: integer
+        reason:
+          type: string

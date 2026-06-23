@@ -56,9 +56,9 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
         String ephemeralToken = runTokenService.generateRunToken(runId, ttlHours);
         Map<String, String> env = interpolateEnv(stepDef, ctx);
 
-        String logCallbackUrl = backendBaseUrl + "/internal/workflow-runs/" + runId + "/log-chunk";
-        String outputsCallbackUrl = backendBaseUrl + "/internal/workflow-runs/" + runId + "/outputs";
-        String jobFailedCallbackUrl = backendBaseUrl + "/internal/workflow-runs/" + runId + "/job-failed";
+        String logCallbackUrl = backendBaseUrl + "/internal/v1/workflow-runs/" + runId + "/log-chunk";
+        String outputsCallbackUrl = backendBaseUrl + "/internal/v1/workflow-runs/" + runId + "/outputs";
+        String jobFailedCallbackUrl = backendBaseUrl + "/internal/v1/workflow-runs/" + runId + "/job-failed";
 
         WorkerVmClient.RunJobRequest request = new WorkerVmClient.RunJobRequest(
                 runId, jobId, image, env,

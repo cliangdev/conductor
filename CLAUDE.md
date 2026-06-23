@@ -15,7 +15,7 @@ conductor/
 
 ## conductor-backend
 
-Spring Boot REST API. OpenAPI-first: edit `openapi.yaml`, run `mvn generate-sources`, then implement.
+Spring Boot REST API. OpenAPI-first — see [`docs/api-guidelines.md`](docs/api-guidelines.md) for the API workflow and conventions.
 
 ```
 src/main/java/com/conductor/
@@ -149,6 +149,15 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 
 **Future eng/marketing grouping** should be done with **labels + saved views** (or a nullable `group` tag on `project_members`), *not* by reintroducing a nested container above projects — that two-level org→project model was deliberately removed for simplicity.
 
+## Deploying a PR build
+
+Add a label to the PR to build, test, and deploy that branch to Cloud Run (`deploy-on-label.yml`):
+- **`deploy-backend`** → deploys `conductor-backend`
+- **`deploy-frontend`** → deploys `conductor-frontend`
+
+The deploy fires on the *labeled* event, so to redeploy after new commits, remove and re-add the label
+(`gh pr edit <PR> --remove-label <label>` then `--add-label <label>`). Each run comments the status on the PR.
+
 ## Fetching Cloud Run Logs
 
 Two options:
@@ -180,7 +189,6 @@ Set up a shell alias for your deployment (see `scripts/gcloud-alias-example.sh`)
 
 ## API Workflow
 
-All backend API changes:
-1. Update `conductor-backend/src/main/resources/openapi.yaml`
-2. `mvn generate-sources` (generates controller interfaces + DTOs)
-3. Implement the generated interface in a `@RestController`
+**Before creating or updating any API, read [`docs/api-guidelines.md`](docs/api-guidelines.md).** It is
+the authoritative reference for the OpenAPI-first workflow, the external vs internal API split,
+centralized base prefixes, versioning, and REST best practices — follow it and its end-of-doc checklist.

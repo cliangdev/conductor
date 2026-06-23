@@ -17,7 +17,7 @@ import java.util.Map;
 
 @RestController
 @Profile("local")
-@RequestMapping("/api/v1/auth")
+@RequestMapping("/auth")
 public class LocalAuthController {
 
     private final UserRepository userRepository;

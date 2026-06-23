@@ -23,7 +23,7 @@ export async function recoverStoppedContainers(): Promise<void> {
     if (backendUrl && workerSecret) {
       try {
         await axios.post(
-          `${backendUrl}/internal/workflow-runs/${container.runId}/job-failed`,
+          `${backendUrl}/internal/v1/workflow-runs/${container.runId}/job-failed`,
           {
             jobId: container.jobId,
             reason: 'Worker restarted; container lost',

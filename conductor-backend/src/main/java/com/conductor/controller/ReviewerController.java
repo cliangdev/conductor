@@ -8,13 +8,11 @@ import com.conductor.generated.model.ReviewerResponse;
 import com.conductor.service.ReviewerService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1")
 public class ReviewerController implements ReviewersApi {
 
     private final ReviewerService reviewerService;

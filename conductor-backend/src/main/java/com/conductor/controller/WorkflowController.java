@@ -42,7 +42,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.lang.Nullable;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.crypto.Mac;
@@ -55,7 +54,6 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/api/v1")
 public class WorkflowController implements WorkflowsApi {
 
     private static final Logger log = LoggerFactory.getLogger(WorkflowController.class);
@@ -231,9 +229,9 @@ public class WorkflowController implements WorkflowsApi {
         }
     }
 
-    // This endpoint is handled by WorkflowLogStreamingController which returns an SseEmitter.
-    // The @RequestMapping below overrides the generated interface mapping to avoid ambiguous mapping
-    // conflict between this controller and WorkflowLogStreamingController.
+    // The live SSE endpoint is handled by WorkflowLogStreamController (returns an SseEmitter).
+    // The @RequestMapping below remaps this generated-interface method off the real route to avoid an
+    // ambiguous mapping conflict with that controller; it is an unused 501 stub.
     @Override
     @org.springframework.web.bind.annotation.RequestMapping(
         method = org.springframework.web.bind.annotation.RequestMethod.GET,

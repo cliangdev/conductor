@@ -6,13 +6,11 @@ import com.conductor.generated.model.DaemonEventDto;
 import com.conductor.generated.model.DaemonEventsResponse;
 import com.conductor.service.DaemonEventService;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1")
 public class DaemonEventsController implements DaemonApi {
 
     private final DaemonEventService daemonEventService;

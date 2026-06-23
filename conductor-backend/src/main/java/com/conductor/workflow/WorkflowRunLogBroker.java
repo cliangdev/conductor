@@ -1,31 +1,19 @@
-package com.conductor.controller;
+package com.conductor.workflow;
 
-import com.conductor.entity.User;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowJobStatus;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.entity.WorkflowStepRun;
+import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
-import com.conductor.service.ProjectSecurityService;
-import com.conductor.workflow.RunTokenService;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -37,60 +25,58 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-@RestController
-public class WorkflowLogStreamingController {
+/**
+ * Shared coordination state for workflow run logs — the single owner of the in-memory SSE emitters and
+ * buffered log lines. Both API surfaces delegate here so the public stream and the internal worker
+ * callbacks can stay in separate controllers (and separate URL spaces) without fracturing this state:
+ *
+ * <ul>
+ *   <li>{@code WorkflowLogStreamController} (external, {@code /api/v1}) registers SSE subscribers.</li>
+ *   <li>{@code WorkflowInternalCallbackController} (internal, {@code /internal/v1}) pushes log chunks,
+ *       outputs, and job-failure signals from the worker.</li>
+ * </ul>
+ *
+ * Sharing a <i>service</i> across the internal/external boundary is intentional; what stays separated is
+ * the API surface (specs, packages, controllers, prefixes).
+ */
+@Component
+public class WorkflowRunLogBroker {
 
-    private static final Logger log = LoggerFactory.getLogger(WorkflowLogStreamingController.class);
+    private static final Logger log = LoggerFactory.getLogger(WorkflowRunLogBroker.class);
     private static final long SSE_TIMEOUT_MS = 10 * 60 * 1000L;
 
     private final WorkflowRunRepository runRepository;
     private final WorkflowJobRunRepository jobRunRepository;
     private final WorkflowStepRunRepository stepRunRepository;
-    private final ProjectSecurityService projectSecurityService;
-    private final RunTokenService runTokenService;
     private final ObjectMapper objectMapper;
 
     private final ConcurrentHashMap<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, List<String>> runLogs = new ConcurrentHashMap<>();
 
-    public WorkflowLogStreamingController(WorkflowRunRepository runRepository,
-                                           WorkflowJobRunRepository jobRunRepository,
-                                           WorkflowStepRunRepository stepRunRepository,
-                                           ProjectSecurityService projectSecurityService,
-                                           RunTokenService runTokenService,
-                                           ObjectMapper objectMapper) {
+    public WorkflowRunLogBroker(WorkflowRunRepository runRepository,
+                                WorkflowJobRunRepository jobRunRepository,
+                                WorkflowStepRunRepository stepRunRepository,
+                                ObjectMapper objectMapper) {
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
-        this.projectSecurityService = projectSecurityService;
-        this.runTokenService = runTokenService;
         this.objectMapper = objectMapper;
     }
 
-    @GetMapping(
-            value = "/api/v1/workflow-runs/{runId}/logs/stream",
-            produces = MediaType.TEXT_EVENT_STREAM_VALUE
-    )
-    public SseEmitter streamLogs(@PathVariable String runId) {
-        String userId = currentUserId();
-
-        WorkflowRun run = runRepository.findByIdWithWorkflow(runId)
-                .orElseThrow(() -> new EntityNotFoundException("Run not found: " + runId));
-
-        String projectId = run.getWorkflow().getProject().getId();
-        if (!projectSecurityService.isProjectMember(projectId, userId)) {
-            throw new com.conductor.exception.ForbiddenException("Not a project member");
-        }
-
+    /**
+     * Open an SSE stream for an already-authorized run. Terminal runs get their historical logs and
+     * are closed immediately; active runs are registered and replayed any buffered lines.
+     */
+    public SseEmitter register(WorkflowRun run) {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         WorkflowRunStatus status = run.getStatus();
-        boolean isTerminal = isTerminalStatus(status);
 
-        if (isTerminal) {
+        if (isTerminalStatus(status)) {
             sendHistoricalLogsAndClose(emitter, run, status);
             return emitter;
         }
 
+        String runId = run.getId();
         activeEmitters.put(runId, emitter);
 
         List<String> existingLines = runLogs.getOrDefault(runId, Collections.emptyList());
@@ -105,43 +91,17 @@ public class WorkflowLogStreamingController {
         return emitter;
     }
 
-    @PostMapping("/internal/workflow-runs/{runId}/log-chunk")
-    public ResponseEntity<Void> receiveLogChunk(
-            @PathVariable String runId,
-            @RequestHeader(value = "Authorization", required = false) String authHeader,
-            @RequestBody LogChunkRequest body) {
-
-        if (!validateRunToken(authHeader, runId)) {
-            return ResponseEntity.status(401).build();
-        }
-
-        List<String> lines = body.lines() != null ? body.lines() : Collections.emptyList();
+    /** Buffer log lines for a run and fan them out to any live subscriber. */
+    public void appendLogChunk(String runId, List<String> lines) {
         runLogs.computeIfAbsent(runId, k -> Collections.synchronizedList(new ArrayList<>())).addAll(lines);
-
         SseEmitter emitter = activeEmitters.get(runId);
         if (emitter != null) {
             sendLogChunk(emitter, lines);
         }
-
-        return ResponseEntity.ok().build();
     }
 
-    @PostMapping("/internal/workflow-runs/{runId}/outputs")
-    public ResponseEntity<Void> receiveOutputs(
-            @PathVariable String runId,
-            @RequestHeader(value = "Authorization", required = false) String authHeader,
-            @RequestBody OutputsRequest body) {
-
-        if (!validateRunToken(authHeader, runId)) {
-            return ResponseEntity.status(401).build();
-        }
-
-        String workerJobId = body.workerJobId();
-        Map<String, String> outputs = body.outputs();
-        if (workerJobId == null || outputs == null) {
-            return ResponseEntity.ok().build();
-        }
-
+    /** Record step outputs for a worker job (idempotent; unknown job is a no-op). */
+    public void recordOutputs(String runId, String workerJobId, Map<String, String> outputs) {
         List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(runId);
         for (WorkflowJobRun jobRun : jobRuns) {
             List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(jobRun.getId());
@@ -153,36 +113,21 @@ public class WorkflowLogStreamingController {
                     } catch (Exception e) {
                         log.warn("Failed to serialize outputs for step {}", step.getId(), e);
                     }
-                    return ResponseEntity.ok().build();
+                    return;
                 }
             }
         }
-
-        return ResponseEntity.ok().build();
     }
 
-    @PostMapping("/internal/workflow-runs/{runId}/job-failed")
-    public ResponseEntity<Void> receiveJobFailed(
-            @PathVariable String runId,
-            @RequestHeader(value = "Authorization", required = false) String authHeader,
-            @RequestBody JobFailedRequest body) {
-
-        if (!validateRunToken(authHeader, runId)) {
-            return ResponseEntity.status(401).build();
-        }
-
-        String workerJobId = body.jobId();
-        if (workerJobId == null) {
-            return ResponseEntity.badRequest().build();
-        }
-
+    /** Mark a worker job's step failed and roll the failure up to the job and (if needed) the run. */
+    public void recordJobFailed(String runId, String workerJobId, String reason) {
         List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(runId);
         for (WorkflowJobRun jobRun : jobRuns) {
             List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(jobRun.getId());
             for (WorkflowStepRun step : steps) {
                 if (workerJobId.equals(step.getWorkerJobId())) {
-                    step.setStatus(com.conductor.entity.WorkflowStepStatus.FAILED);
-                    step.setErrorReason(body.reason());
+                    step.setStatus(WorkflowStepStatus.FAILED);
+                    step.setErrorReason(reason);
                     step.setCompletedAt(OffsetDateTime.now());
                     stepRunRepository.save(step);
 
@@ -191,12 +136,10 @@ public class WorkflowLogStreamingController {
                     jobRunRepository.save(jobRun);
 
                     checkAndCompleteRun(runId);
-                    return ResponseEntity.ok().build();
+                    return;
                 }
             }
         }
-
-        return ResponseEntity.ok().build();
     }
 
     @Scheduled(fixedDelay = 5000)
@@ -282,12 +225,6 @@ public class WorkflowLogStreamingController {
         }
     }
 
-    private boolean validateRunToken(String authHeader, String runId) {
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) return false;
-        String token = authHeader.substring(7);
-        return runTokenService.validateRunToken(token, runId);
-    }
-
     private boolean isTerminalStatus(WorkflowRunStatus status) {
         return status == WorkflowRunStatus.SUCCESS
                 || status == WorkflowRunStatus.FAILED
@@ -300,18 +237,4 @@ public class WorkflowLogStreamingController {
                 || status == WorkflowJobStatus.SKIPPED
                 || status == WorkflowJobStatus.LOOP_EXHAUSTED;
     }
-
-    private String currentUserId() {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = auth != null ? auth.getPrincipal() : null;
-        if (!(principal instanceof User user)) {
-            throw new ClassCastException("Expected User principal but got: " +
-                    (principal == null ? "null" : principal.getClass().getName()));
-        }
-        return user.getId();
-    }
-
-    public record LogChunkRequest(String workerJobId, List<String> lines, String timestamp) {}
-    public record OutputsRequest(String workerJobId, Map<String, String> outputs) {}
-    public record JobFailedRequest(String jobId, Integer exitCode, String reason) {}
 }

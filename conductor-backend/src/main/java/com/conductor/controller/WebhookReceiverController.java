@@ -20,7 +20,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
@@ -50,7 +49,6 @@ import java.util.Optional;
  * {@link HttpServletRequest} directly. Both URL forms are documented in {@code openapi.yaml}.
  */
 @RestController
-@RequestMapping("/api/v1")
 public class WebhookReceiverController {
 
     private static final Logger log = LoggerFactory.getLogger(WebhookReceiverController.class);

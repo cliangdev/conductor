@@ -97,7 +97,7 @@ describe('runJob', () => {
 
     expect(result).toBe('FAILED')
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:8080/internal/workflow-runs/run_abc/log-chunk',
+      'http://localhost:8080/internal/v1/workflow-runs/run_abc/log-chunk',
       expect.objectContaining({
         method: 'POST',
         body: expect.stringContaining('Docker not available'),
@@ -116,7 +116,7 @@ describe('runJob', () => {
 
     expect(result).toBe('FAILED')
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:8080/internal/workflow-runs/run_abc/log-chunk',
+      'http://localhost:8080/internal/v1/workflow-runs/run_abc/log-chunk',
       expect.objectContaining({
         body: expect.stringContaining('No container image'),
       })
@@ -195,7 +195,7 @@ describe('runJob', () => {
     expect(argsStr).toContain('MY_VAR=hello')
   })
 
-  it('streams stdout lines to POST /internal/workflow-runs/{runId}/log-chunk', async () => {
+  it('streams stdout lines to POST /internal/v1/workflow-runs/{runId}/log-chunk', async () => {
     mockChildProcess.spawn
       .mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker info
       .mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker pull
@@ -231,7 +231,7 @@ describe('runJob', () => {
     expect(bodies.some((b) => b.chunk.includes('Tests passing'))).toBe(true)
   })
 
-  it('streams stderr lines to POST /internal/workflow-runs/{runId}/log-chunk', async () => {
+  it('streams stderr lines to POST /internal/v1/workflow-runs/{runId}/log-chunk', async () => {
     mockChildProcess.spawn
       .mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker info
       .mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker pull
