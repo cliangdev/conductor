@@ -72,6 +72,14 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    @ExceptionHandler(UnprocessableEntityException.class)
+    public ProblemDetail handleUnprocessableEntityException(UnprocessableEntityException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
     @ExceptionHandler(InviteExpiredException.class)
     public ProblemDetail handleInviteExpiredException(InviteExpiredException e) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.GONE);

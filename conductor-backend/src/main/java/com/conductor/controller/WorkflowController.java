@@ -20,6 +20,7 @@ import com.conductor.generated.model.WorkflowRunDetailDto;
 import com.conductor.generated.model.WorkflowRunDto;
 import com.conductor.generated.model.WorkflowScheduleSkipDto;
 import com.conductor.generated.model.WorkflowStepRunDto;
+import com.conductor.generated.model.WorkflowState;
 import com.conductor.generated.model.WorkflowUpdateRequest;
 import com.conductor.generated.model.WorkflowValidationWarning;
 import com.conductor.repository.WorkflowDefinitionRepository;
@@ -29,9 +30,11 @@ import com.conductor.repository.WorkflowScheduleRepository;
 import com.conductor.repository.WorkflowScheduleSkipRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ProjectSecurityService;
+import com.conductor.service.WorkflowDefinitionLifecycleService;
 import com.conductor.service.WorkflowService;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
@@ -67,6 +70,7 @@ public class WorkflowController implements WorkflowsApi {
     private final WorkflowStepRunRepository stepRunRepository;
     private final WorkflowScheduleRepository scheduleRepository;
     private final WorkflowScheduleSkipRepository scheduleSkipRepository;
+    private final WorkflowDefinitionLifecycleService lifecycleService;
     private final ObjectMapper objectMapper;
 
     public WorkflowController(WorkflowService workflowService,
@@ -78,6 +82,7 @@ public class WorkflowController implements WorkflowsApi {
                                WorkflowStepRunRepository stepRunRepository,
                                WorkflowScheduleRepository scheduleRepository,
                                WorkflowScheduleSkipRepository scheduleSkipRepository,
+                               WorkflowDefinitionLifecycleService lifecycleService,
                                ObjectMapper objectMapper) {
         this.workflowService = workflowService;
         this.workflowTriggerService = workflowTriggerService;
@@ -88,14 +93,14 @@ public class WorkflowController implements WorkflowsApi {
         this.stepRunRepository = stepRunRepository;
         this.scheduleRepository = scheduleRepository;
         this.scheduleSkipRepository = scheduleSkipRepository;
+        this.lifecycleService = lifecycleService;
         this.objectMapper = objectMapper;
     }
 
-    // TODO(COND-18 E1): implement Draft->Publish promotion (validate definition, flip state to PUBLISHED).
-    // Contract authored ahead of the validator/engine; returns 501 until the definition lifecycle lands.
     @Override
     public ResponseEntity<WorkflowDefinitionDto> publishWorkflow(String projectId, String workflowId) {
-        return ResponseEntity.status(501).build();
+        WorkflowDefinition published = lifecycleService.publish(projectId, workflowId, currentUserId());
+        return ResponseEntity.ok(toDto(published));
     }
 
     @Override
@@ -356,6 +361,14 @@ public class WorkflowController implements WorkflowsApi {
         dto.setYaml(def.getYaml());
         dto.setEnabled(def.isEnabled());
         dto.setWebhookToken(def.getWebhookToken());
+        // COND-18 lifecycle fields
+        dto.setVersion(def.getVersion());
+        dto.setState(def.getState() == null ? null : WorkflowState.fromValue(def.getState()));
+        dto.setArea(def.getArea());
+        dto.setSchemaVersion(def.getSchemaVersion());
+        if (def.getDefinition() != null) {
+            dto.setDefinition(objectMapper.convertValue(def.getDefinition(), new TypeReference<Map<String, Object>>() {}));
+        }
         dto.setCreatedAt(def.getCreatedAt());
         dto.setUpdatedAt(def.getUpdatedAt());
         return dto;
