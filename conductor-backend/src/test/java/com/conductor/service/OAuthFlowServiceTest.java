@@ -4,6 +4,7 @@ import com.conductor.entity.Connection;
 import com.conductor.entity.IntegrationOAuthState;
 import com.conductor.exception.BusinessException;
 import com.conductor.integration.AuthType;
+import com.conductor.integration.ConnectorRegistry;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +44,9 @@ class OAuthFlowServiceTest {
     @Mock
     private RestTemplate restTemplate;
 
+    @Mock
+    private ConnectorRegistry connectorRegistry;
+
     private OAuthFlowService service;
 
     private static final String PROJECT_ID = "proj-1";
@@ -51,7 +55,7 @@ class OAuthFlowServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new OAuthFlowService(oAuthStateRepository, connectionService, new ObjectMapper());
+        service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry, new ObjectMapper());
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(service, "googleClientId", "test-client-id");
         ReflectionTestUtils.setField(service, "googleClientSecret", "test-client-secret");

@@ -53,6 +53,10 @@ public class ConnectorRegistry {
         return as(id, ActionConnector.class);
     }
 
+    public Optional<OAuth2Connector> findOAuth2(String id) {
+        return as(id, OAuth2Connector.class);
+    }
+
     /** Capabilities a connector supports, derived from the interfaces it implements. */
     public List<Capability> capabilitiesOf(Connector c) {
         List<Capability> caps = new ArrayList<>();
