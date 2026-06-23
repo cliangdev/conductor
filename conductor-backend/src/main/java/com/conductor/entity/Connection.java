@@ -12,9 +12,18 @@ import org.hibernate.annotations.ColumnTransformer;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
+/**
+ * A single connected instance of a connector for a project. Many rows per (project, connector)
+ * are allowed — multi-instance (e.g. one GitHub repo per row). Single-instance connectors carry
+ * {@code singleInstance = true} and are constrained to one row per (project, connector) by the
+ * partial unique index {@code uq_connection_single_instance}.
+ *
+ * <p>One per-connection DEK (wrapped in {@code kmsKeyReference}) encrypts all secrets on the row:
+ * access token, refresh token, and webhook signing secret.
+ */
 @Entity
-@Table(name = "integration_credentials")
-public class IntegrationCredential {
+@Table(name = "connection")
+public class Connection {
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
@@ -26,8 +35,22 @@ public class IntegrationCredential {
     @Column(name = "connector_id", length = 64, nullable = false)
     private String connectorId;
 
+    @Column(name = "display_label", length = 160)
+    private String displayLabel;
+
     @Column(name = "auth_type", length = 32, nullable = false)
     private String authType;
+
+    @Column(name = "status", length = 20, nullable = false)
+    private String status;
+
+    /**
+     * True for single-instance connectors (one row per project/connector). Backs the partial
+     * unique index {@code uq_connection_single_instance}, which is the real guarantee against
+     * concurrent duplicate inserts. Set from {@code ConnectorSpec.singleInstance()} at create.
+     */
+    @Column(name = "single_instance", nullable = false)
+    private boolean singleInstance;
 
     @JsonIgnore
     @Column(name = "encrypted_access_token", columnDefinition = "TEXT")
@@ -37,6 +60,11 @@ public class IntegrationCredential {
     @Column(name = "encrypted_refresh_token", columnDefinition = "TEXT")
     private String encryptedRefreshToken;
 
+    @JsonIgnore
+    @Column(name = "encrypted_webhook_secret", columnDefinition = "TEXT")
+    private String encryptedWebhookSecret;
+
+    @JsonIgnore
     @Column(name = "kms_key_reference", columnDefinition = "TEXT")
     private String kmsKeyReference;
 
@@ -57,6 +85,9 @@ public class IntegrationCredential {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    @Column(name = "connected_by", length = 36)
+    private String connectedBy;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -67,6 +98,9 @@ public class IntegrationCredential {
         }
         if (visibilityPolicy == null) {
             visibilityPolicy = "{\"minRole\":\"REVIEWER\"}";
+        }
+        if (status == null) {
+            status = "ACTIVE";
         }
         OffsetDateTime now = OffsetDateTime.now();
         createdAt = now;
@@ -87,14 +121,26 @@ public class IntegrationCredential {
     public String getConnectorId() { return connectorId; }
     public void setConnectorId(String connectorId) { this.connectorId = connectorId; }
 
+    public String getDisplayLabel() { return displayLabel; }
+    public void setDisplayLabel(String displayLabel) { this.displayLabel = displayLabel; }
+
     public String getAuthType() { return authType; }
     public void setAuthType(String authType) { this.authType = authType; }
+
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+
+    public boolean isSingleInstance() { return singleInstance; }
+    public void setSingleInstance(boolean singleInstance) { this.singleInstance = singleInstance; }
 
     public String getEncryptedAccessToken() { return encryptedAccessToken; }
     public void setEncryptedAccessToken(String encryptedAccessToken) { this.encryptedAccessToken = encryptedAccessToken; }
 
     public String getEncryptedRefreshToken() { return encryptedRefreshToken; }
     public void setEncryptedRefreshToken(String encryptedRefreshToken) { this.encryptedRefreshToken = encryptedRefreshToken; }
+
+    public String getEncryptedWebhookSecret() { return encryptedWebhookSecret; }
+    public void setEncryptedWebhookSecret(String encryptedWebhookSecret) { this.encryptedWebhookSecret = encryptedWebhookSecret; }
 
     public String getKmsKeyReference() { return kmsKeyReference; }
     public void setKmsKeyReference(String kmsKeyReference) { this.kmsKeyReference = kmsKeyReference; }
@@ -113,4 +159,7 @@ public class IntegrationCredential {
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getConnectedBy() { return connectedBy; }
+    public void setConnectedBy(String connectedBy) { this.connectedBy = connectedBy; }
 }

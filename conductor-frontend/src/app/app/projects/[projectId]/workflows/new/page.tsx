@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiPost } from '@/lib/api';
+import { apiPost, apiErrorMessage } from '@/lib/api';
 import WorkflowEditorLayout from '@/components/workflow/WorkflowEditorLayout';
 
 const DEFAULT_YAML = `name: my-workflow
@@ -34,7 +34,7 @@ export default function NewWorkflowPage() {
       await apiPost(`/api/v1/projects/${projectId}/workflows`, { name, yaml }, accessToken);
       router.push(`/app/projects/${projectId}/workflows`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save workflow');
+      setError(apiErrorMessage(e, 'Failed to save workflow'));
     } finally {
       setSaving(false);
     }

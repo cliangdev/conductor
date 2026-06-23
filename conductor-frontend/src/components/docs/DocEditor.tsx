@@ -37,6 +37,7 @@ import { useEditorChrome } from '@/contexts/EditorChromeContext'
 import { ResizableSplit } from '@/components/ui/ResizableSplit'
 import { updateDoc } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
+import { apiErrorMessage } from '@/lib/api'
 import type { MemberRole } from '@/types'
 
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
@@ -315,7 +316,7 @@ export function DocEditor({
         applyAndRecord(insertAtCursor(textareaRef.current, snippet, ''))
       }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Image upload failed', 'error')
+      showToast(apiErrorMessage(err, 'Image upload failed'), 'error')
     } finally {
       setUploading(false)
     }
@@ -340,7 +341,7 @@ export function DocEditor({
       const updated = await updateDoc(projectId, doc.id, value, token)
       onSaved(updated)
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to save document', 'error')
+      showToast(apiErrorMessage(err, 'Failed to save document'), 'error')
     } finally {
       setSaving(false)
     }

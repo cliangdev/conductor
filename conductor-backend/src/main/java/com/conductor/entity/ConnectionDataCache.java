@@ -10,26 +10,24 @@ import org.hibernate.annotations.ColumnTransformer;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
+/** Last-successful fetch result for a pull connection; UPSERT keyed by connection_id. */
 @Entity
-@Table(name = "integration_data_cache")
-public class IntegrationDataCache {
+@Table(name = "connection_data_cache")
+public class ConnectionDataCache {
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
     private String id;
 
-    @Column(name = "project_id", length = 36, nullable = false)
-    private String projectId;
-
-    @Column(name = "connector_id", length = 64, nullable = false)
-    private String connectorId;
+    @Column(name = "connection_id", length = 36, nullable = false)
+    private String connectionId;
 
     @Column(name = "data_json", columnDefinition = "JSONB", nullable = false)
     @ColumnTransformer(write = "?::jsonb")
     private String dataJson;
 
     @Column(name = "health_status", length = 32, nullable = false)
-    private String healthStatus = "HEALTHY";
+    private String healthStatus;
 
     @Column(name = "fetched_at", nullable = false)
     private OffsetDateTime fetchedAt;
@@ -50,11 +48,8 @@ public class IntegrationDataCache {
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
-    public String getProjectId() { return projectId; }
-    public void setProjectId(String projectId) { this.projectId = projectId; }
-
-    public String getConnectorId() { return connectorId; }
-    public void setConnectorId(String connectorId) { this.connectorId = connectorId; }
+    public String getConnectionId() { return connectionId; }
+    public void setConnectionId(String connectionId) { this.connectionId = connectionId; }
 
     public String getDataJson() { return dataJson; }
     public void setDataJson(String dataJson) { this.dataJson = dataJson; }

@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiPost } from '@/lib/api'
+import { apiPost, apiErrorMessage, type ApiError } from '@/lib/api'
 
 interface AcceptInviteResponse {
   projectId: string
@@ -23,10 +23,6 @@ function errorMessageForStatus(status: number): string {
   if (status === 409) return 'This invite has already been used'
   if (status === 404) return 'Invite not found'
   return 'Something went wrong. Please try again.'
-}
-
-interface ApiError extends Error {
-  status?: number
 }
 
 export default function AcceptInvitePage() {
@@ -66,10 +62,9 @@ export default function AcceptInvitePage() {
           router.push(`/app/projects/${result.projectId}`)
         }, 2000)
       } catch (err) {
-        const apiErr = err as ApiError
         setPageState({
           status: 'error',
-          message: errorMessageForStatus(apiErr.status ?? 0),
+          message: apiErrorMessage(err, errorMessageForStatus((err as ApiError).status ?? 0)),
         })
       }
     }

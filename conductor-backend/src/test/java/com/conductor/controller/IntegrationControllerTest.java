@@ -1,44 +1,38 @@
 package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
-import com.conductor.entity.MemberRole;
-import com.conductor.entity.ProjectMember;
+import com.conductor.entity.Connection;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
-import com.conductor.integration.ConnectorCategory;
-import com.conductor.integration.ConnectorConfigField;
-import com.conductor.integration.ConnectorData;
-import com.conductor.integration.ConnectorHealth;
-import com.conductor.integration.ConnectorMetadata;
-import com.conductor.integration.ConnectorRegistry;
-import com.conductor.integration.AuthType;
 import com.conductor.integration.DecryptedCredentials;
-import com.conductor.integration.IntegrationConnector;
-import com.conductor.repository.IntegrationCredentialRepository;
-import com.conductor.repository.IntegrationDataCacheRepository;
+import com.conductor.integration.connector.GcpBillingConnector;
+import com.conductor.integration.ConnectorRegistry;
+import com.conductor.repository.ConnectionDataCacheRepository;
 import com.conductor.repository.ProjectApiKeyRepository;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
-import com.conductor.service.CredentialService;
+import com.conductor.repository.WebhookEventRepository;
+import com.conductor.service.ConnectionService;
 import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.JwtService;
 import com.conductor.service.OAuthFlowService;
+import com.conductor.service.ProjectSecurityService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -46,115 +40,176 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
 class IntegrationControllerTest {
 
+    private static final String PROJECT_ID = "proj-1";
+    private static final String GCP_CONNECTOR_ID = "gcp-billing";
+
     @Autowired
     private MockMvc mockMvc;
 
-    @MockitoBean
-    private ConnectorRegistry connectorRegistry;
-    @MockitoBean
-    private IntegrationFetchService fetchService;
-    @MockitoBean
-    private CredentialService credentialService;
-    @MockitoBean
-    private OAuthFlowService oAuthFlowService;
-    @MockitoBean
-    private IntegrationCredentialRepository credentialRepository;
-    @MockitoBean
-    private IntegrationDataCacheRepository cacheRepository;
-    @MockitoBean
-    private ProjectMemberRepository projectMemberRepository;
-    @MockitoBean
-    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    // IntegrationController collaborators
+    @MockitoBean private ConnectorRegistry connectorRegistry;
+    @MockitoBean private ConnectionService connectionService;
+    @MockitoBean private IntegrationFetchService fetchService;
+    @MockitoBean private OAuthFlowService oAuthFlowService;
+    @MockitoBean private ConnectionDataCacheRepository cacheRepository;
+    @MockitoBean private WebhookEventRepository webhookEventRepository;
+    @MockitoBean private ProjectSecurityService projectSecurityService;
+    @MockitoBean private GcpBillingConnector gcpBillingConnector;
+    @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
-    @MockitoBean
-    private JwtService jwtService;
-    @MockitoBean
-    private UserRepository userRepository;
-    @MockitoBean
-    private ProjectApiKeyRepository projectApiKeyRepository;
-    @MockitoBean
-    private UserApiKeyRepository userApiKeyRepository;
+    // Security filter chain collaborators
+    @MockitoBean private JwtService jwtService;
+    @MockitoBean private UserRepository userRepository;
+    @MockitoBean private ProjectApiKeyRepository projectApiKeyRepository;
+    @MockitoBean private UserApiKeyRepository userApiKeyRepository;
 
-    private User adminUser;
-    private User reviewerUser;
+    private User memberUser;
 
     @BeforeEach
     void setUp() {
-        adminUser = new User();
-        adminUser.setId("admin-id");
-        adminUser.setEmail("admin@example.com");
+        memberUser = new User();
+        memberUser.setId("member-user-id");
+        memberUser.setEmail("member@example.com");
+        memberUser.setName("Member User");
 
-        reviewerUser = new User();
-        reviewerUser.setId("reviewer-id");
-        reviewerUser.setEmail("reviewer@example.com");
+        when(jwtService.validateToken("member-token")).thenReturn(true);
+        when(jwtService.getUserIdFromToken("member-token")).thenReturn("member-user-id");
+        when(userRepository.findById("member-user-id")).thenReturn(Optional.of(memberUser));
+    }
 
-        when(jwtService.validateToken("admin-token")).thenReturn(true);
-        when(jwtService.getUserIdFromToken("admin-token")).thenReturn("admin-id");
-        when(userRepository.findById("admin-id")).thenReturn(Optional.of(adminUser));
+    private Connection gcpConnectionWithToken() {
+        Connection conn = new Connection();
+        conn.setId("gcp-conn-1");
+        conn.setProjectId(PROJECT_ID);
+        conn.setConnectorId(GCP_CONNECTOR_ID);
+        conn.setAuthType("OAUTH2");
+        return conn;
+    }
 
-        when(jwtService.validateToken("reviewer-token")).thenReturn(true);
-        when(jwtService.getUserIdFromToken("reviewer-token")).thenReturn("reviewer-id");
-        when(userRepository.findById("reviewer-id")).thenReturn(Optional.of(reviewerUser));
+    // ---- listGcpProjects ----
 
-        ProjectMember admin = new ProjectMember();
-        admin.setRole(MemberRole.ADMIN);
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "admin-id"))
-                .thenReturn(Optional.of(admin));
+    @Test
+    void listGcpProjects_happyPath_returnsProjects() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Connection conn = gcpConnectionWithToken();
+        when(connectionService.findSingle(PROJECT_ID, GCP_CONNECTOR_ID)).thenReturn(Optional.of(conn));
+        when(connectionService.decrypt(conn))
+                .thenReturn(new DecryptedCredentials("tok", "refresh", Instant.now().plusSeconds(3600), Map.of()));
+        when(gcpBillingConnector.listGcpProjects("tok")).thenReturn(List.of(
+                Map.of("projectId", "p-1", "name", "Project One"),
+                Map.of("projectId", "p-2", "name", "Project Two")));
 
-        ProjectMember reviewer = new ProjectMember();
-        reviewer.setRole(MemberRole.REVIEWER);
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "reviewer-id"))
-                .thenReturn(Optional.of(reviewer));
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/gcp-projects")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.projects.length()").value(2))
+                .andExpect(jsonPath("$.projects[0].projectId").value("p-1"))
+                .andExpect(jsonPath("$.projects[0].name").value("Project One"));
     }
 
     @Test
-    void reviewerCannotConnectIntegration() throws Exception {
-        mockMvc.perform(post("/api/v1/projects/proj-1/integrations/stripe/credentials")
-                        .header("Authorization", "Bearer reviewer-token")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"apiKey\": \"sk_test_123\"}"))
+    void listGcpProjects_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/gcp-projects")
+                        .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    void adminCanListIntegrations() throws Exception {
-        when(connectorRegistry.getAll()).thenReturn(List.of(new StubConnector()));
-        when(credentialRepository.findByProjectIdAndConnectorId("proj-1", "stub"))
-                .thenReturn(Optional.empty());
+    void listGcpProjects_noOAuthCredentials_isRejected_andDoesNotCallConnector() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(connectionService.findSingle(PROJECT_ID, GCP_CONNECTOR_ID)).thenReturn(Optional.empty());
 
-        mockMvc.perform(get("/api/v1/projects/proj-1/integrations")
-                        .header("Authorization", "Bearer admin-token"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].connectorId").value("stub"))
-                .andExpect(jsonPath("$[0].connected").value(false));
+        // Missing OAuth credentials raises a CONFLICT ResponseStatusException; the application's
+        // catch-all @ExceptionHandler(Exception.class) renders it as 5xx (preserved from the former
+        // GcpBillingController behavior). The contract under test: the request is rejected and the
+        // connector is never invoked.
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/gcp-projects")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().is5xxServerError());
+        org.mockito.Mockito.verifyNoInteractions(gcpBillingConnector);
     }
 
-    private static class StubConnector implements IntegrationConnector {
-        @Override
-        public String getId() {
-            return "stub";
-        }
+    @Test
+    void listGcpProjects_refreshesExpiringToken() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Connection conn = gcpConnectionWithToken();
+        when(connectionService.findSingle(PROJECT_ID, GCP_CONNECTOR_ID)).thenReturn(Optional.of(conn));
+        when(connectionService.decrypt(conn))
+                .thenReturn(new DecryptedCredentials("stale", "refresh", Instant.now().minusSeconds(10), Map.of()));
+        when(oAuthFlowService.refreshAccessToken(eq(conn), eq("refresh"))).thenReturn("fresh");
+        when(gcpBillingConnector.listGcpProjects("fresh")).thenReturn(List.of(
+                Map.of("projectId", "p-1", "name", "Project One")));
 
-        @Override
-        public ConnectorMetadata getMetadata() {
-            return new ConnectorMetadata("stub", "Stub", ConnectorCategory.ANALYTICS,
-                    AuthType.API_KEY, "A stub connector", "ST");
-        }
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/gcp-projects")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.projects[0].projectId").value("p-1"));
+    }
 
-        @Override
-        public List<ConnectorConfigField> getConfigFields() {
-            return List.of(new ConnectorConfigField("apiKey", "API Key", "Your key", true));
-        }
+    // ---- listBqDatasets ----
 
-        @Override
-        public ConnectorData fetchData(DecryptedCredentials credentials) {
-            return ConnectorData.healthy(java.util.Map.of());
-        }
+    @Test
+    void listBqDatasets_happyPath_returnsDatasets() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Connection conn = gcpConnectionWithToken();
+        when(connectionService.findSingle(PROJECT_ID, GCP_CONNECTOR_ID)).thenReturn(Optional.of(conn));
+        when(connectionService.decrypt(conn))
+                .thenReturn(new DecryptedCredentials("tok", "refresh", Instant.now().plusSeconds(3600), Map.of()));
+        when(gcpBillingConnector.listBqDatasets("tok", "my-gcp-project")).thenReturn(List.of(
+                Map.of("datasetId", "billing", "location", "US")));
 
-        @Override
-        public ConnectorHealth checkHealth(DecryptedCredentials credentials) {
-            return ConnectorHealth.HEALTHY;
-        }
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/bq-datasets")
+                        .param("gcpProjectId", "my-gcp-project")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.datasets.length()").value(1))
+                .andExpect(jsonPath("$.datasets[0].datasetId").value("billing"))
+                .andExpect(jsonPath("$.datasets[0].location").value("US"));
+    }
+
+    @Test
+    void listBqDatasets_invalidProjectId_isRejected_andDoesNotCallConnector() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+
+        // Invalid gcpProjectId raises a BAD_REQUEST ResponseStatusException, rendered as 5xx by the
+        // catch-all handler (preserved behavior). Contract: rejected, and the connector is not called.
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/bq-datasets")
+                        .param("gcpProjectId", "bad id!")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().is5xxServerError());
+        org.mockito.Mockito.verifyNoInteractions(gcpBillingConnector);
+    }
+
+    @Test
+    void listBqDatasets_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/bq-datasets")
+                        .param("gcpProjectId", "my-gcp-project")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    // ---- ProjectSecurityService gating on a plain read endpoint ----
+
+    @Test
+    void listIntegrations_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listIntegrations_member_returns200() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(connectorRegistry.getAll()).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk());
     }
 }

@@ -410,4 +410,72 @@ class IssueServiceTest {
 
         assertThat(inProgressEvent.getMetadata()).doesNotContainKey("assigneeName");
     }
+
+    // --- completeFromPullRequest (system-initiated DONE on merged PR; #3) ---
+
+    @Test
+    void completeFromPullRequestSetsDoneUrlAndNotifications() {
+        testIssue.setStatus(IssueStatus.IN_PROGRESS);
+        when(issueRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
+        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+
+        issueService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
+
+        assertThat(testIssue.getStatus()).isEqualTo(IssueStatus.DONE);
+        assertThat(testIssue.getGithubPrUrl()).isEqualTo("https://github.com/x/y/pull/9");
+        verify(issueRepository).save(testIssue);
+
+        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher, org.mockito.Mockito.times(2)).dispatch(captor.capture());
+        assertThat(captor.getAllValues().stream().map(NotificationEvent::getEventType))
+                .containsExactlyInAnyOrder(EventType.ISSUE_COMPLETED, EventType.ISSUE_STATUS_CHANGED);
+    }
+
+    @Test
+    void completeFromPullRequestThrowsForIssueInAnotherProject() {
+        // Cross-project guard: issue belongs to proj-1 but the webhook came in for another project.
+        when(issueRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
+
+        assertThatThrownBy(() ->
+                issueService.completeFromPullRequest("other-proj", "TEST", 1, "https://github.com/x/y/pull/9"))
+                .isInstanceOf(EntityNotFoundException.class);
+
+        verify(issueRepository, org.mockito.Mockito.never()).save(any());
+        verify(notificationDispatcher, org.mockito.Mockito.never()).dispatch(any());
+    }
+
+    @Test
+    void completeFromPullRequestThrowsWhenIssueMissing() {
+        when(issueRepository.findByProjectKeyAndSequenceNumber("TEST", 7)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() ->
+                issueService.completeFromPullRequest("proj-1", "TEST", 7, "https://github.com/x/y/pull/9"))
+                .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    void completeFromPullRequestIsNoopTransitionWhenAlreadyDone() {
+        testIssue.setStatus(IssueStatus.DONE);
+        when(issueRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
+        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+
+        issueService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
+
+        assertThat(testIssue.getStatus()).isEqualTo(IssueStatus.DONE);
+        // PR url is still recorded, but no status transition → no DONE notifications.
+        assertThat(testIssue.getGithubPrUrl()).isEqualTo("https://github.com/x/y/pull/9");
+        verify(notificationDispatcher, org.mockito.Mockito.never()).dispatch(any());
+    }
+
+    @Test
+    void completeFromPullRequestDoesNotReopenClosedIssue() {
+        testIssue.setStatus(IssueStatus.CLOSED);
+        when(issueRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
+        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+
+        issueService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
+
+        assertThat(testIssue.getStatus()).isEqualTo(IssueStatus.CLOSED);
+        verify(notificationDispatcher, org.mockito.Mockito.never()).dispatch(any());
+    }
 }

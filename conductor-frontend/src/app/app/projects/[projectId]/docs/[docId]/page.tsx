@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { getDoc } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
+import { apiErrorMessage } from '@/lib/api'
 import { DocViewer } from '@/components/docs/DocViewer'
 import { DocHistoryPanel } from '@/components/docs/DocHistoryPanel'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -28,7 +29,7 @@ export default function DocDetailPage() {
 
     getDoc(projectId, docId, accessToken)
       .then(setDoc)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load doc'))
+      .catch((err) => setError(apiErrorMessage(err, 'Failed to load doc')))
       .finally(() => setLoading(false))
   }, [accessToken, projectId, docId])
 

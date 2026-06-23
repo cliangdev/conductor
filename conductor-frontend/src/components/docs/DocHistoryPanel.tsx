@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { X, ArrowLeft, RotateCcw } from 'lucide-react'
 import { listVersions, getDocVersion, restoreVersion } from '@/lib/docs-api'
 import type { DocVersion, ProjectDoc } from '@/lib/docs-api'
+import { apiErrorMessage } from '@/lib/api'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
@@ -45,7 +46,7 @@ export function DocHistoryPanel({
   useEffect(() => {
     listVersions(projectId, docId, token)
       .then(setVersions)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load versions'))
+      .catch((err) => setError(apiErrorMessage(err, 'Failed to load versions')))
       .finally(() => setLoading(false))
   }, [projectId, docId, token])
 
@@ -56,8 +57,8 @@ export function DocHistoryPanel({
     try {
       const full = await getDocVersion(projectId, docId, version.id, token)
       setViewingVersion(full)
-    } catch {
-      setError('Failed to load version content')
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Failed to load version content'))
     } finally {
       setLoadingVersion(false)
     }
@@ -75,8 +76,8 @@ export function DocHistoryPanel({
       const updated = await restoreVersion(projectId, docId, confirmVersion.id, token)
       onRestored(updated)
       onClose()
-    } catch {
-      setError('Failed to restore version')
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Failed to restore version'))
     } finally {
       setRestoring(false)
     }

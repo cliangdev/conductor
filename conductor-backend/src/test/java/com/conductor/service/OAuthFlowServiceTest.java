@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.entity.Connection;
 import com.conductor.entity.IntegrationOAuthState;
 import com.conductor.exception.BusinessException;
 import com.conductor.integration.AuthType;
@@ -37,7 +38,7 @@ class OAuthFlowServiceTest {
     private IntegrationOAuthStateRepository oAuthStateRepository;
 
     @Mock
-    private CredentialService credentialService;
+    private ConnectionService connectionService;
 
     @Mock
     private RestTemplate restTemplate;
@@ -45,12 +46,12 @@ class OAuthFlowServiceTest {
     private OAuthFlowService service;
 
     private static final String PROJECT_ID = "proj-1";
-    private static final String CONNECTOR_ID = "bigquery";
-    private static final String REDIRECT_URI = "http://localhost:8080/api/integrations/oauth/callback";
+    private static final String CONNECTOR_ID = "gcp-billing";
+    private static final String REDIRECT_URI = "http://localhost:8080/api/v1/oauth/callback";
 
     @BeforeEach
     void setUp() {
-        service = new OAuthFlowService(oAuthStateRepository, credentialService, new ObjectMapper());
+        service = new OAuthFlowService(oAuthStateRepository, connectionService, new ObjectMapper());
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(service, "googleClientId", "test-client-id");
         ReflectionTestUtils.setField(service, "googleClientSecret", "test-client-secret");
@@ -87,6 +88,12 @@ class OAuthFlowServiceTest {
         oauthState.setExpiresAt(OffsetDateTime.now().plusMinutes(5));
         when(oAuthStateRepository.findById(state)).thenReturn(Optional.of(oauthState));
 
+        Connection conn = new Connection();
+        conn.setId("conn-1");
+        conn.setProjectId(PROJECT_ID);
+        conn.setConnectorId(CONNECTOR_ID);
+        when(connectionService.getOrCreateSingle(PROJECT_ID, CONNECTOR_ID, AuthType.OAUTH2)).thenReturn(conn);
+
         Map<String, Object> tokenResponse = Map.of(
                 "access_token", "access-123",
                 "refresh_token", "refresh-456",
@@ -97,11 +104,10 @@ class OAuthFlowServiceTest {
         String redirect = service.handleCallback("auth-code", state, REDIRECT_URI);
 
         verify(oAuthStateRepository).delete(oauthState);
-        verify(credentialService).storeCredentials(
-                eq(PROJECT_ID), eq(CONNECTOR_ID), eq(AuthType.OAUTH2),
-                eq("access-123"), eq("refresh-456"), any(OffsetDateTime.class), any(Map.class));
+        verify(connectionService).storeTokens(
+                eq(conn), eq("access-123"), eq("refresh-456"), any(OffsetDateTime.class));
         assertThat(redirect).isEqualTo(
-                "http://localhost:3000/app/projects/proj-1/integrations/bigquery");
+                "http://localhost:3000/app/projects/proj-1/integrations/gcp-billing");
     }
 
     @Test
@@ -112,8 +118,7 @@ class OAuthFlowServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid or expired OAuth state");
 
-        verify(credentialService, never()).storeCredentials(
-                anyString(), anyString(), any(), anyString(), anyString(), any(), any());
+        verify(connectionService, never()).storeTokens(any(), anyString(), anyString(), any());
     }
 
     @Test
@@ -131,7 +136,6 @@ class OAuthFlowServiceTest {
                 .hasMessageContaining("expired");
 
         verify(oAuthStateRepository).delete(oauthState);
-        verify(credentialService, never()).storeCredentials(
-                anyString(), anyString(), any(), anyString(), anyString(), any(), any());
+        verify(connectionService, never()).storeTokens(any(), anyString(), anyString(), any());
     }
 }

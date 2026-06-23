@@ -31,7 +31,7 @@ jobs:
       service: conductor-backend
       image-name: backend
       build-context: conductor-backend/
-      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }} --memory=1Gi"
+      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }} --memory=1Gi"
       cloudrun-secrets: |
         DATABASE_URL=DATABASE_URL:latest
         DATABASE_USERNAME=DATABASE_USERNAME:latest
@@ -45,6 +45,8 @@ jobs:
         WORKFLOW_SECRETS_KEY=WORKFLOW_SECRETS_KEY:latest
         GOOGLE_OAUTH_CLIENT_ID=GOOGLE_OAUTH_CLIENT_ID:latest
         GOOGLE_OAUTH_CLIENT_SECRET=GOOGLE_OAUTH_CLIENT_SECRET:latest
+        GITHUB_APP_PRIVATE_KEY=GITHUB_APP_PRIVATE_KEY:latest
+        GITHUB_APP_WEBHOOK_SECRET=GITHUB_APP_WEBHOOK_SECRET:latest
     secrets: inherit
 
   build-and-test-frontend:

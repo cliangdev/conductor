@@ -5,13 +5,9 @@ export const dynamic = 'force-dynamic'
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet } from '@/lib/api'
+import { apiGet, apiErrorMessage, type ApiError } from '@/lib/api'
 import type { Member } from '@/types'
 import { NotificationSettingsPage } from '@/components/notifications/NotificationSettingsPage'
-
-interface ApiError extends Error {
-  status?: number
-}
 
 export default function NotificationsPage() {
   const params = useParams<{ projectId: string }>()
@@ -42,11 +38,10 @@ export default function NotificationsPage() {
       await apiGet(`/api/v1/projects/${projectId}/notifications/channels`, accessToken)
       setSettingsError(null)
     } catch (err) {
-      const apiErr = err as ApiError
-      if (apiErr.status === 403 || (err as Error).message?.includes('403')) {
+      if ((err as ApiError).status === 403) {
         setAccessDenied(true)
-      } else if (apiErr.status !== undefined) {
-        setSettingsError('Failed to load settings.')
+      } else {
+        setSettingsError(apiErrorMessage(err, 'Failed to load settings.'))
       }
     } finally {
       setSettingsLoading(false)

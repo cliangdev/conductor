@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { apiPost } from '@/lib/api'
+import { apiPost, apiErrorMessage } from '@/lib/api'
 
 type Verdict = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'
 
@@ -48,12 +48,7 @@ export function ReviewSubmissionForm({
       )
       onReviewSubmitted()
     } catch (err) {
-      const apiErr = err as Error & { status?: number }
-      if (apiErr.status === 403) {
-        setError('You do not have permission to submit a review.')
-      } else {
-        setError('Failed to submit review. Please try again.')
-      }
+      setError(apiErrorMessage(err, 'Failed to submit review. Please try again.'))
     } finally {
       setSubmitting(false)
     }

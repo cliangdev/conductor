@@ -1,11 +1,8 @@
 package com.conductor.service;
 
-import com.conductor.entity.IntegrationCredential;
+import com.conductor.entity.Connection;
 import com.conductor.exception.CredentialEncryptionException;
-import com.conductor.integration.AuthType;
 import com.conductor.integration.DecryptedCredentials;
-import com.conductor.repository.IntegrationCredentialRepository;
-import com.conductor.repository.IntegrationDataCacheRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.cloud.kms.v1.CryptoKeyName;
@@ -18,7 +15,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -31,6 +27,11 @@ import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.*;
 
+/**
+ * Envelope encryption with GCP KMS: a per-connection AES-256 DEK is generated, wrapped by the KMS
+ * KEK, and stored Base64 in {@code kms_key_reference}; that same DEK encrypts every secret on the
+ * connection (access token, refresh token, webhook secret) with AES/GCM.
+ */
 @Service
 @Profile("!local")
 public class GcpKmsCredentialService implements CredentialService {
@@ -40,30 +41,93 @@ public class GcpKmsCredentialService implements CredentialService {
     private static final int GCM_IV_LENGTH = 12;
     private static final int GCM_TAG_LENGTH = 128;
 
-    private final IntegrationCredentialRepository credentialRepository;
-    private final IntegrationDataCacheRepository cacheRepository;
     private final ObjectMapper objectMapper;
     private final KeyManagementServiceClient kmsClient;
     private final String kmsKeyName;
 
     public GcpKmsCredentialService(
-            IntegrationCredentialRepository credentialRepository,
-            IntegrationDataCacheRepository cacheRepository,
             ObjectMapper objectMapper,
             KeyManagementServiceClient kmsClient,
             @Value("${GCP_PROJECT_ID:}") String gcpProjectId,
             @Value("${conductor.kms.location:global}") String kmsLocation,
             @Value("${conductor.kms.key-ring:conductor-secrets}") String kmsKeyRing,
             @Value("${conductor.kms.key-name:integration-credentials-kek}") String kmsKeyName) {
-        this.credentialRepository = credentialRepository;
-        this.cacheRepository = cacheRepository;
         this.objectMapper = objectMapper;
         this.kmsClient = kmsClient;
         this.kmsKeyName = CryptoKeyName.format(gcpProjectId, kmsLocation, kmsKeyRing, kmsKeyName);
     }
 
-    // Encrypt plaintext using AES-256-GCM with the provided DEK
-    private byte[] encryptWithDek(byte[] dek, String plaintext) throws Exception {
+    @Override
+    public void putTokens(Connection c, String accessToken, String refreshToken, OffsetDateTime expiresAt) {
+        try {
+            byte[] dek = ensureDek(c);
+            c.setEncryptedAccessToken(encryptWithDek(dek, accessToken));
+            c.setEncryptedRefreshToken(encryptWithDek(dek, refreshToken));
+            c.setTokenExpiresAt(expiresAt);
+        } catch (Exception e) {
+            throw new CredentialEncryptionException("Failed to encrypt tokens", e);
+        }
+    }
+
+    @Override
+    public void putWebhookSecret(Connection c, String secret) {
+        try {
+            byte[] dek = ensureDek(c);
+            c.setEncryptedWebhookSecret(encryptWithDek(dek, secret));
+        } catch (Exception e) {
+            throw new CredentialEncryptionException("Failed to encrypt webhook secret", e);
+        }
+    }
+
+    @Override
+    public DecryptedCredentials decryptTokens(Connection c) {
+        try {
+            byte[] dek = unwrapDek(c);
+            String accessToken = dek != null ? decryptWithDek(dek, c.getEncryptedAccessToken()) : null;
+            String refreshToken = dek != null ? decryptWithDek(dek, c.getEncryptedRefreshToken()) : null;
+            return new DecryptedCredentials(
+                    accessToken, refreshToken,
+                    c.getTokenExpiresAt() != null ? c.getTokenExpiresAt().toInstant() : null,
+                    parseConfigJson(c.getConfigJson()));
+        } catch (Exception e) {
+            throw new CredentialEncryptionException("Failed to decrypt credentials", e);
+        }
+    }
+
+    @Override
+    public String decryptWebhookSecret(Connection c) {
+        try {
+            byte[] dek = unwrapDek(c);
+            return dek != null ? decryptWithDek(dek, c.getEncryptedWebhookSecret()) : null;
+        } catch (Exception e) {
+            throw new CredentialEncryptionException("Failed to decrypt webhook secret", e);
+        }
+    }
+
+    // Reuse the connection's existing DEK, or generate + KMS-wrap a new one and stamp the reference.
+    private byte[] ensureDek(Connection c) throws Exception {
+        byte[] existing = unwrapDek(c);
+        if (existing != null) {
+            return existing;
+        }
+        KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+        keyGen.init(256);
+        byte[] dek = keyGen.generateKey().getEncoded();
+        EncryptResponse encrypted = kmsClient.encrypt(kmsKeyName, ByteString.copyFrom(dek));
+        c.setKmsKeyReference(Base64.getEncoder().encodeToString(encrypted.getCiphertext().toByteArray()));
+        return dek;
+    }
+
+    private byte[] unwrapDek(Connection c) {
+        if (c.getKmsKeyReference() == null || c.getKmsKeyReference().isBlank()) {
+            return null;
+        }
+        byte[] wrappedDek = Base64.getDecoder().decode(c.getKmsKeyReference());
+        DecryptResponse decryptResponse = kmsClient.decrypt(kmsKeyName, ByteString.copyFrom(wrappedDek));
+        return decryptResponse.getPlaintext().toByteArray();
+    }
+
+    private String encryptWithDek(byte[] dek, String plaintext) throws Exception {
         if (plaintext == null) return null;
         SecretKey key = new SecretKeySpec(dek, "AES");
         byte[] iv = new byte[GCM_IV_LENGTH];
@@ -71,7 +135,8 @@ public class GcpKmsCredentialService implements CredentialService {
         Cipher cipher = Cipher.getInstance(ALGORITHM);
         cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH, iv));
         byte[] ciphertext = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
-        return ByteBuffer.allocate(iv.length + ciphertext.length).put(iv).put(ciphertext).array();
+        byte[] combined = ByteBuffer.allocate(iv.length + ciphertext.length).put(iv).put(ciphertext).array();
+        return Base64.getEncoder().encodeToString(combined);
     }
 
     private String decryptWithDek(byte[] dek, String base64Ciphertext) throws Exception {
@@ -83,114 +148,6 @@ public class GcpKmsCredentialService implements CredentialService {
         Cipher cipher = Cipher.getInstance(ALGORITHM);
         cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH, iv));
         return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
-    }
-
-    @Override
-    @Transactional
-    public void storeCredentials(String projectId, String connectorId, AuthType authType,
-                                  String accessToken, String refreshToken, OffsetDateTime expiresAt,
-                                  Map<String, Object> configJson) {
-        log.info("Storing credentials for connector={} project={}", connectorId, projectId);
-        try {
-            // Generate a new DEK
-            KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-            keyGen.init(256);
-            byte[] dek = keyGen.generateKey().getEncoded();
-
-            // Wrap DEK with KMS KEK
-            EncryptResponse encrypted = kmsClient.encrypt(kmsKeyName, ByteString.copyFrom(dek));
-            String wrappedDek = Base64.getEncoder().encodeToString(encrypted.getCiphertext().toByteArray());
-
-            // Encrypt tokens with DEK
-            byte[] encAccessBytes = accessToken != null ? encryptWithDek(dek, accessToken) : null;
-            byte[] encRefreshBytes = refreshToken != null ? encryptWithDek(dek, refreshToken) : null;
-
-            IntegrationCredential cred = credentialRepository
-                    .findByProjectIdAndConnectorId(projectId, connectorId)
-                    .orElse(new IntegrationCredential());
-
-            cred.setProjectId(projectId);
-            cred.setConnectorId(connectorId);
-            cred.setAuthType(authType.name());
-            cred.setEncryptedAccessToken(encAccessBytes != null ? Base64.getEncoder().encodeToString(encAccessBytes) : null);
-            cred.setEncryptedRefreshToken(encRefreshBytes != null ? Base64.getEncoder().encodeToString(encRefreshBytes) : null);
-            cred.setKmsKeyReference(wrappedDek);
-            cred.setTokenExpiresAt(expiresAt);
-
-            if (configJson != null && !configJson.isEmpty()) {
-                cred.setConfigJson(objectMapper.writeValueAsString(configJson));
-            }
-            credentialRepository.save(cred);
-        } catch (Exception e) {
-            throw new CredentialEncryptionException("Failed to store credentials securely", e);
-        }
-    }
-
-    @Override
-    public Optional<DecryptedCredentials> getCredentials(String projectId, String connectorId) {
-        return credentialRepository.findByProjectIdAndConnectorId(projectId, connectorId)
-                .map(cred -> {
-                    try {
-                        byte[] wrappedDek = Base64.getDecoder().decode(cred.getKmsKeyReference());
-                        DecryptResponse decryptResponse = kmsClient.decrypt(kmsKeyName, ByteString.copyFrom(wrappedDek));
-                        byte[] dek = decryptResponse.getPlaintext().toByteArray();
-
-                        String accessToken = decryptWithDek(dek, cred.getEncryptedAccessToken());
-                        String refreshToken = decryptWithDek(dek, cred.getEncryptedRefreshToken());
-                        Map<String, Object> configJson = parseConfigJson(cred.getConfigJson());
-
-                        return new DecryptedCredentials(
-                                accessToken, refreshToken,
-                                cred.getTokenExpiresAt() != null ? cred.getTokenExpiresAt().toInstant() : null,
-                                configJson);
-                    } catch (Exception e) {
-                        throw new CredentialEncryptionException("Failed to decrypt credentials", e);
-                    }
-                });
-    }
-
-    @Override
-    @Transactional
-    public void updateAccessToken(String projectId, String connectorId,
-                                   String newAccessToken, OffsetDateTime newExpiresAt) {
-        credentialRepository.findByProjectIdAndConnectorId(projectId, connectorId)
-                .ifPresent(cred -> {
-                    try {
-                        byte[] wrappedDek = Base64.getDecoder().decode(cred.getKmsKeyReference());
-                        DecryptResponse decryptResponse = kmsClient.decrypt(kmsKeyName, ByteString.copyFrom(wrappedDek));
-                        byte[] dek = decryptResponse.getPlaintext().toByteArray();
-
-                        byte[] encAccessBytes = encryptWithDek(dek, newAccessToken);
-                        cred.setEncryptedAccessToken(Base64.getEncoder().encodeToString(encAccessBytes));
-                        cred.setTokenExpiresAt(newExpiresAt);
-                        credentialRepository.save(cred);
-                    } catch (Exception e) {
-                        throw new CredentialEncryptionException("Failed to update access token", e);
-                    }
-                });
-    }
-
-    @Override
-    @Transactional
-    public void updateConfig(String projectId, String connectorId, Map<String, Object> config) {
-        credentialRepository.findByProjectIdAndConnectorId(projectId, connectorId)
-                .ifPresent(cred -> {
-                    try {
-                        Map<String, Object> existing = parseConfigJson(cred.getConfigJson());
-                        existing.putAll(config);
-                        cred.setConfigJson(objectMapper.writeValueAsString(existing));
-                        credentialRepository.save(cred);
-                    } catch (Exception e) {
-                        throw new CredentialEncryptionException("Failed to update config", e);
-                    }
-                });
-    }
-
-    @Override
-    @Transactional
-    public void deleteCredentials(String projectId, String connectorId) {
-        credentialRepository.deleteByProjectIdAndConnectorId(projectId, connectorId);
-        cacheRepository.deleteByProjectIdAndConnectorId(projectId, connectorId);
     }
 
     @SuppressWarnings("unchecked")

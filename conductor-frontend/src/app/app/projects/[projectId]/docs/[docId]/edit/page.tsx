@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet } from '@/lib/api'
+import { apiGet, apiErrorMessage } from '@/lib/api'
 import { getDoc } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
 import { DocEditor } from '@/components/docs/DocEditor'
@@ -39,7 +39,7 @@ export default function DocEditPage() {
         const me = members.find((m) => m.userId === user!.id)
         if (me) setUserRole(me.role)
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load document')
+        setError(apiErrorMessage(err, 'Failed to load document'))
       } finally {
         setLoading(false)
       }

@@ -11,7 +11,7 @@ import java.util.*;
 @Component
 @Profile("local")
 @Primary
-public class LocalPostHogConnector implements IntegrationConnector {
+public class LocalPostHogConnector implements FetchConnector {
 
     @Override
     public String getId() { return "posthog"; }
@@ -19,24 +19,24 @@ public class LocalPostHogConnector implements IntegrationConnector {
     @Override
     public ConnectorMetadata getMetadata() {
         return new ConnectorMetadata("posthog", "PostHog", ConnectorCategory.ANALYTICS,
-                AuthType.API_KEY, "Web analytics and product insights", "PH");
+                "Web analytics and product insights", "PH");
     }
 
     @Override
-    public List<ConnectorConfigField> getConfigFields() {
-        return List.of(
-            new ConnectorConfigField("apiKey", "Personal API Key",
-                "PostHog → Settings → Personal API Keys", true),
-            new ConnectorConfigField("projectId", "PostHog Project ID",
-                "Found in your PostHog project URL", false)
-        );
+    public ConnectorSpec getSpec() {
+        return ConnectorSpec.apiKey(true, List.of(
+            ConnectorConfigField.userInput("apiKey", "Personal API Key",
+                "PostHog → Settings → Personal API Keys", FieldType.SECRET, true),
+            ConnectorConfigField.userInput("projectId", "PostHog Project ID",
+                "Found in your PostHog project URL", FieldType.STRING, false)
+        ));
     }
 
     @Override
     public Duration getMaxCacheAge() { return Duration.ofMinutes(30); }
 
     @Override
-    public ConnectorData fetchData(DecryptedCredentials credentials) {
+    public ConnectorData fetchData(ConnectionContext ctx) {
         List<Map<String, Object>> series = new ArrayList<>();
         int[] fixtureCounts = {412, 523, 489, 601, 578, 634, 712, 698, 743, 812,
                                756, 689, 723, 834, 891, 867, 745, 712, 689, 734,
@@ -50,7 +50,7 @@ public class LocalPostHogConnector implements IntegrationConnector {
     }
 
     @Override
-    public ConnectorHealth checkHealth(DecryptedCredentials credentials) {
+    public ConnectorHealth checkHealth(ConnectionContext ctx) {
         return ConnectorHealth.HEALTHY;
     }
 }
