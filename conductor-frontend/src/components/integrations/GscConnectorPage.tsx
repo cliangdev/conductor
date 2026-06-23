@@ -285,11 +285,17 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
                 </p>
               </div>
             </div>
-            {errorBanner && (
+            {(saveError ?? fetchError) ? (
+              /* A genuine save/fetch failure — surface it as a warning. */
               <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
-                <p className="text-xs text-yellow-700 dark:text-yellow-400">{errorBanner}</p>
+                <p className="text-xs text-yellow-700 dark:text-yellow-400">{saveError ?? fetchError}</p>
               </div>
-            )}
+            ) : response?.errorMessage ? (
+              /* The expected "configure your property" setup prompt — informational, not an error. */
+              <div className="bg-muted/50 border border-border rounded-md p-3">
+                <p className="text-xs text-muted-foreground">{response.errorMessage}</p>
+              </div>
+            ) : null}
             <button
               onClick={handleSaveConfig}
               disabled={saving || !siteUrl.trim()}
