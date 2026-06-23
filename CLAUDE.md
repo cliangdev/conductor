@@ -149,6 +149,15 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 
 **Future eng/marketing grouping** should be done with **labels + saved views** (or a nullable `group` tag on `project_members`), *not* by reintroducing a nested container above projects — that two-level org→project model was deliberately removed for simplicity.
 
+## Deploying a PR build
+
+Add a label to the PR to build, test, and deploy that branch to Cloud Run (`deploy-on-label.yml`):
+- **`deploy-backend`** → deploys `conductor-backend`
+- **`deploy-frontend`** → deploys `conductor-frontend`
+
+The deploy fires on the *labeled* event, so to redeploy after new commits, remove and re-add the label
+(`gh pr edit <PR> --remove-label <label>` then `--add-label <label>`). Each run comments the status on the PR.
+
 ## Fetching Cloud Run Logs
 
 Two options:
