@@ -80,7 +80,9 @@ public class IntegrationFetchService {
         }
 
         ConnectionContext ctx = connectionService.toContext(conn);
-        if (ctx.accessToken() == null && AuthType.WEBHOOK.name().equals(conn.getAuthType()) == false) {
+        // WEBHOOK (signing-secret) and APP (mints tokens on demand, stores none — e.g. the GitHub App)
+        // connections legitimately carry no stored access token, so a null token here is not "not connected".
+        if (ctx.accessToken() == null && !storesNoAccessToken(conn.getAuthType())) {
             return ConnectorData.setupRequired("Integration not connected — add credentials in Settings");
         }
         ctx = maybeRefreshToken(conn, ctx);
@@ -108,6 +110,11 @@ public class IntegrationFetchService {
         }
 
         return result;
+    }
+
+    /** Auth types whose connections never persist an access token, so a null token is not "setup required". */
+    private boolean storesNoAccessToken(String authType) {
+        return AuthType.WEBHOOK.name().equals(authType) || AuthType.APP.name().equals(authType);
     }
 
     private ConnectionContext maybeRefreshToken(Connection conn, ConnectionContext ctx) {

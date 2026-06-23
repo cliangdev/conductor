@@ -114,6 +114,46 @@ class IntegrationFetchServiceTest {
     }
 
     @Test
+    void appAuth_withNullAccessToken_isNotShortCircuitedToSetupRequired() {
+        // APP-auth connections (e.g. the GitHub App) mint tokens on demand and store no access token;
+        // a null token must NOT be treated as "not connected" — the connector should still be invoked.
+        Connection appConn = new Connection();
+        appConn.setId(CONNECTION_ID);
+        appConn.setProjectId(PROJECT_ID);
+        appConn.setConnectorId(CONNECTOR_ID);
+        appConn.setAuthType("APP");
+        when(connectionService.getById(CONNECTION_ID)).thenReturn(Optional.of(appConn));
+        when(connectionService.toContext(appConn)).thenReturn(
+                new ConnectionContext(PROJECT_ID, CONNECTOR_ID, CONNECTION_ID, null, null, null, Map.of(), null));
+        when(cacheRepository.findByConnectionId(CONNECTION_ID)).thenReturn(Optional.empty());
+        when(connector.fetchData(any())).thenReturn(ConnectorData.healthy(Map.of("rows", 5)));
+
+        ConnectorData result = service.fetchData(CONNECTION_ID, true);
+
+        assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.HEALTHY);
+        assertThat(result.data()).containsEntry("rows", 5);
+        verify(connector).fetchData(any());
+    }
+
+    @Test
+    void apiKeyAuth_withNullAccessToken_returnsSetupRequired_withoutCallingConnector() {
+        Connection apiKeyConn = new Connection();
+        apiKeyConn.setId(CONNECTION_ID);
+        apiKeyConn.setProjectId(PROJECT_ID);
+        apiKeyConn.setConnectorId(CONNECTOR_ID);
+        apiKeyConn.setAuthType("API_KEY");
+        when(connectionService.getById(CONNECTION_ID)).thenReturn(Optional.of(apiKeyConn));
+        when(connectionService.toContext(apiKeyConn)).thenReturn(
+                new ConnectionContext(PROJECT_ID, CONNECTOR_ID, CONNECTION_ID, null, null, null, Map.of(), null));
+        when(cacheRepository.findByConnectionId(CONNECTION_ID)).thenReturn(Optional.empty());
+
+        ConnectorData result = service.fetchData(CONNECTION_ID, true);
+
+        assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
+        verify(connector, never()).fetchData(any());
+    }
+
+    @Test
     void forceRefresh_callsConnector_evenWhenCacheIsFresh() {
         ConnectionDataCache fresh = staleCache(Map.of("rows", 7));
         fresh.setFetchedAt(OffsetDateTime.now().minusMinutes(5));

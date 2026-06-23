@@ -2,18 +2,18 @@ package com.conductor.controller;
 
 import com.conductor.entity.Connection;
 import com.conductor.entity.ConnectionDataCache;
-import com.conductor.entity.MemberRole;
-import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.entity.WebhookEvent;
 import com.conductor.generated.api.IntegrationsApi;
 import com.conductor.generated.model.BqDatasetsResponse;
+import com.conductor.generated.model.BqDatasetsResponseDatasetsInner;
 import com.conductor.generated.model.ConnectionDataResponse;
 import com.conductor.generated.model.ConnectionResponse;
 import com.conductor.generated.model.ConnectionSummary;
 import com.conductor.generated.model.ConnectorConfigFieldDto;
 import com.conductor.generated.model.CreateConnectionRequest;
 import com.conductor.generated.model.GcpProjectsResponse;
+import com.conductor.generated.model.GcpProjectsResponseProjectsInner;
 import com.conductor.generated.model.IntegrationListItem;
 import com.conductor.generated.model.OAuthAuthorizeResponse;
 import com.conductor.generated.model.UpdateConnectionRequest;
@@ -26,13 +26,15 @@ import com.conductor.integration.ConnectorHealth;
 import com.conductor.integration.ConnectorMetadata;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.ConnectorSpec;
+import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.FetchConnector;
+import com.conductor.integration.connector.GcpBillingConnector;
 import com.conductor.repository.ConnectionDataCacheRepository;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.WebhookEventRepository;
 import com.conductor.service.ConnectionService;
 import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.OAuthFlowService;
+import com.conductor.service.ProjectSecurityService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -47,6 +49,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URI;
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -65,8 +68,14 @@ public class IntegrationController implements IntegrationsApi {
     private final OAuthFlowService oAuthFlowService;
     private final ConnectionDataCacheRepository cacheRepository;
     private final WebhookEventRepository webhookEventRepository;
-    private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectSecurityService projectSecurityService;
     private final ObjectMapper objectMapper;
+    /**
+     * Present only outside the {@code local} profile (the real {@link GcpBillingConnector} is
+     * {@code @Profile("!local")}); empty locally — matching the previous {@code @Profile("!local")}
+     * GcpBillingController that served these two endpoints.
+     */
+    private final Optional<GcpBillingConnector> gcpBillingConnector;
 
     @Value("${BACKEND_URL:}")
     private String backendUrl;
@@ -77,7 +86,8 @@ public class IntegrationController implements IntegrationsApi {
                                 OAuthFlowService oAuthFlowService,
                                 ConnectionDataCacheRepository cacheRepository,
                                 WebhookEventRepository webhookEventRepository,
-                                ProjectMemberRepository projectMemberRepository,
+                                ProjectSecurityService projectSecurityService,
+                                Optional<GcpBillingConnector> gcpBillingConnector,
                                 ObjectMapper objectMapper) {
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
@@ -85,7 +95,8 @@ public class IntegrationController implements IntegrationsApi {
         this.oAuthFlowService = oAuthFlowService;
         this.cacheRepository = cacheRepository;
         this.webhookEventRepository = webhookEventRepository;
-        this.projectMemberRepository = projectMemberRepository;
+        this.projectSecurityService = projectSecurityService;
+        this.gcpBillingConnector = gcpBillingConnector;
         this.objectMapper = objectMapper;
     }
 
@@ -234,12 +245,53 @@ public class IntegrationController implements IntegrationsApi {
 
     @Override
     public ResponseEntity<GcpProjectsResponse> listGcpProjects(String projectId) {
-        throw new UnsupportedOperationException("Handled by GcpBillingController");
+        requireMember(projectId);
+        GcpBillingConnector connector = requireGcpBillingConnector();
+        String accessToken = requireGcpAccessToken(projectId, "gcp-billing");
+        List<Map<String, String>> projects = connector.listGcpProjects(accessToken);
+        GcpProjectsResponse response = new GcpProjectsResponse();
+        projects.forEach(p -> response.addProjectsItem(
+                new GcpProjectsResponseProjectsInner()
+                        .projectId(p.get("projectId")).name(p.get("name"))));
+        return ResponseEntity.ok(response);
     }
 
     @Override
     public ResponseEntity<BqDatasetsResponse> listBqDatasets(String projectId, String gcpProjectId) {
-        throw new UnsupportedOperationException("Handled by GcpBillingController");
+        requireMember(projectId);
+        GcpBillingConnector connector = requireGcpBillingConnector();
+        if (gcpProjectId == null || !gcpProjectId.matches("[a-z0-9A-Z:_\\-]+")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid gcpProjectId format");
+        }
+        String accessToken = requireGcpAccessToken(projectId, "gcp-billing");
+        List<Map<String, String>> datasets = connector.listBqDatasets(accessToken, gcpProjectId);
+        BqDatasetsResponse response = new BqDatasetsResponse();
+        datasets.forEach(d -> response.addDatasetsItem(
+                new BqDatasetsResponseDatasetsInner()
+                        .datasetId(d.get("datasetId")).location(d.get("location"))));
+        return ResponseEntity.ok(response);
+    }
+
+    private GcpBillingConnector requireGcpBillingConnector() {
+        return gcpBillingConnector.orElseThrow(() -> new ResponseStatusException(
+                HttpStatus.SERVICE_UNAVAILABLE, "GCP Billing connector is not available"));
+    }
+
+    /** Resolves a usable GCP OAuth access token for the project's single gcp-billing connection,
+     *  refreshing it if expiring. Mirrors the former GcpBillingController behavior. */
+    private String requireGcpAccessToken(String projectId, String connectorId) {
+        Connection conn = connectionService.findSingle(projectId, connectorId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT, "No OAuth credentials stored — complete OAuth first"));
+        DecryptedCredentials creds = connectionService.decrypt(conn);
+        if (creds.accessToken() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT, "No OAuth credentials stored — complete OAuth first");
+        }
+        if (creds.expiresAt() != null && creds.expiresAt().isBefore(Instant.now().plusSeconds(60))) {
+            return oAuthFlowService.refreshAccessToken(conn, creds.refreshToken());
+        }
+        return creds.accessToken();
     }
 
     // ---- helpers ----
@@ -356,19 +408,15 @@ public class IntegrationController implements IntegrationsApi {
     }
 
     private void requireMember(String projectId) {
-        member(projectId);
-    }
-
-    private void requireAdminOrCreator(String projectId) {
-        ProjectMember member = member(projectId);
-        if (member.getRole() != MemberRole.ADMIN && member.getRole() != MemberRole.CREATOR) {
-            throw new AccessDeniedException("Requires ADMIN or CREATOR role");
+        if (!projectSecurityService.isProjectMember(projectId, currentUser().getId())) {
+            throw new AccessDeniedException("Not a member of this project");
         }
     }
 
-    private ProjectMember member(String projectId) {
-        return projectMemberRepository.findByProjectIdAndUserId(projectId, currentUser().getId())
-                .orElseThrow(() -> new AccessDeniedException("Not a member of this project"));
+    private void requireAdminOrCreator(String projectId) {
+        if (!projectSecurityService.isAdminOrCreator(projectId, currentUser().getId())) {
+            throw new AccessDeniedException("Requires ADMIN or CREATOR role");
+        }
     }
 
     private User currentUser() {
