@@ -244,8 +244,20 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
 
         } catch (HttpClientErrorException e) {
             int status = e.getStatusCode().value();
+            // 404 = the property string isn't a property this account can access; 403 = not granted.
+            // Both are configuration problems, so route the user back to the property picker.
+            if (status == 404) {
+                return ConnectorData.setupRequired(
+                        "Couldn't find \"" + siteUrl + "\" for your Google account. Pick a verified "
+                                + "property from the list, or check the exact format "
+                                + "(sc-domain:example.com or https://example.com/).",
+                        Map.of("oauthConnected", true));
+            }
             if (status == 403) {
-                return ConnectorData.setupRequired("Grant access to the Search Console property");
+                return ConnectorData.setupRequired(
+                        "Your Google account doesn't have access to this Search Console property. "
+                                + "Pick one you've been granted, or verify it in Search Console.",
+                        Map.of("oauthConnected", true));
             }
             if (status == 401) {
                 return ConnectorData.degraded("Check credentials", Map.of());
@@ -276,8 +288,10 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
                     "dimensions", List.of("date"), "rowLimit", 1));
             return ConnectorHealth.HEALTHY;
         } catch (HttpClientErrorException e) {
-            // 403 = the OAuth user hasn't been granted the property: a setup problem, not a fault.
-            if (e.getStatusCode().value() == 403) {
+            // 403 = property not granted; 404 = property not found for this account. Both are setup
+            // problems (wrong/inaccessible property), not faults.
+            int status = e.getStatusCode().value();
+            if (status == 403 || status == 404) {
                 return ConnectorHealth.SETUP_REQUIRED;
             }
             return ConnectorHealth.DEGRADED;

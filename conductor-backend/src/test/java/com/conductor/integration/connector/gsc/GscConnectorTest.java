@@ -5,7 +5,9 @@ import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorHealth;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
@@ -106,6 +108,22 @@ class GscConnectorTest {
 
         List<Map<String, Object>> devicesOut = (List<Map<String, Object>>) result.data().get("devices");
         assertThat(devicesOut.get(0).get("device")).isEqualTo("DESKTOP");
+    }
+
+    @Test
+    void notFoundPropertyRoutesBackToSetup() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(any(String.class), eq(HttpMethod.POST), any(), eq(Map.class)))
+                .thenThrow(HttpClientErrorException.create(
+                        HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+        GscConnector connector = new GscConnector(restTemplate);
+        ConnectorData result = connector.fetchData(ctx(CONFIG));
+
+        // A 404 means the configured property isn't accessible — a setup problem, not a fetch fault.
+        assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
+        assertThat(result.data().get("oauthConnected")).isEqualTo(true);
+        assertThat(result.errorMessage()).contains("sc-domain:example.com");
     }
 
     @Test
