@@ -22,6 +22,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -47,6 +48,7 @@ import java.util.Optional;
  * installation's private-repo inventory, so it must not be open to plain members/reviewers).
  */
 @RestController
+@RequestMapping("/api/v1")
 public class GitHubAppController implements GithubApi {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubAppController.class);
