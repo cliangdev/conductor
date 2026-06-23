@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import {
+  apiGet,
   apiPost,
   apiErrorMessage,
   listConnections,
@@ -68,6 +69,9 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
   const [brandTerm, setBrandTerm] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [sites, setSites] = useState<{ siteUrl: string; permissionLevel: string }[]>([]);
+  const [loadingSites, setLoadingSites] = useState(false);
+  const [manualEntry, setManualEntry] = useState(false);
 
   const loadData = useCallback(async (isRefresh = false) => {
     if (!accessToken) return;
@@ -89,6 +93,24 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
   }, [projectId, accessToken]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Once OAuth is complete but the property isn't configured yet, load the verified properties for
+  // the picker. Falls back to manual entry if the list can't be fetched or is empty.
+  useEffect(() => {
+    if (!accessToken || !connectionId || response?.healthStatus !== 'SETUP_REQUIRED') return;
+    setLoadingSites(true);
+    apiGet<{ sites: { siteUrl: string; permissionLevel: string }[] }>(
+      `/api/v1/projects/${projectId}/integrations/gsc/sites`,
+      accessToken
+    )
+      .then(d => {
+        const list = d.sites ?? [];
+        setSites(list);
+        if (list.length === 0) setManualEntry(true);
+      })
+      .catch(() => setManualEntry(true))
+      .finally(() => setLoadingSites(false));
+  }, [projectId, accessToken, connectionId, response?.healthStatus]);
 
   const handleAuthorize = async () => {
     if (!accessToken) return;
@@ -151,7 +173,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="mb-6 flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Search Console</h1>
+            <h1 className="text-2xl font-bold text-foreground">Google Search Console</h1>
             <p className="text-sm text-muted-foreground mt-1">Marketing · Google</p>
           </div>
           <a
@@ -169,7 +191,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
           /* Step 1: OAuth */
           <div className="bg-card rounded-lg border border-border p-8 max-w-lg space-y-6">
             <div>
-              <h2 className="text-lg font-semibold text-foreground mb-1">Set up Search Console</h2>
+              <h2 className="text-lg font-semibold text-foreground mb-1">Set up Google Search Console</h2>
               <p className="text-sm text-muted-foreground">
                 Connect your Google account to view organic search performance.
               </p>
@@ -193,17 +215,59 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
             </div>
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-foreground mb-1">Property URL</label>
-                <input
-                  type="text"
-                  value={siteUrl}
-                  onChange={e => setSiteUrl(e.target.value)}
-                  placeholder="sc-domain:example.com or https://example.com/"
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Use the exact property string from Search Console (domain or URL-prefix).
-                </p>
+                <label className="block text-xs font-medium text-foreground mb-1">Property</label>
+                {!manualEntry && sites.length > 0 ? (
+                  <>
+                    <select
+                      value={siteUrl}
+                      onChange={e => setSiteUrl(e.target.value)}
+                      disabled={loadingSites}
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    >
+                      <option value="">{loadingSites ? 'Loading properties…' : 'Select a property'}</option>
+                      {sites.map(s => (
+                        <option key={s.siteUrl} value={s.siteUrl}>{s.siteUrl}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Verified properties from your Google account.{' '}
+                      <button
+                        type="button"
+                        onClick={() => { setManualEntry(true); setSiteUrl(''); }}
+                        className="text-primary hover:underline"
+                      >
+                        Enter manually
+                      </button>
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      value={siteUrl}
+                      onChange={e => setSiteUrl(e.target.value)}
+                      placeholder="sc-domain:example.com or https://example.com/"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {loadingSites
+                        ? 'Loading your properties…'
+                        : 'Use the exact property string from Search Console (domain or URL-prefix).'}
+                      {sites.length > 0 && (
+                        <>
+                          {' '}
+                          <button
+                            type="button"
+                            onClick={() => { setManualEntry(false); setSiteUrl(''); }}
+                            className="text-primary hover:underline"
+                          >
+                            Choose from my properties
+                          </button>
+                        </>
+                      )}
+                    </p>
+                  </>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-foreground mb-1">
@@ -256,7 +320,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <ConnectorHeader
-        title="Search Console"
+        title="Google Search Console"
         subtitle="Marketing · Organic search (last 28 days)"
         status={health ?? null}
         externalUrl={SEARCH_CONSOLE_URL}

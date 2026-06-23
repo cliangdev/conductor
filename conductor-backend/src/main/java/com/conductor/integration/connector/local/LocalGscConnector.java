@@ -26,7 +26,7 @@ public class LocalGscConnector implements FetchConnector, OAuth2Connector {
 
     @Override
     public ConnectorMetadata getMetadata() {
-        return new ConnectorMetadata("gsc", "Search Console", ConnectorCategory.MARKETING,
+        return new ConnectorMetadata("gsc", "Google Search Console", ConnectorCategory.MARKETING,
                 "Organic search acquisition from Google Search Console", "GSC");
     }
 

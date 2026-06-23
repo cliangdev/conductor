@@ -113,4 +113,23 @@ class GscConnectorTest {
         GscConnector connector = new GscConnector(mock(RestTemplate.class));
         assertThat(connector.checkHealth(ctx(Map.of()))).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void listSitesReturnsVerifiedPropertiesOnly() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        ResponseEntity<Map> sites = ResponseEntity.ok(Map.of("siteEntry", List.of(
+                Map.of("siteUrl", "sc-domain:example.com", "permissionLevel", "siteOwner"),
+                Map.of("siteUrl", "https://blog.example.com/", "permissionLevel", "siteUnverifiedUser"))));
+        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(), eq(Map.class)))
+                .thenReturn(sites);
+
+        GscConnector connector = new GscConnector(restTemplate);
+        List<Map<String, String>> result = connector.listSites("gsc-token");
+
+        // The unverified property is dropped — it can't be queried.
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).get("siteUrl")).isEqualTo("sc-domain:example.com");
+        assertThat(result.get(0).get("permissionLevel")).isEqualTo("siteOwner");
+    }
 }

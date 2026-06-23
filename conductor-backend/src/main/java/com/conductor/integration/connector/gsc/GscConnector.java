@@ -47,7 +47,7 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
 
     @Override
     public ConnectorMetadata getMetadata() {
-        return new ConnectorMetadata("gsc", "Search Console", ConnectorCategory.MARKETING,
+        return new ConnectorMetadata("gsc", "Google Search Console", ConnectorCategory.MARKETING,
                 "Organic search acquisition from Google Search Console", "GSC");
     }
 
@@ -62,6 +62,29 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
                 "Your brand name, for the branded vs non-branded split",
                 FieldType.STRING, false)
         ));
+    }
+
+    /**
+     * Lists the Search Console properties the authorized account can read, for the post-OAuth property
+     * picker. Unverified properties are dropped — they can't be queried. Mirrors GcpBillingConnector's
+     * project/dataset pickers.
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, String>> listSites(String accessToken) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(accessToken);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                "https://www.googleapis.com/webmasters/v3/sites",
+                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        List<Map<String, Object>> entries = response.getBody() != null
+                ? (List<Map<String, Object>>) response.getBody().getOrDefault("siteEntry", List.of())
+                : List.of();
+        return entries.stream()
+                .filter(e -> !"siteUnverifiedUser".equals(String.valueOf(e.get("permissionLevel"))))
+                .map(e -> Map.of(
+                        "siteUrl", String.valueOf(e.get("siteUrl")),
+                        "permissionLevel", String.valueOf(e.get("permissionLevel"))))
+                .toList();
     }
 
     @Override
