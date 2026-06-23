@@ -202,7 +202,8 @@ public class IntegrationController implements IntegrationsApi {
         }
         ConnectionDataCache cache = cached.get();
         ConnectorData data = new ConnectorData(parseJson(cache.getDataJson()),
-                ConnectorHealth.valueOf(cache.getHealthStatus()), cache.getFetchedAt().toInstant(), null);
+                ConnectorHealth.valueOf(cache.getHealthStatus()), cache.getFetchedAt().toInstant(),
+                cache.getErrorMessage());
         return ResponseEntity.ok(connectorDataToResponse(connectorId, connectionId, data));
     }
 

@@ -103,10 +103,19 @@ public class IntegrationFetchService {
 
         if (result.healthStatus() == ConnectorHealth.HEALTHY) {
             upsertCache(connectionId, result, cached.orElse(null));
-        } else if (result.healthStatus() == ConnectorHealth.DEGRADED && cached.isPresent()) {
-            ConnectionDataCache cache = cached.get();
-            cache.setHealthStatus(result.healthStatus().name());
-            cacheRepository.save(cache);
+        } else if (result.healthStatus() == ConnectorHealth.DEGRADED) {
+            if (cached.isPresent()) {
+                // Keep the last-successful data + fetched_at (so "Last updated"/isStale stay honest);
+                // only record that the latest attempt failed and why.
+                ConnectionDataCache cache = cached.get();
+                cache.setHealthStatus(result.healthStatus().name());
+                cache.setErrorMessage(result.errorMessage());
+                cacheRepository.save(cache);
+            } else {
+                // First-ever fetch failed: persist a degraded row so the GET path can surface the
+                // error on the next page load (there is no prior cache to fall back to).
+                upsertCache(connectionId, result, null);
+            }
         }
 
         return result;
@@ -126,8 +135,11 @@ public class IntegrationFetchService {
         if (OffsetDateTime.now().plusMinutes(TOKEN_REFRESH_BUFFER_MINUTES).isAfter(expiresAt)) {
             try {
                 String newToken = oAuthFlowService.refreshAccessToken(conn, ctx.refreshToken());
+                // The fresh token's real expiry is persisted to the connection by refreshAccessToken;
+                // pass null here rather than the now-stale ctx.expiresAt() so downstream consumers don't
+                // treat the new token as already expired.
                 return new ConnectionContext(ctx.projectId(), ctx.connectorId(), ctx.connectionId(),
-                        newToken, ctx.refreshToken(), ctx.expiresAt(), ctx.config(), ctx.webhookSecret());
+                        newToken, ctx.refreshToken(), null, ctx.config(), ctx.webhookSecret());
             } catch (Exception e) {
                 log.warn("Token refresh failed for connection={}: {}", conn.getId(), e.getMessage());
             }
@@ -144,6 +156,7 @@ public class IntegrationFetchService {
             cache.setDataJson("{}");
         }
         cache.setHealthStatus(data.healthStatus().name());
+        cache.setErrorMessage(data.errorMessage());
         cache.setFetchedAt(OffsetDateTime.now());
         cacheRepository.save(cache);
     }
@@ -151,7 +164,7 @@ public class IntegrationFetchService {
     private ConnectorData cacheToConnectorData(ConnectionDataCache cache) {
         Map<String, Object> data = parseJson(cache.getDataJson());
         ConnectorHealth health = ConnectorHealth.valueOf(cache.getHealthStatus());
-        return new ConnectorData(data, health, cache.getFetchedAt().toInstant(), null);
+        return new ConnectorData(data, health, cache.getFetchedAt().toInstant(), cache.getErrorMessage());
     }
 
     private Map<String, Object> extractStaleData(Optional<ConnectionDataCache> cached) {

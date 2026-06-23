@@ -15,7 +15,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
@@ -105,9 +104,12 @@ public class GcpBillingConnector implements FetchConnector {
                 ? (List<String>) config.get("selectedProjectIds") : List.of();
 
         try {
+            // Pass a null expiry: IntegrationFetchService already hands us a freshly-refreshed token
+            // (the BigQuery call runs in seconds), and a bare GoogleCredentials.create(AccessToken)
+            // cannot refresh. A past expiry makes the BigQuery client attempt a refresh and throw
+            // "OAuth2Credentials instance does not support refreshing the access token".
             GoogleCredentials creds = GoogleCredentials.create(
-                    new AccessToken(ctx.accessToken(),
-                            ctx.expiresAt() != null ? Date.from(ctx.expiresAt()) : null));
+                    new AccessToken(ctx.accessToken(), null));
             BigQuery bigquery = BigQueryOptions.newBuilder()
                     .setProjectId(bqProjectId)
                     .setCredentials(creds)
@@ -202,9 +204,12 @@ public class GcpBillingConnector implements FetchConnector {
             return ConnectorHealth.SETUP_REQUIRED;
         }
         try {
+            // Pass a null expiry: IntegrationFetchService already hands us a freshly-refreshed token
+            // (the BigQuery call runs in seconds), and a bare GoogleCredentials.create(AccessToken)
+            // cannot refresh. A past expiry makes the BigQuery client attempt a refresh and throw
+            // "OAuth2Credentials instance does not support refreshing the access token".
             GoogleCredentials creds = GoogleCredentials.create(
-                    new AccessToken(ctx.accessToken(),
-                            ctx.expiresAt() != null ? Date.from(ctx.expiresAt()) : null));
+                    new AccessToken(ctx.accessToken(), null));
             BigQuery bigquery = BigQueryOptions.newBuilder()
                     .setProjectId(bqProjectIdObj.toString())
                     .setCredentials(creds)
