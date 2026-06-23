@@ -103,7 +103,7 @@ class IntegrationFetchServiceTest {
 
     @Test
     void firstFetchFailure_withNoCache_persistsDegradedRowCarryingTheError() {
-        when(connector.getMaxCacheAge()).thenReturn(Duration.ofHours(1));
+        // forceRefresh=true with no cache never consults getMaxCacheAge — don't stub it (strict stubs).
         when(cacheRepository.findByConnectionId(CONNECTION_ID)).thenReturn(Optional.empty());
         when(connector.fetchData(any())).thenThrow(new RuntimeException("vendor down"));
 
