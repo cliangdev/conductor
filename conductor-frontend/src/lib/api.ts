@@ -168,8 +168,24 @@ export function listGitHubRepositories(
   )
 }
 
+/**
+ * A failed API call. `detail` is the backend's RFC 7807 ProblemDetail message (present only when the
+ * server sent a meaningful one); `message` mirrors it, falling back to an opaque "Server error (n)".
+ * `code`/`fieldErrors` are captured forward-compatibly (the backend doesn't mint codes yet).
+ */
+export interface ApiError extends Error {
+  status: number
+  detail?: string
+  code?: string
+  fieldErrors?: { field: string; message: string }[]
+}
+
+const NETWORK_ERROR_MESSAGE = 'Could not reach server — please try again'
+
 async function throwApiError(res: Response): Promise<never> {
-  let detail = `Server error (${res.status})`
+  let detail: string | undefined
+  let code: string | undefined
+  let fieldErrors: { field: string; message: string }[] | undefined
   try {
     const contentType = res.headers.get('content-type') ?? ''
     if (contentType.includes('json')) {
@@ -177,15 +193,34 @@ async function throwApiError(res: Response): Promise<never> {
       if (typeof json.detail === 'string') detail = json.detail
       else if (typeof json.message === 'string') detail = json.message
       else if (typeof json.error === 'string') detail = json.error
+      if (typeof json.code === 'string') code = json.code
+      if (Array.isArray(json.fieldErrors)) fieldErrors = json.fieldErrors
     }
-  } catch { /* non-parseable body — keep default */ }
-  const err = new Error(detail) as Error & { status: number }
+  } catch { /* non-parseable body — keep defaults */ }
+  const err = new Error(detail ?? `Server error (${res.status})`) as ApiError
   err.status = res.status
+  err.detail = detail
+  if (code) err.code = code
+  if (fieldErrors) err.fieldErrors = fieldErrors
   throw err
 }
 
 function networkError(): never {
-  throw new Error('Could not reach server — please try again')
+  throw new Error(NETWORK_ERROR_MESSAGE)
+}
+
+/**
+ * Pick a user-facing message: the backend's ProblemDetail `detail` when present and meaningful,
+ * otherwise the caller's `fallback` (used for opaque "Server error (n)" and network failures).
+ * This is the universal way to surface backend errors — components should call this instead of
+ * branching on `status` with hardcoded strings.
+ */
+export function apiErrorMessage(err: unknown, fallback: string): string {
+  if (err && typeof err === 'object') {
+    const detail = (err as Partial<ApiError>).detail
+    if (typeof detail === 'string' && detail.trim()) return detail
+  }
+  return fallback
 }
 
 export async function apiGet<T>(path: string, token: string): Promise<T> {

@@ -5,9 +5,9 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet, createConnection, deleteConnection } from '@/lib/api';
+import { apiGet, apiPost, createConnection, deleteConnection, apiErrorMessage } from '@/lib/api';
 import type { ConnectionSummary } from '@/lib/api';
-import { apiPost } from '@/lib/api';
+import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
 import { PuzzleIcon, CheckCircleIcon } from 'lucide-react';
 import type { Member } from '@/types';
@@ -41,6 +41,7 @@ type Tab = 'browse' | 'connected';
 export default function SettingsIntegrationsPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const { accessToken, user } = useAuth();
+  const { showToast } = useToast();
   const [integrations, setIntegrations] = useState<IntegrationListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>('browse');
@@ -135,7 +136,7 @@ export default function SettingsIntegrationsPage() {
       setConnectModal(null);
       await loadIntegrations();
     } catch (err: unknown) {
-      setConnectError(err instanceof Error ? err.message : 'Connection failed');
+      setConnectError(apiErrorMessage(err, 'Connection failed'));
     } finally {
       setConnecting(false);
     }
@@ -151,7 +152,7 @@ export default function SettingsIntegrationsPage() {
       );
       window.location.href = result.authorizationUrl;
     } catch (e) {
-      console.error('OAuth initiation failed', e);
+      showToast(apiErrorMessage(e, 'Could not start authorization. Please try again.'), 'error');
     }
   };
 
@@ -164,7 +165,7 @@ export default function SettingsIntegrationsPage() {
       await deleteConnection(projectId, item.connectorId, connectionId, accessToken);
       await loadIntegrations();
     } catch (e) {
-      console.error(e);
+      showToast(apiErrorMessage(e, 'Failed to disconnect. Please try again.'), 'error');
     } finally {
       setDisconnecting(null);
     }

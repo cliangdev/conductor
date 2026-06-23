@@ -12,6 +12,11 @@ vi.mock('@/contexts/AuthContext', () => ({
 
 vi.mock('@/lib/api', () => ({
   apiPost: vi.fn(),
+  // Faithful to the real helper: surface a backend `detail` when present, else the fallback.
+  apiErrorMessage: (err: unknown, fallback: string) => {
+    const detail = (err as { detail?: unknown })?.detail
+    return typeof detail === 'string' && detail.trim() ? detail : fallback
+  },
 }))
 
 import * as api from '@/lib/api'

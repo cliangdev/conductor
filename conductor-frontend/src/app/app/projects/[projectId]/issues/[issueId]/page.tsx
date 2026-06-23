@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet, apiPost, apiDelete } from '@/lib/api'
+import { apiGet, apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { ExternalLink } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
@@ -183,7 +183,7 @@ export default function IssueDetailPage() {
           // Default to REVIEWER
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load issue')
+        setError(apiErrorMessage(err, 'Failed to load issue'))
       } finally {
         setLoading(false)
       }

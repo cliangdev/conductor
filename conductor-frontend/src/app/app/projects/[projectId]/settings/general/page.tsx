@@ -9,12 +9,8 @@ import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
-import { apiDelete, apiGet, apiPatch } from '@/lib/api'
+import { apiDelete, apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import type { Member, Project } from '@/types'
-
-interface ApiError extends Error {
-  status?: number
-}
 
 export default function GeneralSettingsPage() {
   const params = useParams()
@@ -68,11 +64,7 @@ export default function GeneralSettingsPage() {
       else if (activeProject) updateProject({ ...activeProject, name: name.trim() })
       showToast('Workspace renamed')
     } catch (err) {
-      const apiErr = err as ApiError
-      showToast(
-        apiErr.status === 403 ? 'Only admins can rename the workspace.' : 'Failed to rename workspace.',
-        'error',
-      )
+      showToast(apiErrorMessage(err, 'Failed to rename workspace.'), 'error')
     } finally {
       setSaving(false)
     }
@@ -87,8 +79,7 @@ export default function GeneralSettingsPage() {
       removeProject(projectId)
       router.push('/app/projects')
     } catch (err) {
-      const apiErr = err as ApiError
-      setDangerError(apiErr.status === 403 ? 'Only admins can delete the workspace.' : 'Failed to delete workspace.')
+      setDangerError(apiErrorMessage(err, 'Failed to delete workspace.'))
     } finally {
       setDangerSubmitting(false)
     }
@@ -103,12 +94,7 @@ export default function GeneralSettingsPage() {
       removeProject(projectId)
       router.push('/app/projects')
     } catch (err) {
-      const apiErr = err as ApiError
-      setDangerError(
-        apiErr.status === 400
-          ? 'You are the last admin — assign another admin before leaving.'
-          : 'Failed to leave workspace.',
-      )
+      setDangerError(apiErrorMessage(err, 'Failed to leave workspace.'))
     } finally {
       setDangerSubmitting(false)
     }

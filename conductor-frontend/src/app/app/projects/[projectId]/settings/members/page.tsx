@@ -10,12 +10,8 @@ import { useToast } from '@/components/ui/toast'
 import { MemberRow } from '@/components/members/MemberRow'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
-import { apiDelete, apiGet, apiPatch, apiPost } from '@/lib/api'
+import { apiDelete, apiGet, apiPatch, apiPost, apiErrorMessage } from '@/lib/api'
 import type { Invite, Member, MemberRole } from '@/types'
-
-interface ApiError extends Error {
-  status?: number
-}
 
 const INVITE_ROLES: MemberRole[] = ['CREATOR', 'REVIEWER']
 
@@ -94,12 +90,7 @@ export default function MembersPage() {
       setMembers((prev) => prev.map((m) => (m.userId === userId ? { ...m, role: updated?.role ?? role } : m)))
       showToast('Role updated successfully')
     } catch (err) {
-      const apiErr = err as ApiError
-      if (apiErr.status === 403) {
-        showToast('You do not have permission to change roles.', 'error')
-      } else {
-        showToast('Failed to update role. Please try again.', 'error')
-      }
+      showToast(apiErrorMessage(err, 'Failed to update role. Please try again.'), 'error')
     }
   }
 
@@ -118,12 +109,7 @@ export default function MembersPage() {
       setMembers((prev) => prev.filter((m) => m.userId !== removeConfirm.userId))
       setRemoveConfirm(null)
     } catch (err) {
-      const apiErr = err as ApiError
-      if (apiErr.status === 400) {
-        setRemoveError('Cannot remove the last admin from the workspace.')
-      } else {
-        setRemoveError('Failed to remove member. Please try again.')
-      }
+      setRemoveError(apiErrorMessage(err, 'Failed to remove member. Please try again.'))
     }
   }
 
@@ -155,14 +141,7 @@ export default function MembersPage() {
       await fetchInvites()
       showToast('Invitation sent')
     } catch (err) {
-      const apiErr = err as ApiError
-      if (apiErr.status === 403) {
-        setInviteError('Only admins can invite members.')
-      } else if (apiErr.status === 409) {
-        setInviteError('That person is already a member or has a pending invite.')
-      } else {
-        setInviteError('Failed to send invitation.')
-      }
+      setInviteError(apiErrorMessage(err, 'Failed to send invitation.'))
     } finally {
       setInviteSubmitting(false)
     }
@@ -181,8 +160,8 @@ export default function MembersPage() {
     try {
       await apiDelete(`/api/v1/projects/${projectId}/invites/${inviteId}`, accessToken)
       setInvites((prev) => prev.filter((i) => i.id !== inviteId))
-    } catch {
-      showToast('Failed to cancel invitation.', 'error')
+    } catch (err) {
+      showToast(apiErrorMessage(err, 'Failed to cancel invitation.'), 'error')
     }
   }
 

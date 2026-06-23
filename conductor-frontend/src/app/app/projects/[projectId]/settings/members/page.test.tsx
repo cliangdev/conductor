@@ -22,6 +22,10 @@ vi.mock('@/lib/api', () => ({
   apiPost: vi.fn(),
   apiPatch: vi.fn(),
   apiDelete: vi.fn(),
+  apiErrorMessage: (err: unknown, fallback: string) => {
+    const detail = (err as { detail?: unknown })?.detail
+    return typeof detail === 'string' && detail.trim() ? detail : fallback
+  },
 }))
 
 vi.mock('@/components/ui/modal', () => ({
@@ -176,8 +180,12 @@ describe('MembersPage', () => {
     expect(mockShowToast).toHaveBeenCalledWith('Invitation sent')
   })
 
-  it('shows 409 error when invitee is already a member or invited', async () => {
-    const err = Object.assign(new Error('API error: 409'), { status: 409 })
+  it('surfaces the backend error message when the invitee is already a member or invited', async () => {
+    // The backend (ConflictException) sends a human message in ProblemDetail.detail; the UI surfaces it.
+    const err = Object.assign(new Error('conflict'), {
+      status: 409,
+      detail: 'That person is already a member or has a pending invite.',
+    })
     vi.mocked(api.apiPost).mockRejectedValue(err)
 
     render(<MembersPage />)

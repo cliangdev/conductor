@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet, apiPost, apiPatch, apiDelete } from '@/lib/api'
+import { apiGet, apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
@@ -374,7 +374,7 @@ export default function IssuesListPage() {
           reviewers: reviewerResults[i].status === 'fulfilled' ? reviewerResults[i].value : [],
         })))
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load issues')
+        setError(apiErrorMessage(err, 'Failed to load issues'))
       } finally {
         setLoading(false)
       }

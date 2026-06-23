@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { listConnections, createConnection, fetchConnectionData } from '@/lib/api';
+import { listConnections, createConnection, fetchConnectionData, apiErrorMessage } from '@/lib/api';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { ExternalLink } from 'lucide-react';
 
@@ -72,7 +72,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
       const data = await fetchConnectionData(projectId, 'posthog', created.id, accessToken, true);
       setResponse(data as unknown as IntegrationDataResponse);
     } catch (err: unknown) {
-      setConnectError(err instanceof Error ? err.message : 'Connection failed');
+      setConnectError(apiErrorMessage(err, 'Connection failed'));
     } finally {
       setConnecting(false);
     }

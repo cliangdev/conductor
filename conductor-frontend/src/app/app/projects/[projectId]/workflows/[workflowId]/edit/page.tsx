@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet, apiPut } from '@/lib/api';
+import { apiGet, apiPut, apiErrorMessage } from '@/lib/api';
 import { WorkflowDefinitionDto } from '@/types/workflow';
 import WorkflowEditorLayout from '@/components/workflow/WorkflowEditorLayout';
 
@@ -29,7 +29,7 @@ export default function EditWorkflowPage() {
       await apiPut(`/api/v1/projects/${projectId}/workflows/${workflowId}`, { name, yaml }, accessToken);
       router.push(`/app/projects/${projectId}/workflows`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save workflow');
+      setError(apiErrorMessage(e, 'Failed to save workflow'));
     } finally {
       setSaving(false);
     }

@@ -11,13 +11,10 @@ import {
   listConnectionWebhookEvents,
   installGitHubApp,
   listGitHubRepositories,
+  apiErrorMessage,
 } from '@/lib/api';
-import type { ConnectionSummary, WebhookEventSummary, GitHubRepositoriesResponse } from '@/lib/api';
+import type { ConnectionSummary, WebhookEventSummary, GitHubRepositoriesResponse, ApiError } from '@/lib/api';
 import type { Member } from '@/types';
-
-interface ApiError extends Error {
-  status?: number;
-}
 
 const CONNECTOR_ID = 'github';
 
@@ -69,8 +66,11 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
       );
       setRepos(Object.fromEntries(entries));
     } catch (err) {
-      const apiErr = err as ApiError;
-      setConnectionsError(apiErr.status === 403 ? 'access_denied' : 'Failed to load GitHub connection.');
+      setConnectionsError(
+        (err as ApiError).status === 403
+          ? 'access_denied'
+          : apiErrorMessage(err, 'Failed to load GitHub connection.')
+      );
     } finally {
       setConnectionsLoading(false);
     }
@@ -115,14 +115,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
       const { installUrl } = await installGitHubApp(projectId, accessToken);
       window.location.href = installUrl;
     } catch (err) {
-      const apiErr = err as ApiError;
-      setInstallError(
-        apiErr.status === 503
-          ? 'The GitHub App isn’t configured on the server yet. Please try again later.'
-          : apiErr.status === 403
-            ? 'You do not have permission to connect GitHub.'
-            : 'Could not start the GitHub installation. Please try again.'
-      );
+      setInstallError(apiErrorMessage(err, 'Could not start the GitHub installation. Please try again.'));
       setInstalling(false);
     }
   }
@@ -139,13 +132,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
         return next;
       });
     } catch (err) {
-      const apiErr = err as ApiError;
-      showToast(
-        apiErr.status === 403
-          ? 'You do not have permission to disconnect GitHub.'
-          : 'Failed to disconnect. Please try again.',
-        'error'
-      );
+      showToast(apiErrorMessage(err, 'Failed to disconnect. Please try again.'), 'error');
     } finally {
       setDisconnecting(null);
     }
