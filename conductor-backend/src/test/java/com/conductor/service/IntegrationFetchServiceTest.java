@@ -96,6 +96,56 @@ class IntegrationFetchServiceTest {
         verify(cacheRepository).save(existing);
         assertThat(existing.getDataJson()).contains("42");
         assertThat(existing.getHealthStatus()).isEqualTo("DEGRADED");
+        // The failure reason is persisted so the GET path can replay it on the next page load.
+        assertThat(result.errorMessage()).contains("vendor down");
+        assertThat(existing.getErrorMessage()).contains("vendor down");
+    }
+
+    @Test
+    void firstFetchFailure_withNoCache_persistsDegradedRowCarryingTheError() {
+        when(connector.getMaxCacheAge()).thenReturn(Duration.ofHours(1));
+        when(cacheRepository.findByConnectionId(CONNECTION_ID)).thenReturn(Optional.empty());
+        when(connector.fetchData(any())).thenThrow(new RuntimeException("vendor down"));
+
+        ConnectorData result = service.fetchData(CONNECTION_ID, true);
+
+        assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.DEGRADED);
+        // With no prior cache there is nothing to fall back to — but we still persist a row so the
+        // error survives to the next GET (loss point: the GET path previously had nothing to read).
+        org.mockito.ArgumentCaptor<ConnectionDataCache> captor =
+                org.mockito.ArgumentCaptor.forClass(ConnectionDataCache.class);
+        verify(cacheRepository).save(captor.capture());
+        assertThat(captor.getValue().getHealthStatus()).isEqualTo("DEGRADED");
+        assertThat(captor.getValue().getErrorMessage()).contains("vendor down");
+    }
+
+    @Test
+    void freshCache_replaysPersistedErrorMessage() {
+        when(connector.getMaxCacheAge()).thenReturn(Duration.ofHours(1));
+        ConnectionDataCache fresh = staleCache(Map.of("rows", 7));
+        fresh.setFetchedAt(OffsetDateTime.now().minusMinutes(5));
+        fresh.setHealthStatus("DEGRADED");
+        fresh.setErrorMessage("BigQuery error: table not found");
+        when(cacheRepository.findByConnectionId(CONNECTION_ID)).thenReturn(Optional.of(fresh));
+
+        ConnectorData result = service.fetchData(CONNECTION_ID, false);
+
+        // Serving cache without a live fetch must carry the stored error through, not null it out.
+        assertThat(result.errorMessage()).isEqualTo("BigQuery error: table not found");
+        verify(connector, never()).fetchData(any());
+    }
+
+    @Test
+    void successfulFetch_clearsAnyPreviousError() {
+        ConnectionDataCache existing = staleCache(Map.of("rows", 1));
+        existing.setErrorMessage("stale failure");
+        when(cacheRepository.findByConnectionId(CONNECTION_ID)).thenReturn(Optional.of(existing));
+        when(connector.fetchData(any())).thenReturn(ConnectorData.healthy(Map.of("rows", 99)));
+
+        service.fetchData(CONNECTION_ID, true);
+
+        assertThat(existing.getErrorMessage()).isNull();
+        assertThat(existing.getHealthStatus()).isEqualTo("HEALTHY");
     }
 
     @Test

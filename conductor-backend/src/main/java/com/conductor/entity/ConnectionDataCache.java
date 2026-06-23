@@ -32,6 +32,10 @@ public class ConnectionDataCache {
     @Column(name = "fetched_at", nullable = false)
     private OffsetDateTime fetchedAt;
 
+    /** Reason the last fetch attempt failed; null when the last attempt succeeded. */
+    @Column(name = "error_message", columnDefinition = "TEXT")
+    private String errorMessage;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -59,4 +63,7 @@ public class ConnectionDataCache {
 
     public OffsetDateTime getFetchedAt() { return fetchedAt; }
     public void setFetchedAt(OffsetDateTime fetchedAt) { this.fetchedAt = fetchedAt; }
+
+    public String getErrorMessage() { return errorMessage; }
+    public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
 }

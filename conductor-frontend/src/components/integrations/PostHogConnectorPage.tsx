@@ -2,7 +2,13 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { listConnections, createConnection, fetchConnectionData, apiErrorMessage } from '@/lib/api';
+import {
+  listConnections,
+  createConnection,
+  fetchConnectionData,
+  apiErrorMessage,
+  type ConnectionDataResponse,
+} from '@/lib/api';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { ExternalLink } from 'lucide-react';
 
@@ -11,18 +17,10 @@ interface DataPoint {
   value: number;
 }
 
+/** Shape of the connector-specific `data` blob inside ConnectionDataResponse. */
 interface IntegrationData {
   series?: DataPoint[];
   total?: number;
-  errorMessage?: string;
-}
-
-interface IntegrationDataResponse {
-  connectorId: string;
-  healthStatus: 'HEALTHY' | 'DEGRADED' | 'SETUP_REQUIRED';
-  fetchedAt: string | null;
-  data: IntegrationData | null;
-  isStale?: boolean;
 }
 
 interface ConnectFormState {
@@ -32,7 +30,7 @@ interface ConnectFormState {
 
 export default function PostHogConnectorPage({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth();
-  const [response, setResponse] = useState<IntegrationDataResponse | null>(null);
+  const [response, setResponse] = useState<ConnectionDataResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [connectForm, setConnectForm] = useState<ConnectFormState>({ apiKey: '', posthogProjectId: '' });
@@ -47,7 +45,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
       const connId = conns[0]?.id ?? null;
       if (!connId) { setResponse(null); return; }
       const data = await fetchConnectionData(projectId, 'posthog', connId, accessToken, isRefresh);
-      setResponse(data as unknown as IntegrationDataResponse);
+      setResponse(data);
     } catch (e) {
       console.error(e);
     } finally {
@@ -70,7 +68,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
         accessToken
       );
       const data = await fetchConnectionData(projectId, 'posthog', created.id, accessToken, true);
-      setResponse(data as unknown as IntegrationDataResponse);
+      setResponse(data);
     } catch (err: unknown) {
       setConnectError(apiErrorMessage(err, 'Connection failed'));
     } finally {
@@ -90,7 +88,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
   }
 
   const health = response?.healthStatus;
-  const data = response?.data;
+  const data = (response?.data ?? null) as IntegrationData | null;
   const series = data?.series ?? [];
   const total = data?.total ?? 0;
 
@@ -229,10 +227,12 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
           </div>
         )}
         {response.isStale && (
-          <p className="text-xs text-muted-foreground mt-3">Showing cached data — live fetch failed.</p>
+          <p className="text-xs text-muted-foreground mt-3">
+            Showing cached data{response.errorMessage ? ' — the latest refresh failed (see below).' : '.'}
+          </p>
         )}
-        {data?.errorMessage && health === 'DEGRADED' && (
-          <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">{data.errorMessage}</p>
+        {response.errorMessage && (
+          <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">{response.errorMessage}</p>
         )}
       </div>
 

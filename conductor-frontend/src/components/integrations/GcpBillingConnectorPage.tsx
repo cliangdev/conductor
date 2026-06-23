@@ -2,7 +2,15 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet, apiPost, listConnections, fetchConnectionData, patchConnection } from '@/lib/api';
+import {
+  apiGet,
+  apiPost,
+  apiErrorMessage,
+  listConnections,
+  fetchConnectionData,
+  patchConnection,
+  type ConnectionDataResponse,
+} from '@/lib/api';
 import { ExternalLink } from 'lucide-react';
 
 interface ServiceCost {
@@ -11,28 +19,21 @@ interface ServiceCost {
   currency: string;
 }
 
+/** Shape of the connector-specific `data` blob inside ConnectionDataResponse. */
 interface GcpBillingData {
   services?: ServiceCost[];
   totalCost?: number;
   currency?: string;
   period?: string;
   momDelta?: number;
-  errorMessage?: string;
   datasetConfigured?: boolean;
   oauthConnected?: boolean;
 }
 
-interface IntegrationDataResponse {
-  connectorId: string;
-  healthStatus: 'HEALTHY' | 'DEGRADED' | 'SETUP_REQUIRED';
-  fetchedAt: string | null;
-  data: GcpBillingData | null;
-  isStale?: boolean;
-}
-
 export default function GcpBillingConnectorPage({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth();
-  const [response, setResponse] = useState<IntegrationDataResponse | null>(null);
+  const [response, setResponse] = useState<ConnectionDataResponse | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [connectionId, setConnectionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -48,15 +49,17 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   const loadData = useCallback(async (isRefresh = false) => {
     if (!accessToken) return;
     if (isRefresh) setRefreshing(true); else setLoading(true);
+    setFetchError(null);
     try {
       const conns = await listConnections(projectId, 'gcp-billing', accessToken);
       const connId = conns[0]?.id ?? null;
       setConnectionId(connId);
       if (!connId) { setResponse(null); return; }
       const data = await fetchConnectionData(projectId, 'gcp-billing', connId, accessToken, isRefresh);
-      setResponse(data as unknown as IntegrationDataResponse);
+      setResponse(data);
     } catch (e) {
       console.error(e);
+      setFetchError(apiErrorMessage(e, 'Failed to load billing data'));
     } finally {
       if (isRefresh) setRefreshing(false); else setLoading(false);
     }
@@ -138,7 +141,10 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   }
 
   const health = response?.healthStatus;
-  const data = response?.data;
+  const data = (response?.data ?? null) as GcpBillingData | null;
+  // The actual reason a live fetch failed: a thrown request error, or the soft error the backend
+  // returns in a 200 body (cached data served, live refresh failed).
+  const errorBanner = fetchError ?? response?.errorMessage ?? null;
 
   if (health === 'SETUP_REQUIRED' || !response) {
     const oauthConnected = connectionId != null;
@@ -251,9 +257,9 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
                 )}
               </div>
             </div>
-            {data?.errorMessage && (
+            {errorBanner && (
               <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
-                <p className="text-xs text-yellow-700 dark:text-yellow-400">{data.errorMessage}</p>
+                <p className="text-xs text-yellow-700 dark:text-yellow-400">{errorBanner}</p>
               </div>
             )}
             <button
@@ -316,6 +322,13 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
         </div>
       </div>
 
+      {errorBanner && (
+        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3 mb-4">
+          <p className="text-xs font-medium text-yellow-800 dark:text-yellow-300">Live fetch failed</p>
+          <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-0.5 break-words">{errorBanner}</p>
+        </div>
+      )}
+
       {/* Summary */}
       <div className="bg-card rounded-lg border border-border p-6 mb-6">
         <div className="flex items-end gap-4 mb-4">
@@ -356,21 +369,39 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
               ))}
             </tbody>
           </table>
+        ) : health === 'HEALTHY' && !errorBanner ? (
+          /* Fetch succeeded but returned no rows — almost always the BigQuery export lag, not an error. */
+          <div className="py-6 text-center text-sm text-muted-foreground space-y-2">
+            <p className="font-medium text-foreground">No cost data yet.</p>
+            <p>
+              GCP billing export typically takes 24–48h to populate after you enable it. If you just
+              connected, check back later.
+            </p>
+            <p>
+              Otherwise, confirm rows exist in your export dataset under{' '}
+              <a
+                href="https://console.cloud.google.com/billing"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                GCP Console → Billing → Billing export
+              </a>
+              .
+            </p>
+          </div>
         ) : (
           <div className="py-8 text-center text-sm text-muted-foreground">
             No service cost data available.
           </div>
         )}
         {response.isStale && (
-          <p className="text-xs text-muted-foreground mt-3">Showing cached data — live fetch failed.</p>
+          <p className="text-xs text-muted-foreground mt-3">
+            Showing cached data{response.fetchedAt ? ` from ${new Date(response.fetchedAt).toLocaleString()}` : ''}
+            {errorBanner ? ' — the latest refresh failed (see above).' : '.'}
+          </p>
         )}
       </div>
-
-      {data?.errorMessage && health === 'DEGRADED' && (
-        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3 mb-4">
-          <p className="text-xs text-yellow-700 dark:text-yellow-400">{data.errorMessage}</p>
-        </div>
-      )}
 
       {response.fetchedAt && (
         <p className="text-xs text-muted-foreground">

@@ -103,10 +103,19 @@ public class IntegrationFetchService {
 
         if (result.healthStatus() == ConnectorHealth.HEALTHY) {
             upsertCache(connectionId, result, cached.orElse(null));
-        } else if (result.healthStatus() == ConnectorHealth.DEGRADED && cached.isPresent()) {
-            ConnectionDataCache cache = cached.get();
-            cache.setHealthStatus(result.healthStatus().name());
-            cacheRepository.save(cache);
+        } else if (result.healthStatus() == ConnectorHealth.DEGRADED) {
+            if (cached.isPresent()) {
+                // Keep the last-successful data + fetched_at (so "Last updated"/isStale stay honest);
+                // only record that the latest attempt failed and why.
+                ConnectionDataCache cache = cached.get();
+                cache.setHealthStatus(result.healthStatus().name());
+                cache.setErrorMessage(result.errorMessage());
+                cacheRepository.save(cache);
+            } else {
+                // First-ever fetch failed: persist a degraded row so the GET path can surface the
+                // error on the next page load (there is no prior cache to fall back to).
+                upsertCache(connectionId, result, null);
+            }
         }
 
         return result;
@@ -144,6 +153,7 @@ public class IntegrationFetchService {
             cache.setDataJson("{}");
         }
         cache.setHealthStatus(data.healthStatus().name());
+        cache.setErrorMessage(data.errorMessage());
         cache.setFetchedAt(OffsetDateTime.now());
         cacheRepository.save(cache);
     }
@@ -151,7 +161,7 @@ public class IntegrationFetchService {
     private ConnectorData cacheToConnectorData(ConnectionDataCache cache) {
         Map<String, Object> data = parseJson(cache.getDataJson());
         ConnectorHealth health = ConnectorHealth.valueOf(cache.getHealthStatus());
-        return new ConnectorData(data, health, cache.getFetchedAt().toInstant(), null);
+        return new ConnectorData(data, health, cache.getFetchedAt().toInstant(), cache.getErrorMessage());
     }
 
     private Map<String, Object> extractStaleData(Optional<ConnectionDataCache> cached) {
