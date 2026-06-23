@@ -2,6 +2,7 @@ package com.conductor.controller;
 
 import com.conductor.entity.User;
 import com.conductor.generated.api.IssuesApi;
+import com.conductor.generated.model.AvailableTransitionsResponse;
 import com.conductor.generated.model.CreateIssueRequest;
 import com.conductor.generated.model.IssueResponse;
 import com.conductor.generated.model.IssueStatus;
@@ -24,6 +25,14 @@ public class IssueController implements IssuesApi {
 
     public IssueController(IssueService issueService) {
         this.issueService = issueService;
+    }
+
+    // TODO(COND-18 E2): implement the Work Item lifecycle engine's doer projection.
+    // Contract authored ahead of the engine (openapi.yaml + workflow-definition-v1.schema.json);
+    // returns 501 until the WorkflowEngine.availableTransitions path lands.
+    @Override
+    public ResponseEntity<AvailableTransitionsResponse> listAvailableTransitions(String projectId, String issueId) {
+        return ResponseEntity.status(501).build();
     }
 
     @Override

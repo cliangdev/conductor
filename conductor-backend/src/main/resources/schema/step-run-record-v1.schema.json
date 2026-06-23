@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://conductor.dev/schema/step-run-record-v1.schema.json",
+  "title": "Conductor Step-Run Record (schemaVersion 1)",
+  "description": "The record a Review gate renders so a non-engineer can judge what an agent-run Step produced (COND-18 P0-6). Because skill Steps run LOCALLY (Claude Code drives, the backend does not), this record is REPORTED BY THE SKILL THROUGH MCP, not materialized by the automation engine's WorkflowRun. It captures: what the agent was asked to do, what it produced (rendered naturally), an optional before/after, and any flags — the context that defeats 'approval theater'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "workItemId", "workflow", "transition", "step", "status", "inputBrief", "reportedBy", "startedAt"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": {
+      "description": "Stable id of this step-run, used as the Review's resume/reference handle.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "workItemId": { "type": "string", "minLength": 1 },
+    "workflow": {
+      "description": "Workflow definition id (slug) the Work Item runs on.",
+      "type": "string"
+    },
+    "transition": {
+      "description": "The transition this Step ran on; the gate holds the move to `to` until the Review resolves.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": { "type": "string" },
+        "to": { "type": "string" }
+      }
+    },
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["skill", "http", "notify", "set_field", "create_sub_items"] },
+        "skill": { "type": "string", "description": "For kind=skill: the skill id that ran (e.g. conductor:implement)." }
+      }
+    },
+    "status": {
+      "description": "Lifecycle of the step-run. AWAITING_REVIEW means it produced its artifact and the gate is now held for a human.",
+      "type": "string",
+      "enum": ["RUNNING", "SUCCEEDED", "FAILED", "AWAITING_REVIEW"]
+    },
+    "inputBrief": {
+      "description": "Plain-language statement of WHAT THE AGENT WAS ASKED TO DO — rendered first at the gate (P0-6 (1)).",
+      "type": "string",
+      "minLength": 1
+    },
+    "produced": {
+      "description": "What the Step produced, rendered naturally (P0-6 (2)): Documents edited and Assets recorded. Type-aware rendering keys off `kind` (a content asset shows the readable output; a github_pr shows the diff).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "ref"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["document", "asset"] },
+          "ref": { "type": "string", "description": "Document filename/id or Asset ref (url or file reference)." },
+          "label": { "type": "string" },
+          "assetType": { "type": "string", "description": "For kind=asset: the asset type (e.g. github_pr, published_url)." }
+        }
+      }
+    },
+    "beforeAfter": {
+      "description": "Optional before/after where the Step edited existing content (P0-6 (3)).",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["before", "after"],
+          "properties": {
+            "before": { "type": "string" },
+            "after": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "flags": {
+      "description": "Why it's here / anything ambiguous the reviewer should weigh (P0-6 (4)). e.g. 'market sizing was ambiguous'.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["level", "message"],
+        "properties": {
+          "level": { "type": "string", "enum": ["info", "warn"] },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "reportedBy": {
+      "description": "Identity that ran the local skill and reported this record via MCP (attribution for the audit log).",
+      "type": "string",
+      "minLength": 1
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" }
+  }
+}
