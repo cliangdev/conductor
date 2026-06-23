@@ -7,6 +7,7 @@ import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.exception.GlobalExceptionHandler;
+import com.conductor.internal.WorkflowInternalCallbackController;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
@@ -16,18 +17,16 @@ import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.workflow.RunTokenService;
+import com.conductor.workflow.WorkflowRunLogBroker;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import org.mockito.ArgumentMatchers;
 import java.util.Collections;
 import java.util.Optional;
@@ -37,9 +36,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@WebMvcTest(WorkflowLogStreamingController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
-class WorkflowLogStreamingControllerTest {
+/**
+ * Covers the split workflow-run log API: the external SSE controller ({@code /api/v1}) and the internal
+ * worker-callback controller ({@code /internal/v1}), both backed by the real {@link WorkflowRunLogBroker}.
+ * The asserted paths are the prefixed routes, so this doubles as the regression oracle that the
+ * centralized {@code ApiPathConfig} prefixes resolve correctly across both API surfaces.
+ */
+@WebMvcTest({WorkflowLogStreamController.class, WorkflowInternalCallbackController.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, WorkflowRunLogBroker.class})
+class WorkflowRunLogControllersTest {
 
     @Autowired
     private MockMvc mockMvc;
@@ -133,7 +138,7 @@ class WorkflowLogStreamingControllerTest {
 
     @Test
     void logChunkReturns401ForMissingToken() throws Exception {
-        mockMvc.perform(post("/internal/workflow-runs/run-1/log-chunk")
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/log-chunk")
                         .contentType("application/json")
                         .content("{\"lines\":[\"hello\"]}"))
                 .andExpect(status().isUnauthorized());
@@ -143,7 +148,7 @@ class WorkflowLogStreamingControllerTest {
     void logChunkReturns401ForInvalidToken() throws Exception {
         when(runTokenService.validateRunToken("bad-token", "run-1")).thenReturn(false);
 
-        mockMvc.perform(post("/internal/workflow-runs/run-1/log-chunk")
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/log-chunk")
                         .header("Authorization", "Bearer bad-token")
                         .contentType("application/json")
                         .content("{\"lines\":[\"hello\"]}"))
@@ -154,7 +159,7 @@ class WorkflowLogStreamingControllerTest {
     void logChunkReturns200ForValidToken() throws Exception {
         when(runTokenService.validateRunToken("valid-run-token", "run-1")).thenReturn(true);
 
-        mockMvc.perform(post("/internal/workflow-runs/run-1/log-chunk")
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/log-chunk")
                         .header("Authorization", "Bearer valid-run-token")
                         .contentType("application/json")
                         .content("{\"workerJobId\":\"job-1\",\"lines\":[\"log line 1\"],\"timestamp\":\"2026-04-12T00:00:00Z\"}"))
@@ -165,7 +170,7 @@ class WorkflowLogStreamingControllerTest {
     void outputsCallbackReturns401ForInvalidToken() throws Exception {
         when(runTokenService.validateRunToken("bad-token", "run-1")).thenReturn(false);
 
-        mockMvc.perform(post("/internal/workflow-runs/run-1/outputs")
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/outputs")
                         .header("Authorization", "Bearer bad-token")
                         .contentType("application/json")
                         .content("{\"workerJobId\":\"job-1\",\"outputs\":{\"key\":\"value\"}}"))
@@ -176,7 +181,7 @@ class WorkflowLogStreamingControllerTest {
     void jobFailedCallbackReturns401ForInvalidToken() throws Exception {
         when(runTokenService.validateRunToken("bad-token", "run-1")).thenReturn(false);
 
-        mockMvc.perform(post("/internal/workflow-runs/run-1/job-failed")
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/job-failed")
                         .header("Authorization", "Bearer bad-token")
                         .contentType("application/json")
                         .content("{\"jobId\":\"job-1\",\"reason\":\"OOM\"}"))
@@ -188,7 +193,7 @@ class WorkflowLogStreamingControllerTest {
         when(runTokenService.validateRunToken("valid-run-token", "run-1")).thenReturn(true);
         when(jobRunRepository.findByRunId("run-1")).thenReturn(Collections.emptyList());
 
-        mockMvc.perform(post("/internal/workflow-runs/run-1/job-failed")
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/job-failed")
                         .header("Authorization", "Bearer valid-run-token")
                         .contentType("application/json")
                         .content("{\"jobId\":\"job-1\",\"reason\":\"Container exited with code 1\"}"))

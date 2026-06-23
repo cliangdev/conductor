@@ -434,7 +434,7 @@ class WorkflowPhase1bE2ETest {
         );
 
         var resp = rest.exchange(
-                url("/internal/workflow-runs/" + runId + "/log-chunk"),
+                url("/internal/v1/workflow-runs/" + runId + "/log-chunk"),
                 HttpMethod.POST,
                 new HttpEntity<>(body, tokenHeaders),
                 Void.class);
@@ -477,7 +477,7 @@ class WorkflowPhase1bE2ETest {
         );
 
         var resp = rest.exchange(
-                url("/internal/workflow-runs/" + runId + "/log-chunk"),
+                url("/internal/v1/workflow-runs/" + runId + "/log-chunk"),
                 HttpMethod.POST,
                 new HttpEntity<>(body, badHeaders),
                 Void.class);

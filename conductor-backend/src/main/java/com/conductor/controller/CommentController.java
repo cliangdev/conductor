@@ -10,13 +10,11 @@ import com.conductor.generated.model.CreateCommentRequest;
 import com.conductor.service.CommentService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1")
 public class CommentController implements CommentsApi {
 
     private final CommentService commentService;

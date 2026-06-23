@@ -198,9 +198,9 @@ class DockerStepExecutorTest {
         executor.execute(buildContext(stepDef, ctx));
 
         verify(workerVmClient).submitJob(argThat(req ->
-                req.logCallbackUrl().equals("http://localhost:8080/internal/workflow-runs/run-123/log-chunk") &&
-                req.outputsCallbackUrl().equals("http://localhost:8080/internal/workflow-runs/run-123/outputs") &&
-                req.jobFailedCallbackUrl().equals("http://localhost:8080/internal/workflow-runs/run-123/job-failed")));
+                req.logCallbackUrl().equals("http://localhost:8080/internal/v1/workflow-runs/run-123/log-chunk") &&
+                req.outputsCallbackUrl().equals("http://localhost:8080/internal/v1/workflow-runs/run-123/outputs") &&
+                req.jobFailedCallbackUrl().equals("http://localhost:8080/internal/v1/workflow-runs/run-123/job-failed")));
     }
 
     @Test

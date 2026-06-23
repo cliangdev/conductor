@@ -17,7 +17,7 @@ import java.nio.file.Paths;
 
 @RestController
 @Profile("local")
-@RequestMapping("/api/v1/local-files")
+@RequestMapping("/local-files")
 public class LocalFileController {
 
     private final Path storagePath;

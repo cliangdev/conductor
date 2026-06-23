@@ -43,7 +43,7 @@ describe('recoverStoppedContainers', () => {
 
     expect(mockedCleanup).toHaveBeenCalledWith('conductor-run1-job1');
     expect(mockedAxios.post).toHaveBeenCalledWith(
-      'http://backend/internal/workflow-runs/run1/job-failed',
+      'http://backend/internal/v1/workflow-runs/run1/job-failed',
       { jobId: 'job1', reason: 'Worker restarted; container lost' },
       expect.objectContaining({
         headers: { Authorization: 'Bearer worker-secret' },
