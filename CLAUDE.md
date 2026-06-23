@@ -15,7 +15,7 @@ conductor/
 
 ## conductor-backend
 
-Spring Boot REST API. OpenAPI-first: edit `openapi.yaml`, run `mvn generate-sources`, then implement.
+Spring Boot REST API. OpenAPI-first — see [`docs/api-guidelines.md`](docs/api-guidelines.md) for the API workflow and conventions.
 
 ```
 src/main/java/com/conductor/
@@ -180,14 +180,6 @@ Set up a shell alias for your deployment (see `scripts/gcloud-alias-example.sh`)
 
 ## API Workflow
 
-**Before creating or updating any API, read [`docs/api-guidelines.md`](docs/api-guidelines.md)** — it is
-the authoritative reference for the external vs internal API split, the centralized base prefixes
-(`/api/v1`, `/internal/v1` via `ApiPathConfig` — controllers map at **bare** paths, never hand-write the
-prefix), versioning, and REST best practices. Follow it and the checklist at the end.
-
-All backend API changes:
-1. Decide external (`openapi.yaml`) vs internal (`openapi-internal.yaml`) — see the guidelines.
-2. Update the matching spec.
-3. `mvn generate-sources` (generates controller interfaces + DTOs).
-4. Implement the generated interface in a `@RestController` in the matching package
-   (`com.conductor.controller` for external, `com.conductor.internal` for internal), mapping at bare paths.
+**Before creating or updating any API, read [`docs/api-guidelines.md`](docs/api-guidelines.md).** It is
+the authoritative reference for the OpenAPI-first workflow, the external vs internal API split,
+centralized base prefixes, versioning, and REST best practices — follow it and its end-of-doc checklist.
