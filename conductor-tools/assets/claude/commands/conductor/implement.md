@@ -64,25 +64,21 @@ Load the PRD if not already in context.
 
 ## Step 2b — Advance to IN_PROGRESS
 
-The valid status transition graph is:
+Walk the Work Item to `IN_PROGRESS` **driven by the Workflow definition**, not a hardcoded graph — so this
+works for any Workflow, not only Engineering. Loop:
 
-```
-DRAFT → IN_REVIEW → READY_FOR_DEVELOPMENT → IN_PROGRESS → CODE_REVIEW → DONE
-```
+1. Call `get_available_transitions({issueId})` → the valid next statuses for this Work Item right now
+   (`{workflow, currentStatus, noun, transitions: [{toStatus, label, requiresReview}]}`).
+2. If `currentStatus` is already `IN_PROGRESS`, stop — you're ready to implement.
+3. If `currentStatus` is terminal or `CODE_REVIEW` (no path forward toward IN_PROGRESS), the issue may already
+   be implemented — use AskUserQuestion with options **Continue anyway** / **Abort**.
+4. Otherwise pick the transition whose `toStatus` advances toward `IN_PROGRESS`
+   (the typical path is `DRAFT → IN_REVIEW → READY_FOR_DEVELOPMENT → IN_PROGRESS`), call
+   `transition_work_item({issueId, toStatus})`, then repeat from step 1.
 
-Before implementation begins, walk the issue to `IN_PROGRESS` by calling `set_issue_status` for each required step in sequence based on the issue's **current status**:
-
-| Current status | Steps to call |
-|---|---|
-| `DRAFT` | `IN_REVIEW` → `READY_FOR_DEVELOPMENT` → `IN_PROGRESS` |
-| `IN_REVIEW` | `READY_FOR_DEVELOPMENT` → `IN_PROGRESS` |
-| `READY_FOR_DEVELOPMENT` | `IN_PROGRESS` |
-| `IN_PROGRESS` | (already correct, skip) |
-| `CODE_REVIEW`, `DONE`, `CLOSED` | Warn user — issue may already be implemented |
-
-For any status in the last row, use AskUserQuestion with options: **Continue anyway** / **Abort**.
-
-After each `set_issue_status` call, check for a `warning` field in the response. If present, surface it and pause:
+Never call a status that isn't in the returned `transitions` list — the backend rejects an invalid or
+review-gated move. After each `transition_work_item` call, check for a `warning` field (sync queued); if
+present, surface it and pause:
 
 > ⚠️ Status update failed (queued): {warning}
 > Run `conductor start` to drain the sync queue, then verify the status in the UI before continuing.
@@ -359,19 +355,40 @@ Show the PR URL to the user.
 
 ---
 
-## Step 7 — Issue Status Update
+## Step 7 — Record the PR, report the run, advance to CODE_REVIEW
 
-After the PR is created successfully, call:
+After the PR is created successfully:
 
-```
-set_issue_status(issueId, "CODE_REVIEW")
-```
+1. **Record the PR as an Asset** (supersedes the old `github_pr_url` column):
 
-This transitions the Conductor issue from `IN_PROGRESS` → `CODE_REVIEW`, reflecting that the PR is open and awaiting review.
+   ```
+   record_asset({issueId, type: "github_pr", kind: "link", ref: <pr_url>, label: "Pull Request", done: true})
+   ```
 
-**Check the response**: if it contains a `warning` field, surface it to the user:
+2. **Report the step-run** so the human Review gate can judge what you did (P0-6):
 
-> ⚠️ Status update to CODE_REVIEW failed (queued): {warning}
+   ```
+   report_step_run({
+     issueId, stepKind: "skill", skill: "conductor:implement", status: "AWAITING_REVIEW",
+     reportedBy: <your conductor user/email>, fromStatus: "IN_PROGRESS", toStatus: "CODE_REVIEW",
+     inputBrief: "<one-line: what this issue asked you to implement>",
+     produced: [{kind: "asset", ref: <pr_url>, label: "PR", assetType: "github_pr"}]
+   })
+   ```
+
+3. **Advance to CODE_REVIEW** (definition-driven — confirm `CODE_REVIEW` is in the available transitions first):
+
+   ```
+   get_available_transitions({issueId})           // expect CODE_REVIEW among the options from IN_PROGRESS
+   transition_work_item({issueId, toStatus: "CODE_REVIEW"})
+   ```
+
+   **Stop here.** `CODE_REVIEW → DONE` is a server-enforced Review gate — a human approves the PR; do not
+   attempt to move the Work Item to DONE yourself (the PR merge completes it).
+
+**Check each response**: if it contains a `warning` field, surface it to the user:
+
+> ⚠️ Update failed (queued): {warning}
 > Run `conductor start` to drain the sync queue, or update the status manually in the UI.
 
 ---
