@@ -72,6 +72,30 @@ public class Issue {
     @ColumnTransformer(write = "?::jsonb")
     private JsonNode issueTasks;
 
+    // --- COND-18 Work Item binding (nullable; legacy/unbound rows default to ENGINEERING) ---
+
+    /** The Workflow definition slug this Work Item runs on (e.g. ENGINEERING). */
+    @Column(name = "workflow", length = 64)
+    private String workflow;
+
+    /** Version of the Workflow this Work Item is pinned to. */
+    @Column(name = "workflow_version")
+    private Integer workflowVersion;
+
+    /** Current status as a Workflow-defined string (mirrors {@link #status} for ENGINEERING-bound issues). */
+    @Column(name = "current_status", length = 48)
+    private String currentStatus;
+
+    /** Per-Work-Item engine scratch (step outputs, guard inputs). */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "state_context", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
+    private JsonNode stateContext;
+
+    /** Parent Work Item for fan-out (create-sub-items) children. */
+    @Column(name = "parent_work_item_id", length = 36)
+    private String parentWorkItemId;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -124,6 +148,21 @@ public class Issue {
 
     public String getGithubPrUrl() { return githubPrUrl; }
     public void setGithubPrUrl(String githubPrUrl) { this.githubPrUrl = githubPrUrl; }
+
+    public String getWorkflow() { return workflow; }
+    public void setWorkflow(String workflow) { this.workflow = workflow; }
+
+    public Integer getWorkflowVersion() { return workflowVersion; }
+    public void setWorkflowVersion(Integer workflowVersion) { this.workflowVersion = workflowVersion; }
+
+    public String getCurrentStatus() { return currentStatus; }
+    public void setCurrentStatus(String currentStatus) { this.currentStatus = currentStatus; }
+
+    public JsonNode getStateContext() { return stateContext; }
+    public void setStateContext(JsonNode stateContext) { this.stateContext = stateContext; }
+
+    public String getParentWorkItemId() { return parentWorkItemId; }
+    public void setParentWorkItemId(String parentWorkItemId) { this.parentWorkItemId = parentWorkItemId; }
 
     public JsonNode getIssueTasks() { return issueTasks; }
     public void setIssueTasks(JsonNode issueTasks) { this.issueTasks = issueTasks; }

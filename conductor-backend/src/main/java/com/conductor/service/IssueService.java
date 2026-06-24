@@ -25,24 +25,15 @@ import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 @Service
 public class IssueService {
 
-    private static final Map<IssueStatus, Set<IssueStatus>> VALID_TRANSITIONS = Map.of(
-        IssueStatus.DRAFT, EnumSet.of(IssueStatus.IN_REVIEW, IssueStatus.CLOSED),
-        IssueStatus.IN_REVIEW, EnumSet.of(IssueStatus.READY_FOR_DEVELOPMENT, IssueStatus.DRAFT, IssueStatus.CLOSED),
-        IssueStatus.READY_FOR_DEVELOPMENT, EnumSet.of(IssueStatus.IN_PROGRESS, IssueStatus.CLOSED),
-        IssueStatus.IN_PROGRESS, EnumSet.of(IssueStatus.CODE_REVIEW, IssueStatus.CLOSED),
-        IssueStatus.CODE_REVIEW, EnumSet.of(IssueStatus.DONE, IssueStatus.CLOSED),
-        IssueStatus.DONE, EnumSet.noneOf(IssueStatus.class),
-        IssueStatus.CLOSED, EnumSet.noneOf(IssueStatus.class)
-    );
+    // COND-18 E2: the status state machine moved out of this hardcoded map into the Workflow definition;
+    // transitions are now validated by WorkItemTransitionService against the bound Statechart.
 
     private final IssueRepository issueRepository;
     private final ProjectRepository projectRepository;
@@ -51,6 +42,7 @@ public class IssueService {
     private final NotificationDispatcher notificationDispatcher;
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
+    private final WorkItemTransitionService workItemTransitionService;
 
     public IssueService(
             IssueRepository issueRepository,
@@ -59,7 +51,8 @@ public class IssueService {
             ProjectMemberRepository projectMemberRepository,
             NotificationDispatcher notificationDispatcher,
             CommentRepository commentRepository,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            WorkItemTransitionService workItemTransitionService) {
         this.issueRepository = issueRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
@@ -67,6 +60,7 @@ public class IssueService {
         this.notificationDispatcher = notificationDispatcher;
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
+        this.workItemTransitionService = workItemTransitionService;
     }
 
     @Transactional
@@ -83,6 +77,12 @@ public class IssueService {
         issue.setDescription(request.getDescription());
         issue.setCreatedBy(caller);
         issue.setStatus(IssueStatus.DRAFT);
+        // COND-18: bind the Work Item to its Workflow (defaults to the built-in ENGINEERING).
+        String workflow = request.getWorkflow() != null && !request.getWorkflow().isBlank()
+                ? request.getWorkflow() : WorkItemTransitionService.DEFAULT_WORKFLOW;
+        issue.setWorkflow(workflow);
+        issue.setWorkflowVersion(1);
+        issue.setCurrentStatus(IssueStatus.DRAFT.name());
 
         Integer nextSeq = issueRepository.findMaxSequenceNumberByProjectId(projectId) + 1;
         issue.setSequenceNumber(nextSeq);
@@ -162,8 +162,9 @@ public class IssueService {
         if (request.getStatus() != null) {
             verifyCallerCanChangeStatus(projectId, caller.getId());
             IssueStatus newStatus = toEntityIssueStatus(request.getStatus());
-            validateTransition(issue.getStatus(), newStatus);
+            workItemTransitionService.validateTransition(projectId, issue, newStatus);
             issue.setStatus(newStatus);
+            issue.setCurrentStatus(newStatus.name());
         }
 
         issueRepository.save(issue);
@@ -333,13 +334,6 @@ public class IssueService {
             throw new EntityNotFoundException("Issue not found");
         }
         return issue;
-    }
-
-    private void validateTransition(IssueStatus from, IssueStatus to) {
-        Set<IssueStatus> allowed = VALID_TRANSITIONS.getOrDefault(from, EnumSet.noneOf(IssueStatus.class));
-        if (!allowed.contains(to)) {
-            throw new BusinessException("Invalid status transition from " + from + " to " + to);
-        }
     }
 
     private IssueType toEntityIssueType(com.conductor.generated.model.IssueType type) {
