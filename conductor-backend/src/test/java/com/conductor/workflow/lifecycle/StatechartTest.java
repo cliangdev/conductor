@@ -78,10 +78,14 @@ class StatechartTest {
     }
 
     @Test
-    void engineeringGateIsOffInTheSeed() throws Exception {
+    void engineeringMergeIsReviewGated() throws Exception {
         Statechart sc = engineering();
-        // CODE_REVIEW -> DONE ships UNGATED (the review gate is the deliberate Phase-2 change).
-        assertThat(sc.transition("CODE_REVIEW", "DONE")).get()
+        // CODE_REVIEW -> DONE is the review gate (COND-18 E3 / P0-6). The PR-merge bypass stays ungated.
+        StatechartTransition merge = sc.transition("CODE_REVIEW", "DONE").orElseThrow();
+        assertThat(merge.requiresReview()).isTrue();
+        assertThat(merge.reviewOutcomes()).contains("approve", "request_changes");
+        // The CLOSED edge from CODE_REVIEW remains ungated.
+        assertThat(sc.transition("CODE_REVIEW", "CLOSED")).get()
                 .extracting(StatechartTransition::requiresReview).isEqualTo(false);
     }
 

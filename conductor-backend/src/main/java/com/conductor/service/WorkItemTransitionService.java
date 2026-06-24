@@ -5,10 +5,12 @@ import com.conductor.entity.IssueStatus;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.model.AvailableTransition;
 import com.conductor.generated.model.AvailableTransitionsResponse;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
+import com.conductor.repository.ReviewRepository;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
@@ -19,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Owns Work Item status transitions against the bound Workflow's {@link Statechart} (COND-18 E2). It is the
@@ -33,21 +36,25 @@ import java.util.List;
 public class WorkItemTransitionService {
 
     static final String DEFAULT_WORKFLOW = "ENGINEERING";
+    static final String APPROVED_VERDICT = "APPROVED";
 
     private final IssueRepository issueRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
+    private final ReviewRepository reviewRepository;
     private final WorkflowDefinitionResolver resolver;
     private final WorkflowEngine engine;
 
     public WorkItemTransitionService(IssueRepository issueRepository,
                                      ProjectSecurityService projectSecurityService,
                                      ProjectMemberRepository projectMemberRepository,
+                                     ReviewRepository reviewRepository,
                                      WorkflowDefinitionResolver resolver,
                                      WorkflowEngine engine) {
         this.issueRepository = issueRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
+        this.reviewRepository = reviewRepository;
         this.resolver = resolver;
         this.engine = engine;
     }
@@ -59,9 +66,15 @@ public class WorkItemTransitionService {
      */
     public void validateTransition(String projectId, Issue issue, IssueStatus newStatus) {
         Statechart statechart = resolveFor(projectId, issue);
-        if (!engine.canTransition(statechart, issue.getStatus().name(), newStatus.name())) {
+        Optional<StatechartTransition> transition =
+                statechart.transition(issue.getStatus().name(), newStatus.name());
+        if (transition.isEmpty()) {
             throw new BusinessException(
                     "Invalid status transition from " + issue.getStatus() + " to " + newStatus);
+        }
+        if (transition.get().requiresReview() && !isReviewSatisfied(issue)) {
+            throw new UnprocessableEntityException(
+                    "Transition to " + newStatus + " requires an approved review");
         }
     }
 
@@ -83,7 +96,12 @@ public class WorkItemTransitionService {
 
         List<AvailableTransition> transitions = new ArrayList<>();
         if (!isReviewer(projectId, caller.getId())) {
+            boolean reviewSatisfied = isReviewSatisfied(issue);
             for (StatechartTransition t : engine.availableTransitions(statechart, currentStatus)) {
+                // Doer projection: a review-gated edge stays hidden until its Review is satisfied.
+                if (t.requiresReview() && !reviewSatisfied) {
+                    continue;
+                }
                 AvailableTransition at = new AvailableTransition(t.to(), t.label());
                 at.setRequiresReview(t.requiresReview());
                 transitions.add(at);
@@ -105,5 +123,10 @@ public class WorkItemTransitionService {
         return projectMemberRepository.findByProjectIdAndUserId(projectId, callerId)
                 .map(m -> m.getRole() == MemberRole.REVIEWER)
                 .orElse(false);
+    }
+
+    /** A review-gated transition is satisfied when at least one APPROVED Review is recorded on the Work Item. */
+    private boolean isReviewSatisfied(Issue issue) {
+        return reviewRepository.existsByIssueIdAndVerdict(issue.getId(), APPROVED_VERDICT);
     }
 }

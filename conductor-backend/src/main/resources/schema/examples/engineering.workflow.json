@@ -35,7 +35,14 @@
     { "from": "READY_FOR_DEVELOPMENT", "to": "CLOSED", "label": "Close" },
     { "from": "IN_PROGRESS", "to": "CODE_REVIEW", "label": "Open PR" },
     { "from": "IN_PROGRESS", "to": "CLOSED", "label": "Close" },
-    { "from": "CODE_REVIEW", "to": "DONE", "label": "Merge" },
+    {
+      "from": "CODE_REVIEW",
+      "to": "DONE",
+      "label": "Merge",
+      "requiresReview": true,
+      "reviewOutcomes": ["approve", "request_changes"],
+      "reviewerRole": "REVIEWER"
+    },
     { "from": "CODE_REVIEW", "to": "CLOSED", "label": "Close" }
   ]
 }

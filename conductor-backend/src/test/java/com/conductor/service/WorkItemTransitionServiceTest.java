@@ -7,10 +7,12 @@ import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.model.AvailableTransition;
 import com.conductor.generated.model.AvailableTransitionsResponse;
 import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
+import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.conductor.workflow.lifecycle.WorkflowEngine;
@@ -39,6 +41,7 @@ class WorkItemTransitionServiceTest {
     private IssueRepository issueRepository;
     private ProjectSecurityService projectSecurityService;
     private ProjectMemberRepository projectMemberRepository;
+    private ReviewRepository reviewRepository;
     private WorkItemTransitionService service;
 
     @BeforeEach
@@ -46,10 +49,11 @@ class WorkItemTransitionServiceTest {
         issueRepository = Mockito.mock(IssueRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
         projectMemberRepository = Mockito.mock(ProjectMemberRepository.class);
+        reviewRepository = Mockito.mock(ReviewRepository.class);
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(
                 Mockito.mock(WorkflowDefinitionRepository.class), new ObjectMapper());
-        service = new WorkItemTransitionService(
-                issueRepository, projectSecurityService, projectMemberRepository, resolver, new WorkflowEngine());
+        service = new WorkItemTransitionService(issueRepository, projectSecurityService, projectMemberRepository,
+                reviewRepository, resolver, new WorkflowEngine());
     }
 
     private Issue issueAt(IssueStatus status) {
@@ -111,6 +115,42 @@ class WorkItemTransitionServiceTest {
         assertThat(response.getNoun()).isEqualTo("Issue");
         assertThat(response.getTransitions()).extracting(AvailableTransition::getToStatus)
                 .containsExactlyInAnyOrder("IN_REVIEW", "CLOSED");
+    }
+
+    @Test
+    void reviewGatedMergeIsBlockedWithoutApproval() {
+        when(reviewRepository.existsByIssueIdAndVerdict("issue-1", "APPROVED")).thenReturn(false);
+        assertThatThrownBy(() ->
+                service.validateTransition(PROJECT_ID, issueAt(IssueStatus.CODE_REVIEW), IssueStatus.DONE))
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("requires an approved review");
+    }
+
+    @Test
+    void reviewGatedMergeIsAllowedWithApproval() {
+        when(reviewRepository.existsByIssueIdAndVerdict("issue-1", "APPROVED")).thenReturn(true);
+        assertThatCode(() ->
+                service.validateTransition(PROJECT_ID, issueAt(IssueStatus.CODE_REVIEW), IssueStatus.DONE))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void availableTransitionsHidesGatedMergeUntilApproved() {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issueAt(IssueStatus.CODE_REVIEW)));
+        ProjectMember member = new ProjectMember();
+        member.setRole(MemberRole.CREATOR);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
+
+        // No approval: the gated DONE edge is hidden; only CLOSED shows.
+        when(reviewRepository.existsByIssueIdAndVerdict("issue-1", "APPROVED")).thenReturn(false);
+        assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).getTransitions())
+                .extracting(AvailableTransition::getToStatus).containsExactly("CLOSED");
+
+        // Approved: DONE appears.
+        when(reviewRepository.existsByIssueIdAndVerdict("issue-1", "APPROVED")).thenReturn(true);
+        assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).getTransitions())
+                .extracting(AvailableTransition::getToStatus).containsExactlyInAnyOrder("DONE", "CLOSED");
     }
 
     @Test
