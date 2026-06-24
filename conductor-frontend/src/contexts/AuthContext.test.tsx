@@ -10,7 +10,8 @@ vi.mock('firebase/auth', () => ({
   GoogleAuthProvider: class GoogleAuthProvider {
     setCustomParameters() {}
   },
-  signInWithPopup: vi.fn(),
+  signInWithRedirect: vi.fn(),
+  getRedirectResult: vi.fn().mockResolvedValue(null),
   signOut: vi.fn(),
   getIdToken: vi.fn(),
 }))
@@ -40,6 +41,7 @@ function TestConsumer({ onValues }: { onValues: (v: ReturnType<typeof useAuth>) 
 describe('AuthContext', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(firebaseAuth.getRedirectResult).mockResolvedValue(null)
     localStorage.clear()
     document.cookie = 'access_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT'
     vi.unstubAllEnvs()
@@ -79,13 +81,33 @@ describe('AuthContext', () => {
     expect(captured?.accessToken).toBe('stored-token')
   })
 
-  it('signIn calls signInWithPopup and stores user on success', async () => {
+  it('signIn calls signInWithRedirect; getRedirectResult on mount stores user', async () => {
     const mockFirebaseUser = { uid: 'firebase-uid' }
-    vi.mocked(firebaseAuth.signInWithPopup).mockResolvedValue({
+    vi.mocked(firebaseAuth.getRedirectResult).mockResolvedValue({
       user: mockFirebaseUser,
-    } as Awaited<ReturnType<typeof firebaseAuth.signInWithPopup>>)
+    } as Awaited<ReturnType<typeof firebaseAuth.getRedirectResult>>)
     vi.mocked(firebaseAuth.getIdToken).mockResolvedValue('firebase-id-token')
     vi.mocked(api.apiPost).mockResolvedValue({ accessToken: 'backend-token', user: mockUser })
+
+    let captured: ReturnType<typeof useAuth> | null = null
+
+    render(
+      <AuthProvider>
+        <TestConsumer onValues={(v) => { captured = v }} />
+      </AuthProvider>
+    )
+
+    await waitFor(() => expect(captured?.loading).toBe(false))
+
+    expect(firebaseAuth.getRedirectResult).toHaveBeenCalled()
+    expect(api.apiPost).toHaveBeenCalledWith('/api/v1/auth/firebase', { idToken: 'firebase-id-token' })
+    expect(captured?.user).toEqual(mockUser)
+    expect(captured?.accessToken).toBe('backend-token')
+    expect(localStorage.getItem('access_token')).toBe('backend-token')
+  })
+
+  it('signIn initiates redirect', async () => {
+    vi.mocked(firebaseAuth.signInWithRedirect).mockResolvedValue(undefined)
 
     let captured: ReturnType<typeof useAuth> | null = null
 
@@ -101,16 +123,12 @@ describe('AuthContext', () => {
       await captured?.signIn()
     })
 
-    expect(firebaseAuth.signInWithPopup).toHaveBeenCalled()
-    expect(api.apiPost).toHaveBeenCalledWith('/api/v1/auth/firebase', { idToken: 'firebase-id-token' })
-    expect(captured?.user).toEqual(mockUser)
-    expect(captured?.accessToken).toBe('backend-token')
-    expect(localStorage.getItem('access_token')).toBe('backend-token')
+    expect(firebaseAuth.signInWithRedirect).toHaveBeenCalled()
   })
 
   it('signIn sets signInError on failure', async () => {
-    const firebaseError = Object.assign(new Error('popup-closed'), { code: 'auth/popup-closed-by-user' })
-    vi.mocked(firebaseAuth.signInWithPopup).mockRejectedValue(firebaseError)
+    const firebaseError = Object.assign(new Error('redirect-failed'), { code: 'auth/network-request-failed' })
+    vi.mocked(firebaseAuth.signInWithRedirect).mockRejectedValue(firebaseError)
 
     let captured: ReturnType<typeof useAuth> | null = null
 
@@ -126,7 +144,7 @@ describe('AuthContext', () => {
       try { await captured?.signIn() } catch { /* expected */ }
     })
 
-    expect(captured?.signInError).toBe('Sign in failed: auth/popup-closed-by-user')
+    expect(captured?.signInError).toBe('Sign in failed: auth/network-request-failed')
     expect(captured?.user).toBeNull()
   })
 
@@ -201,7 +219,7 @@ describe('AuthContext', () => {
         await captured?.signIn({ email: 'user@example.com', password: 'secret123' })
       })
 
-      expect(firebaseAuth.signInWithPopup).not.toHaveBeenCalled()
+      expect(firebaseAuth.signInWithRedirect).not.toHaveBeenCalled()
       expect(firebaseAuth.getIdToken).not.toHaveBeenCalled()
     })
 

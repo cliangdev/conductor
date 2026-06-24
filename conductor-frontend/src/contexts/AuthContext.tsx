@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 import type { User, AuthResponse } from '@/types'
 import { apiPost, setOnUnauthorized } from '@/lib/api'
 import { getFirebaseAuth } from '@/lib/firebase'
-import { GoogleAuthProvider, signInWithPopup, getIdToken, signOut as firebaseSignOut } from 'firebase/auth'
+import { GoogleAuthProvider, signInWithRedirect, getRedirectResult, getIdToken, signOut as firebaseSignOut } from 'firebase/auth'
 
 interface AuthContextValue {
   user: User | null
@@ -56,21 +56,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.location.href = '/login'
     })
 
-    const storedToken = localStorage.getItem('access_token')
-    const storedUser = localStorage.getItem('user')
-    if (storedToken) {
-      setAccessToken(storedToken)
-      setAccessTokenCookie(storedToken)
-      if (storedUser) {
-        try {
-          setUser(JSON.parse(storedUser))
-        } catch {
-          // Ignore malformed stored user
+    async function init() {
+      // Check for a pending redirect result from signInWithRedirect
+      try {
+        const result = await getRedirectResult(getFirebaseAuth())
+        if (result) {
+          const idToken = await getIdToken(result.user)
+          const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
+          setUser(response.user)
+          setAccessToken(response.accessToken)
+          localStorage.setItem('access_token', response.accessToken)
+          localStorage.setItem('user', JSON.stringify(response.user))
+          setAccessTokenCookie(response.accessToken)
+          setLoading(false)
+          return
+        }
+      } catch {
+        // Redirect result error — fall through to localStorage restore
+      }
+
+      const storedToken = localStorage.getItem('access_token')
+      const storedUser = localStorage.getItem('user')
+      if (storedToken) {
+        setAccessToken(storedToken)
+        setAccessTokenCookie(storedToken)
+        if (storedUser) {
+          try {
+            setUser(JSON.parse(storedUser))
+          } catch {
+            // Ignore malformed stored user
+          }
         }
       }
+
+      setLoading(false)
     }
 
-    setLoading(false)
+    init()
   }, [])
 
   async function signIn(credentials?: { email: string; password: string }): Promise<void> {
@@ -88,18 +110,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setSignInError(null)
     try {
-      // signInWithPopup must be called synchronously within the user gesture;
-      // static imports above ensure no async gap before the popup is opened.
       const provider = new GoogleAuthProvider()
       provider.setCustomParameters({ prompt: 'select_account' })
-      const result = await signInWithPopup(getFirebaseAuth(), provider)
-      const idToken = await getIdToken(result.user)
-      const response = await apiPost<AuthResponse>('/api/v1/auth/firebase', { idToken })
-      setUser(response.user)
-      setAccessToken(response.accessToken)
-      localStorage.setItem('access_token', response.accessToken)
-      localStorage.setItem('user', JSON.stringify(response.user))
-      setAccessTokenCookie(response.accessToken)
+      await signInWithRedirect(getFirebaseAuth(), provider)
+      // Browser navigates away; token exchange happens in init() on return
     } catch (err) {
       const code = (err as { code?: string })?.code
       setSignInError(code ? `Sign in failed: ${code}` : 'Sign in failed. Please try again.')
