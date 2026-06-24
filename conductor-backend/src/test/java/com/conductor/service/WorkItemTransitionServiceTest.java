@@ -15,7 +15,6 @@ import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
-import com.conductor.workflow.lifecycle.WorkflowEngine;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,7 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 /**
- * Exercises the transition seam with the REAL {@link WorkflowEngine} + built-in ENGINEERING statechart
+ * Exercises the transition seam with the REAL resolver + built-in ENGINEERING statechart
  * (resolver backed by a mock repo → no DB rows → built-in). This is where the byte-for-byte no-regression
  * behavior (AC-P0-1.1) is verified end to end through the engine.
  */
@@ -53,7 +52,7 @@ class WorkItemTransitionServiceTest {
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(
                 Mockito.mock(WorkflowDefinitionRepository.class), new ObjectMapper());
         service = new WorkItemTransitionService(issueRepository, projectSecurityService, projectMemberRepository,
-                reviewRepository, resolver, new WorkflowEngine());
+                reviewRepository, resolver);
     }
 
     private Issue issueAt(IssueStatus status) {

@@ -82,7 +82,14 @@ public class Issue {
     @Column(name = "workflow_version")
     private Integer workflowVersion;
 
-    /** Current status as a Workflow-defined string (mirrors {@link #status} for ENGINEERING-bound issues). */
+    /**
+     * Current status as a Workflow-defined string (mirrors {@link #status} for ENGINEERING-bound issues).
+     *
+     * <p>DEFERRED (before custom workflows ship): today {@link #status} (the {@link IssueStatus} enum) is the
+     * authority the engine reads; this column is a denormalized mirror. A custom Workflow with a non-enum status
+     * cannot be stored until workflow-bound issues switch their authority to this string field — a prerequisite
+     * for the Work Item rename / custom-status work, tracked separately.
+     */
     @Column(name = "current_status", length = 48)
     private String currentStatus;
 
@@ -110,12 +117,20 @@ public class Issue {
         if (status == null) {
             status = IssueStatus.DRAFT;
         }
+        // COND-18: keep the current_status string mirror non-null even for rows saved without it
+        // (the enum status remains the authority; current_status is the forward-compat string view).
+        if (currentStatus == null && status != null) {
+            currentStatus = status.name();
+        }
         createdAt = OffsetDateTime.now();
         updatedAt = OffsetDateTime.now();
     }
 
     @PreUpdate
     protected void onUpdate() {
+        if (currentStatus == null && status != null) {
+            currentStatus = status.name();
+        }
         updatedAt = OffsetDateTime.now();
     }
 

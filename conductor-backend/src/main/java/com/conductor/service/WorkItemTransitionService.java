@@ -14,7 +14,6 @@ import com.conductor.repository.ReviewRepository;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
-import com.conductor.workflow.lifecycle.WorkflowEngine;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,20 +42,17 @@ public class WorkItemTransitionService {
     private final ProjectMemberRepository projectMemberRepository;
     private final ReviewRepository reviewRepository;
     private final WorkflowDefinitionResolver resolver;
-    private final WorkflowEngine engine;
 
     public WorkItemTransitionService(IssueRepository issueRepository,
                                      ProjectSecurityService projectSecurityService,
                                      ProjectMemberRepository projectMemberRepository,
                                      ReviewRepository reviewRepository,
-                                     WorkflowDefinitionResolver resolver,
-                                     WorkflowEngine engine) {
+                                     WorkflowDefinitionResolver resolver) {
         this.issueRepository = issueRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
         this.reviewRepository = reviewRepository;
         this.resolver = resolver;
-        this.engine = engine;
     }
 
     /**
@@ -97,7 +93,7 @@ public class WorkItemTransitionService {
         List<AvailableTransition> transitions = new ArrayList<>();
         if (!isReviewer(projectId, caller.getId())) {
             boolean reviewSatisfied = isReviewSatisfied(issue);
-            for (StatechartTransition t : engine.availableTransitions(statechart, currentStatus)) {
+            for (StatechartTransition t : statechart.transitionsFrom(currentStatus)) {
                 // Doer projection: a review-gated edge stays hidden until its Review is satisfied.
                 if (t.requiresReview() && !reviewSatisfied) {
                     continue;
@@ -125,7 +121,14 @@ public class WorkItemTransitionService {
                 .orElse(false);
     }
 
-    /** A review-gated transition is satisfied when at least one APPROVED Review is recorded on the Work Item. */
+    /**
+     * A review-gated transition is satisfied when at least one APPROVED Review is recorded on the Work Item.
+     *
+     * <p>DEFERRED (v1): the transition's {@code reviewerRole} (e.g. REVIEWER on ENGINEERING's merge gate) is
+     * parsed into the domain model but NOT enforced here — any APPROVED review satisfies the gate. In practice
+     * {@code ReviewService.submitReview} already forbids CREATORs from reviewing, so the only un-scoped path is
+     * an ADMIN approval. Role-scoped gate enforcement lands with per-Workflow review roles.
+     */
     private boolean isReviewSatisfied(Issue issue) {
         return reviewRepository.existsByIssueIdAndVerdict(issue.getId(), APPROVED_VERDICT);
     }

@@ -10,7 +10,7 @@ import java.util.Optional;
 /**
  * The immutable, parsed form of a Workflow {@code definition} (COND-18) — the rich domain model of the
  * Lifecycle bounded context. It encapsulates the statechart and answers the questions the
- * {@link WorkflowEngine} and the doer projection need: which status is initial/terminal, which transitions
+ * the transition service and the doer projection need: which status is initial/terminal, which transitions
  * leave a status, and whether a given move is allowed and gated.
  *
  * <p>This is a value object, not a JPA entity: the {@code WorkflowDefinition} entity stays anemic and stores

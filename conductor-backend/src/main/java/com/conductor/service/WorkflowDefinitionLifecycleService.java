@@ -63,9 +63,12 @@ public class WorkflowDefinitionLifecycleService {
         }
 
         definition.setState(STATE_PUBLISHED);
-        if (definition.getVersion() == null) {
-            definition.setVersion(1);
-        }
+        // Always advance the version on publish so re-publishing an edited definition is observable.
+        // NOTE (deferred to the authoring/Builder phase): WorkflowDefinitionResolver currently resolves
+        // the latest PUBLISHED version by slug and does NOT honor a Work Item's pinned workflow_version,
+        // so in-flight Work Items are not yet pinned to the version they started on. Pinning + in-flight
+        // migration land with the editing experience (no edit/re-publish path exists in the v1 API yet).
+        definition.setVersion(definition.getVersion() == null ? 1 : definition.getVersion() + 1);
         if (definition.getSchemaVersion() == null && definition.getDefinition().hasNonNull("schemaVersion")) {
             definition.setSchemaVersion(definition.getDefinition().get("schemaVersion").asInt());
         }
