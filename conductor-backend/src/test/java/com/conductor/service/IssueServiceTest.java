@@ -68,6 +68,9 @@ class IssueServiceTest {
     @Mock
     private WorkItemTransitionService workItemTransitionService;
 
+    @Mock
+    private AssetService assetService;
+
     @InjectMocks
     private IssueService issueService;
 

@@ -89,7 +89,14 @@ public enum EventType {
      *
      * <p>Required metadata keys: {@code memberName}, {@code role}
      */
-    MEMBER_ROLE_CHANGED("Member role changed");
+    MEMBER_ROLE_CHANGED("Member role changed"),
+
+    /**
+     * A produced-output Asset has been recorded on a Work Item (COND-18).
+     *
+     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}, {@code assetType}
+     */
+    ASSET_ADDED("Asset added to a Work Item");
 
     private final String description;
 

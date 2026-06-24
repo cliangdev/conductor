@@ -43,6 +43,7 @@ public class IssueService {
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
     private final WorkItemTransitionService workItemTransitionService;
+    private final AssetService assetService;
 
     public IssueService(
             IssueRepository issueRepository,
@@ -52,7 +53,8 @@ public class IssueService {
             NotificationDispatcher notificationDispatcher,
             CommentRepository commentRepository,
             UserRepository userRepository,
-            WorkItemTransitionService workItemTransitionService) {
+            WorkItemTransitionService workItemTransitionService,
+            AssetService assetService) {
         this.issueRepository = issueRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
@@ -61,6 +63,7 @@ public class IssueService {
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
         this.workItemTransitionService = workItemTransitionService;
+        this.assetService = assetService;
     }
 
     @Transactional
@@ -260,8 +263,13 @@ public class IssueService {
         boolean alreadyTerminal = previousStatus == IssueStatus.DONE || previousStatus == IssueStatus.CLOSED;
         if (!alreadyTerminal) {
             issue.setStatus(IssueStatus.DONE);
+            issue.setCurrentStatus(IssueStatus.DONE.name());
         }
         issueRepository.save(issue);
+
+        // COND-18 E5: record the merged PR as a github_pr Asset (additive — the column is still written
+        // above for one release). Idempotent on (issue, type, ref).
+        assetService.recordPullRequestAsset(issue, pullRequestUrl);
 
         if (!alreadyTerminal) {
             notificationDispatcher.dispatch(NotificationEvent.of(
