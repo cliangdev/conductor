@@ -96,6 +96,12 @@ public class Issue {
     @Column(name = "parent_work_item_id", length = 36)
     private String parentWorkItemId;
 
+    /** Append-only Outcome Metric series ({value, observedAt, note}); metric def from the Workflow (COND-18 E6). */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "outcome_metric", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
+    private JsonNode outcomeMetric;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -163,6 +169,9 @@ public class Issue {
 
     public String getParentWorkItemId() { return parentWorkItemId; }
     public void setParentWorkItemId(String parentWorkItemId) { this.parentWorkItemId = parentWorkItemId; }
+
+    public JsonNode getOutcomeMetric() { return outcomeMetric; }
+    public void setOutcomeMetric(JsonNode outcomeMetric) { this.outcomeMetric = outcomeMetric; }
 
     public JsonNode getIssueTasks() { return issueTasks; }
     public void setIssueTasks(JsonNode issueTasks) { this.issueTasks = issueTasks; }

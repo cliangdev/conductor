@@ -29,11 +29,13 @@ public final class Statechart {
     private final List<String> assetTypes;
     private final List<StatechartStatus> statuses;
     private final List<StatechartTransition> transitions;
+    private final StatechartMetric metric;
     private final Map<String, StatechartStatus> statusById;
 
     private Statechart(String slug, String area, Integer version, String state, Integer schemaVersion,
                        String noun, String defaultView, List<String> types, List<String> assetTypes,
-                       List<StatechartStatus> statuses, List<StatechartTransition> transitions) {
+                       List<StatechartStatus> statuses, List<StatechartTransition> transitions,
+                       StatechartMetric metric) {
         this.slug = slug;
         this.area = area;
         this.version = version;
@@ -45,6 +47,7 @@ public final class Statechart {
         this.assetTypes = List.copyOf(assetTypes);
         this.statuses = List.copyOf(statuses);
         this.transitions = List.copyOf(transitions);
+        this.metric = metric;
         Map<String, StatechartStatus> byId = new LinkedHashMap<>();
         for (StatechartStatus s : statuses) {
             byId.put(s.id(), s);
@@ -76,7 +79,8 @@ public final class Statechart {
                 Json.stringList(def, "types"),
                 Json.stringList(def, "asset_types"),
                 statuses,
-                transitions);
+                transitions,
+                StatechartMetric.parse(def.get("metric")));
     }
 
     public String slug() { return slug; }
@@ -91,6 +95,8 @@ public final class Statechart {
     public List<String> assetTypes() { return assetTypes; }
     public List<StatechartStatus> statuses() { return statuses; }
     public List<StatechartTransition> transitions() { return transitions; }
+    /** The optional Outcome Metric this Workflow declares, or null if it opts out. */
+    public StatechartMetric metric() { return metric; }
 
     public Optional<StatechartStatus> status(String id) {
         return Optional.ofNullable(statusById.get(id));

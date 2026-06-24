@@ -42,6 +42,8 @@ tags:
     description: Produced-output Assets on a Work Item (COND-18)
   - name: step-runs
     description: Agent-run step records for the P0-6 Review gate (COND-18)
+  - name: metrics
+    description: Outcome Metric time series on a Work Item (COND-18)
   - name: daemon
     description: Daemon event polling endpoints
   - name: project-docs
@@ -3348,6 +3350,97 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/issues/{issueId}/metric:
+    get:
+      tags:
+        - metrics
+      summary: Get a Work Item's Outcome Metric series
+      description: >-
+        The append-only metric time series on a Work Item (COND-18 P0-5), with the metric's name/unit/
+        direction from the bound Workflow definition. Empty observations when none recorded.
+      operationId: getOutcomeMetric
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Work Item's metric series
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutcomeMetricResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags:
+        - metrics
+      summary: Record an Outcome Metric observation (append)
+      operationId: recordOutcomeMetric
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: issueId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordMetricObservationRequest"
+      responses:
+        "200":
+          description: Observation recorded; the updated series is returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutcomeMetricResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/issues/{issueId}/step-runs:
     get:
       tags:
@@ -5776,6 +5869,54 @@ components:
       enum:
         - DRAFT
         - PUBLISHED
+
+    MetricObservation:
+      type: object
+      required:
+        - value
+        - observedAt
+      properties:
+        value:
+          type: number
+          format: double
+        observedAt:
+          type: string
+          format: date-time
+        note:
+          type: string
+
+    OutcomeMetricResponse:
+      type: object
+      required:
+        - observations
+      properties:
+        name:
+          type: string
+          description: Metric name from the bound Workflow definition (null if the Workflow defines none).
+        unit:
+          type: string
+        direction:
+          type: string
+          description: higher_better | lower_better (from the Workflow definition).
+        observations:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricObservation"
+
+    RecordMetricObservationRequest:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: number
+          format: double
+        observedAt:
+          type: string
+          format: date-time
+          description: Defaults to now when omitted.
+        note:
+          type: string
 
     StepRunProduced:
       type: object
