@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
@@ -8,16 +8,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
-import { apiPatch } from '@/lib/api'
+import { apiGet, apiPatch } from '@/lib/api'
 
-type Status =
-  | 'DRAFT'
-  | 'IN_REVIEW'
-  | 'READY_FOR_DEVELOPMENT'
-  | 'IN_PROGRESS'
-  | 'CODE_REVIEW'
-  | 'DONE'
-  | 'CLOSED'
 type UserRole = 'ADMIN' | 'CREATOR' | 'REVIEWER'
 
 interface StatusDropdownProps {
@@ -48,16 +40,6 @@ const STATUS_VARIANTS: Record<string, StatusVariant> = {
   CLOSED: 'status-closed',
 }
 
-const VALID_TRANSITIONS: Record<string, Status[]> = {
-  DRAFT: ['IN_REVIEW', 'CLOSED'],
-  IN_REVIEW: ['READY_FOR_DEVELOPMENT', 'DRAFT', 'CLOSED'],
-  READY_FOR_DEVELOPMENT: ['IN_PROGRESS', 'CLOSED'],
-  IN_PROGRESS: ['CODE_REVIEW', 'CLOSED'],
-  CODE_REVIEW: ['DONE', 'CLOSED'],
-  DONE: [],
-  CLOSED: [],
-}
-
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Draft',
   IN_REVIEW: 'In Review',
@@ -68,6 +50,28 @@ const STATUS_LABELS: Record<string, string> = {
   CLOSED: 'Closed',
 }
 
+interface AvailableTransition {
+  toStatus: string
+  label: string
+  requiresReview?: boolean
+}
+
+interface AvailableTransitionsResponse {
+  workflow: string
+  currentStatus: string
+  noun?: string
+  transitions: AvailableTransition[]
+}
+
+function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status.replace(/_/g, ' ')
+}
+
+/**
+ * COND-18: the doer's status control. The valid next moves are computed server-side from the active
+ * Workflow definition (GET .../available-transitions) — not a hardcoded table — so a review-gated
+ * transition stays hidden until its Review is satisfied, and the same control works for any Workflow.
+ */
 export function StatusDropdown({
   projectId,
   issueId,
@@ -77,19 +81,35 @@ export function StatusDropdown({
   onStatusChanged,
 }: StatusDropdownProps) {
   const [loading, setLoading] = useState(false)
+  const [transitions, setTransitions] = useState<AvailableTransition[]>([])
 
   const currentVariant = STATUS_VARIANTS[currentStatus] ?? 'status-draft'
-  const displayLabel = STATUS_LABELS[currentStatus] ?? currentStatus.replace(/_/g, ' ')
+  const displayLabel = statusLabel(currentStatus)
 
-  if (userRole === 'REVIEWER') {
-    return (
-      <Badge variant={currentVariant}>{displayLabel}</Badge>
+  useEffect(() => {
+    if (userRole === 'REVIEWER' || !token) return
+    let cancelled = false
+    apiGet<AvailableTransitionsResponse>(
+      `/api/v1/projects/${projectId}/issues/${issueId}/available-transitions`,
+      token
     )
+      .then((res) => {
+        if (!cancelled) setTransitions(res.transitions ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setTransitions([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, issueId, currentStatus, userRole, token])
+
+  // REVIEWERs (and any state with no available moves) see a read-only badge.
+  if (userRole === 'REVIEWER' || transitions.length === 0) {
+    return <Badge variant={currentVariant}>{displayLabel}</Badge>
   }
 
-  const transitions = VALID_TRANSITIONS[currentStatus] ?? []
-
-  async function handleSelect(newStatus: Status) {
+  async function handleSelect(newStatus: string) {
     setLoading(true)
     try {
       await apiPatch(
@@ -99,16 +119,10 @@ export function StatusDropdown({
       )
       onStatusChanged(newStatus)
     } catch {
-      // Status change failed silently; UI stays at current status
+      // Transition rejected (e.g. an unsatisfied gate); UI stays at the current status.
     } finally {
       setLoading(false)
     }
-  }
-
-  if (transitions.length === 0) {
-    return (
-      <Badge variant={currentVariant}>{displayLabel}</Badge>
-    )
   }
 
   return (
@@ -122,15 +136,16 @@ export function StatusDropdown({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {transitions.map((status) => (
+        {transitions.map((t) => (
           <DropdownMenuItem
-            key={status}
-            onClick={() => handleSelect(status)}
+            key={t.toStatus}
+            onClick={() => handleSelect(t.toStatus)}
             className="cursor-pointer"
           >
-            <Badge variant={STATUS_VARIANTS[status] ?? 'status-draft'} className="mr-2">
-              {STATUS_LABELS[status] ?? status.replace(/_/g, ' ')}
+            <Badge variant={STATUS_VARIANTS[t.toStatus] ?? 'status-draft'} className="mr-2">
+              {t.label || statusLabel(t.toStatus)}
             </Badge>
+            {t.requiresReview && <span className="text-xs opacity-60">needs review</span>}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
