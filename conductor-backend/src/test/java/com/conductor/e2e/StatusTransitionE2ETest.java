@@ -151,7 +151,7 @@ class StatusTransitionE2ETest {
                 HttpMethod.PATCH,
                 new HttpEntity<>(Map.of("status", "DONE"), adminHeaders),
                 Map.class);
-        assertThat(blockedDone.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(blockedDone.getStatusCode().value()).isEqualTo(422);
 
         // …assign the reviewer and record an APPROVED review to satisfy the gate.
         rest.exchange(
