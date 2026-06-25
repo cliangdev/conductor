@@ -66,7 +66,11 @@ public class GcpStorageService implements StorageService {
 
     public boolean isHealthy() {
         try {
-            storage.get(bucketName, Storage.BucketGetOption.fields(Storage.BucketField.NAME));
+            // Probe an OBJECT-level operation the app actually relies on (storage.objects.list), not a
+            // bucket-metadata read (storage.buckets.get). The runtime service account is granted
+            // roles/storage.objectAdmin (object ops) but not bucket.get, so a bucket-get probe reports a
+            // false "unhealthy" even though uploads/downloads/signed URLs work. pageSize(1) keeps it cheap.
+            storage.list(bucketName, Storage.BlobListOption.pageSize(1)).getValues();
             return true;
         } catch (Exception e) {
             log.warn("GCS health check failed: {}", e.getMessage());

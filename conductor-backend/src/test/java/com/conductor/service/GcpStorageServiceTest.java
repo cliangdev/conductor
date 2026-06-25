@@ -1,6 +1,8 @@
 package com.conductor.service;
 
 import com.conductor.exception.StorageUploadException;
+import com.google.api.gax.paging.Page;
+import com.google.cloud.storage.Blob;
 import com.google.cloud.storage.BlobId;
 import com.google.cloud.storage.BlobInfo;
 import com.google.cloud.storage.Storage;
@@ -21,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -138,15 +141,18 @@ class GcpStorageServiceTest {
     }
 
     @Test
-    void isHealthy_returnsTrueWhenStorageReachable() {
-        when(storage.get(eq(BUCKET_NAME), any(Storage.BucketGetOption.class))).thenReturn(null);
+    @SuppressWarnings("unchecked")
+    void isHealthy_returnsTrueWhenObjectListingSucceeds() {
+        Page<Blob> page = mock(Page.class);
+        when(page.getValues()).thenReturn(java.util.Collections.emptyList());
+        when(storage.list(eq(BUCKET_NAME), any(Storage.BlobListOption.class))).thenReturn(page);
 
         assertThat(gcpStorageService.isHealthy()).isTrue();
     }
 
     @Test
     void isHealthy_returnsFalseWhenStorageThrows() {
-        when(storage.get(eq(BUCKET_NAME), any(Storage.BucketGetOption.class)))
+        when(storage.list(eq(BUCKET_NAME), any(Storage.BlobListOption.class)))
                 .thenThrow(new RuntimeException("GCS unreachable"));
 
         assertThat(gcpStorageService.isHealthy()).isFalse();
