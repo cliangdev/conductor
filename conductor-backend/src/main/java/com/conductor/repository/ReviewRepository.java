@@ -13,4 +13,6 @@ public interface ReviewRepository extends JpaRepository<Review, String> {
     Optional<Review> findByIssueIdAndReviewerId(String issueId, String reviewerId);
 
     List<Review> findAllByIssueId(String issueId);
+
+    boolean existsByIssueIdAndVerdict(String issueId, String verdict);
 }

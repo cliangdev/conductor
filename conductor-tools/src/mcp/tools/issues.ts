@@ -34,11 +34,19 @@ function updateFrontmatterField(content: string, field: string, value: string): 
 }
 
 export async function createIssue(
-  params: { type: string; title: string; description?: string },
+  params: { type: string; title: string; description?: string; workflow?: string },
   config: Config
 ): Promise<Record<string, unknown>> {
   if (!config.localPath) {
     return { error: 'Run conductor init to set up local project directory' }
+  }
+
+  // COND-18: bind the Work Item to a Workflow (slug). Omitted → backend defaults to ENGINEERING.
+  const body = {
+    type: params.type,
+    title: params.title,
+    description: params.description,
+    workflow: params.workflow,
   }
 
   let issueId: string
@@ -49,7 +57,7 @@ export async function createIssue(
   try {
     backendResult = await apiPost<IssueResponse>(
       `/api/v1/projects/${config.projectId}/issues`,
-      { type: params.type, title: params.title, description: params.description },
+      body,
       config
     )
     issueId = backendResult.id
@@ -58,7 +66,7 @@ export async function createIssue(
     const size = queueChange({
       method: 'POST',
       path: `/api/v1/projects/${config.projectId}/issues`,
-      body: { type: params.type, title: params.title, description: params.description },
+      body,
       timestamp: new Date().toISOString(),
     })
     warning = 'Sync failed — change queued'

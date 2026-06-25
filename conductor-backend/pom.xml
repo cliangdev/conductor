@@ -188,6 +188,13 @@
             <version>3.13.2</version>
             <scope>test</scope>
         </dependency>
+        <!-- JSON Schema (draft 2020-12) validation for COND-18 Workflow definitions.
+             Validates the `definition` JSONB against schema/workflow-definition-v1.schema.json. -->
+        <dependency>
+            <groupId>com.networknt</groupId>
+            <artifactId>json-schema-validator</artifactId>
+            <version>1.5.6</version>
+        </dependency>
     </dependencies>
 
     <build>

@@ -1,0 +1,135 @@
+package com.conductor.service;
+
+import com.conductor.entity.Issue;
+import com.conductor.entity.IssueStatus;
+import com.conductor.entity.MemberRole;
+import com.conductor.entity.User;
+import com.conductor.exception.BusinessException;
+import com.conductor.exception.UnprocessableEntityException;
+import com.conductor.generated.model.AvailableTransition;
+import com.conductor.generated.model.AvailableTransitionsResponse;
+import com.conductor.repository.IssueRepository;
+import com.conductor.repository.ProjectMemberRepository;
+import com.conductor.repository.ReviewRepository;
+import com.conductor.workflow.lifecycle.Statechart;
+import com.conductor.workflow.lifecycle.StatechartTransition;
+import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
+import jakarta.persistence.EntityNotFoundException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * Owns Work Item status transitions against the bound Workflow's {@link Statechart} (COND-18 E2). It is the
+ * seam {@code IssueService} delegates transition validation to, and the source of the doer projection behind
+ * {@code GET .../available-transitions}.
+ *
+ * <p>For an ENGINEERING-bound issue the resolved statechart reproduces today's exact {@code VALID_TRANSITIONS}
+ * edges, so an illegal move throws the <em>identical</em> {@code BusinessException} message — no behavior
+ * change (AC-P0-1.1). Issues with no explicit binding default to the built-in ENGINEERING workflow.
+ */
+@Service
+public class WorkItemTransitionService {
+
+    static final String DEFAULT_WORKFLOW = "ENGINEERING";
+    static final String APPROVED_VERDICT = "APPROVED";
+
+    private final IssueRepository issueRepository;
+    private final ProjectSecurityService projectSecurityService;
+    private final ProjectMemberRepository projectMemberRepository;
+    private final ReviewRepository reviewRepository;
+    private final WorkflowDefinitionResolver resolver;
+
+    public WorkItemTransitionService(IssueRepository issueRepository,
+                                     ProjectSecurityService projectSecurityService,
+                                     ProjectMemberRepository projectMemberRepository,
+                                     ReviewRepository reviewRepository,
+                                     WorkflowDefinitionResolver resolver) {
+        this.issueRepository = issueRepository;
+        this.projectSecurityService = projectSecurityService;
+        this.projectMemberRepository = projectMemberRepository;
+        this.reviewRepository = reviewRepository;
+        this.resolver = resolver;
+    }
+
+    /**
+     * Validate a status change against the issue's bound Workflow. Throws the same
+     * {@code "Invalid status transition from X to Y"} {@link BusinessException} the legacy hardcoded map threw,
+     * so existing behavior and tests are preserved.
+     */
+    public void validateTransition(String projectId, Issue issue, IssueStatus newStatus) {
+        Statechart statechart = resolveFor(projectId, issue);
+        Optional<StatechartTransition> transition =
+                statechart.transition(issue.getStatus().name(), newStatus.name());
+        if (transition.isEmpty()) {
+            throw new BusinessException(
+                    "Invalid status transition from " + issue.getStatus() + " to " + newStatus);
+        }
+        if (transition.get().requiresReview() && !isReviewSatisfied(issue)) {
+            throw new UnprocessableEntityException(
+                    "Transition to " + newStatus + " requires an approved review");
+        }
+    }
+
+    /**
+     * The doer projection: the valid next transitions for this actor from the issue's current status,
+     * computed from the bound Workflow definition. REVIEWERs cannot change status, so they see none.
+     */
+    @Transactional(readOnly = true)
+    public AvailableTransitionsResponse availableTransitions(String projectId, String issueId, User caller) {
+        if (!projectSecurityService.isProjectMember(projectId, caller.getId())) {
+            throw new EntityNotFoundException("Issue not found");
+        }
+        Issue issue = issueRepository.findById(issueId)
+                .filter(i -> i.getProject() != null && projectId.equals(i.getProject().getId()))
+                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
+
+        Statechart statechart = resolveFor(projectId, issue);
+        String currentStatus = issue.getStatus().name();
+
+        List<AvailableTransition> transitions = new ArrayList<>();
+        if (!isReviewer(projectId, caller.getId())) {
+            boolean reviewSatisfied = isReviewSatisfied(issue);
+            for (StatechartTransition t : statechart.transitionsFrom(currentStatus)) {
+                // Doer projection: a review-gated edge stays hidden until its Review is satisfied.
+                if (t.requiresReview() && !reviewSatisfied) {
+                    continue;
+                }
+                AvailableTransition at = new AvailableTransition(t.to(), t.label());
+                at.setRequiresReview(t.requiresReview());
+                transitions.add(at);
+            }
+        }
+
+        AvailableTransitionsResponse response =
+                new AvailableTransitionsResponse(statechart.slug(), currentStatus, transitions);
+        response.setNoun(statechart.noun());
+        return response;
+    }
+
+    private Statechart resolveFor(String projectId, Issue issue) {
+        String slug = issue.getWorkflow() != null ? issue.getWorkflow() : DEFAULT_WORKFLOW;
+        return resolver.resolveRequired(projectId, slug);
+    }
+
+    private boolean isReviewer(String projectId, String callerId) {
+        return projectMemberRepository.findByProjectIdAndUserId(projectId, callerId)
+                .map(m -> m.getRole() == MemberRole.REVIEWER)
+                .orElse(false);
+    }
+
+    /**
+     * A review-gated transition is satisfied when at least one APPROVED Review is recorded on the Work Item.
+     *
+     * <p>DEFERRED (v1): the transition's {@code reviewerRole} (e.g. REVIEWER on ENGINEERING's merge gate) is
+     * parsed into the domain model but NOT enforced here — any APPROVED review satisfies the gate. In practice
+     * {@code ReviewService.submitReview} already forbids CREATORs from reviewing, so the only un-scoped path is
+     * an ADMIN approval. Role-scoped gate enforcement lands with per-Workflow review roles.
+     */
+    private boolean isReviewSatisfied(Issue issue) {
+        return reviewRepository.existsByIssueIdAndVerdict(issue.getId(), APPROVED_VERDICT);
+    }
+}

@@ -6,17 +6,25 @@ import { getConfig, resolveProject } from './config.js'
 import { createIssue, updateIssue, setIssueStatus, listIssues, getIssue } from './tools/issues.js'
 import { deleteDocument, scaffoldDocument } from './tools/documents.js'
 import { listIssueComments } from './tools/comments.js'
+import {
+  listWorkflows,
+  getAvailableTransitions,
+  transitionWorkItem,
+  recordAsset,
+  reportStepRun,
+} from './tools/workflows.js'
 
 const TOOLS = [
   {
     name: 'create_issue',
-    description: 'Create a new issue in the project',
+    description: 'Create a new issue (Work Item) in the project',
     inputSchema: {
       type: 'object',
       properties: {
-        type: { type: 'string', description: 'Issue type (e.g. task, epic, story)' },
+        type: { type: 'string', description: 'Work Item type, validated against the Workflow (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
         title: { type: 'string', description: 'Issue title' },
         description: { type: 'string', description: 'Issue description (optional)' },
+        workflow: { type: 'string', description: 'Workflow slug to run on (optional; defaults to ENGINEERING). Use list_workflows to discover.' },
       },
       required: ['type', 'title'],
     },
@@ -108,6 +116,72 @@ const TOOLS = [
       required: ['issueId'],
     },
   },
+  {
+    name: 'list_workflows',
+    description: 'List the project\'s Workflows (slug, name, area, display noun, allowed types). Discovery entry point: resolve a natural-language workflow name to its slug before creating a Work Item.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_available_transitions',
+    description: 'Get the valid next statuses for a Work Item from its current status (the doer projection). Review-gated transitions are hidden until satisfied. Walk a Work Item by calling this, then transition_work_item.',
+    inputSchema: {
+      type: 'object',
+      properties: { issueId: { type: 'string', description: 'Work Item (issue) ID' } },
+      required: ['issueId'],
+    },
+  },
+  {
+    name: 'transition_work_item',
+    description: 'Move a Work Item to a new status. The backend validates the move against the active Workflow and the Review gate (rejects an invalid or un-approved transition).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item (issue) ID' },
+        toStatus: { type: 'string', description: 'Target status (one of get_available_transitions)' },
+      },
+      required: ['issueId', 'toStatus'],
+    },
+  },
+  {
+    name: 'record_asset',
+    description: 'Record a produced-output Asset on a Work Item (e.g. a github_pr). Type is validated against the Workflow\'s asset_types.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item (issue) ID' },
+        type: { type: 'string', description: 'Asset type (e.g. github_pr)' },
+        kind: { type: 'string', enum: ['link', 'file'], description: 'link (URL) or file (stored reference)' },
+        ref: { type: 'string', description: 'URL or stored-file reference' },
+        label: { type: 'string', description: 'Optional label' },
+        done: { type: 'boolean', description: 'Optional done flag' },
+      },
+      required: ['issueId', 'type', 'kind', 'ref'],
+    },
+  },
+  {
+    name: 'report_step_run',
+    description: 'Report an agent-run step on a Work Item so a human can judge it at a Review gate (P0-6): what the agent was asked (inputBrief), what it produced, and any flags.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item (issue) ID' },
+        stepKind: { type: 'string', enum: ['skill', 'http', 'notify', 'set_field', 'create_sub_items'] },
+        status: { type: 'string', enum: ['RUNNING', 'SUCCEEDED', 'FAILED', 'AWAITING_REVIEW'] },
+        inputBrief: { type: 'string', description: 'Plain-language statement of what the agent was asked to do' },
+        reportedBy: { type: 'string', description: 'Who ran the step (attribution)' },
+        workflow: { type: 'string' },
+        fromStatus: { type: 'string' },
+        toStatus: { type: 'string' },
+        skill: { type: 'string', description: 'For stepKind=skill: the skill id (e.g. conductor:implement)' },
+        startedAt: { type: 'string', description: 'ISO-8601 timestamp' },
+        finishedAt: { type: 'string', description: 'ISO-8601 timestamp' },
+        produced: { type: 'array', description: 'Produced artifacts: [{kind: document|asset, ref, label?, assetType?}]' },
+        beforeAfter: { type: 'object', description: '{before, after} when the step edited existing content' },
+        flags: { type: 'array', description: 'Reviewer flags: [{level: info|warn, message}]' },
+      },
+      required: ['issueId', 'stepKind', 'status', 'inputBrief', 'reportedBy'],
+    },
+  },
 ]
 
 function authErrorResponse() {
@@ -182,16 +256,72 @@ export async function runMcpServer(): Promise<void> {
 
     try {
       switch (name) {
-        case 'create_issue': {
+        case 'create_issue':
+        case 'create_work_item': {
           const result = await createIssue(
             {
               type: params['type'] as string,
               title: params['title'] as string,
               description: params['description'] as string | undefined,
+              workflow: params['workflow'] as string | undefined,
             },
             config
           )
           return successResponse(result)
+        }
+        case 'list_workflows': {
+          return successResponse(await listWorkflows({}, config))
+        }
+        case 'get_available_transitions': {
+          return successResponse(
+            await getAvailableTransitions({ issueId: params['issueId'] as string }, config)
+          )
+        }
+        case 'transition_work_item': {
+          return successResponse(
+            await transitionWorkItem(
+              { issueId: params['issueId'] as string, toStatus: params['toStatus'] as string },
+              config
+            )
+          )
+        }
+        case 'record_asset': {
+          return successResponse(
+            await recordAsset(
+              {
+                issueId: params['issueId'] as string,
+                type: params['type'] as string,
+                kind: params['kind'] as string,
+                ref: params['ref'] as string,
+                label: params['label'] as string | undefined,
+                done: params['done'] as boolean | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'report_step_run': {
+          return successResponse(
+            await reportStepRun(
+              {
+                issueId: params['issueId'] as string,
+                stepKind: params['stepKind'] as string,
+                status: params['status'] as string,
+                inputBrief: params['inputBrief'] as string,
+                reportedBy: params['reportedBy'] as string,
+                workflow: params['workflow'] as string | undefined,
+                fromStatus: params['fromStatus'] as string | undefined,
+                toStatus: params['toStatus'] as string | undefined,
+                skill: params['skill'] as string | undefined,
+                startedAt: params['startedAt'] as string | undefined,
+                finishedAt: params['finishedAt'] as string | undefined,
+                produced: params['produced'] as unknown[] | undefined,
+                beforeAfter: params['beforeAfter'],
+                flags: params['flags'] as unknown[] | undefined,
+              },
+              config
+            )
+          )
         }
         case 'update_issue': {
           const result = await updateIssue(

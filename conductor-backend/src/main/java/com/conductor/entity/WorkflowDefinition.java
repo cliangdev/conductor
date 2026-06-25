@@ -9,6 +9,10 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.ColumnTransformer;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -28,7 +32,8 @@ public class WorkflowDefinition {
     @Column(name = "name", length = 255, nullable = false)
     private String name;
 
-    @Column(name = "yaml", columnDefinition = "TEXT", nullable = false)
+    // Deprecated by COND-18 in favor of `definition`; now optional (a definition-only Workflow has no yaml).
+    @Column(name = "yaml", columnDefinition = "TEXT")
     private String yaml;
 
     @Column(name = "enabled", nullable = false)
@@ -36,6 +41,32 @@ public class WorkflowDefinition {
 
     @Column(name = "webhook_token", length = 64)
     private String webhookToken;
+
+    // --- COND-18 lifecycle layer (nullable for legacy YAML automations) ---
+
+    /** The versioned statechart (statuses, transitions, reviews, steps, triggers, types, asset_types,
+     *  metric, noun, default_view). Null for legacy YAML-only automations. Validated in Java against
+     *  schema/workflow-definition-v1.schema.json. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "definition", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
+    private JsonNode definition;
+
+    /** Monotonic version; in-flight Work Items pin to the version they started on. */
+    @Column(name = "version")
+    private Integer version;
+
+    /** Lifecycle state — only a PUBLISHED version is bindable by Work Items. {@code DRAFT} | {@code PUBLISHED}. */
+    @Column(name = "state", length = 16)
+    private String state;
+
+    /** Nav-grouping slug; single-Workflow Areas render flat. */
+    @Column(name = "area", length = 64)
+    private String area;
+
+    /** Version of the workflow-definition schema this row targets. */
+    @Column(name = "schema_version")
+    private Integer schemaVersion;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -74,6 +105,21 @@ public class WorkflowDefinition {
 
     public String getWebhookToken() { return webhookToken; }
     public void setWebhookToken(String webhookToken) { this.webhookToken = webhookToken; }
+
+    public JsonNode getDefinition() { return definition; }
+    public void setDefinition(JsonNode definition) { this.definition = definition; }
+
+    public Integer getVersion() { return version; }
+    public void setVersion(Integer version) { this.version = version; }
+
+    public String getState() { return state; }
+    public void setState(String state) { this.state = state; }
+
+    public String getArea() { return area; }
+    public void setArea(String area) { this.area = area; }
+
+    public Integer getSchemaVersion() { return schemaVersion; }
+    public void setSchemaVersion(Integer schemaVersion) { this.schemaVersion = schemaVersion; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

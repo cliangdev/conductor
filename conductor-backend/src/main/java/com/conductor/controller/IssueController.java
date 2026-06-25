@@ -9,6 +9,7 @@ import com.conductor.generated.model.IssueStatus;
 import com.conductor.generated.model.IssueType;
 import com.conductor.generated.model.PatchIssueRequest;
 import com.conductor.service.IssueService;
+import com.conductor.service.WorkItemTransitionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -22,17 +23,18 @@ import java.util.List;
 public class IssueController implements IssuesApi {
 
     private final IssueService issueService;
+    private final WorkItemTransitionService workItemTransitionService;
 
-    public IssueController(IssueService issueService) {
+    public IssueController(IssueService issueService, WorkItemTransitionService workItemTransitionService) {
         this.issueService = issueService;
+        this.workItemTransitionService = workItemTransitionService;
     }
 
-    // TODO(COND-18 E2): implement the Work Item lifecycle engine's doer projection.
-    // Contract authored ahead of the engine (openapi.yaml + workflow-definition-v1.schema.json);
-    // returns 501 until the WorkflowEngine.availableTransitions path lands.
     @Override
     public ResponseEntity<AvailableTransitionsResponse> listAvailableTransitions(String projectId, String issueId) {
-        return ResponseEntity.status(501).build();
+        AvailableTransitionsResponse response =
+                workItemTransitionService.availableTransitions(projectId, issueId, currentUser());
+        return ResponseEntity.ok(response);
     }
 
     @Override

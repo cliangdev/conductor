@@ -225,7 +225,7 @@ Call MCP tools in this exact sequence:
 
 3. **Write content**: Use the Write tool with the `absolutePath` from step 2 (Write requires absolute paths) to write the full PRD with YAML frontmatter including the `issueId` from step 1.
 
-4. **Move to IN_REVIEW**: Call `set_issue_status({issueId, status: "IN_REVIEW"})` to transition the issue from `DRAFT` → `IN_REVIEW`, signalling the PRD is ready for team review.
+4. **Move to IN_REVIEW** (definition-driven): call `get_available_transitions({issueId})` to confirm `IN_REVIEW` is an available next status from `DRAFT`, then `transition_work_item({issueId, toStatus: "IN_REVIEW"})`, signalling the PRD is ready for team review.
 
 5. **Confirm**: "PRD saved — **{displayId}** is now IN_REVIEW."
 

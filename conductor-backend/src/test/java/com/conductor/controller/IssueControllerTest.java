@@ -10,8 +10,11 @@ import com.conductor.generated.model.IssueType;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.generated.model.AvailableTransition;
+import com.conductor.generated.model.AvailableTransitionsResponse;
 import com.conductor.service.IssueService;
 import com.conductor.service.JwtService;
+import com.conductor.service.WorkItemTransitionService;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,6 +50,9 @@ class IssueControllerTest {
     private IssueService issueService;
 
     @MockitoBean
+    private WorkItemTransitionService workItemTransitionService;
+
+    @MockitoBean
     private JwtService jwtService;
 
     @MockitoBean
@@ -74,6 +80,24 @@ class IssueControllerTest {
     private IssueResponse buildIssueResponse(String id, IssueType type, IssueStatus status) {
         return new IssueResponse(id, "proj-1", type, "Test Issue", status, "user-id-123",
                 OffsetDateTime.now(), OffsetDateTime.now(), 1, "PROJ-1");
+    }
+
+    @Test
+    void listAvailableTransitionsReturns200() throws Exception {
+        AvailableTransition t = new AvailableTransition("IN_REVIEW", "Submit for review");
+        t.setRequiresReview(false);
+        AvailableTransitionsResponse response =
+                new AvailableTransitionsResponse("ENGINEERING", "DRAFT", List.of(t));
+        response.setNoun("Issue");
+        when(workItemTransitionService.availableTransitions(eq("proj-1"), eq("issue-1"), any()))
+                .thenReturn(response);
+
+        mockMvc.perform(get("/api/v1/projects/proj-1/issues/issue-1/available-transitions")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.workflow").value("ENGINEERING"))
+                .andExpect(jsonPath("$.currentStatus").value("DRAFT"))
+                .andExpect(jsonPath("$.transitions[0].toStatus").value("IN_REVIEW"));
     }
 
     @Test

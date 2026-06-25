@@ -72,6 +72,43 @@ public class Issue {
     @ColumnTransformer(write = "?::jsonb")
     private JsonNode issueTasks;
 
+    // --- COND-18 Work Item binding (nullable; legacy/unbound rows default to ENGINEERING) ---
+
+    /** The Workflow definition slug this Work Item runs on (e.g. ENGINEERING). */
+    @Column(name = "workflow", length = 64)
+    private String workflow;
+
+    /** Version of the Workflow this Work Item is pinned to. */
+    @Column(name = "workflow_version")
+    private Integer workflowVersion;
+
+    /**
+     * Current status as a Workflow-defined string (mirrors {@link #status} for ENGINEERING-bound issues).
+     *
+     * <p>DEFERRED (before custom workflows ship): today {@link #status} (the {@link IssueStatus} enum) is the
+     * authority the engine reads; this column is a denormalized mirror. A custom Workflow with a non-enum status
+     * cannot be stored until workflow-bound issues switch their authority to this string field — a prerequisite
+     * for the Work Item rename / custom-status work, tracked separately.
+     */
+    @Column(name = "current_status", length = 48)
+    private String currentStatus;
+
+    /** Per-Work-Item engine scratch (step outputs, guard inputs). */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "state_context", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
+    private JsonNode stateContext;
+
+    /** Parent Work Item for fan-out (create-sub-items) children. */
+    @Column(name = "parent_work_item_id", length = 36)
+    private String parentWorkItemId;
+
+    /** Append-only Outcome Metric series ({value, observedAt, note}); metric def from the Workflow (COND-18 E6). */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "outcome_metric", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
+    private JsonNode outcomeMetric;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -80,12 +117,20 @@ public class Issue {
         if (status == null) {
             status = IssueStatus.DRAFT;
         }
+        // COND-18: keep the current_status string mirror non-null even for rows saved without it
+        // (the enum status remains the authority; current_status is the forward-compat string view).
+        if (currentStatus == null && status != null) {
+            currentStatus = status.name();
+        }
         createdAt = OffsetDateTime.now();
         updatedAt = OffsetDateTime.now();
     }
 
     @PreUpdate
     protected void onUpdate() {
+        if (currentStatus == null && status != null) {
+            currentStatus = status.name();
+        }
         updatedAt = OffsetDateTime.now();
     }
 
@@ -124,6 +169,24 @@ public class Issue {
 
     public String getGithubPrUrl() { return githubPrUrl; }
     public void setGithubPrUrl(String githubPrUrl) { this.githubPrUrl = githubPrUrl; }
+
+    public String getWorkflow() { return workflow; }
+    public void setWorkflow(String workflow) { this.workflow = workflow; }
+
+    public Integer getWorkflowVersion() { return workflowVersion; }
+    public void setWorkflowVersion(Integer workflowVersion) { this.workflowVersion = workflowVersion; }
+
+    public String getCurrentStatus() { return currentStatus; }
+    public void setCurrentStatus(String currentStatus) { this.currentStatus = currentStatus; }
+
+    public JsonNode getStateContext() { return stateContext; }
+    public void setStateContext(JsonNode stateContext) { this.stateContext = stateContext; }
+
+    public String getParentWorkItemId() { return parentWorkItemId; }
+    public void setParentWorkItemId(String parentWorkItemId) { this.parentWorkItemId = parentWorkItemId; }
+
+    public JsonNode getOutcomeMetric() { return outcomeMetric; }
+    public void setOutcomeMetric(JsonNode outcomeMetric) { this.outcomeMetric = outcomeMetric; }
 
     public JsonNode getIssueTasks() { return issueTasks; }
     public void setIssueTasks(JsonNode issueTasks) { this.issueTasks = issueTasks; }

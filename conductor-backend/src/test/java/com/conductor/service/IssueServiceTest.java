@@ -37,6 +37,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -63,6 +64,12 @@ class IssueServiceTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private WorkItemTransitionService workItemTransitionService;
+
+    @Mock
+    private AssetService assetService;
 
     @InjectMocks
     private IssueService issueService;
@@ -203,6 +210,8 @@ class IssueServiceTest {
     void patchIssueInvalidTransitionDraftToReadyForDevelopmentThrows400() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        doThrow(new BusinessException("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT"))
+                .when(workItemTransitionService).validateTransition(any(), any(), any());
 
         PatchIssueRequest request = new PatchIssueRequest()
                 .status(com.conductor.generated.model.IssueStatus.READY_FOR_DEVELOPMENT);
@@ -217,6 +226,8 @@ class IssueServiceTest {
         testIssue.setStatus(IssueStatus.READY_FOR_DEVELOPMENT);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        doThrow(new BusinessException("Invalid status transition from READY_FOR_DEVELOPMENT to DRAFT"))
+                .when(workItemTransitionService).validateTransition(any(), any(), any());
 
         PatchIssueRequest request = new PatchIssueRequest()
                 .status(com.conductor.generated.model.IssueStatus.DRAFT);

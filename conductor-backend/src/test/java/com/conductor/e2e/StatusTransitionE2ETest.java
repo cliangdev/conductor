@@ -48,6 +48,7 @@ class StatusTransitionE2ETest {
 
     HttpHeaders adminHeaders;
     HttpHeaders reviewerHeaders;
+    String reviewerId;
     String projectId;
 
     @BeforeEach
@@ -67,6 +68,7 @@ class StatusTransitionE2ETest {
                 Map.class);
         assertThat(reviewerLogin.getStatusCode()).isEqualTo(HttpStatus.OK);
         reviewerHeaders = bearerHeaders((String) reviewerLogin.getBody().get("accessToken"));
+        reviewerId = (String) ((Map<?, ?>) reviewerLogin.getBody().get("user")).get("id");
 
         // Admin creates project — becomes ADMIN member automatically
         var projResp = rest.exchange(
@@ -143,7 +145,28 @@ class StatusTransitionE2ETest {
         assertThat(toCodeReview.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(toCodeReview.getBody().get("status")).isEqualTo("CODE_REVIEW");
 
-        // CODE_REVIEW → DONE
+        // CODE_REVIEW → DONE is review-gated (COND-18 P0-6): without an approved review it is rejected (422)…
+        var blockedDone = rest.exchange(
+                url("/api/v1/projects/" + projectId + "/issues/" + issueId),
+                HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("status", "DONE"), adminHeaders),
+                Map.class);
+        assertThat(blockedDone.getStatusCode().value()).isEqualTo(422);
+
+        // …assign the reviewer and record an APPROVED review to satisfy the gate.
+        rest.exchange(
+                url("/api/v1/projects/" + projectId + "/issues/" + issueId + "/reviewers"),
+                HttpMethod.POST,
+                new HttpEntity<>(Map.of("userId", reviewerId), adminHeaders),
+                Map.class);
+        var reviewResp = rest.exchange(
+                url("/api/v1/projects/" + projectId + "/issues/" + issueId + "/reviews"),
+                HttpMethod.POST,
+                new HttpEntity<>(Map.of("verdict", "APPROVED", "body", "LGTM"), reviewerHeaders),
+                Map.class);
+        assertThat(reviewResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+
+        // CODE_REVIEW → DONE now succeeds.
         var toDone = rest.exchange(
                 url("/api/v1/projects/" + projectId + "/issues/" + issueId),
                 HttpMethod.PATCH,
