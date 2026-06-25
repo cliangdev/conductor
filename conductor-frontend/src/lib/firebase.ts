@@ -12,7 +12,13 @@ let auth: Auth
 
 function getFirebaseApp(): FirebaseApp {
   if (!app) {
-    app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig)
+    // Use the current host as authDomain so Firebase opens its auth popup to our own
+    // domain (proxied via /__/auth/*). This makes the popup same-origin, eliminating
+    // Chrome 149 COOP cross-origin issues with window.closed and postMessage.
+    const authDomain = typeof window !== 'undefined'
+      ? window.location.host
+      : firebaseConfig.authDomain
+    app = getApps().length ? getApps()[0] : initializeApp({ ...firebaseConfig, authDomain })
   }
   return app
 }
