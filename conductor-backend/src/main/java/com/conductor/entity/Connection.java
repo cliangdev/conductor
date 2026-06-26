@@ -79,6 +79,10 @@ public class Connection {
     @ColumnTransformer(write = "?::jsonb")
     private String visibilityPolicy;
 
+    @Column(name = "tool_metadata", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
+    private String toolMetadata;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -162,4 +166,7 @@ public class Connection {
 
     public String getConnectedBy() { return connectedBy; }
     public void setConnectedBy(String connectedBy) { this.connectedBy = connectedBy; }
+
+    public String getToolMetadata() { return toolMetadata; }
+    public void setToolMetadata(String toolMetadata) { this.toolMetadata = toolMetadata; }
 }

@@ -17,6 +17,7 @@ import com.conductor.generated.model.GcpProjectsResponseProjectsInner;
 import com.conductor.generated.model.GscSitesResponse;
 import com.conductor.generated.model.GscSitesResponseSitesInner;
 import com.conductor.generated.model.IntegrationListItem;
+import com.conductor.generated.model.IntegrationToolItem;
 import com.conductor.generated.model.OAuthAuthorizeResponse;
 import com.conductor.generated.model.UpdateConnectionRequest;
 import com.conductor.generated.model.WebhookEventSummary;
@@ -130,6 +131,33 @@ public class IntegrationController implements IntegrationsApi {
             items.add(item);
         }
         return ResponseEntity.ok(items);
+    }
+
+    @Override
+    public ResponseEntity<List<IntegrationToolItem>> listIntegrationTools(String projectId) {
+        requireMember(projectId);
+        List<IntegrationToolItem> result = connectionService.listForProject(projectId).stream()
+            .filter(c -> "ACTIVE".equals(c.getStatus()) && c.getToolMetadata() != null)
+            .map(c -> {
+                IntegrationToolItem item = new IntegrationToolItem();
+                item.setConnectionId(c.getId());
+                item.setConnectorId(c.getConnectorId());
+                item.setDisplayLabel(c.getDisplayLabel());
+                List<String> caps = connectorRegistry.getById(c.getConnectorId())
+                    .map(connector -> connectorRegistry.capabilitiesOf(connector).stream()
+                        .map(cap -> cap.name()).toList())
+                    .orElse(List.of());
+                item.setCapabilities(caps);
+                try {
+                    item.setToolMetadata(objectMapper.readValue(
+                        c.getToolMetadata(), new TypeReference<Map<String, Object>>() {}));
+                } catch (Exception e) {
+                    item.setToolMetadata(Map.of());
+                }
+                return item;
+            })
+            .toList();
+        return ResponseEntity.ok(result);
     }
 
     @Override

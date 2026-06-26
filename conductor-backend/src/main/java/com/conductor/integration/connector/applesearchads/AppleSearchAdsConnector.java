@@ -137,6 +137,25 @@ public class AppleSearchAdsConnector implements FetchConnector {
     }
 
     @Override
+    public IntegrationToolSpec getToolSpec() {
+        return new IntegrationToolSpec(
+            "Campaign installs, spend, and keyword performance from Apple Search Ads",
+            List.of(
+                new ToolOperation("campaign_report",
+                    "Campaign-level installs, downloads, and spend time series (last 30 days)",
+                    Map.of(),
+                    "{installs:[{date,installs}], downloads:[{date,downloads}], spend:[{date,spend}]}",
+                    List.of("installs", "downloads", "spend")),
+                new ToolOperation("keyword_report",
+                    "Top keywords by installs with spend, taps, and TTR (last 30 days; requires campaignId)",
+                    Map.of("campaignId", "Campaign ID configured in connection settings"),
+                    "{topKeywords:[{keyword,installs,taps,spend,ttr}]}",
+                    List.of("topKeywords"))
+            )
+        );
+    }
+
+    @Override
     public ConnectorHealth checkHealth(ConnectionContext ctx) {
         AppleAdsTokenService.Credentials creds = credentials(ctx);
         String orgId = str(ctx.configValue("orgId"));

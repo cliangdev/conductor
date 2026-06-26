@@ -16,6 +16,7 @@ jobs:
           distribution: 'temurin'
           cache: maven
       - name: Run tests
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-tests') }}
         working-directory: conductor-backend
         env:
           WORKFLOW_SECRETS_KEY: dGVzdC1rZXktZm9yLWNpLW9ubHktMzItYnl0ZXMhIXg=
@@ -65,7 +66,9 @@ jobs:
           cache-dependency-path: conductor-frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
-      - run: npm run test
+      - name: Run tests
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-tests') }}
+        run: npm run test
 
   deploy-frontend:
     needs: build-and-test-frontend

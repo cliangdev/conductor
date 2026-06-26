@@ -91,6 +91,20 @@ public class GcpBillingConnector implements FetchConnector, OAuth2Connector {
     }
 
     @Override
+    public IntegrationToolSpec getToolSpec() {
+        return new IntegrationToolSpec(
+            "Cloud spend by service from GCP BigQuery billing export",
+            List.of(
+                new ToolOperation("cost_by_service",
+                    "Cloud spend per GCP service: current 30d vs prior 30d with MoM delta percentage",
+                    Map.of(),
+                    "{services:[{service,cost,currency}], totalCost:number, previousPeriodCost:number, momDeltaPct:number, currency:string}",
+                    List.of("services", "totalCost", "previousPeriodCost", "momDeltaPct", "currency"))
+            )
+        );
+    }
+
+    @Override
     @SuppressWarnings("unchecked")
     public ConnectorData fetchData(ConnectionContext ctx) {
         Map<String, Object> config = ctx.config();

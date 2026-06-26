@@ -12,7 +12,14 @@ import {
   transitionWorkItem,
   recordAsset,
   reportStepRun,
+  createWorkflow,
+  getWorkflow,
+  updateWorkflow,
+  publishWorkflow,
+  dispatchWorkflow,
+  getWorkflowRun,
 } from './tools/workflows.js'
+import { listIntegrationTools } from './tools/integrations.js'
 
 const TOOLS = [
   {
@@ -159,6 +166,86 @@ const TOOLS = [
     },
   },
   {
+    name: 'list_integration_tools',
+    description: 'List connected integrations and their available data operations for workflow authoring. Always call before designing a workflow — returns ACTIVE connections with connectorId, displayLabel, capabilities, and toolMetadata (description + operations list with id, outputShape, and outputKeys). Use connectorId in workflow YAML as: uses: integration / with: / connector: <connectorId> / operation: <operationId>',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'create_workflow',
+    description: 'Create a new workflow definition in DRAFT state. Use this to save a designed workflow. Returns workflowId. Always call get_workflow after to verify the workflow was stored correctly.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Workflow display name' },
+        area: { type: 'string', description: 'Nav-grouping slug (e.g. "marketing", "engineering")' },
+        yaml: { type: 'string', description: 'YAML automation workflow definition (for schedule/webhook/event-triggered automations)' },
+        definition: { type: 'object', description: 'Statechart lifecycle definition (for Work Item state management — COND-18 format)' },
+      },
+      required: ['name', 'area'],
+    },
+  },
+  {
+    name: 'get_workflow',
+    description: 'Get a workflow definition by ID. Call this after create_workflow or update_workflow to verify the change was stored correctly (observability close). Always verify after mutations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: { type: 'string', description: 'Workflow definition ID' },
+      },
+      required: ['workflowId'],
+    },
+  },
+  {
+    name: 'update_workflow',
+    description: 'Update a DRAFT workflow definition. Use this to fix validation errors returned by publish_workflow before retrying. Do NOT create a second workflow — fix in place.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: { type: 'string', description: 'Workflow definition ID' },
+        name: { type: 'string', description: 'New display name (optional)' },
+        area: { type: 'string', description: 'New area slug (optional)' },
+        yaml: { type: 'string', description: 'Updated YAML (optional)' },
+        definition: { type: 'object', description: 'Updated statechart definition (optional)' },
+      },
+      required: ['workflowId'],
+    },
+  },
+  {
+    name: 'publish_workflow',
+    description: 'Promote a workflow from DRAFT to PUBLISHED. Returns {success, errors[]}. If errors is non-empty, fix with update_workflow and retry — do not create a new workflow. DRAFT acts as a dry-run buffer: no commitment until publish succeeds.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: { type: 'string', description: 'Workflow definition ID' },
+      },
+      required: ['workflowId'],
+    },
+  },
+  {
+    name: 'dispatch_workflow',
+    description: 'Manually trigger a workflow run for testing. Returns runId. Only works on PUBLISHED YAML automation workflows (not statechart lifecycle workflows).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: { type: 'string', description: 'Workflow definition ID' },
+        inputs: { type: 'object', description: 'Optional input values passed to the workflow run' },
+      },
+      required: ['workflowId'],
+    },
+  },
+  {
+    name: 'get_workflow_run',
+    description: 'Get status and step details for a workflow run. Returns status (PENDING/RUNNING/SUCCESS/FAILED), per-job and per-step breakdown, and step logs. Call once after dispatch_workflow to verify the test run started or succeeded before reporting to the user. workflowId and runId come from the dispatch_workflow response.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: { type: 'string', description: 'Workflow definition ID (from dispatch_workflow response)' },
+        runId: { type: 'string', description: 'Run ID (from dispatch_workflow response)' },
+      },
+      required: ['workflowId', 'runId'],
+    },
+  },
+  {
     name: 'report_step_run',
     description: 'Report an agent-run step on a Work Item so a human can judge it at a Review gate (P0-6): what the agent was asked (inputBrief), what it produced, and any flags.',
     inputSchema: {
@@ -269,8 +356,70 @@ export async function runMcpServer(): Promise<void> {
           )
           return successResponse(result)
         }
+        case 'list_integration_tools': {
+          return successResponse(await listIntegrationTools({}, config))
+        }
         case 'list_workflows': {
           return successResponse(await listWorkflows({}, config))
+        }
+        case 'create_workflow': {
+          return successResponse(
+            await createWorkflow(
+              {
+                name: params['name'] as string,
+                area: params['area'] as string,
+                yaml: params['yaml'] as string | undefined,
+                definition: params['definition'] as Record<string, unknown> | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'get_workflow': {
+          return successResponse(
+            await getWorkflow({ workflowId: params['workflowId'] as string }, config)
+          )
+        }
+        case 'update_workflow': {
+          return successResponse(
+            await updateWorkflow(
+              {
+                workflowId: params['workflowId'] as string,
+                name: params['name'] as string | undefined,
+                area: params['area'] as string | undefined,
+                yaml: params['yaml'] as string | undefined,
+                definition: params['definition'] as Record<string, unknown> | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'publish_workflow': {
+          return successResponse(
+            await publishWorkflow({ workflowId: params['workflowId'] as string }, config)
+          )
+        }
+        case 'dispatch_workflow': {
+          return successResponse(
+            await dispatchWorkflow(
+              {
+                workflowId: params['workflowId'] as string,
+                inputs: params['inputs'] as Record<string, unknown> | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'get_workflow_run': {
+          return successResponse(
+            await getWorkflowRun(
+              {
+                workflowId: params['workflowId'] as string,
+                runId: params['runId'] as string,
+              },
+              config
+            )
+          )
         }
         case 'get_available_transitions': {
           return successResponse(

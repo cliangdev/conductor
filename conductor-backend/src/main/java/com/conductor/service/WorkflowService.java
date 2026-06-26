@@ -12,12 +12,15 @@ import com.conductor.repository.WorkflowSecretRepository;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.conductor.workflow.WorkflowValidator;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -32,19 +35,22 @@ public class WorkflowService {
     private final WorkflowValidator validator;
     private final WorkflowSecretRepository secretRepository;
     private final WorkflowTriggerService workflowTriggerService;
+    private final ObjectMapper objectMapper;
 
     public WorkflowService(WorkflowDefinitionRepository workflowRepository,
                            ProjectRepository projectRepository,
                            ProjectSecurityService projectSecurityService,
                            WorkflowValidator validator,
                            WorkflowSecretRepository secretRepository,
-                           @Lazy WorkflowTriggerService workflowTriggerService) {
+                           @Lazy WorkflowTriggerService workflowTriggerService,
+                           ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
         this.validator = validator;
         this.secretRepository = secretRepository;
         this.workflowTriggerService = workflowTriggerService;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -61,23 +67,29 @@ public class WorkflowService {
         workflowRepository.findByProjectIdAndName(projectId, request.getName())
                 .ifPresent(w -> { throw new BusinessException("A workflow named '" + request.getName() + "' already exists in this project"); });
 
-        Set<String> secretKeys = secretRepository.findByProjectId(projectId)
-                .stream().map(s -> s.getKey()).collect(Collectors.toSet());
-        WorkflowValidationResult result = validator.validate(request.getYaml(), secretKeys);
-        if (result.hasErrors()) {
-            throw new BusinessException(String.join("; ", result.getErrors()));
+        if (request.getYaml() != null) {
+            Set<String> secretKeys = secretRepository.findByProjectId(projectId)
+                    .stream().map(s -> s.getKey()).collect(Collectors.toSet());
+            WorkflowValidationResult result = validator.validate(request.getYaml(), secretKeys);
+            if (result.hasErrors()) {
+                throw new BusinessException(String.join("; ", result.getErrors()));
+            }
         }
 
         WorkflowDefinition def = new WorkflowDefinition();
         def.setProject(project);
         def.setName(request.getName());
+        def.setArea(request.getArea());
         def.setYaml(request.getYaml());
+        def.setDefinition(toJsonNode(request.getDefinition()));
         def.setEnabled(true);
-        if (request.getYaml().contains("webhook:")) {
+        if (request.getYaml() != null && request.getYaml().contains("webhook:")) {
             def.setWebhookToken(java.util.UUID.randomUUID().toString().replace("-", ""));
         }
         WorkflowDefinition saved = workflowRepository.save(def);
-        workflowTriggerService.upsertSchedule(saved);
+        if (request.getYaml() != null) {
+            workflowTriggerService.upsertSchedule(saved);
+        }
         return saved;
     }
 
@@ -91,17 +103,23 @@ public class WorkflowService {
                     .ifPresent(w -> { throw new BusinessException("A workflow named '" + request.getName() + "' already exists in this project"); });
         }
 
-        Set<String> secretKeys = secretRepository.findByProjectId(projectId)
-                .stream().map(s -> s.getKey()).collect(Collectors.toSet());
-        WorkflowValidationResult result = validator.validate(request.getYaml(), secretKeys);
-        if (result.hasErrors()) {
-            throw new BusinessException(String.join("; ", result.getErrors()));
+        if (request.getYaml() != null) {
+            Set<String> secretKeys = secretRepository.findByProjectId(projectId)
+                    .stream().map(s -> s.getKey()).collect(Collectors.toSet());
+            WorkflowValidationResult result = validator.validate(request.getYaml(), secretKeys);
+            if (result.hasErrors()) {
+                throw new BusinessException(String.join("; ", result.getErrors()));
+            }
         }
 
         def.setName(request.getName());
-        def.setYaml(request.getYaml());
+        if (request.getArea() != null) def.setArea(request.getArea());
+        if (request.getYaml() != null) def.setYaml(request.getYaml());
+        if (request.getDefinition() != null) def.setDefinition(toJsonNode(request.getDefinition()));
         WorkflowDefinition updated = workflowRepository.save(def);
-        workflowTriggerService.upsertSchedule(updated);
+        if (request.getYaml() != null) {
+            workflowTriggerService.upsertSchedule(updated);
+        }
         return updated;
     }
 
@@ -147,5 +165,10 @@ public class WorkflowService {
         if (!projectSecurityService.isAdminOrCreator(projectId, userId)) {
             throw new ForbiddenException("Only ADMIN or CREATOR can manage workflows");
         }
+    }
+
+    private JsonNode toJsonNode(Map<String, Object> map) {
+        if (map == null || map.isEmpty()) return null;
+        return objectMapper.valueToTree(map);
     }
 }

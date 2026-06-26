@@ -256,6 +256,38 @@ Triggers a flow in your Kestra instance and optionally waits for it to finish.
 | `fail_on_warning` | `false` | Treat Kestra WARNING execution state as a failure. |
 | `outputs` | — | Map of output key → dot-notation path into the Kestra execution response. |
 
+#### `integration` — Query a connected integration
+
+Fetches data from a connected integration (Google Search Console, PostHog, RevenueCat, GCP Billing, etc.) without embedding credentials in the workflow YAML. The active connection is resolved at runtime using the project's linked integration.
+
+```yaml
+- id: seo_data
+  uses: integration
+  with:
+    connector: gsc              # connectorId — see Settings → Integrations
+    operation: search_analytics # optional; defaults to the connector's main fetch
+    params: {}                  # optional connector-specific overrides
+```
+
+| Field | Description |
+|-------|-------------|
+| `connector` | Connector ID of an ACTIVE integration (e.g. `gsc`, `posthog`, `revenuecat`, `gcp-billing`). |
+| `operation` | Named operation to run. Omit to use the connector's default fetch. |
+| `params` | Optional map of connector-specific override parameters. |
+
+Step outputs are accessible via `${{ steps.ID.outputs.* }}`. The exact output keys depend on the connector and operation — discover them via the `list_integration_tools` MCP tool or by running a test dispatch.
+
+**Credentials are resolved at runtime** — they never appear in the workflow YAML. The integration must be connected first via **Settings → Integrations** before it can be referenced in a workflow.
+
+**Available connectors:**
+
+| Connector ID | Name | Operations |
+|---|---|---|
+| `gsc` | Google Search Console | `search_analytics`, `top_queries`, `top_pages` |
+| `posthog` | PostHog | `pageview_trend`, `total_pageviews` |
+| `revenuecat` | RevenueCat | `mrr`, `subscriptions`, `trial_conversion` |
+| `gcp-billing` | GCP Billing | `cost_by_service` |
+
 #### `condition` — Branch execution
 
 Routes to one of two jobs based on a boolean expression. The condition step itself always succeeds; it just decides which branch to activate next. **A condition step must be the last step in its job.**
@@ -500,3 +532,28 @@ The daemon reads from `~/.conductor/config.json`, written by `conductor init`. S
 | Key | Default | Description |
 |-----|---------|-------------|
 | `maxConcurrentRuns` | `1` | Maximum number of self-hosted Docker jobs to run simultaneously. |
+
+---
+
+## Building workflows with Claude
+
+Claude can design and create workflows for you based on a plain-language description of the business goal.
+
+### How it works
+
+1. **Invoke the skill** — Type `/conductor:workflow` in Claude Code and describe what you want:
+   > "Build a workflow that analyzes our landing page SEO performance weekly and posts a summary to Discord."
+
+2. **Claude runs discovery** — it calls `list_integration_tools` to see which data sources are already connected, and `list_workflows` to understand your existing conventions. You do not need to know connector names, credential keys, or YAML syntax.
+
+3. **Claude asks clarifying questions** — trigger cadence, output destination (Discord, Slack, Conductor issue), and any scope constraints.
+
+4. **Claude designs and creates the workflow** — it writes the YAML using `uses: integration` for connected data sources (credentials are never embedded), creates the workflow as a DRAFT, verifies it, publishes it, and optionally dispatches a test run.
+
+### Prerequisites
+
+**Integrations must be connected before Claude can reference them.** Go to **Settings → Integrations** and connect any data sources your workflow will use (Google Search Console, PostHog, RevenueCat, GCP Billing). Once a connection is ACTIVE, Claude will automatically discover it via `list_integration_tools`.
+
+For guidelines on adding or updating the MCP tools that power this skill, see [`docs/mcp-tool-guidelines.md`](mcp-tool-guidelines.md).
+
+For data sources without a built-in connector, add the credentials as [workflow secrets](#outputs-and-interpolation) and Claude will use `${{ secrets.KEY }}` interpolation in `http` steps instead.

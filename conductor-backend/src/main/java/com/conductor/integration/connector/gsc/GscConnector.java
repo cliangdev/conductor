@@ -1,6 +1,8 @@
 package com.conductor.integration.connector.gsc;
 
 import com.conductor.integration.*;
+import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
@@ -90,6 +92,25 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
 
     @Override
     public Duration getMaxCacheAge() { return Duration.ofHours(6); }
+
+    @Override
+    public IntegrationToolSpec getToolSpec() {
+        return new IntegrationToolSpec(
+            "Organic search performance from Google Search Console: clicks, impressions, top queries, top pages",
+            List.of(
+                new ToolOperation("search_analytics", "Daily click/impression trend (90d), branded share, top 50 queries, top 25 pages, top 10 countries, device breakdown (28d)",
+                    Map.of("siteUrl", "Search Console property URL (e.g. sc-domain:example.com)"),
+                    "{trend:[{date,clicks,impressions,ctr,position}], topQueries:[{query,clicks,impressions}], topPages:[{page,clicks,impressions}], brandedClickShare:number}",
+                    List.of("trend", "topQueries", "topPages", "brandedClickShare", "countries", "devices")),
+                new ToolOperation("top_queries", "Top 50 search queries by clicks (last 28 days)",
+                    Map.of(), "{topQueries:[{query,clicks,impressions,ctr,position}]}",
+                    List.of("topQueries")),
+                new ToolOperation("top_pages", "Top 25 pages by clicks (last 28 days)",
+                    Map.of(), "{topPages:[{page,clicks,impressions}]}",
+                    List.of("topPages"))
+            )
+        );
+    }
 
     @Override
     public ConnectorData fetchData(ConnectionContext ctx) {

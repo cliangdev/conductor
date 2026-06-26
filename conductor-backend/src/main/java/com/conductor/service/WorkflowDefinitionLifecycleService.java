@@ -52,14 +52,19 @@ public class WorkflowDefinitionLifecycleService {
                 .filter(d -> d.getProject() != null && projectId.equals(d.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Workflow not found"));
 
-        if (definition.getDefinition() == null) {
+        boolean hasStatechart = definition.getDefinition() != null;
+        boolean hasYaml = definition.getYaml() != null && !definition.getYaml().isBlank();
+
+        if (!hasStatechart && !hasYaml) {
             throw new UnprocessableEntityException("Workflow has no definition to publish");
         }
 
-        WorkflowValidationResult result = validator.validate(definition.getDefinition());
-        if (result.hasErrors()) {
-            throw new UnprocessableEntityException(
-                    "Workflow definition is invalid: " + String.join("; ", result.getErrors()));
+        if (hasStatechart) {
+            WorkflowValidationResult result = validator.validate(definition.getDefinition());
+            if (result.hasErrors()) {
+                throw new UnprocessableEntityException(
+                        "Workflow definition is invalid: " + String.join("; ", result.getErrors()));
+            }
         }
 
         definition.setState(STATE_PUBLISHED);
@@ -69,7 +74,8 @@ public class WorkflowDefinitionLifecycleService {
         // so in-flight Work Items are not yet pinned to the version they started on. Pinning + in-flight
         // migration land with the editing experience (no edit/re-publish path exists in the v1 API yet).
         definition.setVersion(definition.getVersion() == null ? 1 : definition.getVersion() + 1);
-        if (definition.getSchemaVersion() == null && definition.getDefinition().hasNonNull("schemaVersion")) {
+        if (definition.getSchemaVersion() == null && definition.getDefinition() != null
+                && definition.getDefinition().hasNonNull("schemaVersion")) {
             definition.setSchemaVersion(definition.getDefinition().get("schemaVersion").asInt());
         }
         return definitionRepository.save(definition);

@@ -114,10 +114,12 @@ public class WorkflowController implements WorkflowsApi {
     public ResponseEntity<WorkflowCreateResponse> createWorkflow(String projectId, WorkflowCreateRequest workflowCreateRequest) {
         String userId = currentUserId();
         WorkflowDefinition def = workflowService.createWorkflow(projectId, userId, workflowCreateRequest);
-        WorkflowValidationResult validation = workflowService.validate(projectId, def.getYaml());
         WorkflowCreateResponse response = new WorkflowCreateResponse();
         response.setWorkflow(toDto(def));
-        response.setWarnings(toWarningDtos(validation.getWarnings()));
+        if (def.getYaml() != null) {
+            WorkflowValidationResult validation = workflowService.validate(projectId, def.getYaml());
+            response.setWarnings(toWarningDtos(validation.getWarnings()));
+        }
         return ResponseEntity.status(201).body(response);
     }
 
@@ -131,10 +133,12 @@ public class WorkflowController implements WorkflowsApi {
     public ResponseEntity<WorkflowCreateResponse> updateWorkflow(String projectId, String workflowId, WorkflowUpdateRequest workflowUpdateRequest) {
         String userId = currentUserId();
         WorkflowDefinition def = workflowService.updateWorkflow(projectId, workflowId, userId, workflowUpdateRequest);
-        WorkflowValidationResult validation = workflowService.validate(projectId, def.getYaml());
         WorkflowCreateResponse response = new WorkflowCreateResponse();
         response.setWorkflow(toDto(def));
-        response.setWarnings(toWarningDtos(validation.getWarnings()));
+        if (def.getYaml() != null) {
+            WorkflowValidationResult validation = workflowService.validate(projectId, def.getYaml());
+            response.setWarnings(toWarningDtos(validation.getWarnings()));
+        }
         return ResponseEntity.ok(response);
     }
 
