@@ -114,6 +114,27 @@ export function listConnectionWebhookEvents(
   )
 }
 
+export interface ConnectionHealthResponse {
+  oauthConnected: boolean
+  configured: boolean
+  siteUrl?: string | null
+  propertyAccessible?: boolean | null
+  status: string
+  errorMessage?: string | null
+}
+
+export function getConnectionHealth(
+  projectId: string,
+  connectorId: string,
+  connectionId: string,
+  token: string,
+): Promise<ConnectionHealthResponse> {
+  return apiGet<ConnectionHealthResponse>(
+    `/api/v1/projects/${projectId}/integrations/${connectorId}/connections/${connectionId}/health`,
+    token,
+  )
+}
+
 export function fetchConnectionData(
   projectId: string,
   connectorId: string,

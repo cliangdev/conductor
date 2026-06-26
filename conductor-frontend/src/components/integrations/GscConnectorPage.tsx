@@ -47,6 +47,7 @@ interface DeviceRow extends DimensionClicks { device: string }
 
 /** Shape of the connector-specific `data` blob inside ConnectionDataResponse. */
 interface GscData {
+  siteUrl?: string;
   trend?: TrendPoint[];
   topQueries?: QueryRow[];
   brandedClickShare?: number;
@@ -82,13 +83,21 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
       const connId = conns[0]?.id ?? null;
       setConnectionId(connId);
       if (!connId) { setResponse(null); return; }
-      const data = await fetchConnectionData(projectId, 'gsc', connId, accessToken, isRefresh);
-      setResponse(data);
+      // Fast cache read for immediate render
+      const cached = await fetchConnectionData(projectId, 'gsc', connId, accessToken, false);
+      setResponse(cached);
+      // Auto-refresh when explicitly requested, cache is stale, or no data has been fetched yet
+      if (isRefresh || cached.isStale || !cached.healthStatus) {
+        if (!isRefresh) setRefreshing(true);
+        const fresh = await fetchConnectionData(projectId, 'gsc', connId, accessToken, true);
+        setResponse(fresh);
+      }
     } catch (e) {
       console.error(e);
       setFetchError(apiErrorMessage(e, 'Failed to load Search Console data'));
     } finally {
-      if (isRefresh) setRefreshing(false); else setLoading(false);
+      setRefreshing(false);
+      setLoading(false);
     }
   }, [projectId, accessToken]);
 
@@ -140,7 +149,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
         { config: { siteUrl: siteUrl.trim(), brandTerm: brandTerm.trim() } },
         accessToken
       );
-      await loadData();
+      await loadData(true);
     } catch (e) {
       console.error('Config save failed', e);
       setSaveError(apiErrorMessage(e, 'Failed to save configuration'));
@@ -335,9 +344,18 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
         refreshing={refreshing}
       />
 
+      {/* Always-visible connection health — shown without any user action */}
+      <div className="flex items-center gap-4 mb-4 text-xs">
+        <HealthDot ok={true} label="Google connected" />
+        <HealthDot
+          ok={health === 'HEALTHY'}
+          label={data?.siteUrl ? `Property: ${data.siteUrl}` : 'Property not accessible'}
+        />
+      </div>
+
       {errorBanner && (
         <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3 mb-4">
-          <p className="text-xs font-medium text-yellow-800 dark:text-yellow-300">Live fetch failed</p>
+          <p className="text-xs font-medium text-yellow-800 dark:text-yellow-300">Fetch issue</p>
           <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-0.5 break-words">{errorBanner}</p>
         </div>
       )}
@@ -494,6 +512,15 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
         </p>
       )}
     </div>
+  );
+}
+
+function HealthDot({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 ${ok ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${ok ? 'bg-green-500' : 'bg-yellow-500'}`} />
+      {label}
+    </span>
   );
 }
 

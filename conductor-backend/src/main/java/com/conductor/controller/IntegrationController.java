@@ -8,6 +8,7 @@ import com.conductor.generated.api.IntegrationsApi;
 import com.conductor.generated.model.BqDatasetsResponse;
 import com.conductor.generated.model.BqDatasetsResponseDatasetsInner;
 import com.conductor.generated.model.ConnectionDataResponse;
+import com.conductor.generated.model.ConnectionHealthResponse;
 import com.conductor.generated.model.ConnectionResponse;
 import com.conductor.generated.model.ConnectionSummary;
 import com.conductor.generated.model.ConnectorConfigFieldDto;
@@ -23,6 +24,7 @@ import com.conductor.generated.model.UpdateConnectionRequest;
 import com.conductor.generated.model.WebhookEventSummary;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.Capability;
+import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.Connector;
 import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorHealth;
@@ -313,6 +315,62 @@ public class IntegrationController implements IntegrationsApi {
                 new GscSitesResponseSitesInner()
                         .siteUrl(s.get("siteUrl")).permissionLevel(s.get("permissionLevel"))));
         return ResponseEntity.ok(response);
+    }
+
+    @Override
+    public ResponseEntity<ConnectionHealthResponse> getConnectionHealth(
+            String projectId, String connectorId, String connectionId) {
+        requireMember(projectId);
+        Connection conn = requireConnection(projectId, connectorId, connectionId);
+        ConnectionContext ctx = connectionService.toContext(conn);
+
+        boolean oauthConnected = ctx.accessToken() != null;
+        String siteUrl = ctx.config() != null ? (String) ctx.config().get("siteUrl") : null;
+        boolean configured = siteUrl != null && !siteUrl.isBlank();
+        String status = ConnectorHealth.SETUP_REQUIRED.name();
+        Boolean propertyAccessible = null;
+        String errorMessage = null;
+
+        if (!oauthConnected) {
+            errorMessage = "OAuth credentials not stored — reconnect the integration";
+        } else if (!configured) {
+            errorMessage = "No property configured";
+        } else {
+            // Refresh token if close to expiry before probing the third-party API
+            String token = requireGcpAccessToken(projectId, connectorId);
+            ConnectionContext refreshed = new ConnectionContext(
+                    ctx.projectId(), ctx.connectorId(), ctx.connectionId(),
+                    token, ctx.refreshToken(), null, ctx.config(), ctx.webhookSecret());
+            Optional<FetchConnector> connector = connectorRegistry.findFetch(connectorId);
+            if (connector.isEmpty()) {
+                return ResponseEntity.ok(new ConnectionHealthResponse()
+                        .oauthConnected(true).configured(true).siteUrl(siteUrl)
+                        .status(ConnectorHealth.DEGRADED.name())
+                        .errorMessage("Connector does not support health checks"));
+            }
+            try {
+                ConnectorHealth health = connector.get().checkHealth(refreshed);
+                status = health.name();
+                propertyAccessible = health == ConnectorHealth.HEALTHY;
+                if (health == ConnectorHealth.SETUP_REQUIRED) {
+                    errorMessage = "Property \"" + siteUrl
+                            + "\" not accessible — check URL format and verify ownership in Search Console";
+                } else if (health == ConnectorHealth.DEGRADED) {
+                    errorMessage = "Could not verify property access — try again or re-connect";
+                }
+            } catch (Exception e) {
+                status = ConnectorHealth.DEGRADED.name();
+                errorMessage = e.getMessage();
+            }
+        }
+
+        return ResponseEntity.ok(new ConnectionHealthResponse()
+                .oauthConnected(oauthConnected)
+                .configured(configured)
+                .siteUrl(siteUrl)
+                .propertyAccessible(propertyAccessible)
+                .status(status)
+                .errorMessage(errorMessage));
     }
 
     private GcpBillingConnector requireGcpBillingConnector() {

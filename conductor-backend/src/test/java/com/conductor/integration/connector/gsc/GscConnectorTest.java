@@ -123,7 +123,7 @@ class GscConnectorTest {
     }
 
     @Test
-    void notFoundPropertyRoutesBackToSetup() {
+    void notFoundPropertyReturnsDegraded() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(), eq(Map.class)))
                 .thenThrow(HttpClientErrorException.create(
@@ -132,9 +132,10 @@ class GscConnectorTest {
         GscConnector connector = new GscConnector(restTemplate);
         ConnectorData result = connector.fetchData(ctx(CONFIG));
 
-        // A 404 means the configured property isn't accessible — a setup problem, not a fetch fault.
-        assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
-        assertThat(result.data().get("oauthConnected")).isEqualTo(true);
+        // A 404 on a configured property is a DEGRADED connection (wrong format/not found),
+        // not SETUP_REQUIRED — the user should stay on the dashboard and see the error banner.
+        assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.DEGRADED);
+        assertThat(result.data().get("siteUrl")).isEqualTo("sc-domain:example.com");
         assertThat(result.errorMessage()).contains("sc-domain:example.com");
     }
 
