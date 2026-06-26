@@ -496,8 +496,9 @@ public class WorkflowJobOrchestrator {
 
     private String resolveStepType(Map<String, Object> stepDef) {
         Object usesVal = stepDef.get("uses");
-        if (usesVal instanceof String uses && uses.startsWith("docker://")) {
-            return "docker";
+        if (usesVal instanceof String uses) {
+            if (uses.startsWith("docker://")) return "docker";
+            return uses;  // "integration", "http", "kestra", "condition"
         }
         return (String) stepDef.getOrDefault("type", "http");
     }

@@ -25,6 +25,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Owns Connection persistence + crypto orchestration. The single source of truth for a connector's
@@ -211,8 +213,12 @@ public class ConnectionService {
                 merged.put("description", spec.description());
                 merged.put("operations", spec.operations());
                 // Include non-secret config values for agent context (e.g. siteUrl for GSC)
+                Set<String> secretKeys = fetch.getSpec().fields().stream()
+                        .filter(com.conductor.integration.ConnectorConfigField::secret)
+                        .map(com.conductor.integration.ConnectorConfigField::key)
+                        .collect(Collectors.toSet());
                 parseConfig(c.getConfigJson()).forEach((k, v) -> {
-                    if (v != null) merged.put(k, v);
+                    if (v != null && !secretKeys.contains(k)) merged.put(k, v);
                 });
                 c.setToolMetadata(objectMapper.writeValueAsString(merged));
             } catch (Exception e) {
