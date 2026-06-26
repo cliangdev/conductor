@@ -11,13 +11,13 @@
   },
   "dependencies": {
     "express": "^5.2.1",
-    "uuid": "^14.0.0",
-    "axios": "^1.18.0"
+    "uuid": "^14.0.1",
+    "axios": "^1.18.1"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/uuid": "^11.0.0",
-    "@types/node": "^26.0.0",
+    "@types/node": "^26.0.1",
     "typescript": "^5.0.0",
     "ts-node": "^10.9.0",
     "jest": "^30.4.2",
