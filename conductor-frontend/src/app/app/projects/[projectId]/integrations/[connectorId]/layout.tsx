@@ -14,11 +14,11 @@ const CONNECTOR_LABELS: Record<string, string> = {
   'apple-search-ads': 'Apple Search Ads',
 };
 
-type Tab = 'overview' | 'workflow-tools';
+type Tab = 'overview' | 'tool-metadata';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'workflow-tools', label: 'Workflow Tools' },
+  { id: 'tool-metadata', label: 'Tool Metadata' },
 ];
 
 export default function ConnectorLayout({ children }: { children: React.ReactNode }) {
