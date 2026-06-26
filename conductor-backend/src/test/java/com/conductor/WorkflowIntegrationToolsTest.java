@@ -86,27 +86,25 @@ class WorkflowIntegrationToolsTest {
         when(jwtService.getUserIdFromToken("test-token")).thenReturn("user-1");
         when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(objectMapper.readValue(anyString(), any(com.fasterxml.jackson.core.type.TypeReference.class)))
-            .thenAnswer(inv -> realMapper.readValue((String) inv.getArgument(0),
-                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {}));
     }
 
     // ── listIntegrationTools endpoint ─────────────────────────────────────────
 
     @Test
     void listIntegrationTools_returnsActiveConnectionsWithMetadata() throws Exception {
-        String toolMetaJson = """
-            {"description":"Test data source","operations":[{"id":"fetch_test_data"}]}
-            """;
-
         Connection conn = new Connection();
         conn.setId("conn-1");
         conn.setConnectorId("test-data-source");
         conn.setDisplayLabel("Test Data Source");
         conn.setStatus("ACTIVE");
-        conn.setToolMetadata(toolMetaJson);
+
+        Map<String, Object> toolMeta = Map.of(
+            "description", "Test data source",
+            "operations", List.of(Map.of("id", "fetch_test_data"))
+        );
 
         when(connectionService.listForProject(PROJECT_ID)).thenReturn(List.of(conn));
+        when(connectionService.computeToolMetadata(conn)).thenReturn(Optional.of(toolMeta));
 
         TestFetchConnector stub = new TestFetchConnector();
         when(connectorRegistry.getById("test-data-source")).thenReturn(Optional.of(stub));
