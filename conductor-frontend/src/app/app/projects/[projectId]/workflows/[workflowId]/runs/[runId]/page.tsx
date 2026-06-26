@@ -118,7 +118,7 @@ export default function RunDetailPage() {
 
   if (!run)
     return (
-      <PageContainer width="wide">
+      <PageContainer>
         <div className="text-muted-foreground">Loading...</div>
       </PageContainer>
     );
@@ -156,7 +156,7 @@ export default function RunDetailPage() {
   const uniqueJobIds = [...new Set(run.jobs.map(j => j.jobId))];
 
   return (
-    <PageContainer width="wide" className="space-y-6">
+    <PageContainer className="space-y-6">
       <PageHeader
         className="mb-0"
         breadcrumbs={[

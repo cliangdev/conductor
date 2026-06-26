@@ -13,7 +13,7 @@ export default function ApiKeysPage() {
   const { accessToken } = useAuth()
 
   return (
-    <PageContainer width="narrow" className="space-y-6">
+    <PageContainer className="space-y-6">
       <PageHeader
         breadcrumbs={[
           { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },

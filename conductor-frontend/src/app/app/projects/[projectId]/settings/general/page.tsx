@@ -103,7 +103,7 @@ export default function GeneralSettingsPage() {
   }
 
   return (
-    <PageContainer width="narrow" className="space-y-10">
+    <PageContainer className="space-y-10">
       <div>
         <PageHeader
           breadcrumbs={[

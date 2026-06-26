@@ -84,14 +84,14 @@ export default function WorkflowsPage() {
 
   if (loading)
     return (
-      <PageContainer width="wide">
+      <PageContainer>
         <PageHeader title="Workflows" description="Run automations and review their history." />
         <div className="text-muted-foreground">Loading...</div>
       </PageContainer>
     );
 
   return (
-    <PageContainer width="wide">
+    <PageContainer>
       <PageHeader
         title="Workflows"
         description="Run automations and review their history."

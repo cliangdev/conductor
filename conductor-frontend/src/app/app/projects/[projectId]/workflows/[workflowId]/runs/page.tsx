@@ -71,7 +71,7 @@ export default function RunListPage() {
   };
 
   return (
-    <PageContainer width="wide">
+    <PageContainer>
       <PageHeader
         breadcrumbs={[
           { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },

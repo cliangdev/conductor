@@ -129,13 +129,13 @@ export default function WorkflowDetailPage() {
 
   if (loading)
     return (
-      <PageContainer width="wide">
+      <PageContainer>
         <div className="text-muted-foreground">Loading...</div>
       </PageContainer>
     );
   if (!workflow)
     return (
-      <PageContainer width="wide">
+      <PageContainer>
         <div className="text-muted-foreground">Workflow not found.</div>
       </PageContainer>
     );
@@ -144,7 +144,7 @@ export default function WorkflowDetailPage() {
   const stats = computeStats(runs);
 
   return (
-    <PageContainer width="wide">
+    <PageContainer>
       <PageHeader
         breadcrumbs={[
           { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },

@@ -420,7 +420,7 @@ export default function IssuesListPage() {
 
   if (loading) {
     return (
-      <PageContainer width="wide">
+      <PageContainer>
         <PageHeader title="Issues" />
         <div className="flex items-center justify-center h-64 text-muted-foreground">
           Loading issues...
@@ -431,7 +431,7 @@ export default function IssuesListPage() {
 
   if (error) {
     return (
-      <PageContainer width="wide">
+      <PageContainer>
         <PageHeader title="Issues" />
         <div className="flex items-center justify-center h-64 text-destructive">Error: {error}</div>
       </PageContainer>
@@ -451,7 +451,7 @@ export default function IssuesListPage() {
   const filtersAreActive = typeFilter !== 'All' || statusFilterValue !== 'All'
 
   return (
-    <PageContainer width="wide">
+    <PageContainer>
       <PageHeader title="Issues" />
 
       {/* View tabs */}

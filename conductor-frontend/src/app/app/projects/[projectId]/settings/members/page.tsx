@@ -170,7 +170,7 @@ export default function MembersPage() {
   const workspaceName = activeProject?.name ?? 'this workspace'
 
   return (
-    <PageContainer width="narrow">
+    <PageContainer>
       <PageHeader
         breadcrumbs={[
           { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
