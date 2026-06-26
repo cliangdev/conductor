@@ -14,9 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.context.event.EventListener;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -207,37 +205,30 @@ public class ConnectionService {
         }
     }
 
-    @EventListener(ApplicationReadyEvent.class)
-    @Transactional
-    public void backfillToolMetadata() {
-        List<Connection> missing = connectionRepository.findActiveWithoutToolMetadata();
-        if (missing.isEmpty()) return;
-        log.info("Backfilling tool_metadata for {} active connection(s)", missing.size());
-        for (Connection c : missing) {
-            computeAndStoreToolMetadata(c);
-            connectionRepository.save(c);
-        }
-        log.info("tool_metadata backfill complete");
+    /** Compute tool metadata for a connection on-the-fly from the connector's static spec + non-secret config. */
+    public Optional<Map<String, Object>> computeToolMetadata(Connection c) {
+        return connectorRegistry.findFetch(c.getConnectorId()).map(fetch -> {
+            IntegrationToolSpec spec = fetch.getToolSpec();
+            Map<String, Object> merged = new java.util.LinkedHashMap<>();
+            merged.put("description", spec.description());
+            merged.put("operations", spec.operations());
+            Set<String> secretKeys = fetch.getSpec().fields().stream()
+                    .filter(com.conductor.integration.ConnectorConfigField::secret)
+                    .map(com.conductor.integration.ConnectorConfigField::key)
+                    .collect(Collectors.toSet());
+            parseConfig(c.getConfigJson()).forEach((k, v) -> {
+                if (v != null && !secretKeys.contains(k)) merged.put(k, v);
+            });
+            return merged;
+        });
     }
 
     private void computeAndStoreToolMetadata(Connection c) {
-        connectorRegistry.findFetch(c.getConnectorId()).ifPresent(fetch -> {
+        computeToolMetadata(c).ifPresent(meta -> {
             try {
-                IntegrationToolSpec spec = fetch.getToolSpec();
-                Map<String, Object> merged = new java.util.LinkedHashMap<>();
-                merged.put("description", spec.description());
-                merged.put("operations", spec.operations());
-                // Include non-secret config values for agent context (e.g. siteUrl for GSC)
-                Set<String> secretKeys = fetch.getSpec().fields().stream()
-                        .filter(com.conductor.integration.ConnectorConfigField::secret)
-                        .map(com.conductor.integration.ConnectorConfigField::key)
-                        .collect(Collectors.toSet());
-                parseConfig(c.getConfigJson()).forEach((k, v) -> {
-                    if (v != null && !secretKeys.contains(k)) merged.put(k, v);
-                });
-                c.setToolMetadata(objectMapper.writeValueAsString(merged));
+                c.setToolMetadata(objectMapper.writeValueAsString(meta));
             } catch (Exception e) {
-                log.warn("Failed to compute tool metadata for connection {}: {}", c.getId(), e.getMessage());
+                log.warn("Failed to store tool metadata for connection {}: {}", c.getId(), e.getMessage());
             }
         });
     }

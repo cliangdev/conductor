@@ -31,7 +31,4 @@ public interface ConnectionRepository extends JpaRepository<Connection, String> 
                                                      @Param("key") String key,
                                                      @Param("value") String value);
 
-    @Query(nativeQuery = true,
-            value = "SELECT * FROM connection WHERE status = 'ACTIVE' AND tool_metadata IS NULL")
-    List<Connection> findActiveWithoutToolMetadata();
 }
