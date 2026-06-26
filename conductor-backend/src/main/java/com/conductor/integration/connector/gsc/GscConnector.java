@@ -237,6 +237,7 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             }
 
             Map<String, Object> data = new LinkedHashMap<>();
+            data.put("siteUrl", siteUrl);
             data.put("trend", trend);
             data.put("topQueries", topQueries);
             data.put("brandedClickShare", brandedClickShare);
@@ -250,17 +251,16 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             // 404 = the property string isn't a property this account can access; 403 = not granted.
             // Both are configuration problems, so route the user back to the property picker.
             if (status == 404) {
-                return ConnectorData.setupRequired(
-                        "Couldn't find \"" + siteUrl + "\" for your Google account. Pick a verified "
-                                + "property from the list, or check the exact format "
-                                + "(sc-domain:example.com or https://example.com/).",
-                        Map.of("oauthConnected", true));
+                return ConnectorData.degraded(
+                        "Property \"" + siteUrl + "\" wasn't found for your Google account. "
+                                + "Check the exact format (sc-domain:example.com or https://example.com/).",
+                        Map.of("siteUrl", siteUrl));
             }
             if (status == 403) {
-                return ConnectorData.setupRequired(
-                        "Your Google account doesn't have access to this Search Console property. "
-                                + "Pick one you've been granted, or verify it in Search Console.",
-                        Map.of("oauthConnected", true));
+                return ConnectorData.degraded(
+                        "Your Google account doesn't have access to \"" + siteUrl + "\". "
+                                + "Verify ownership in Search Console or re-connect with a different account.",
+                        Map.of("siteUrl", siteUrl));
             }
             if (status == 401) {
                 return ConnectorData.degraded("Check credentials", Map.of());
