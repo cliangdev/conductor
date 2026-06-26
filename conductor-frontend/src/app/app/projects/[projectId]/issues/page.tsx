@@ -15,6 +15,8 @@ import {
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
+import { PageContainer } from '@/components/layout/PageContainer'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type { MemberRole } from '@/types'
 
 export const dynamic = 'force-dynamic'
@@ -418,15 +420,21 @@ export default function IssuesListPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground">
-        Loading issues...
-      </div>
+      <PageContainer>
+        <PageHeader title="Issues" />
+        <div className="flex items-center justify-center h-64 text-muted-foreground">
+          Loading issues...
+        </div>
+      </PageContainer>
     )
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64 text-destructive">Error: {error}</div>
+      <PageContainer>
+        <PageHeader title="Issues" />
+        <div className="flex items-center justify-center h-64 text-destructive">Error: {error}</div>
+      </PageContainer>
     )
   }
 
@@ -443,8 +451,8 @@ export default function IssuesListPage() {
   const filtersAreActive = typeFilter !== 'All' || statusFilterValue !== 'All'
 
   return (
-    <div className="p-4 sm:p-6">
-      <h1 className="text-xl font-semibold text-foreground mb-4">Issues</h1>
+    <PageContainer>
+      <PageHeader title="Issues" />
 
       {/* View tabs */}
       <div
@@ -689,6 +697,6 @@ export default function IssuesListPage() {
           </div>
         </>
       )}
-    </div>
+    </PageContainer>
   )
 }

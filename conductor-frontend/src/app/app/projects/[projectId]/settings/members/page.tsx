@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { MemberRow } from '@/components/members/MemberRow'
+import { PageHeader } from '@/components/layout/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { apiDelete, apiGet, apiPatch, apiPost, apiErrorMessage } from '@/lib/api'
@@ -168,15 +169,17 @@ export default function MembersPage() {
   const workspaceName = activeProject?.name ?? 'this workspace'
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-foreground">Members</h1>
-        {isAdmin && (
-          <Button onClick={openInviteModal} size="sm">
-            Invite member
-          </Button>
-        )}
-      </div>
+    <>
+      <PageHeader
+        title="Members"
+        actions={
+          isAdmin && (
+            <Button onClick={openInviteModal} size="sm">
+              Invite member
+            </Button>
+          )
+        }
+      />
 
       {membersLoading && (
         <p className="text-sm text-muted-foreground">Loading members…</p>
@@ -342,6 +345,6 @@ export default function MembersPage() {
           </Button>
         </div>
       </Modal>
-    </div>
+    </>
   )
 }

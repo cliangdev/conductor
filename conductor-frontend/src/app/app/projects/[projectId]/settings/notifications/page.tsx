@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiErrorMessage, type ApiError } from '@/lib/api'
 import type { Member } from '@/types'
 import { NotificationSettingsPage } from '@/components/notifications/NotificationSettingsPage'
+import { PageHeader } from '@/components/layout/PageHeader'
 
 export default function NotificationsPage() {
   const params = useParams<{ projectId: string }>()
@@ -54,49 +55,52 @@ export default function NotificationsPage() {
   const currentUserRole = members.find((m) => m.userId === user?.id)?.role
   const isAdmin = currentUserRole === 'ADMIN'
 
+  const header = <PageHeader title="Notifications" />
+
   if (membersLoading || settingsLoading) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
+      <>
+        {header}
         <p className="text-sm text-muted-foreground">Loading…</p>
-      </div>
+      </>
     )
   }
 
   if (!isAdmin) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-
+      <>
+        {header}
         <p className="text-sm text-muted-foreground">
           You don&apos;t have permission to manage settings.
         </p>
-      </div>
+      </>
     )
   }
 
   if (accessDenied) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-
+      <>
+        {header}
         <p className="text-sm text-destructive" role="alert">
           Access denied. You do not have permission to view project settings.
         </p>
-      </div>
+      </>
     )
   }
 
   if (settingsError) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-
+      <>
+        {header}
         <p className="text-sm text-destructive" role="alert">{settingsError}</p>
-      </div>
+      </>
     )
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-foreground mb-6">Notifications</h1>
+    <>
+      {header}
       <NotificationSettingsPage projectId={projectId} accessToken={accessToken!} />
-    </div>
+    </>
   )
 }

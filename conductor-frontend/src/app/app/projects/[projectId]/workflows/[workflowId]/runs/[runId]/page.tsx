@@ -7,6 +7,7 @@ import { apiGet, apiPost } from '@/lib/api';
 import { WorkflowRunDetailDto, WorkflowJobRunDto } from '@/types/workflow';
 import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { StepRow } from '@/components/workflow/StepRow';
 
 const WorkflowDiagram = dynamic(() => import('@/components/workflow/WorkflowDiagram'), { ssr: false });
@@ -106,7 +107,7 @@ export default function RunDetailPage() {
     });
   };
 
-  if (!run) return <div className="p-6 text-muted-foreground">Loading...</div>;
+  if (!run) return <PageHeader title="Run Detail" />;
 
   // Build jobRunData from run.jobs (use latest iteration per jobId)
   const jobRunData: Record<string, JobRunStatus> = {};
@@ -141,27 +142,18 @@ export default function RunDetailPage() {
   const uniqueJobIds = [...new Set(run.jobs.map(j => j.jobId))];
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <button
-            className="text-sm text-muted-foreground hover:underline"
-            onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs`)}
-          >
-            ← Run History
-          </button>
-          <div className="flex items-center gap-3 mt-1">
-            <h1 className="text-2xl font-semibold">Run Detail</h1>
-            <span className={`inline-flex items-center px-2 py-0.5 rounded text-sm font-medium ${STATUS_COLORS[run.status] ?? ''}`}>
-              {run.status}
-            </span>
-          </div>
-          <p className="text-sm text-muted-foreground mt-1">
-            Trigger: {run.triggerType} · Duration: {formatDuration(run.startedAt, run.completedAt)}
-          </p>
-        </div>
-        <Button onClick={handleRunAgain} variant="outline">Run Again</Button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        className="mb-0"
+        title="Run Detail"
+        status={
+          <span className={`inline-flex items-center px-2 py-0.5 rounded text-sm font-medium ${STATUS_COLORS[run.status] ?? ''}`}>
+            {run.status}
+          </span>
+        }
+        description={`Trigger: ${run.triggerType} · Duration: ${formatDuration(run.startedAt, run.completedAt)}`}
+        actions={<Button onClick={handleRunAgain} variant="outline">Run Again</Button>}
+      />
 
       <div className="border rounded-lg bg-muted/20 h-64">
         <WorkflowDiagram

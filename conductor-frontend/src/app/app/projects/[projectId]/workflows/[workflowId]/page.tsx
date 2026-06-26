@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
-import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
+import { WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/layout/PageHeader';
 import WorkflowDiagram from '@/components/workflow/WorkflowDiagram';
+import { useWorkflow } from '@/contexts/WorkflowContext';
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: 'bg-green-100 text-green-800',
@@ -94,20 +96,15 @@ export default function WorkflowDetailPage() {
   const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>();
   const { accessToken } = useAuth();
   const router = useRouter();
-  const [workflow, setWorkflow] = useState<WorkflowDefinitionDto | null>(null);
+  const { workflow } = useWorkflow();
   const [runs, setRuns] = useState<WorkflowRunDto[]>([]);
-  const [loading, setLoading] = useState(true);
   const [dispatching, setDispatching] = useState(false);
 
   useEffect(() => {
     if (!accessToken) return;
-    Promise.all([
-      apiGet<WorkflowDefinitionDto>(`/api/v1/projects/${projectId}/workflows/${workflowId}`, accessToken),
-      apiGet<WorkflowRunDto[]>(`/api/v1/projects/${projectId}/workflows/${workflowId}/runs?page=0&size=5`, accessToken),
-    ]).then(([wf, wfRuns]) => {
-      setWorkflow(wf);
-      setRuns(wfRuns);
-    }).finally(() => setLoading(false));
+    apiGet<WorkflowRunDto[]>(`/api/v1/projects/${projectId}/workflows/${workflowId}/runs?page=0&size=5`, accessToken)
+      .then(setRuns)
+      .catch(() => {});
   }, [projectId, workflowId, accessToken]);
 
   const handleRunNow = async () => {
@@ -125,54 +122,42 @@ export default function WorkflowDetailPage() {
     }
   };
 
-  if (loading) return <div className="p-6">Loading...</div>;
-  if (!workflow) return <div className="p-6 text-muted-foreground">Workflow not found.</div>;
+  if (!workflow)
+    return <PageHeader title={<span className="text-muted-foreground">Loading…</span>} />;
 
   const triggers = parseTriggers(workflow.yaml);
   const stats = computeStats(runs);
 
   return (
-    <div className="p-6 max-w-6xl">
-      <button
-        className="text-sm text-muted-foreground hover:underline mb-4 block"
-        onClick={() => router.push(`/app/projects/${projectId}/workflows`)}
-      >
-        ← Workflows
-      </button>
+    <>
+      <PageHeader
+        title={workflow.name}
+        status={
+          <span className={`flex items-center gap-1 text-sm ${workflow.enabled ? 'text-green-600' : 'text-gray-400'}`}>
+            <span className={`inline-block w-2 h-2 rounded-full ${workflow.enabled ? 'bg-green-500' : 'bg-gray-400'}`} />
+            {workflow.enabled ? 'Enabled' : 'Disabled'}
+          </span>
+        }
+        description={triggers.length > 0 ? `Triggers: ${triggers.join(', ')}` : undefined}
+        actions={
+          <>
+            <Link
+              href={`/app/projects/${projectId}/settings/workflows/${workflowId}/edit`}
+              className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+            >
+              Edit in Settings →
+            </Link>
+            <Button
+              onClick={handleRunNow}
+              disabled={!workflow.enabled || dispatching}
+            >
+              {dispatching ? 'Starting...' : '▶ Run Now'}
+            </Button>
+          </>
+        }
+      />
 
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold">{workflow.name}</h1>
-          <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-            <span className={`flex items-center gap-1 ${workflow.enabled ? 'text-green-600' : 'text-gray-400'}`}>
-              <span className={`inline-block w-2 h-2 rounded-full ${workflow.enabled ? 'bg-green-500' : 'bg-gray-400'}`} />
-              {workflow.enabled ? 'Enabled' : 'Disabled'}
-            </span>
-            {triggers.length > 0 && (
-              <>
-                <span>·</span>
-                <span>Triggers: {triggers.join(', ')}</span>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}/edit`)}
-          >
-            Edit
-          </Button>
-          <Button
-            onClick={handleRunNow}
-            disabled={!workflow.enabled || dispatching}
-          >
-            {dispatching ? 'Starting...' : '▶ Run Now'}
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-[280px_1fr] gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-4 mb-6">
         <div className="border rounded-lg p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Stats</p>
           {stats ? (
@@ -230,8 +215,8 @@ export default function WorkflowDetailPage() {
           No runs yet. Click &quot;Run Now&quot; to trigger this workflow.
         </div>
       ) : (
-        <div className="border rounded-lg overflow-hidden">
-          <table className="w-full">
+        <div className="border rounded-lg overflow-x-auto">
+          <table className="w-full min-w-[520px]">
             <tbody>
               {runs.map((run, i) => (
                 <tr
@@ -255,6 +240,6 @@ export default function WorkflowDetailPage() {
           </table>
         </div>
       )}
-    </div>
+    </>
   );
 }

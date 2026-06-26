@@ -4,8 +4,9 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
-import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
+import { WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: 'bg-green-100 text-green-800',
@@ -31,17 +32,9 @@ export default function RunListPage() {
   const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>();
   const { accessToken } = useAuth();
   const router = useRouter();
-  const [workflow, setWorkflow] = useState<WorkflowDefinitionDto | null>(null);
   const [runs, setRuns] = useState<WorkflowRunDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
-
-  useEffect(() => {
-    if (!accessToken) return;
-    apiGet<WorkflowDefinitionDto>(`/api/v1/projects/${projectId}/workflows/${workflowId}`, accessToken)
-      .then(setWorkflow)
-      .catch(() => {});
-  }, [projectId, workflowId, accessToken]);
 
   const fetchRuns = useCallback(() => {
     if (!accessToken) return;
@@ -69,32 +62,11 @@ export default function RunListPage() {
   };
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-            <button
-              className="hover:underline"
-              onClick={() => router.push(`/app/projects/${projectId}/workflows`)}
-            >
-              ← Workflows
-            </button>
-            {workflow && (
-              <>
-                <span>/</span>
-                <button
-                  className="hover:underline"
-                  onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}`)}
-                >
-                  {workflow.name}
-                </button>
-              </>
-            )}
-          </div>
-          <h1 className="text-2xl font-semibold mt-1">Run History</h1>
-        </div>
-        <Button onClick={handleRunAgain}>Run Now</Button>
-      </div>
+    <>
+      <PageHeader
+        title="Run History"
+        actions={<Button onClick={handleRunAgain}>Run Now</Button>}
+      />
 
       {loading ? (
         <div className="text-muted-foreground">Loading...</div>
@@ -103,8 +75,8 @@ export default function RunListPage() {
           No runs yet. Click &quot;Run Now&quot; to trigger this workflow.
         </div>
       ) : (
-        <div className="border rounded-lg overflow-hidden">
-          <table className="w-full">
+        <div className="border rounded-lg overflow-x-auto">
+          <table className="w-full min-w-[640px]">
             <thead className="bg-muted/50">
               <tr>
                 <th className="text-left p-3 font-medium">Status</th>
@@ -140,6 +112,6 @@ export default function RunListPage() {
           )}
         </div>
       )}
-    </div>
+    </>
   );
 }

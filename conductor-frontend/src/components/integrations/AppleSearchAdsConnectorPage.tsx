@@ -118,7 +118,7 @@ export default function AppleSearchAdsConnectorPage({ projectId }: { projectId: 
 
   if (loading) {
     return (
-      <div className="max-w-5xl mx-auto px-4 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-muted rounded w-48" />
           <div className="h-48 bg-muted rounded-lg" />
@@ -137,7 +137,7 @@ export default function AppleSearchAdsConnectorPage({ projectId }: { projectId: 
 
   if (health === 'SETUP_REQUIRED' || !response) {
     return (
-      <div className="max-w-5xl mx-auto px-4 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6 flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold text-foreground">Apple Search Ads</h1>
@@ -216,7 +216,7 @@ export default function AppleSearchAdsConnectorPage({ projectId }: { projectId: 
   }));
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <ConnectorHeader
         title="Apple Search Ads"
         subtitle="Marketing · paid acquisition (last 30 days)"

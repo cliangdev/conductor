@@ -54,8 +54,8 @@ export default function DocDetailPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="border-b border-border bg-background px-4 sm:px-6 py-4 shrink-0">
-        <div className="flex items-center gap-3">
+      <div className="border-b border-border bg-background px-4 sm:px-6 lg:px-8 py-4 shrink-0">
+        <div className="max-w-6xl mx-auto flex items-center gap-3">
           <Link
             href={`/app/projects/${projectId}/docs`}
             className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
@@ -63,7 +63,7 @@ export default function DocDetailPage() {
           >
             <ChevronLeft className="h-5 w-5" />
           </Link>
-          <h1 className="text-lg sm:text-xl font-semibold text-foreground flex-1 min-w-0 truncate">
+          <h1 className="text-xl sm:text-2xl font-semibold text-foreground flex-1 min-w-0 truncate">
             {doc.title}
           </h1>
           <div className="flex items-center gap-2 shrink-0">
@@ -84,17 +84,19 @@ export default function DocDetailPage() {
 
       {/* Content */}
       <div className="flex-1 relative overflow-hidden">
-        <div className="h-full overflow-y-auto p-4 md:p-6">
-          {doc.content ? (
-            <DocViewer
-              doc={doc}
-              projectId={projectId}
-              token={accessToken!}
-              currentUserId={user?.id ?? ''}
-            />
-          ) : (
-            <p className="text-muted-foreground text-sm">No content yet.</p>
-          )}
+        <div className="h-full overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
+          <div className="max-w-6xl mx-auto">
+            {doc.content ? (
+              <DocViewer
+                doc={doc}
+                projectId={projectId}
+                token={accessToken!}
+                currentUserId={user?.id ?? ''}
+              />
+            ) : (
+              <p className="text-muted-foreground text-sm">No content yet.</p>
+            )}
+          </div>
         </div>
 
         {showHistory && (

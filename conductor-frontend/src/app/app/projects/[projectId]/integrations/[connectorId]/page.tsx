@@ -9,6 +9,8 @@ import RevenueCatConnectorPage from '@/components/integrations/RevenueCatConnect
 import GscConnectorPage from '@/components/integrations/GscConnectorPage';
 import AppleSearchAdsConnectorPage from '@/components/integrations/AppleSearchAdsConnectorPage';
 
+// The breadcrumb lives in the persistent layout; this page only renders the
+// per-connector body, which is the part that re-renders on connector switch.
 export default function ConnectorPage() {
   const { projectId, connectorId } = useParams<{ projectId: string; connectorId: string }>();
 
@@ -27,7 +29,7 @@ export default function ConnectorPage() {
       return <AppleSearchAdsConnectorPage projectId={projectId} />;
     default:
       return (
-        <div className="max-w-4xl mx-auto px-4 py-8">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-12">
             <p className="text-muted-foreground">Unknown connector: {connectorId}</p>
           </div>
