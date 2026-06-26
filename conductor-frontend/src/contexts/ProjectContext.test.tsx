@@ -31,90 +31,90 @@ describe('ProjectContext', () => {
 
   it('fetches projects on mount when accessToken is available', async () => {
     vi.mocked(api.apiGet).mockResolvedValue(mockProjects)
-    let captured: ReturnType<typeof useProject> | null = null
+    const ref: { current: ReturnType<typeof useProject> | null } = { current: null }
 
     render(
       <ProjectProvider>
-        <TestConsumer onValues={(v) => { captured = v }} />
+        <TestConsumer onValues={(v) => { ref.current = v }} />
       </ProjectProvider>
     )
 
-    await waitFor(() => expect(captured?.loading).toBe(false))
+    await waitFor(() => expect(ref.current?.loading).toBe(false))
 
-    expect(captured?.projects).toEqual(mockProjects)
+    expect(ref.current?.projects).toEqual(mockProjects)
     expect(api.apiGet).toHaveBeenCalledWith('/api/v1/projects', 'test-token')
   })
 
   it('restores active project from localStorage on mount', async () => {
     localStorage.setItem('active_project_id', 'proj-2')
     vi.mocked(api.apiGet).mockResolvedValue(mockProjects)
-    let captured: ReturnType<typeof useProject> | null = null
+    const ref: { current: ReturnType<typeof useProject> | null } = { current: null }
 
     render(
       <ProjectProvider>
-        <TestConsumer onValues={(v) => { captured = v }} />
+        <TestConsumer onValues={(v) => { ref.current = v }} />
       </ProjectProvider>
     )
 
-    await waitFor(() => expect(captured?.loading).toBe(false))
+    await waitFor(() => expect(ref.current?.loading).toBe(false))
 
-    expect(captured?.activeProject?.id).toBe('proj-2')
-    expect(captured?.activeProject?.name).toBe('Project Beta')
+    expect(ref.current?.activeProject?.id).toBe('proj-2')
+    expect(ref.current?.activeProject?.name).toBe('Project Beta')
   })
 
   it('sets active project and persists to localStorage', async () => {
     vi.mocked(api.apiGet).mockResolvedValue(mockProjects)
-    let captured: ReturnType<typeof useProject> | null = null
+    const ref: { current: ReturnType<typeof useProject> | null } = { current: null }
 
     render(
       <ProjectProvider>
-        <TestConsumer onValues={(v) => { captured = v }} />
+        <TestConsumer onValues={(v) => { ref.current = v }} />
       </ProjectProvider>
     )
 
-    await waitFor(() => expect(captured?.loading).toBe(false))
+    await waitFor(() => expect(ref.current?.loading).toBe(false))
 
     act(() => {
-      captured?.setActiveProject(mockProjects[0])
+      ref.current?.setActiveProject(mockProjects[0])
     })
 
-    expect(captured?.activeProject?.id).toBe('proj-1')
+    expect(ref.current?.activeProject?.id).toBe('proj-1')
     expect(localStorage.getItem('active_project_id')).toBe('proj-1')
   })
 
   it('does not restore active project if id not in fetched projects', async () => {
     localStorage.setItem('active_project_id', 'proj-999')
     vi.mocked(api.apiGet).mockResolvedValue(mockProjects)
-    let captured: ReturnType<typeof useProject> | null = null
+    const ref: { current: ReturnType<typeof useProject> | null } = { current: null }
 
     render(
       <ProjectProvider>
-        <TestConsumer onValues={(v) => { captured = v }} />
+        <TestConsumer onValues={(v) => { ref.current = v }} />
       </ProjectProvider>
     )
 
-    await waitFor(() => expect(captured?.loading).toBe(false))
+    await waitFor(() => expect(ref.current?.loading).toBe(false))
 
-    expect(captured?.activeProject).toBeNull()
+    expect(ref.current?.activeProject).toBeNull()
   })
 
   it('addProject appends a new project without refetching', async () => {
     vi.mocked(api.apiGet).mockResolvedValue([mockProjects[0]])
-    let captured: ReturnType<typeof useProject> | null = null
+    const ref: { current: ReturnType<typeof useProject> | null } = { current: null }
 
     render(
       <ProjectProvider>
-        <TestConsumer onValues={(v) => { captured = v }} />
+        <TestConsumer onValues={(v) => { ref.current = v }} />
       </ProjectProvider>
     )
 
-    await waitFor(() => expect(captured?.loading).toBe(false))
-    expect(captured?.projects).toHaveLength(1)
+    await waitFor(() => expect(ref.current?.loading).toBe(false))
+    expect(ref.current?.projects).toHaveLength(1)
 
-    act(() => { captured?.addProject(mockProjects[1]) })
+    act(() => { ref.current?.addProject(mockProjects[1]) })
 
-    expect(captured?.projects).toHaveLength(2)
-    expect(captured?.projects[1].id).toBe('proj-2')
+    expect(ref.current?.projects).toHaveLength(2)
+    expect(ref.current?.projects[1].id).toBe('proj-2')
     expect(api.apiGet).toHaveBeenCalledTimes(1)
   })
 

@@ -8,8 +8,8 @@ vi.mock('@xyflow/react', () => ({
       {nodes.map(n => (
         <div key={n.id} data-testid={`node-${n.id}`} data-type={n.type}>
           <span data-testid={`node-label-${n.id}`}>{String(n.data.label ?? '')}</span>
-          {n.data.stepInfo && <span data-testid={`node-stepinfo-${n.id}`}>{String(n.data.stepInfo)}</span>}
-          {n.data.status && <span data-testid={`node-status-${n.id}`}>{String(n.data.status)}</span>}
+          {!!n.data.stepInfo && <span data-testid={`node-stepinfo-${n.id}`}>{String(n.data.stepInfo)}</span>}
+          {!!n.data.status && <span data-testid={`node-status-${n.id}`}>{String(n.data.status)}</span>}
         </div>
       ))}
       {edges.map(e => (

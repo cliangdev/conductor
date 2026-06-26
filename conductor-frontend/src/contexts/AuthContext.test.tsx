@@ -46,37 +46,37 @@ describe('AuthContext', () => {
   })
 
   it('starts with null user and null token when no stored token', async () => {
-    let captured: ReturnType<typeof useAuth> | null = null
+    const ref: { current: ReturnType<typeof useAuth> | null } = { current: null }
 
     render(
       <AuthProvider>
-        <TestConsumer onValues={(v) => { captured = v }} />
+        <TestConsumer onValues={(v) => { ref.current = v }} />
       </AuthProvider>
     )
 
     await waitFor(() => {
-      expect(captured?.loading).toBe(false)
+      expect(ref.current?.loading).toBe(false)
     })
 
-    expect(captured?.user).toBeNull()
-    expect(captured?.accessToken).toBeNull()
+    expect(ref.current?.user).toBeNull()
+    expect(ref.current?.accessToken).toBeNull()
   })
 
   it('restores accessToken from localStorage on mount', async () => {
     localStorage.setItem('access_token', 'stored-token')
-    let captured: ReturnType<typeof useAuth> | null = null
+    const ref: { current: ReturnType<typeof useAuth> | null } = { current: null }
 
     render(
       <AuthProvider>
-        <TestConsumer onValues={(v) => { captured = v }} />
+        <TestConsumer onValues={(v) => { ref.current = v }} />
       </AuthProvider>
     )
 
     await waitFor(() => {
-      expect(captured?.loading).toBe(false)
+      expect(ref.current?.loading).toBe(false)
     })
 
-    expect(captured?.accessToken).toBe('stored-token')
+    expect(ref.current?.accessToken).toBe('stored-token')
   })
 
   it('signIn calls signInWithPopup and stores user + token', async () => {
@@ -87,24 +87,24 @@ describe('AuthContext', () => {
     vi.mocked(firebaseAuth.getIdToken).mockResolvedValue('firebase-id-token')
     vi.mocked(api.apiPost).mockResolvedValue({ accessToken: 'backend-token', user: mockUser })
 
-    let captured: ReturnType<typeof useAuth> | null = null
+    const ref: { current: ReturnType<typeof useAuth> | null } = { current: null }
 
     render(
       <AuthProvider>
-        <TestConsumer onValues={(v) => { captured = v }} />
+        <TestConsumer onValues={(v) => { ref.current = v }} />
       </AuthProvider>
     )
 
-    await waitFor(() => expect(captured?.loading).toBe(false))
+    await waitFor(() => expect(ref.current?.loading).toBe(false))
 
     await act(async () => {
-      await captured?.signIn()
+      await ref.current?.signIn()
     })
 
     expect(firebaseAuth.signInWithPopup).toHaveBeenCalled()
     expect(api.apiPost).toHaveBeenCalledWith('/api/v1/auth/firebase', { idToken: 'firebase-id-token' })
-    expect(captured?.user).toEqual(mockUser)
-    expect(captured?.accessToken).toBe('backend-token')
+    expect(ref.current?.user).toEqual(mockUser)
+    expect(ref.current?.accessToken).toBe('backend-token')
     expect(localStorage.getItem('access_token')).toBe('backend-token')
   })
 
@@ -112,22 +112,22 @@ describe('AuthContext', () => {
     const firebaseError = Object.assign(new Error('popup-failed'), { code: 'auth/popup-closed-by-user' })
     vi.mocked(firebaseAuth.signInWithPopup).mockRejectedValue(firebaseError)
 
-    let captured: ReturnType<typeof useAuth> | null = null
+    const ref: { current: ReturnType<typeof useAuth> | null } = { current: null }
 
     render(
       <AuthProvider>
-        <TestConsumer onValues={(v) => { captured = v }} />
+        <TestConsumer onValues={(v) => { ref.current = v }} />
       </AuthProvider>
     )
 
-    await waitFor(() => expect(captured?.loading).toBe(false))
+    await waitFor(() => expect(ref.current?.loading).toBe(false))
 
     await act(async () => {
-      try { await captured?.signIn() } catch { /* expected */ }
+      try { await ref.current?.signIn() } catch { /* expected */ }
     })
 
-    expect(captured?.signInError).toBe('Sign in failed: auth/popup-closed-by-user')
-    expect(captured?.user).toBeNull()
+    expect(ref.current?.signInError).toBe('Sign in failed: auth/popup-closed-by-user')
+    expect(ref.current?.user).toBeNull()
   })
 
   it('clears user and token after signOut', async () => {
@@ -136,20 +136,20 @@ describe('AuthContext', () => {
     vi.mocked(firebaseAuth.signOut).mockResolvedValue()
     vi.mocked(api.apiPost).mockResolvedValue({})
 
-    let captured: ReturnType<typeof useAuth> | null = null
+    const ref: { current: ReturnType<typeof useAuth> | null } = { current: null }
 
     render(
       <AuthProvider>
-        <TestConsumer onValues={(v) => { captured = v }} />
+        <TestConsumer onValues={(v) => { ref.current = v }} />
       </AuthProvider>
     )
 
-    await waitFor(() => expect(captured?.user).toEqual(mockUser))
+    await waitFor(() => expect(ref.current?.user).toEqual(mockUser))
 
-    await act(async () => { await captured?.signOut() })
+    await act(async () => { await ref.current?.signOut() })
 
-    expect(captured?.user).toBeNull()
-    expect(captured?.accessToken).toBeNull()
+    expect(ref.current?.user).toBeNull()
+    expect(ref.current?.accessToken).toBeNull()
     expect(localStorage.getItem('access_token')).toBeNull()
   })
 
@@ -161,44 +161,44 @@ describe('AuthContext', () => {
     it('signIn with credentials calls POST /api/v1/auth/local and stores accessToken', async () => {
       vi.mocked(api.apiPost).mockResolvedValue({ accessToken: 'local-token', user: mockUser })
 
-      let captured: ReturnType<typeof useAuth> | null = null
+      const ref: { current: ReturnType<typeof useAuth> | null } = { current: null }
 
       render(
         <AuthProvider>
-          <TestConsumer onValues={(v) => { captured = v }} />
+          <TestConsumer onValues={(v) => { ref.current = v }} />
         </AuthProvider>
       )
 
-      await waitFor(() => expect(captured?.loading).toBe(false))
+      await waitFor(() => expect(ref.current?.loading).toBe(false))
 
       await act(async () => {
-        await captured?.signIn({ email: 'user@example.com', password: 'secret123' })
+        await ref.current?.signIn({ email: 'user@example.com', password: 'secret123' })
       })
 
       expect(api.apiPost).toHaveBeenCalledWith('/api/v1/auth/local', {
         email: 'user@example.com',
         password: 'secret123',
       })
-      expect(captured?.user).toEqual(mockUser)
-      expect(captured?.accessToken).toBe('local-token')
+      expect(ref.current?.user).toEqual(mockUser)
+      expect(ref.current?.accessToken).toBe('local-token')
       expect(localStorage.getItem('access_token')).toBe('local-token')
     })
 
     it('signIn with credentials does not call Firebase SDK', async () => {
       vi.mocked(api.apiPost).mockResolvedValue({ accessToken: 'local-token', user: mockUser })
 
-      let captured: ReturnType<typeof useAuth> | null = null
+      const ref: { current: ReturnType<typeof useAuth> | null } = { current: null }
 
       render(
         <AuthProvider>
-          <TestConsumer onValues={(v) => { captured = v }} />
+          <TestConsumer onValues={(v) => { ref.current = v }} />
         </AuthProvider>
       )
 
-      await waitFor(() => expect(captured?.loading).toBe(false))
+      await waitFor(() => expect(ref.current?.loading).toBe(false))
 
       await act(async () => {
-        await captured?.signIn({ email: 'user@example.com', password: 'secret123' })
+        await ref.current?.signIn({ email: 'user@example.com', password: 'secret123' })
       })
 
       expect(firebaseAuth.signInWithPopup).not.toHaveBeenCalled()
@@ -208,26 +208,26 @@ describe('AuthContext', () => {
     it('signOut clears token without calling Firebase signOut', async () => {
       vi.mocked(api.apiPost).mockResolvedValue({ accessToken: 'local-token', user: mockUser })
 
-      let captured: ReturnType<typeof useAuth> | null = null
+      const ref: { current: ReturnType<typeof useAuth> | null } = { current: null }
 
       render(
         <AuthProvider>
-          <TestConsumer onValues={(v) => { captured = v }} />
+          <TestConsumer onValues={(v) => { ref.current = v }} />
         </AuthProvider>
       )
 
-      await waitFor(() => expect(captured?.loading).toBe(false))
+      await waitFor(() => expect(ref.current?.loading).toBe(false))
 
       await act(async () => {
-        await captured?.signIn({ email: 'user@example.com', password: 'secret123' })
+        await ref.current?.signIn({ email: 'user@example.com', password: 'secret123' })
       })
 
       vi.mocked(api.apiPost).mockResolvedValue({})
-      await act(async () => { await captured?.signOut() })
+      await act(async () => { await ref.current?.signOut() })
 
       expect(firebaseAuth.signOut).not.toHaveBeenCalled()
-      expect(captured?.user).toBeNull()
-      expect(captured?.accessToken).toBeNull()
+      expect(ref.current?.user).toBeNull()
+      expect(ref.current?.accessToken).toBeNull()
       expect(localStorage.getItem('access_token')).toBeNull()
     })
   })
