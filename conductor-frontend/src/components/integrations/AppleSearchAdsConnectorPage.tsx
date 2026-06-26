@@ -245,7 +245,7 @@ export default function AppleSearchAdsConnectorPage({ projectId }: { projectId: 
                 <YAxis yAxisId="left" hide />
                 <YAxis yAxisId="right" orientation="right" hide />
                 <Tooltip
-                  formatter={(value, name: string) =>
+                  formatter={(value, name) =>
                     name === 'localSpend' ? [formatUsd(Number(value)), 'Spend'] : [Number(value).toLocaleString(), 'New downloads']}
                   labelFormatter={l => `Date: ${l}`}
                 />
@@ -272,7 +272,7 @@ export default function AppleSearchAdsConnectorPage({ projectId }: { projectId: 
                   interval="preserveStartEnd" tickLine={false} axisLine={false} />
                 <YAxis hide />
                 <Tooltip
-                  formatter={(value: number) => [formatUsd(value), 'CPA']}
+                  formatter={(value) => [formatUsd(Number(value)), 'CPA']}
                   labelFormatter={l => `Date: ${l}`}
                 />
                 <Line type="monotone" dataKey="avgCPA" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />

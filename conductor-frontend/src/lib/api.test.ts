@@ -25,7 +25,7 @@ describe('throwApiError (via apiPost)', () => {
       }),
     ))
 
-    const err = await apiPost('/x', {}, 'tok').catch((e) => e as ApiError)
+    const err = await apiPost('/x', {}, 'tok').catch((e) => e as ApiError) as ApiError
     expect(err.status).toBe(400)
     expect(err.detail).toBe('Invalid status transition from TODO to DONE')
     expect(err.message).toBe('Invalid status transition from TODO to DONE')
@@ -39,7 +39,7 @@ describe('throwApiError (via apiPost)', () => {
       }),
     ))
 
-    const err = await apiPost('/x', {}, 'tok').catch((e) => e as ApiError)
+    const err = await apiPost('/x', {}, 'tok').catch((e) => e as ApiError) as ApiError
     expect(err.fieldErrors).toEqual([{ field: 'email', message: 'must be a valid email' }])
   })
 
@@ -48,7 +48,7 @@ describe('throwApiError (via apiPost)', () => {
       problemResponse(500, { type: 'about:blank', title: 'Internal Server Error', status: 500 }),
     ))
 
-    const err = await apiPost('/x', {}, 'tok').catch((e) => e as ApiError)
+    const err = await apiPost('/x', {}, 'tok').catch((e) => e as ApiError) as ApiError
     expect(err.status).toBe(500)
     expect(err.detail).toBeUndefined()
     expect(err.message).toBe('Server error (500)')

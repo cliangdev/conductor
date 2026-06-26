@@ -271,7 +271,7 @@ export default function RevenueCatConnectorPage({ projectId }: { projectId: stri
                 />
                 <YAxis hide domain={[0, 1]} />
                 <Tooltip
-                  formatter={(value: number) => [`${(value * 100).toFixed(1)}%`, 'Conversion']}
+                  formatter={(value) => [`${(Number(value) * 100).toFixed(1)}%`, 'Conversion']}
                   labelFormatter={l => `Week of: ${l}`}
                 />
                 <Line
@@ -315,7 +315,7 @@ export default function RevenueCatConnectorPage({ projectId }: { projectId: stri
                 />
                 <YAxis hide />
                 <Tooltip
-                  formatter={(value: number) => [formatUsd(value), 'Revenue']}
+                  formatter={(value) => [formatUsd(Number(value)), 'Revenue']}
                   labelFormatter={l => `Date: ${l}`}
                 />
                 <Line

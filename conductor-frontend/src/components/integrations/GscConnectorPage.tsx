@@ -368,7 +368,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
                 <YAxis yAxisId="left" hide />
                 <YAxis yAxisId="right" orientation="right" hide />
                 <Tooltip
-                  formatter={(value: number, name: string) => [value.toLocaleString(), name]}
+                  formatter={(value, name) => [Number(value).toLocaleString(), name]}
                   labelFormatter={l => `Date: ${l}`}
                 />
                 <Legend wrapperStyle={{ fontSize: 11 }} />

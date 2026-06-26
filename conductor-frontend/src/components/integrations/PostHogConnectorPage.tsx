@@ -208,7 +208,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
                 />
                 <YAxis hide />
                 <Tooltip
-                  formatter={(value: number) => [value.toLocaleString(), 'Pageviews']}
+                  formatter={(value) => [Number(value).toLocaleString(), 'Pageviews']}
                   labelFormatter={l => `Date: ${l}`}
                 />
                 <Line
