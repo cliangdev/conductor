@@ -6,6 +6,7 @@ import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.Connector;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.DecryptedCredentials;
+import com.conductor.integration.IntegrationToolSpec;
 import com.conductor.repository.ConnectionDataCacheRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -24,6 +25,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Owns Connection persistence + crypto orchestration. The single source of truth for a connector's
@@ -130,6 +133,7 @@ public class ConnectionService {
         c.setConnectedBy(connectedBy);
         c.setStatus("ACTIVE");
         c.setSingleInstance(isSingleInstance(connectorId));
+        computeAndStoreToolMetadata(c);
         return connectionRepository.save(c);
     }
 
@@ -137,6 +141,7 @@ public class ConnectionService {
     public void storeTokens(Connection c, String accessToken, String refreshToken, OffsetDateTime expiresAt) {
         credentialService.putTokens(c, accessToken, refreshToken, expiresAt);
         c.setStatus("ACTIVE");
+        computeAndStoreToolMetadata(c);
         connectionRepository.save(c);
     }
 
@@ -164,6 +169,7 @@ public class ConnectionService {
         } catch (Exception e) {
             throw new RuntimeException("Failed to serialize config", e);
         }
+        computeAndStoreToolMetadata(c);
         connectionRepository.save(c);
     }
 
@@ -197,5 +203,27 @@ public class ConnectionService {
         } catch (Exception e) {
             return new HashMap<>();
         }
+    }
+
+    private void computeAndStoreToolMetadata(Connection c) {
+        connectorRegistry.findFetch(c.getConnectorId()).ifPresent(fetch -> {
+            try {
+                IntegrationToolSpec spec = fetch.getToolSpec();
+                Map<String, Object> merged = new java.util.LinkedHashMap<>();
+                merged.put("description", spec.description());
+                merged.put("operations", spec.operations());
+                // Include non-secret config values for agent context (e.g. siteUrl for GSC)
+                Set<String> secretKeys = fetch.getSpec().fields().stream()
+                        .filter(com.conductor.integration.ConnectorConfigField::secret)
+                        .map(com.conductor.integration.ConnectorConfigField::key)
+                        .collect(Collectors.toSet());
+                parseConfig(c.getConfigJson()).forEach((k, v) -> {
+                    if (v != null && !secretKeys.contains(k)) merged.put(k, v);
+                });
+                c.setToolMetadata(objectMapper.writeValueAsString(merged));
+            } catch (Exception e) {
+                log.warn("Failed to compute tool metadata for connection {}: {}", c.getId(), e.getMessage());
+            }
+        });
     }
 }

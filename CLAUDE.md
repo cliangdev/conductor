@@ -2,20 +2,27 @@
 
 Team PRD collaboration platform. Claude Code generates PRDs; this app handles review, approval, and team workflow.
 
+## Maintaining This File
+
+Keep this file under 200 lines. Review changes to it like code. Rules for what belongs here:
+
+- **Include**: build commands, directory layout, monorepo structure, coding conventions, team norms, pointers to deeper docs
+- **Exclude**: procedural workflows, release checklists, ops runbooks → put those in `.claude/skills/` or `docs/`
+- **Don't** encode enforcement rules ("never do X") here — use hooks or permission settings instead
+- Any section growing past ~15 lines should move to a dedicated doc or skill with a pointer here
+
 ## Project Structure
 
 ```
 conductor/
-├── conductor-backend/     # Spring Boot 3.3.4, Java 21, Maven
-├── conductor-frontend/    # Next.js 14, TypeScript, Tailwind, shadcn/ui
-└── conductor-tools/
-    ├── cli/               # @conductor/cli — npm package, Commander.js
-    └── mcp/               # @conductor/mcp — MCP server, stdio transport
+├── conductor-backend/     # Spring Boot 4.1.0, Java 21, Maven
+├── conductor-frontend/    # Next.js 16, TypeScript, Tailwind, shadcn/ui
+└── conductor-tools/       # @cliangdev/conductor — CLI + MCP server (single npm package)
 ```
 
 ## conductor-backend
 
-Spring Boot REST API. OpenAPI-first — see [`docs/api-guidelines.md`](docs/api-guidelines.md) for the API workflow and conventions.
+Spring Boot REST API. OpenAPI-first — see [`docs/api-guidelines.md`](docs/api-guidelines.md).
 
 ```
 src/main/java/com/conductor/
@@ -41,7 +48,7 @@ src/main/resources/
 
 ## conductor-frontend
 
-Next.js 14 App Router. Auth via `AuthContext` (Firebase JS SDK + app JWT). Project scope via `ProjectContext`.
+Next.js 16 App Router. Auth via `AuthContext` (Firebase JS SDK + app JWT). Project scope via `ProjectContext`.
 
 ```
 src/
@@ -67,74 +74,23 @@ src/
 
 **Run**: `npm run dev` · **Test**: `npx vitest`
 
-## conductor-tools/cli
+## conductor-tools
 
-`@conductor/cli` — `conductor` command for issue/doc management and local sync daemon.
+`@cliangdev/conductor` — single npm package combining the CLI and MCP server.
 
 ```
 src/
-├── commands/    # issue, doc, start, stop, login, init, status, doctor
+├── commands/    # CLI commands: issue, doc, start, stop, login, init, status, doctor
 ├── daemon/      # watcher.ts — chokidar file watcher, 500ms debounce
-└── lib/         # API client, config loader
+├── lib/         # API client, config loader
+└── mcp/         # MCP server (stdio): issues, documents, workflows, comments, integrations tools
 ```
 
 Local files at `~/.conductor/{projectId}/issues/**`. Offline queue at `~/.conductor/sync-queue.json`.
 
-**Build**: `npm run build` · **Test**: `npx vitest`
+**Build**: `npm run build` · **Test**: `npx vitest` · **Config**: `~/.conductor/config.json`
 
-### Releasing the CLI
-
-The CLI publishes to npm automatically on push to `main` whenever `conductor-tools/package.json` changes. The `Release CLI` workflow (`.github/workflows/release-cli.yml`) is idempotent: it reads the version from `package.json`, skips if `cli-vX.Y.Z` already exists, otherwise runs `npm ci → test → build → publish → tag → gh release create`.
-
-**Per-release workflow:**
-
-1. **On your feature branch, bump the version** in the same commit set as your changes:
-   ```bash
-   cd conductor-tools && npm version <patch|minor|major> --no-git-tag-version
-   ```
-   This edits `package.json` and `package-lock.json`. Stage and commit alongside your feature changes.
-   → Next: open the PR.
-
-2. **Open and merge the PR.** The `version-bump-check` job in `tools.yml` fails the PR if CLI source under `src/`, `assets/`, or `scripts/` changed without a `package.json` version bump — so you'll know before merge if you forgot.
-   → Next: wait for CI to go green and merge via the GitHub UI.
-
-3. **The `Release CLI` workflow auto-fires** on the merge commit (path filter: `conductor-tools/package.json`).
-   → Next: watch `Actions → Release CLI → <run>`. ~2 minutes to npm.
-
-4. **Verify the release:**
-   ```bash
-   npm install -g @cliangdev/conductor@latest
-   conductor --version    # → matches the bump
-   ```
-   → Next: in a target project, `conductor init` to refresh `~/.claude/` skills.
-
-**Recovery cases:**
-
-- **Forgot the version bump (PR already merged)**: open a one-line follow-up PR bumping `conductor-tools/package.json`. Same flow.
-- **Workflow failed mid-release**: re-run via `Actions → Release CLI → <run> → Re-run failed jobs`. Idempotent — skips publish if the tag already landed, retries from the failure point otherwise.
-- **Two PRs raced on the same version**: the second `npm publish` fails with HTTP 403 (`version already exists`). Bump again in a new PR.
-- **Manual fallback** (workflow broken):
-  ```bash
-  cd conductor-tools && npm publish --access public
-  git tag cli-vX.Y.Z && git push origin cli-vX.Y.Z
-  gh release create cli-vX.Y.Z --generate-notes --title "CLI vX.Y.Z"
-  ```
-- **Need to release a version already in `main` but not yet tagged** (e.g. recovery from a failed manual run): `Actions → Release CLI → Run workflow` (workflow_dispatch). Reads the current `package.json` and ships it.
-
-## conductor-tools/mcp
-
-`@conductor/mcp` — MCP server for Claude Code integration (stdio transport, 8 tools).
-
-```
-src/
-├── tools/     # issues.ts, documents.ts
-├── api.ts     # authenticated HTTP client
-├── config.ts  # reads ~/.conductor/config.json
-├── files.ts   # local file read/write
-└── queue.ts   # offline sync queue
-```
-
-**Run**: `node dist/index.js` · **Config**: `~/.conductor/config.json`
+**Releasing**: Bump version on your branch (`cd conductor-tools && npm version <patch|minor|major> --no-git-tag-version`), then PR + merge. CI (`release-cli.yml`) auto-publishes to npm on merge when `package.json` changes. See `.github/workflows/release-cli.yml` for the full flow and recovery cases.
 
 ## Data Model (key tables)
 
@@ -147,48 +103,43 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 `project_settings` (Discord webhook URL)  
 `invites`, `api_keys`
 
-**Future eng/marketing grouping** should be done with **labels + saved views** (or a nullable `group` tag on `project_members`), *not* by reintroducing a nested container above projects — that two-level org→project model was deliberately removed for simplicity.
+**Future eng/marketing grouping** should use **labels + saved views** (or a nullable `group` tag on `project_members`), *not* a nested container above projects — that two-level org→project model was deliberately removed for simplicity.
 
-## Deploying a PR build
+## Claude Integration (.claude/)
 
-Add a label to the PR to build, test, and deploy that branch to Cloud Run (`deploy-on-label.yml`):
-- **`deploy-backend`** → deploys `conductor-backend`
-- **`deploy-frontend`** → deploys `conductor-frontend`
+`.claude/` at the repo root provides skills and agents for Claude Code users:
 
-The deploy fires on the *labeled* event, so to redeploy after new commits, remove and re-add the label
-(`gh pr edit <PR> --remove-label <label>` then `--add-label <label>`). Each run comments the status on the PR.
+- `commands/conductor` — the `conductor` slash command (installed to `~/.claude/` via `conductor init`)
+- `skills/` — `conductor-coder`, `agent-creator`, `ux-ui-design`
+- `agents/` — custom subagent definitions
 
-## Fetching Cloud Run Logs
+Source of truth for these assets is `conductor-tools/assets/claude/` — edit there, not in `.claude/` directly.
 
-Two options:
+## CI / Deployment
 
-**Option 1 — `scripts/logs.sh`** (wraps gcloud, requires `CONDUCTOR_GCP_PROJECT`):
+**PR deployments** — add a label to deploy to Cloud Run:
+- `deploy-backend` → deploys `conductor-backend`
+- `deploy-frontend` → deploys `conductor-frontend`
+
+To redeploy after new commits: remove then re-add the label. Each run posts deploy status as a PR comment.
+
+**CLI release** — handled automatically by `release-cli.yml` on merge (see conductor-tools section).
+
+## Logs
+
+Use `scripts/logs.sh` (requires `CONDUCTOR_GCP_PROJECT` env var):
+
 ```bash
-export CONDUCTOR_GCP_PROJECT=<your-gcp-project>
-./scripts/logs.sh                        # backend logs, last 50 lines
-./scripts/logs.sh frontend               # frontend logs, last 50 lines
-./scripts/logs.sh backend --lines 200    # last 200 lines
-./scripts/logs.sh backend --since 1h     # last 1 hour
+export CONDUCTOR_GCP_PROJECT=<project>
+./scripts/logs.sh                        # backend, last 50 lines
+./scripts/logs.sh frontend --since 1h   # frontend, last 1 hour
 ```
 
-**Option 2 — `gcloud` directly** (useful with a named configuration or alias):
-```bash
-gcloud --configuration=<config> --project=<project> logging read \
-  "resource.type=cloud_run_revision AND resource.labels.service_name=conductor-backend" \
-  --limit=50 --format=json | python3 -c "
-import json, sys
-for l in reversed(json.load(sys.stdin)):
-    ts = l.get('timestamp','')[:19]
-    sev = l.get('severity','')
-    msg = l.get('textPayload') or l.get('jsonPayload',{}).get('message','') or l.get('httpRequest',{}).get('requestUrl','')
-    if msg: print(f'{ts} [{sev}] {msg}')
-"
-```
+See `scripts/gcloud-alias-example.sh` for a persistent shell alias.
 
-Set up a shell alias for your deployment (see `scripts/gcloud-alias-example.sh`) so you don't have to repeat the flags. Requires `gcloud` CLI authenticated with access to the target project.
+## Key Docs
 
-## API Workflow
-
-**Before creating or updating any API, read [`docs/api-guidelines.md`](docs/api-guidelines.md).** It is
-the authoritative reference for the OpenAPI-first workflow, the external vs internal API split,
-centralized base prefixes, versioning, and REST best practices — follow it and its end-of-doc checklist.
+- [`docs/api-guidelines.md`](docs/api-guidelines.md) — OpenAPI-first workflow, external vs internal API split, REST conventions. **Read before creating or updating any API.**
+- [`docs/workflows.md`](docs/workflows.md) — Workflow YAML format, trigger types, step types, execution modes, self-hosted runner setup.
+- [`docs/mcp-tool-guidelines.md`](docs/mcp-tool-guidelines.md) — MCP tool design principles: context budget, action–verify pattern, dispatch–status pattern, checklist. **Read before creating or updating any MCP tool.**
+- [`docs/dev-workflow.md`](docs/dev-workflow.md) — PR branch deploy/test/debug loop: deploy labels, skip-tests, live MCP testing, log access.
