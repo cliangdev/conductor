@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
 import { PuzzleIcon, CheckCircleIcon } from 'lucide-react';
 import { ConnectorIcon } from '@/components/integrations/ConnectorIcon';
+import { PageHeader } from '@/components/layout/PageHeader';
 import type { Member } from '@/types';
 
 interface ConnectorConfigField {
@@ -192,13 +193,15 @@ export default function SettingsIntegrationsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-foreground">Integrations</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Connect third-party tools to view live metrics and automate workflows in Conductor.
-        </p>
-      </div>
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
+          { label: 'Connect Apps' },
+        ]}
+        title="Connect Apps"
+        description="Connect third-party tools to view live metrics and automate workflows in Conductor."
+      />
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b border-border">

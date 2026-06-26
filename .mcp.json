@@ -8,8 +8,9 @@
       ]
     },
     "conductor": {
-      "command": "conductor",
+      "command": "node",
       "args": [
+        "/Users/cliang/workspace/specflux_workspace/conductor/conductor-tools/dist/index.js",
         "mcp"
       ]
     }

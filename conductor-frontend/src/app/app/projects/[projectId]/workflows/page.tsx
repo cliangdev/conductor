@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet, apiPatch, apiPost } from '@/lib/api';
+import { apiGet, apiPost } from '@/lib/api';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
-import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { TriggerBadges } from '@/components/workflow/TriggerBadges';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -33,59 +34,6 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function KebabMenu({
-  workflow,
-  onEdit,
-  onRun,
-}: {
-  workflow: WorkflowDefinitionDto;
-  onEdit: () => void;
-  onRun: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [open]);
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        className="px-2 py-1 rounded text-muted-foreground hover:bg-muted/50 text-base leading-none"
-        onClick={e => { e.stopPropagation(); setOpen(v => !v); }}
-        aria-label="More actions"
-      >
-        ···
-      </button>
-      {open && (
-        <div className="absolute right-0 z-20 mt-1 w-36 rounded-md border bg-background shadow-md">
-          <button
-            className="flex w-full items-center px-3 py-2 text-sm hover:bg-muted/50"
-            onClick={e => { e.stopPropagation(); setOpen(false); onEdit(); }}
-          >
-            Edit
-          </button>
-          <button
-            className={`flex w-full items-center px-3 py-2 text-sm hover:bg-muted/50 ${!workflow.enabled ? 'opacity-40 cursor-not-allowed' : ''}`}
-            disabled={!workflow.enabled}
-            onClick={e => { e.stopPropagation(); setOpen(false); onRun(); }}
-          >
-            Run Now
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function WorkflowsPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const { accessToken } = useAuth();
@@ -93,6 +41,7 @@ export default function WorkflowsPage() {
   const [workflows, setWorkflows] = useState<WorkflowDefinitionDto[]>([]);
   const [lastRuns, setLastRuns] = useState<Record<string, WorkflowRunDto | null>>({});
   const [loading, setLoading] = useState(true);
+  const [runningId, setRunningId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -117,52 +66,58 @@ export default function WorkflowsPage() {
       .finally(() => setLoading(false));
   }, [projectId, accessToken]);
 
-  const handleToggleEnabled = async (workflow: WorkflowDefinitionDto) => {
+  const handleRun = async (workflow: WorkflowDefinitionDto) => {
     if (!accessToken) return;
-    const updated = await apiPatch<WorkflowDefinitionDto>(
-      `/api/v1/projects/${projectId}/workflows/${workflow.id}/enabled`,
-      { enabled: !workflow.enabled },
-      accessToken
-    );
-    if (!updated) return;
-    setWorkflows(prev => prev.map(w => w.id === updated.id ? updated : w));
+    setRunningId(workflow.id);
+    try {
+      const run = await apiPost<WorkflowRunDto>(
+        `/api/v1/projects/${projectId}/workflows/${workflow.id}/dispatch`,
+        {},
+        accessToken
+      );
+      router.push(`/app/projects/${projectId}/workflows/${workflow.id}/runs/${run.id}`);
+    } finally {
+      setRunningId(null);
+    }
   };
 
-  const handleDispatch = async (workflow: WorkflowDefinitionDto) => {
-    if (!accessToken) return;
-    const run = await apiPost<WorkflowRunDto>(
-      `/api/v1/projects/${projectId}/workflows/${workflow.id}/dispatch`,
-      {},
-      accessToken
-    );
-    router.push(`/app/projects/${projectId}/workflows/${workflow.id}/runs/${run.id}`);
-  };
-
-  if (loading) return <div className="p-6">Loading...</div>;
+  if (loading) return <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">Loading...</div>;
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Workflows</h1>
-        <Button onClick={() => router.push(`/app/projects/${projectId}/workflows/new`)}>
-          New Workflow
-        </Button>
-      </div>
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+      <PageHeader
+        title="Workflows"
+        description="Run automations and review their history."
+        actions={
+          <Link
+            href={`/app/projects/${projectId}/settings/workflows`}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            Manage workflows →
+          </Link>
+        }
+      />
 
       {workflows.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
-          No workflows yet. Create one to automate your project.
+          No workflows yet.{' '}
+          <Link
+            href={`/app/projects/${projectId}/settings/workflows/new`}
+            className="text-primary hover:underline"
+          >
+            Create one in Settings →
+          </Link>
         </div>
       ) : (
-        <div className="border rounded-lg">
-          <table className="w-full">
+        <div className="border rounded-lg overflow-x-auto">
+          <table className="w-full min-w-[640px]">
             <thead className="bg-muted/50">
               <tr>
                 <th className="text-left p-3 font-medium">Name</th>
                 <th className="text-left p-3 font-medium">Last Run</th>
                 <th className="text-left p-3 font-medium">Triggers</th>
-                <th className="text-left p-3 font-medium">Enabled</th>
-                <th className="p-3 font-medium w-10" />
+                <th className="text-left p-3 font-medium">Status</th>
+                <th className="p-3 font-medium w-24" />
               </tr>
             </thead>
             <tbody>
@@ -190,24 +145,20 @@ export default function WorkflowsPage() {
                     <td className="p-3">
                       <TriggerBadges yaml={workflow.yaml} />
                     </td>
-                    <td className="p-3" onClick={e => e.stopPropagation()}>
-                      <button
-                        onClick={() => handleToggleEnabled(workflow)}
-                        className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
-                          workflow.enabled ? 'bg-green-500' : 'bg-gray-300'
-                        }`}
-                      >
-                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                          workflow.enabled ? 'translate-x-5' : 'translate-x-1'
-                        }`} />
-                      </button>
+                    <td className="p-3">
+                      <span className={`inline-flex items-center gap-1 text-xs ${workflow.enabled ? 'text-green-600' : 'text-muted-foreground'}`}>
+                        <span className={`inline-block w-1.5 h-1.5 rounded-full ${workflow.enabled ? 'bg-green-500' : 'bg-gray-400'}`} />
+                        {workflow.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
                     </td>
                     <td className="p-3 text-right" onClick={e => e.stopPropagation()}>
-                      <KebabMenu
-                        workflow={workflow}
-                        onEdit={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/edit`)}
-                        onRun={() => handleDispatch(workflow)}
-                      />
+                      <button
+                        onClick={() => handleRun(workflow)}
+                        disabled={!workflow.enabled || runningId === workflow.id}
+                        className="text-sm font-medium text-primary hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                      >
+                        {runningId === workflow.id ? 'Starting…' : '▶ Run'}
+                      </button>
                     </td>
                   </tr>
                 );

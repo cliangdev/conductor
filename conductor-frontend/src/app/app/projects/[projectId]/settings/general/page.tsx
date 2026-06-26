@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { apiDelete, apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
+import { PageHeader } from '@/components/layout/PageHeader'
 import type { Member, Project } from '@/types'
 
 export default function GeneralSettingsPage() {
@@ -101,9 +102,15 @@ export default function GeneralSettingsPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8 space-y-10">
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-10">
       <div>
-        <h1 className="text-2xl font-bold text-foreground mb-6">General</h1>
+        <PageHeader
+          breadcrumbs={[
+            { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
+            { label: 'General' },
+          ]}
+          title="General"
+        />
 
         <form onSubmit={handleSave} className="space-y-4">
           <div>

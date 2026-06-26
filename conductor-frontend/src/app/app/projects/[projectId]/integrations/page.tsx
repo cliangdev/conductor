@@ -9,6 +9,7 @@ import { apiGet } from '@/lib/api';
 import Link from 'next/link';
 import { PuzzleIcon } from 'lucide-react';
 import { ConnectorIcon } from '@/components/integrations/ConnectorIcon';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 interface IntegrationListItem {
   connectorId: string;
@@ -55,11 +56,19 @@ export default function IntegrationsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-foreground">Integrations</h1>
-        <p className="text-sm text-muted-foreground mt-1">Connected apps</p>
-      </div>
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+      <PageHeader
+        title="Integrations"
+        description="Your connected apps and their live data."
+        actions={
+          <Link
+            href={`/app/projects/${projectId}/settings/integrations`}
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            Connect an app →
+          </Link>
+        }
+      />
 
       {connected.length === 0 ? (
         <div className="bg-card rounded-lg border border-border p-12 text-center">

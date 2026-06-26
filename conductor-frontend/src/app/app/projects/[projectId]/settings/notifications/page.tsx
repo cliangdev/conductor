@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiErrorMessage, type ApiError } from '@/lib/api'
 import type { Member } from '@/types'
 import { NotificationSettingsPage } from '@/components/notifications/NotificationSettingsPage'
+import { PageHeader } from '@/components/layout/PageHeader'
 
 export default function NotificationsPage() {
   const params = useParams<{ projectId: string }>()
@@ -94,8 +95,14 @@ export default function NotificationsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <h1 className="text-2xl font-bold text-foreground mb-6">Notifications</h1>
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
+          { label: 'Notifications' },
+        ]}
+        title="Notifications"
+      />
       <NotificationSettingsPage projectId={projectId} accessToken={accessToken!} />
     </div>
   )

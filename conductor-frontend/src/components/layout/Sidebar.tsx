@@ -315,6 +315,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                     Members
                   </NavItem>
                   <NavItem
+                    href={`/app/projects/${currentWorkspace.id}/settings/workflows`}
+                    icon={<GitBranchIcon className="h-4 w-4" />}
+                    onNavigate={onNavigate}
+                  >
+                    Workflows
+                  </NavItem>
+                  <NavItem
                     href={`/app/projects/${currentWorkspace.id}/settings/api-keys`}
                     icon={<KeyIcon className="h-4 w-4" />}
                     onNavigate={onNavigate}
@@ -333,7 +340,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                     icon={<PuzzleIcon className="h-4 w-4" />}
                     onNavigate={onNavigate}
                   >
-                    Integrations
+                    Connect Apps
                   </NavItem>
                 </>
               }

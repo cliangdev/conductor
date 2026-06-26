@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/layout/PageHeader';
 import WorkflowDiagram from '@/components/workflow/WorkflowDiagram';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -132,47 +133,39 @@ export default function WorkflowDetailPage() {
   const stats = computeStats(runs);
 
   return (
-    <div className="p-6 max-w-6xl">
-      <button
-        className="text-sm text-muted-foreground hover:underline mb-4 block"
-        onClick={() => router.push(`/app/projects/${projectId}/workflows`)}
-      >
-        ← Workflows
-      </button>
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },
+          { label: workflow.name },
+        ]}
+        title={workflow.name}
+        status={
+          <span className={`flex items-center gap-1 text-sm ${workflow.enabled ? 'text-green-600' : 'text-gray-400'}`}>
+            <span className={`inline-block w-2 h-2 rounded-full ${workflow.enabled ? 'bg-green-500' : 'bg-gray-400'}`} />
+            {workflow.enabled ? 'Enabled' : 'Disabled'}
+          </span>
+        }
+        description={triggers.length > 0 ? `Triggers: ${triggers.join(', ')}` : undefined}
+        actions={
+          <>
+            <Link
+              href={`/app/projects/${projectId}/settings/workflows/${workflowId}/edit`}
+              className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+            >
+              Edit in Settings →
+            </Link>
+            <Button
+              onClick={handleRunNow}
+              disabled={!workflow.enabled || dispatching}
+            >
+              {dispatching ? 'Starting...' : '▶ Run Now'}
+            </Button>
+          </>
+        }
+      />
 
-      <div className="flex items-start justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold">{workflow.name}</h1>
-          <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-            <span className={`flex items-center gap-1 ${workflow.enabled ? 'text-green-600' : 'text-gray-400'}`}>
-              <span className={`inline-block w-2 h-2 rounded-full ${workflow.enabled ? 'bg-green-500' : 'bg-gray-400'}`} />
-              {workflow.enabled ? 'Enabled' : 'Disabled'}
-            </span>
-            {triggers.length > 0 && (
-              <>
-                <span>·</span>
-                <span>Triggers: {triggers.join(', ')}</span>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}/edit`)}
-          >
-            Edit
-          </Button>
-          <Button
-            onClick={handleRunNow}
-            disabled={!workflow.enabled || dispatching}
-          >
-            {dispatching ? 'Starting...' : '▶ Run Now'}
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-[280px_1fr] gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-4 mb-6">
         <div className="border rounded-lg p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Stats</p>
           {stats ? (
@@ -230,8 +223,8 @@ export default function WorkflowDetailPage() {
           No runs yet. Click &quot;Run Now&quot; to trigger this workflow.
         </div>
       ) : (
-        <div className="border rounded-lg overflow-hidden">
-          <table className="w-full">
+        <div className="border rounded-lg overflow-x-auto">
+          <table className="w-full min-w-[520px]">
             <tbody>
               {runs.map((run, i) => (
                 <tr

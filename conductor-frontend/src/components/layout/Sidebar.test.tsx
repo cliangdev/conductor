@@ -56,7 +56,21 @@ describe('Sidebar', () => {
     render(<Sidebar />)
     expect(screen.getByRole('link', { name: /issues/i })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /docs/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /workflows/i })).toBeInTheDocument()
+    // Workflows appears both at top level (operate) and under Settings (manage).
+    const workflowsLinks = screen.getAllByRole('link', { name: /workflows/i })
+    expect(workflowsLinks.some((l) => l.getAttribute('href') === '/app/projects/proj-1/workflows')).toBe(true)
+  })
+
+  it('renders a Settings → Workflows management link', () => {
+    render(<Sidebar />)
+    const workflowsLinks = screen.getAllByRole('link', { name: /workflows/i })
+    expect(workflowsLinks.some((l) => l.getAttribute('href') === '/app/projects/proj-1/settings/workflows')).toBe(true)
+  })
+
+  it('renders a Connect Apps link under Settings pointing to settings/integrations', () => {
+    render(<Sidebar />)
+    const connectApps = screen.getByRole('link', { name: /connect apps/i })
+    expect(connectApps).toHaveAttribute('href', '/app/projects/proj-1/settings/integrations')
   })
 
   it('renders Settings group when on a workspace settings page', () => {
