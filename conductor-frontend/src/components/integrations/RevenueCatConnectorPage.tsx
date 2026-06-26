@@ -109,7 +109,7 @@ export default function RevenueCatConnectorPage({ projectId }: { projectId: stri
 
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-muted rounded w-32" />
           <div className="h-48 bg-muted rounded-lg" />
@@ -128,7 +128,7 @@ export default function RevenueCatConnectorPage({ projectId }: { projectId: stri
 
   if (health === 'SETUP_REQUIRED' || !response) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="mb-6 flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold text-foreground">RevenueCat</h1>
@@ -203,7 +203,7 @@ export default function RevenueCatConnectorPage({ projectId }: { projectId: stri
   ];
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <ConnectorHeader
         title="RevenueCat"
         subtitle="Finance · Subscription metrics"

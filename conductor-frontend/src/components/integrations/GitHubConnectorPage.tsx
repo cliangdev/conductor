@@ -140,7 +140,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
 
   if (membersLoading || connectionsLoading) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <p className="text-sm text-muted-foreground">Loading…</p>
       </div>
     );
@@ -148,7 +148,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
 
   if (connectionsError === 'access_denied') {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <p className="text-sm text-destructive" role="alert">
           Access denied. You do not have permission to view this integration.
         </p>
@@ -158,14 +158,14 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
 
   if (connectionsError) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <p className="text-sm text-destructive" role="alert">{connectionsError}</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <h1 className="text-2xl font-bold text-foreground mb-1">GitHub</h1>
       <p className="text-sm text-muted-foreground mb-6">
         Install the Conductor GitHub App and choose which repositories it can access. When a pull request

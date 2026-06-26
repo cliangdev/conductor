@@ -36,7 +36,7 @@ function ConnectorBody({ projectId, connectorId }: { projectId: string; connecto
       return <AppleSearchAdsConnectorPage projectId={projectId} />;
     default:
       return (
-        <div className="max-w-4xl mx-auto px-4 py-8">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-12">
             <p className="text-muted-foreground">Unknown connector: {connectorId}</p>
           </div>
@@ -51,7 +51,7 @@ export default function ConnectorPage() {
 
   return (
     <>
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-6">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
         <Breadcrumb
           items={[
             { label: 'Integrations', href: `/app/projects/${projectId}/integrations` },
