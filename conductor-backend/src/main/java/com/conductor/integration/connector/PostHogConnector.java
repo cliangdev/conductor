@@ -130,6 +130,19 @@ public class PostHogConnector implements FetchConnector {
     }
 
     @Override
+    public IntegrationToolSpec getToolSpec() {
+        return new IntegrationToolSpec(
+            "Web analytics and product insights from PostHog",
+            List.of(
+                new ToolOperation("pageview_trend", "Daily pageview trend (last 30 days)",
+                    Map.of(), "{series:[{date,count}], total:number}"),
+                new ToolOperation("total_pageviews", "Total pageviews for the last 30 days",
+                    Map.of(), "{total:number}")
+            )
+        );
+    }
+
+    @Override
     public ConnectorHealth checkHealth(ConnectionContext ctx) {
         try {
             Object projectIdObj = ctx.configValue("projectId");
