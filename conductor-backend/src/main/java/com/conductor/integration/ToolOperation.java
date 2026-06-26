@@ -10,5 +10,5 @@ public record ToolOperation(
         @JsonProperty("id") String id,
         @JsonProperty("description") String description,
         @JsonProperty("params") Map<String, String> params,
-        @JsonProperty("outputShape") String outputShape,
+        @JsonProperty("outputShape") Object outputShape,
         @JsonProperty("outputKeys") List<String> outputKeys) {}

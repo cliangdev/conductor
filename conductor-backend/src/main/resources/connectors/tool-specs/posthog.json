@@ -5,14 +5,21 @@
       "id": "pageview_trend",
       "description": "Daily pageview trend (last 30 days)",
       "params": {},
-      "outputShape": "{series:[{date,count}], total:number}",
-      "outputKeys": ["series"]
+      "outputShape": {
+        "series": [
+          { "date": "2026-06-01", "count": 1234 }
+        ],
+        "total": 38420
+      },
+      "outputKeys": ["series", "total"]
     },
     {
       "id": "total_pageviews",
       "description": "Total pageviews for the last 30 days",
       "params": {},
-      "outputShape": "{total:number}",
+      "outputShape": {
+        "total": 38420
+      },
       "outputKeys": ["total"]
     }
   ]

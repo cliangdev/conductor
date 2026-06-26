@@ -7,21 +7,46 @@
       "params": {
         "siteUrl": "Search Console property URL (e.g. sc-domain:example.com)"
       },
-      "outputShape": "{trend:[{date,clicks,impressions,ctr,position}], topQueries:[{query,clicks,impressions}], topPages:[{page,clicks,impressions}], brandedClickShare:number}",
+      "outputShape": {
+        "trend": [
+          { "date": "2026-06-01", "clicks": 420, "impressions": 8900, "ctr": 0.047, "position": 18.3 }
+        ],
+        "topQueries": [
+          { "query": "example keyword", "clicks": 210, "impressions": 3400, "ctr": 0.062, "position": 7.1 }
+        ],
+        "topPages": [
+          { "page": "https://example.com/blog/post", "clicks": 180, "impressions": 2100 }
+        ],
+        "brandedClickShare": 0.31,
+        "countries": [
+          { "country": "usa", "clicks": 310 }
+        ],
+        "devices": [
+          { "device": "MOBILE", "clicks": 260 }
+        ]
+      },
       "outputKeys": ["trend", "topQueries", "topPages", "brandedClickShare", "countries", "devices"]
     },
     {
       "id": "top_queries",
       "description": "Top 50 search queries by clicks (last 28 days)",
       "params": {},
-      "outputShape": "{topQueries:[{query,clicks,impressions,ctr,position}]}",
+      "outputShape": {
+        "topQueries": [
+          { "query": "example keyword", "clicks": 210, "impressions": 3400, "ctr": 0.062, "position": 7.1 }
+        ]
+      },
       "outputKeys": ["topQueries"]
     },
     {
       "id": "top_pages",
       "description": "Top 25 pages by clicks (last 28 days)",
       "params": {},
-      "outputShape": "{topPages:[{page,clicks,impressions}]}",
+      "outputShape": {
+        "topPages": [
+          { "page": "https://example.com/blog/post", "clicks": 180, "impressions": 2100 }
+        ]
+      },
       "outputKeys": ["topPages"]
     }
   ]

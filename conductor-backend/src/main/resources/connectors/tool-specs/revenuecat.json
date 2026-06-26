@@ -5,21 +5,37 @@
       "id": "overview",
       "description": "Snapshot: MRR, active subscriptions, active trials, revenue last 28 days, new customers last 28 days",
       "params": {},
-      "outputShape": "{overview:{mrr,activeSubscriptions,activeTrials,revenueLast28Days,newCustomersLast28Days}}",
+      "outputShape": {
+        "overview": {
+          "mrr": 4200.00,
+          "activeSubscriptions": 312,
+          "activeTrials": 45,
+          "revenueLast28Days": 9800.00,
+          "newCustomersLast28Days": 67
+        }
+      },
       "outputKeys": ["overview"]
     },
     {
       "id": "revenue_series",
       "description": "Daily revenue series (30d)",
       "params": {},
-      "outputShape": "{revenueSeries:[{date,value}]}",
+      "outputShape": {
+        "revenueSeries": [
+          { "date": "2026-06-01", "value": 320.50 }
+        ]
+      },
       "outputKeys": ["revenueSeries"]
     },
     {
       "id": "trial_conversion",
       "description": "Weekly trial-to-paid conversion series (30d)",
       "params": {},
-      "outputShape": "{trialConversion:[{period,startRate,conversionRate}]}",
+      "outputShape": {
+        "trialConversion": [
+          { "period": "2026-05-26", "startRate": 0.18, "conversionRate": 0.42 }
+        ]
+      },
       "outputKeys": ["trialConversion"]
     }
   ]

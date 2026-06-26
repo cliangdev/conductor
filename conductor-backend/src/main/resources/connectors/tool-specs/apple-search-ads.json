@@ -5,7 +5,17 @@
       "id": "campaign_report",
       "description": "Campaign-level installs, downloads, and spend time series (last 30 days)",
       "params": {},
-      "outputShape": "{installs:[{date,installs}], downloads:[{date,downloads}], spend:[{date,spend}]}",
+      "outputShape": {
+        "installs": [
+          { "date": "2026-06-01", "installs": 142 }
+        ],
+        "downloads": [
+          { "date": "2026-06-01", "downloads": 98 }
+        ],
+        "spend": [
+          { "date": "2026-06-01", "spend": 84.50 }
+        ]
+      },
       "outputKeys": ["installs", "downloads", "spend"]
     },
     {
@@ -14,7 +24,11 @@
       "params": {
         "campaignId": "Campaign ID configured in connection settings"
       },
-      "outputShape": "{topKeywords:[{keyword,installs,taps,spend,ttr}]}",
+      "outputShape": {
+        "topKeywords": [
+          { "keyword": "example app", "installs": 58, "taps": 210, "spend": 32.10, "ttr": 0.276 }
+        ]
+      },
       "outputKeys": ["topKeywords"]
     }
   ]

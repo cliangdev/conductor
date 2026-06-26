@@ -77,8 +77,8 @@ function OperationCard({ op, connectorId }: { op: IntegrationToolOperation; conn
       {op.outputShape && (
         <div>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Output shape</p>
-          <pre className="text-xs font-mono bg-muted/60 rounded p-3 overflow-x-auto text-foreground whitespace-pre-wrap break-words">
-            {op.outputShape}
+          <pre className="text-xs font-mono bg-muted/60 rounded p-3 overflow-x-auto text-foreground">
+            {JSON.stringify(op.outputShape, null, 2)}
           </pre>
         </div>
       )}

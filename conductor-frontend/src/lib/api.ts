@@ -162,7 +162,7 @@ export interface IntegrationToolOperation {
   id: string
   description: string
   params: Record<string, string>
-  outputShape: string
+  outputShape: Record<string, unknown>
   outputKeys: string[]
 }
 
