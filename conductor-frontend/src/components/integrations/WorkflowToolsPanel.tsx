@@ -178,30 +178,6 @@ export default function WorkflowToolsPanel({
             )}
           </div>
 
-          {/* Connection details */}
-          {tool && (
-            <div>
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Connection</p>
-              <div className="bg-card border border-border rounded-lg divide-y divide-border">
-                <div className="flex items-center gap-4 px-4 py-2.5">
-                  <span className="text-xs text-muted-foreground w-28">ID</span>
-                  <span className="font-mono text-xs text-foreground">{tool.connectionId}</span>
-                </div>
-                {tool.capabilities.length > 0 && (
-                  <div className="flex items-center gap-4 px-4 py-2.5">
-                    <span className="text-xs text-muted-foreground w-28">Capabilities</span>
-                    <div className="flex gap-1.5">
-                      {tool.capabilities.map((cap) => (
-                        <span key={cap} className="text-xs bg-muted px-2 py-0.5 rounded text-foreground">
-                          {cap}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>
