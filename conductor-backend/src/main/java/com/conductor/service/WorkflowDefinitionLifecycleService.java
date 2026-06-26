@@ -74,7 +74,8 @@ public class WorkflowDefinitionLifecycleService {
         // so in-flight Work Items are not yet pinned to the version they started on. Pinning + in-flight
         // migration land with the editing experience (no edit/re-publish path exists in the v1 API yet).
         definition.setVersion(definition.getVersion() == null ? 1 : definition.getVersion() + 1);
-        if (definition.getSchemaVersion() == null && definition.getDefinition().hasNonNull("schemaVersion")) {
+        if (definition.getSchemaVersion() == null && definition.getDefinition() != null
+                && definition.getDefinition().hasNonNull("schemaVersion")) {
             definition.setSchemaVersion(definition.getDefinition().get("schemaVersion").asInt());
         }
         return definitionRepository.save(definition);
