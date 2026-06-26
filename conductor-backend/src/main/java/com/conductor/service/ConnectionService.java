@@ -205,24 +205,30 @@ public class ConnectionService {
         }
     }
 
+    /** Compute tool metadata for a connection on-the-fly from the connector's static spec + non-secret config. */
+    public Optional<Map<String, Object>> computeToolMetadata(Connection c) {
+        return connectorRegistry.findFetch(c.getConnectorId()).map(fetch -> {
+            IntegrationToolSpec spec = fetch.getToolSpec();
+            Map<String, Object> merged = new java.util.LinkedHashMap<>();
+            merged.put("description", spec.description());
+            merged.put("operations", spec.operations());
+            Set<String> secretKeys = fetch.getSpec().fields().stream()
+                    .filter(com.conductor.integration.ConnectorConfigField::secret)
+                    .map(com.conductor.integration.ConnectorConfigField::key)
+                    .collect(Collectors.toSet());
+            parseConfig(c.getConfigJson()).forEach((k, v) -> {
+                if (v != null && !secretKeys.contains(k)) merged.put(k, v);
+            });
+            return merged;
+        });
+    }
+
     private void computeAndStoreToolMetadata(Connection c) {
-        connectorRegistry.findFetch(c.getConnectorId()).ifPresent(fetch -> {
+        computeToolMetadata(c).ifPresent(meta -> {
             try {
-                IntegrationToolSpec spec = fetch.getToolSpec();
-                Map<String, Object> merged = new java.util.LinkedHashMap<>();
-                merged.put("description", spec.description());
-                merged.put("operations", spec.operations());
-                // Include non-secret config values for agent context (e.g. siteUrl for GSC)
-                Set<String> secretKeys = fetch.getSpec().fields().stream()
-                        .filter(com.conductor.integration.ConnectorConfigField::secret)
-                        .map(com.conductor.integration.ConnectorConfigField::key)
-                        .collect(Collectors.toSet());
-                parseConfig(c.getConfigJson()).forEach((k, v) -> {
-                    if (v != null && !secretKeys.contains(k)) merged.put(k, v);
-                });
-                c.setToolMetadata(objectMapper.writeValueAsString(merged));
+                c.setToolMetadata(objectMapper.writeValueAsString(meta));
             } catch (Exception e) {
-                log.warn("Failed to compute tool metadata for connection {}: {}", c.getId(), e.getMessage());
+                log.warn("Failed to store tool metadata for connection {}: {}", c.getId(), e.getMessage());
             }
         });
     }

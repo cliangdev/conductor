@@ -214,21 +214,6 @@ public class RevenueCatConnector implements FetchConnector {
     }
 
     @Override
-    public IntegrationToolSpec getToolSpec() {
-        return new IntegrationToolSpec(
-            "Subscription revenue, trials, and conversion metrics from RevenueCat",
-            List.of(
-                new ToolOperation("overview", "Snapshot: MRR, active subscriptions, active trials, revenue last 28 days, new customers last 28 days",
-                    Map.of(), "{overview:{mrr,activeSubscriptions,activeTrials,revenueLast28Days,newCustomersLast28Days}}", List.of("overview")),
-                new ToolOperation("revenue_series", "Daily revenue series (30d)",
-                    Map.of(), "{revenueSeries:[{date,value}]}", List.of("revenueSeries")),
-                new ToolOperation("trial_conversion", "Weekly trial-to-paid conversion series (30d)",
-                    Map.of(), "{trialConversion:[{period,startRate,conversionRate}]}", List.of("trialConversion"))
-            )
-        );
-    }
-
-    @Override
     public ConnectorHealth checkHealth(ConnectionContext ctx) {
         try {
             Object projectIdObj = ctx.configValue("projectId");

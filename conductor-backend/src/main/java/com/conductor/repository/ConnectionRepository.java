@@ -30,4 +30,5 @@ public interface ConnectionRepository extends JpaRepository<Connection, String> 
     List<Connection> findByConnectorIdAndConfigValue(@Param("connectorId") String connectorId,
                                                      @Param("key") String key,
                                                      @Param("value") String value);
+
 }

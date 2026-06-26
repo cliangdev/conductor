@@ -1,0 +1,20 @@
+{
+  "description": "Cloud spend by service from GCP BigQuery billing export",
+  "operations": [
+    {
+      "id": "cost_by_service",
+      "description": "Cloud spend per GCP service: current 30d vs prior 30d with MoM delta percentage",
+      "params": {},
+      "outputShape": {
+        "services": [
+          { "service": "Cloud Run", "cost": 12.34, "currency": "USD" }
+        ],
+        "totalCost": 42.00,
+        "previousPeriodCost": 38.50,
+        "momDeltaPct": 9.1,
+        "currency": "USD"
+      },
+      "outputKeys": ["services", "totalCost", "previousPeriodCost", "momDeltaPct", "currency"]
+    }
+  ]
+}

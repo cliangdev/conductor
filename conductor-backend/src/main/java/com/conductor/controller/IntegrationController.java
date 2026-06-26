@@ -60,6 +60,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 @RestController
 public class IntegrationController implements IntegrationsApi {
@@ -137,8 +138,8 @@ public class IntegrationController implements IntegrationsApi {
     public ResponseEntity<List<IntegrationToolItem>> listIntegrationTools(String projectId) {
         requireMember(projectId);
         List<IntegrationToolItem> result = connectionService.listForProject(projectId).stream()
-            .filter(c -> "ACTIVE".equals(c.getStatus()) && c.getToolMetadata() != null)
-            .map(c -> {
+            .filter(c -> "ACTIVE".equals(c.getStatus()))
+            .flatMap(c -> connectionService.computeToolMetadata(c).map(meta -> {
                 IntegrationToolItem item = new IntegrationToolItem();
                 item.setConnectionId(c.getId());
                 item.setConnectorId(c.getConnectorId());
@@ -148,14 +149,9 @@ public class IntegrationController implements IntegrationsApi {
                         .map(cap -> cap.name()).toList())
                     .orElse(List.of());
                 item.setCapabilities(caps);
-                try {
-                    item.setToolMetadata(objectMapper.readValue(
-                        c.getToolMetadata(), new TypeReference<Map<String, Object>>() {}));
-                } catch (Exception e) {
-                    item.setToolMetadata(Map.of());
-                }
+                item.setToolMetadata(meta);
                 return item;
-            })
+            }).stream())
             .toList();
         return ResponseEntity.ok(result);
     }
