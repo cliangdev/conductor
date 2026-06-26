@@ -1,0 +1,21 @@
+{
+  "description": "Campaign installs, spend, and keyword performance from Apple Search Ads",
+  "operations": [
+    {
+      "id": "campaign_report",
+      "description": "Campaign-level installs, downloads, and spend time series (last 30 days)",
+      "params": {},
+      "outputShape": "{installs:[{date,installs}], downloads:[{date,downloads}], spend:[{date,spend}]}",
+      "outputKeys": ["installs", "downloads", "spend"]
+    },
+    {
+      "id": "keyword_report",
+      "description": "Top keywords by installs with spend, taps, and TTR (last 30 days; requires campaignId)",
+      "params": {
+        "campaignId": "Campaign ID configured in connection settings"
+      },
+      "outputShape": "{topKeywords:[{keyword,installs,taps,spend,ttr}]}",
+      "outputKeys": ["topKeywords"]
+    }
+  ]
+}

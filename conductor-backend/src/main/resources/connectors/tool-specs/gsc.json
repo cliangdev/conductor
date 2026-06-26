@@ -1,0 +1,28 @@
+{
+  "description": "Organic search performance from Google Search Console: clicks, impressions, top queries, top pages",
+  "operations": [
+    {
+      "id": "search_analytics",
+      "description": "Daily click/impression trend (90d), branded share, top 50 queries, top 25 pages, top 10 countries, device breakdown (28d)",
+      "params": {
+        "siteUrl": "Search Console property URL (e.g. sc-domain:example.com)"
+      },
+      "outputShape": "{trend:[{date,clicks,impressions,ctr,position}], topQueries:[{query,clicks,impressions}], topPages:[{page,clicks,impressions}], brandedClickShare:number}",
+      "outputKeys": ["trend", "topQueries", "topPages", "brandedClickShare", "countries", "devices"]
+    },
+    {
+      "id": "top_queries",
+      "description": "Top 50 search queries by clicks (last 28 days)",
+      "params": {},
+      "outputShape": "{topQueries:[{query,clicks,impressions,ctr,position}]}",
+      "outputKeys": ["topQueries"]
+    },
+    {
+      "id": "top_pages",
+      "description": "Top 25 pages by clicks (last 28 days)",
+      "params": {},
+      "outputShape": "{topPages:[{page,clicks,impressions}]}",
+      "outputKeys": ["topPages"]
+    }
+  ]
+}

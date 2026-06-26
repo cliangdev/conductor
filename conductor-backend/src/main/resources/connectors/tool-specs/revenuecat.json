@@ -1,0 +1,26 @@
+{
+  "description": "Subscription revenue, trials, and conversion metrics from RevenueCat",
+  "operations": [
+    {
+      "id": "overview",
+      "description": "Snapshot: MRR, active subscriptions, active trials, revenue last 28 days, new customers last 28 days",
+      "params": {},
+      "outputShape": "{overview:{mrr,activeSubscriptions,activeTrials,revenueLast28Days,newCustomersLast28Days}}",
+      "outputKeys": ["overview"]
+    },
+    {
+      "id": "revenue_series",
+      "description": "Daily revenue series (30d)",
+      "params": {},
+      "outputShape": "{revenueSeries:[{date,value}]}",
+      "outputKeys": ["revenueSeries"]
+    },
+    {
+      "id": "trial_conversion",
+      "description": "Weekly trial-to-paid conversion series (30d)",
+      "params": {},
+      "outputShape": "{trialConversion:[{period,startRate,conversionRate}]}",
+      "outputKeys": ["trialConversion"]
+    }
+  ]
+}

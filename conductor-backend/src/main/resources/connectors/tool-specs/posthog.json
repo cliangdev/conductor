@@ -1,0 +1,19 @@
+{
+  "description": "Web analytics and product insights from PostHog",
+  "operations": [
+    {
+      "id": "pageview_trend",
+      "description": "Daily pageview trend (last 30 days)",
+      "params": {},
+      "outputShape": "{series:[{date,count}], total:number}",
+      "outputKeys": ["series"]
+    },
+    {
+      "id": "total_pageviews",
+      "description": "Total pageviews for the last 30 days",
+      "params": {},
+      "outputShape": "{total:number}",
+      "outputKeys": ["total"]
+    }
+  ]
+}
