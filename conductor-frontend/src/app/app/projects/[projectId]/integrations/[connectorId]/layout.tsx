@@ -1,9 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { Breadcrumb } from '@/components/layout/PageHeader';
+import WorkflowToolsPanel from '@/components/integrations/WorkflowToolsPanel';
 
-// Display names for the breadcrumb. Mirrors the connectors handled by the page.
 const CONNECTOR_LABELS: Record<string, string> = {
   posthog: 'PostHog',
   'gcp-billing': 'GCP Billing',
@@ -13,12 +14,16 @@ const CONNECTOR_LABELS: Record<string, string> = {
   'apple-search-ads': 'Apple Search Ads',
 };
 
-/**
- * Persistent breadcrumb for the connector detail route. Stays mounted while
- * switching between connectors — only the connector body below re-renders.
- */
+type Tab = 'overview' | 'workflow-tools';
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'workflow-tools', label: 'Workflow Tools' },
+];
+
 export default function ConnectorLayout({ children }: { children: React.ReactNode }) {
   const { projectId, connectorId } = useParams<{ projectId: string; connectorId: string }>();
+  const [tab, setTab] = useState<Tab>('overview');
   const label = CONNECTOR_LABELS[connectorId] ?? connectorId;
 
   return (
@@ -31,7 +36,28 @@ export default function ConnectorLayout({ children }: { children: React.ReactNod
           ]}
         />
       </div>
-      {children}
+
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 mt-4">
+        <div className="flex gap-1 border-b border-border">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                tab === t.id
+                  ? 'border-primary text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab === 'overview' ? children : (
+        <WorkflowToolsPanel projectId={projectId} connectorId={connectorId} />
+      )}
     </>
   );
 }

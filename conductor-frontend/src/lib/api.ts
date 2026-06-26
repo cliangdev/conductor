@@ -156,6 +156,35 @@ export function installGitHubApp(projectId: string, token: string): Promise<GitH
   )
 }
 
+// ── Integration tool metadata (agent-facing) ──────────────────────────────
+
+export interface IntegrationToolOperation {
+  id: string
+  description: string
+  params: Record<string, string>
+  outputShape: string
+  outputKeys: string[]
+}
+
+export interface IntegrationToolItem {
+  connectionId: string
+  connectorId: string
+  displayLabel: string
+  capabilities: string[]
+  toolMetadata: {
+    description: string
+    operations: IntegrationToolOperation[]
+    [key: string]: unknown
+  }
+}
+
+export function listIntegrationTools(projectId: string, token: string): Promise<IntegrationToolItem[]> {
+  return apiGet<IntegrationToolItem[]>(
+    `/api/v1/projects/${projectId}/integrations/tools`,
+    token,
+  )
+}
+
 /** List the repositories an installation can access (read live from GitHub). */
 export function listGitHubRepositories(
   projectId: string,
