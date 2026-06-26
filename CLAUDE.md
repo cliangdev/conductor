@@ -142,3 +142,4 @@ See `scripts/gcloud-alias-example.sh` for a persistent shell alias.
 - [`docs/api-guidelines.md`](docs/api-guidelines.md) — OpenAPI-first workflow, external vs internal API split, REST conventions. **Read before creating or updating any API.**
 - [`docs/workflows.md`](docs/workflows.md) — Workflow YAML format, trigger types, step types, execution modes, self-hosted runner setup.
 - [`docs/mcp-tool-guidelines.md`](docs/mcp-tool-guidelines.md) — MCP tool design principles: context budget, action–verify pattern, dispatch–status pattern, checklist. **Read before creating or updating any MCP tool.**
+- [`docs/dev-workflow.md`](docs/dev-workflow.md) — PR branch deploy/test/debug loop: deploy labels, skip-tests, live MCP testing, log access.
