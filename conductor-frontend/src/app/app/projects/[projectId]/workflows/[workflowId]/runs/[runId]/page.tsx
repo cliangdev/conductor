@@ -4,10 +4,9 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
-import { WorkflowRunDetailDto, WorkflowJobRunDto, WorkflowDefinitionDto } from '@/types/workflow';
+import { WorkflowRunDetailDto, WorkflowJobRunDto } from '@/types/workflow';
 import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
-import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { StepRow } from '@/components/workflow/StepRow';
 
@@ -74,7 +73,6 @@ export default function RunDetailPage() {
   const { accessToken } = useAuth();
   const router = useRouter();
   const [run, setRun] = useState<WorkflowRunDetailDto | null>(null);
-  const [workflow, setWorkflow] = useState<WorkflowDefinitionDto | null>(null);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
 
   const fetchRun = useCallback(() => {
@@ -86,13 +84,6 @@ export default function RunDetailPage() {
   }, [projectId, workflowId, runId, accessToken]);
 
   useEffect(() => { fetchRun(); }, [fetchRun]);
-
-  useEffect(() => {
-    if (!accessToken) return;
-    apiGet<WorkflowDefinitionDto>(`/api/v1/projects/${projectId}/workflows/${workflowId}`, accessToken)
-      .then(setWorkflow)
-      .catch(() => {});
-  }, [projectId, workflowId, accessToken]);
 
   useEffect(() => {
     if (!run || (run.status !== 'RUNNING' && run.status !== 'PENDING')) return;
@@ -116,12 +107,7 @@ export default function RunDetailPage() {
     });
   };
 
-  if (!run)
-    return (
-      <PageContainer>
-        <div className="text-muted-foreground">Loading...</div>
-      </PageContainer>
-    );
+  if (!run) return <PageHeader title="Run Detail" />;
 
   // Build jobRunData from run.jobs (use latest iteration per jobId)
   const jobRunData: Record<string, JobRunStatus> = {};
@@ -156,15 +142,9 @@ export default function RunDetailPage() {
   const uniqueJobIds = [...new Set(run.jobs.map(j => j.jobId))];
 
   return (
-    <PageContainer className="space-y-6">
+    <div className="space-y-6">
       <PageHeader
         className="mb-0"
-        breadcrumbs={[
-          { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },
-          { label: workflow?.name ?? 'Workflow', href: `/app/projects/${projectId}/workflows/${workflowId}` },
-          { label: 'Run History', href: `/app/projects/${projectId}/workflows/${workflowId}/runs` },
-          { label: 'Run Detail' },
-        ]}
         title="Run Detail"
         status={
           <span className={`inline-flex items-center px-2 py-0.5 rounded text-sm font-medium ${STATUS_COLORS[run.status] ?? ''}`}>
@@ -195,7 +175,7 @@ export default function RunDetailPage() {
           />
         ))}
       </div>
-    </PageContainer>
+    </div>
   );
 }
 

@@ -11,7 +11,6 @@ import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
 import { PuzzleIcon, CheckCircleIcon } from 'lucide-react';
 import { ConnectorIcon } from '@/components/integrations/ConnectorIcon';
-import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import type { Member } from '@/types';
 
@@ -180,10 +179,6 @@ export default function SettingsIntegrationsPage() {
 
   const header = (
     <PageHeader
-      breadcrumbs={[
-        { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
-        { label: 'Connect Apps' },
-      ]}
       title="Connect Apps"
       description="Connect third-party tools to view live metrics and automate workflows in Conductor."
     />
@@ -191,19 +186,19 @@ export default function SettingsIntegrationsPage() {
 
   if (loading) {
     return (
-      <PageContainer>
+      <>
         {header}
         <div className="animate-pulse grid grid-cols-2 gap-4">
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="h-28 bg-muted rounded-lg" />
           ))}
         </div>
-      </PageContainer>
+      </>
     );
   }
 
   return (
-    <PageContainer>
+    <>
       {header}
 
       {/* Tabs */}
@@ -402,6 +397,6 @@ export default function SettingsIntegrationsPage() {
           </div>
         </div>
       )}
-    </PageContainer>
+    </>
   );
 }

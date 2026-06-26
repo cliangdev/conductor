@@ -8,7 +8,6 @@ import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiErrorMessage, type ApiError } from '@/lib/api'
 import type { Member } from '@/types'
 import { NotificationSettingsPage } from '@/components/notifications/NotificationSettingsPage'
-import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 
 export default function NotificationsPage() {
@@ -56,60 +55,52 @@ export default function NotificationsPage() {
   const currentUserRole = members.find((m) => m.userId === user?.id)?.role
   const isAdmin = currentUserRole === 'ADMIN'
 
-  const header = (
-    <PageHeader
-      breadcrumbs={[
-        { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
-        { label: 'Notifications' },
-      ]}
-      title="Notifications"
-    />
-  )
+  const header = <PageHeader title="Notifications" />
 
   if (membersLoading || settingsLoading) {
     return (
-      <PageContainer>
+      <>
         {header}
         <p className="text-sm text-muted-foreground">Loading…</p>
-      </PageContainer>
+      </>
     )
   }
 
   if (!isAdmin) {
     return (
-      <PageContainer>
+      <>
         {header}
         <p className="text-sm text-muted-foreground">
           You don&apos;t have permission to manage settings.
         </p>
-      </PageContainer>
+      </>
     )
   }
 
   if (accessDenied) {
     return (
-      <PageContainer>
+      <>
         {header}
         <p className="text-sm text-destructive" role="alert">
           Access denied. You do not have permission to view project settings.
         </p>
-      </PageContainer>
+      </>
     )
   }
 
   if (settingsError) {
     return (
-      <PageContainer>
+      <>
         {header}
         <p className="text-sm text-destructive" role="alert">{settingsError}</p>
-      </PageContainer>
+      </>
     )
   }
 
   return (
-    <PageContainer>
+    <>
       {header}
       <NotificationSettingsPage projectId={projectId} accessToken={accessToken!} />
-    </PageContainer>
+    </>
   )
 }

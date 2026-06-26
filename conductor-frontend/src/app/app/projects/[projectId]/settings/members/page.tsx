@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { MemberRow } from '@/components/members/MemberRow'
-import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
@@ -170,12 +169,8 @@ export default function MembersPage() {
   const workspaceName = activeProject?.name ?? 'this workspace'
 
   return (
-    <PageContainer>
+    <>
       <PageHeader
-        breadcrumbs={[
-          { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
-          { label: 'Members' },
-        ]}
         title="Members"
         actions={
           isAdmin && (
@@ -350,6 +345,6 @@ export default function MembersPage() {
           </Button>
         </div>
       </Modal>
-    </PageContainer>
+    </>
   )
 }

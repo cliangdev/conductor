@@ -2,7 +2,6 @@
 export const dynamic = 'force-dynamic';
 
 import { useParams } from 'next/navigation';
-import { Breadcrumb } from '@/components/layout/PageHeader';
 import PostHogConnectorPage from '@/components/integrations/PostHogConnectorPage';
 import GcpBillingConnectorPage from '@/components/integrations/GcpBillingConnectorPage';
 import GitHubConnectorPage from '@/components/integrations/GitHubConnectorPage';
@@ -10,17 +9,11 @@ import RevenueCatConnectorPage from '@/components/integrations/RevenueCatConnect
 import GscConnectorPage from '@/components/integrations/GscConnectorPage';
 import AppleSearchAdsConnectorPage from '@/components/integrations/AppleSearchAdsConnectorPage';
 
-// Display names for the breadcrumb. Mirrors the connectors enumerated below.
-const CONNECTOR_LABELS: Record<string, string> = {
-  posthog: 'PostHog',
-  'gcp-billing': 'GCP Billing',
-  github: 'GitHub',
-  revenuecat: 'RevenueCat',
-  gsc: 'Search Console',
-  'apple-search-ads': 'Apple Search Ads',
-};
+// The breadcrumb lives in the persistent layout; this page only renders the
+// per-connector body, which is the part that re-renders on connector switch.
+export default function ConnectorPage() {
+  const { projectId, connectorId } = useParams<{ projectId: string; connectorId: string }>();
 
-function ConnectorBody({ projectId, connectorId }: { projectId: string; connectorId: string }) {
   switch (connectorId) {
     case 'posthog':
       return <PostHogConnectorPage projectId={projectId} />;
@@ -43,23 +36,4 @@ function ConnectorBody({ projectId, connectorId }: { projectId: string; connecto
         </div>
       );
   }
-}
-
-export default function ConnectorPage() {
-  const { projectId, connectorId } = useParams<{ projectId: string; connectorId: string }>();
-  const label = CONNECTOR_LABELS[connectorId] ?? connectorId;
-
-  return (
-    <>
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-6">
-        <Breadcrumb
-          items={[
-            { label: 'Integrations', href: `/app/projects/${projectId}/integrations` },
-            { label },
-          ]}
-        />
-      </div>
-      <ConnectorBody projectId={projectId} connectorId={connectorId} />
-    </>
-  );
 }

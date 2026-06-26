@@ -10,7 +10,6 @@ import { WorkflowDefinitionDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
 import { useToast } from '@/components/ui/toast';
-import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TriggerBadges } from '@/components/workflow/TriggerBadges';
 
@@ -105,12 +104,8 @@ export default function ManageWorkflowsPage() {
   };
 
   return (
-    <PageContainer>
+    <>
       <PageHeader
-        breadcrumbs={[
-          { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
-          { label: 'Workflows' },
-        ]}
         title="Workflows"
         description="Create and edit automations. Run them and view history from the Workflows tab."
         actions={
@@ -191,6 +186,6 @@ export default function ManageWorkflowsPage() {
           </Button>
         </div>
       </Modal>
-    </PageContainer>
+    </>
   );
 }

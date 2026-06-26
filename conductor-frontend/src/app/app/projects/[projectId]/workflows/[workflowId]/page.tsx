@@ -5,11 +5,11 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
-import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
+import { WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
-import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import WorkflowDiagram from '@/components/workflow/WorkflowDiagram';
+import { useWorkflow } from '@/contexts/WorkflowContext';
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: 'bg-green-100 text-green-800',
@@ -96,20 +96,15 @@ export default function WorkflowDetailPage() {
   const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>();
   const { accessToken } = useAuth();
   const router = useRouter();
-  const [workflow, setWorkflow] = useState<WorkflowDefinitionDto | null>(null);
+  const { workflow } = useWorkflow();
   const [runs, setRuns] = useState<WorkflowRunDto[]>([]);
-  const [loading, setLoading] = useState(true);
   const [dispatching, setDispatching] = useState(false);
 
   useEffect(() => {
     if (!accessToken) return;
-    Promise.all([
-      apiGet<WorkflowDefinitionDto>(`/api/v1/projects/${projectId}/workflows/${workflowId}`, accessToken),
-      apiGet<WorkflowRunDto[]>(`/api/v1/projects/${projectId}/workflows/${workflowId}/runs?page=0&size=5`, accessToken),
-    ]).then(([wf, wfRuns]) => {
-      setWorkflow(wf);
-      setRuns(wfRuns);
-    }).finally(() => setLoading(false));
+    apiGet<WorkflowRunDto[]>(`/api/v1/projects/${projectId}/workflows/${workflowId}/runs?page=0&size=5`, accessToken)
+      .then(setRuns)
+      .catch(() => {});
   }, [projectId, workflowId, accessToken]);
 
   const handleRunNow = async () => {
@@ -127,29 +122,15 @@ export default function WorkflowDetailPage() {
     }
   };
 
-  if (loading)
-    return (
-      <PageContainer>
-        <div className="text-muted-foreground">Loading...</div>
-      </PageContainer>
-    );
   if (!workflow)
-    return (
-      <PageContainer>
-        <div className="text-muted-foreground">Workflow not found.</div>
-      </PageContainer>
-    );
+    return <PageHeader title={<span className="text-muted-foreground">Loading…</span>} />;
 
   const triggers = parseTriggers(workflow.yaml);
   const stats = computeStats(runs);
 
   return (
-    <PageContainer>
+    <>
       <PageHeader
-        breadcrumbs={[
-          { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },
-          { label: workflow.name },
-        ]}
         title={workflow.name}
         status={
           <span className={`flex items-center gap-1 text-sm ${workflow.enabled ? 'text-green-600' : 'text-gray-400'}`}>
@@ -259,6 +240,6 @@ export default function WorkflowDetailPage() {
           </table>
         </div>
       )}
-    </PageContainer>
+    </>
   );
 }

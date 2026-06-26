@@ -4,9 +4,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
-import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
+import { WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
-import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -33,17 +32,9 @@ export default function RunListPage() {
   const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>();
   const { accessToken } = useAuth();
   const router = useRouter();
-  const [workflow, setWorkflow] = useState<WorkflowDefinitionDto | null>(null);
   const [runs, setRuns] = useState<WorkflowRunDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
-
-  useEffect(() => {
-    if (!accessToken) return;
-    apiGet<WorkflowDefinitionDto>(`/api/v1/projects/${projectId}/workflows/${workflowId}`, accessToken)
-      .then(setWorkflow)
-      .catch(() => {});
-  }, [projectId, workflowId, accessToken]);
 
   const fetchRuns = useCallback(() => {
     if (!accessToken) return;
@@ -71,13 +62,8 @@ export default function RunListPage() {
   };
 
   return (
-    <PageContainer>
+    <>
       <PageHeader
-        breadcrumbs={[
-          { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },
-          { label: workflow?.name ?? 'Workflow', href: `/app/projects/${projectId}/workflows/${workflowId}` },
-          { label: 'Run History' },
-        ]}
         title="Run History"
         actions={<Button onClick={handleRunAgain}>Run Now</Button>}
       />
@@ -126,6 +112,6 @@ export default function RunListPage() {
           )}
         </div>
       )}
-    </PageContainer>
+    </>
   );
 }
