@@ -52,14 +52,19 @@ public class WorkflowDefinitionLifecycleService {
                 .filter(d -> d.getProject() != null && projectId.equals(d.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Workflow not found"));
 
-        if (definition.getDefinition() == null) {
+        boolean hasStatechart = definition.getDefinition() != null;
+        boolean hasYaml = definition.getYaml() != null && !definition.getYaml().isBlank();
+
+        if (!hasStatechart && !hasYaml) {
             throw new UnprocessableEntityException("Workflow has no definition to publish");
         }
 
-        WorkflowValidationResult result = validator.validate(definition.getDefinition());
-        if (result.hasErrors()) {
-            throw new UnprocessableEntityException(
-                    "Workflow definition is invalid: " + String.join("; ", result.getErrors()));
+        if (hasStatechart) {
+            WorkflowValidationResult result = validator.validate(definition.getDefinition());
+            if (result.hasErrors()) {
+                throw new UnprocessableEntityException(
+                        "Workflow definition is invalid: " + String.join("; ", result.getErrors()));
+            }
         }
 
         definition.setState(STATE_PUBLISHED);

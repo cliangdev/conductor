@@ -6260,21 +6260,37 @@ components:
 
     WorkflowCreateRequest:
       type: object
-      required: [name, yaml]
+      required: [name]
       properties:
         name:
           type: string
+        area:
+          type: string
+          description: Nav-grouping slug (e.g. "marketing", "engineering")
         yaml:
           type: string
+          description: YAML automation workflow definition
+        definition:
+          type: object
+          additionalProperties: true
+          description: Statechart lifecycle definition (COND-18 format)
 
     WorkflowUpdateRequest:
       type: object
-      required: [name, yaml]
+      required: [name]
       properties:
         name:
           type: string
+        area:
+          type: string
+          description: Nav-grouping slug (e.g. "marketing", "engineering")
         yaml:
           type: string
+          description: YAML automation workflow definition
+        definition:
+          type: object
+          additionalProperties: true
+          description: Statechart lifecycle definition (COND-18 format)
 
     SetWorkflowEnabledRequest:
       type: object
