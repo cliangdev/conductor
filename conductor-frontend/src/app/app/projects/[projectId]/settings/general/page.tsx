@@ -10,6 +10,7 @@ import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { apiDelete, apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
+import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import type { Member, Project } from '@/types'
 
@@ -102,7 +103,7 @@ export default function GeneralSettingsPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-10">
+    <PageContainer width="narrow" className="space-y-10">
       <div>
         <PageHeader
           breadcrumbs={[
@@ -200,6 +201,6 @@ export default function GeneralSettingsPage() {
           </Button>
         </div>
       </Modal>
-    </div>
+    </PageContainer>
   )
 }

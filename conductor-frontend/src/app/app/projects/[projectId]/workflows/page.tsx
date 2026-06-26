@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
+import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TriggerBadges } from '@/components/workflow/TriggerBadges';
 
@@ -81,10 +82,16 @@ export default function WorkflowsPage() {
     }
   };
 
-  if (loading) return <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">Loading...</div>;
+  if (loading)
+    return (
+      <PageContainer width="wide">
+        <PageHeader title="Workflows" description="Run automations and review their history." />
+        <div className="text-muted-foreground">Loading...</div>
+      </PageContainer>
+    );
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+    <PageContainer width="wide">
       <PageHeader
         title="Workflows"
         description="Run automations and review their history."
@@ -167,6 +174,6 @@ export default function WorkflowsPage() {
           </table>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

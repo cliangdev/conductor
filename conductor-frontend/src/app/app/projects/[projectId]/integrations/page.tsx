@@ -9,6 +9,7 @@ import { apiGet } from '@/lib/api';
 import Link from 'next/link';
 import { PuzzleIcon } from 'lucide-react';
 import { ConnectorIcon } from '@/components/integrations/ConnectorIcon';
+import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 
 interface IntegrationListItem {
@@ -42,21 +43,19 @@ export default function IntegrationsPage() {
 
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-muted rounded w-48" />
-          <div className="grid grid-cols-2 gap-4">
-            {[1, 2].map((i) => (
-              <div key={i} className="h-32 bg-muted rounded-lg" />
-            ))}
-          </div>
+      <PageContainer>
+        <PageHeader title="Integrations" description="Your connected apps and their live data." />
+        <div className="animate-pulse grid grid-cols-2 gap-4">
+          {[1, 2].map((i) => (
+            <div key={i} className="h-32 bg-muted rounded-lg" />
+          ))}
         </div>
-      </div>
+      </PageContainer>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+    <PageContainer>
       <PageHeader
         title="Integrations"
         description="Your connected apps and their live data."
@@ -120,6 +119,6 @@ export default function IntegrationsPage() {
           </div>
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }

@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
+import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import WorkflowDiagram from '@/components/workflow/WorkflowDiagram';
 
@@ -126,14 +127,24 @@ export default function WorkflowDetailPage() {
     }
   };
 
-  if (loading) return <div className="p-6">Loading...</div>;
-  if (!workflow) return <div className="p-6 text-muted-foreground">Workflow not found.</div>;
+  if (loading)
+    return (
+      <PageContainer width="wide">
+        <div className="text-muted-foreground">Loading...</div>
+      </PageContainer>
+    );
+  if (!workflow)
+    return (
+      <PageContainer width="wide">
+        <div className="text-muted-foreground">Workflow not found.</div>
+      </PageContainer>
+    );
 
   const triggers = parseTriggers(workflow.yaml);
   const stats = computeStats(runs);
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+    <PageContainer width="wide">
       <PageHeader
         breadcrumbs={[
           { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },
@@ -248,6 +259,6 @@ export default function WorkflowDetailPage() {
           </table>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

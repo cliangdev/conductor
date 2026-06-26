@@ -7,6 +7,7 @@ import { apiGet, apiPost } from '@/lib/api';
 import { WorkflowRunDetailDto, WorkflowJobRunDto, WorkflowDefinitionDto } from '@/types/workflow';
 import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
+import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { StepRow } from '@/components/workflow/StepRow';
 
@@ -115,7 +116,12 @@ export default function RunDetailPage() {
     });
   };
 
-  if (!run) return <div className="p-6 text-muted-foreground">Loading...</div>;
+  if (!run)
+    return (
+      <PageContainer width="wide">
+        <div className="text-muted-foreground">Loading...</div>
+      </PageContainer>
+    );
 
   // Build jobRunData from run.jobs (use latest iteration per jobId)
   const jobRunData: Record<string, JobRunStatus> = {};
@@ -150,7 +156,7 @@ export default function RunDetailPage() {
   const uniqueJobIds = [...new Set(run.jobs.map(j => j.jobId))];
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <PageContainer width="wide" className="space-y-6">
       <PageHeader
         className="mb-0"
         breadcrumbs={[
@@ -189,7 +195,7 @@ export default function RunDetailPage() {
           />
         ))}
       </div>
-    </div>
+    </PageContainer>
   );
 }
 

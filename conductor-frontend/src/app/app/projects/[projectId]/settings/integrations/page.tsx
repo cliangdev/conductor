@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
 import { PuzzleIcon, CheckCircleIcon } from 'lucide-react';
 import { ConnectorIcon } from '@/components/integrations/ConnectorIcon';
+import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import type { Member } from '@/types';
 
@@ -177,31 +178,33 @@ export default function SettingsIntegrationsPage() {
     <ConnectorIcon connectorId={item.connectorId} iconLabel={item.iconLabel} className="h-10 w-10" />
   );
 
+  const header = (
+    <PageHeader
+      breadcrumbs={[
+        { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
+        { label: 'Connect Apps' },
+      ]}
+      title="Connect Apps"
+      description="Connect third-party tools to view live metrics and automate workflows in Conductor."
+    />
+  );
+
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-muted rounded w-48" />
-          <div className="grid grid-cols-2 gap-4">
-            {[1, 2, 3, 4].map((i) => (
-              <div key={i} className="h-28 bg-muted rounded-lg" />
-            ))}
-          </div>
+      <PageContainer>
+        {header}
+        <div className="animate-pulse grid grid-cols-2 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-28 bg-muted rounded-lg" />
+          ))}
         </div>
-      </div>
+      </PageContainer>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
-      <PageHeader
-        breadcrumbs={[
-          { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
-          { label: 'Connect Apps' },
-        ]}
-        title="Connect Apps"
-        description="Connect third-party tools to view live metrics and automate workflows in Conductor."
-      />
+    <PageContainer>
+      {header}
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b border-border">
@@ -399,6 +402,6 @@ export default function SettingsIntegrationsPage() {
           </div>
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

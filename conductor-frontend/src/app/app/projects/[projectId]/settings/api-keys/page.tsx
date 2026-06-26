@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { ApiKeySection } from '@/components/api-keys/ApiKeySection'
+import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 
 export default function ApiKeysPage() {
@@ -12,7 +13,7 @@ export default function ApiKeysPage() {
   const { accessToken } = useAuth()
 
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+    <PageContainer width="narrow" className="space-y-6">
       <PageHeader
         breadcrumbs={[
           { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
@@ -22,6 +23,6 @@ export default function ApiKeysPage() {
         description="Personal API keys for the Conductor CLI and integrations. These are tied to your account, not the workspace."
       />
       <ApiKeySection accessToken={accessToken} />
-    </div>
+    </PageContainer>
   )
 }

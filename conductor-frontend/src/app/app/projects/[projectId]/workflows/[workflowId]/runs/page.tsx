@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
+import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -70,7 +71,7 @@ export default function RunListPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+    <PageContainer width="wide">
       <PageHeader
         breadcrumbs={[
           { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },
@@ -125,6 +126,6 @@ export default function RunListPage() {
           )}
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }
