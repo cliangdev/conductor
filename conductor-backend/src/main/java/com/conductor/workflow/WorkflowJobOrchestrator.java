@@ -190,8 +190,21 @@ public class WorkflowJobOrchestrator {
             return StepResult.failed("", "Unknown step type: " + stepType);
         }
 
+        // When using the `uses: <type>` + `with: {...}` format, flatten `with` params into the
+        // stepDef so executors can read them the same way as the legacy flat-key format.
+        Map<String, Object> effectiveStepDef = stepDef;
+        if (stepDef.containsKey("uses") && stepDef.containsKey("with")) {
+            Object withObj = stepDef.get("with");
+            if (withObj instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> withParams = (Map<String, Object>) withObj;
+                effectiveStepDef = new java.util.HashMap<>(stepDef);
+                effectiveStepDef.putAll(withParams);
+            }
+        }
+
         // Executors only read non-lazy primitives (IDs). Load once inside a short read-only tx.
-        StepExecutionContext execCtx = self.buildStepExecutionContext(runId, jobRunId, stepDef, ctx, projectId);
+        StepExecutionContext execCtx = self.buildStepExecutionContext(runId, jobRunId, effectiveStepDef, ctx, projectId);
         return backend.execute(execCtx);
     }
 
