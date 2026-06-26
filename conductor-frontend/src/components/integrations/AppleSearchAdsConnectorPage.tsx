@@ -245,8 +245,8 @@ export default function AppleSearchAdsConnectorPage({ projectId }: { projectId: 
                 <YAxis yAxisId="left" hide />
                 <YAxis yAxisId="right" orientation="right" hide />
                 <Tooltip
-                  formatter={(value: number, name: string) =>
-                    name === 'localSpend' ? [formatUsd(value), 'Spend'] : [value.toLocaleString(), 'New downloads']}
+                  formatter={(value, name: string) =>
+                    name === 'localSpend' ? [formatUsd(Number(value)), 'Spend'] : [Number(value).toLocaleString(), 'New downloads']}
                   labelFormatter={l => `Date: ${l}`}
                 />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
