@@ -162,7 +162,8 @@ class WorkflowIntegrationToolsTest {
         when(fetchSvc.fetchData("conn-gsc", true))
             .thenReturn(ConnectorData.healthy(Map.of("topQueries", List.of("q1", "q2"), "clicks", 100)));
 
-        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper);
+        ConnectorRegistry registry = mock(ConnectorRegistry.class);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
 
         StepExecutionContext ctx = mock(StepExecutionContext.class);
         when(ctx.getProjectId()).thenReturn("proj-1");
@@ -187,7 +188,8 @@ class WorkflowIntegrationToolsTest {
 
         when(connRepo.findByProjectIdAndConnectorId(anyString(), anyString())).thenReturn(List.of());
 
-        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper);
+        ConnectorRegistry registry = mock(ConnectorRegistry.class);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
 
         StepExecutionContext ctx = mock(StepExecutionContext.class);
         when(ctx.getProjectId()).thenReturn("proj-1");
@@ -206,7 +208,8 @@ class WorkflowIntegrationToolsTest {
         ConnectionRepository connRepo = mock(ConnectionRepository.class);
         IntegrationFetchService fetchSvc = mock(IntegrationFetchService.class);
 
-        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper);
+        ConnectorRegistry registry = mock(ConnectorRegistry.class);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
 
         StepExecutionContext ctx = mock(StepExecutionContext.class);
         when(ctx.getProjectId()).thenReturn("proj-1");
@@ -232,7 +235,8 @@ class WorkflowIntegrationToolsTest {
         when(fetchSvc.fetchData("conn-1", true))
             .thenReturn(ConnectorData.setupRequired("Configure your Search Console property"));
 
-        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper);
+        ConnectorRegistry registry = mock(ConnectorRegistry.class);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
 
         StepExecutionContext ctx = mock(StepExecutionContext.class);
         when(ctx.getProjectId()).thenReturn("proj-1");

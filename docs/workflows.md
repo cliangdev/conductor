@@ -554,4 +554,6 @@ Claude can design and create workflows for you based on a plain-language descrip
 
 **Integrations must be connected before Claude can reference them.** Go to **Settings → Integrations** and connect any data sources your workflow will use (Google Search Console, PostHog, RevenueCat, GCP Billing). Once a connection is ACTIVE, Claude will automatically discover it via `list_integration_tools`.
 
+For guidelines on adding or updating the MCP tools that power this skill, see [`docs/mcp-tool-guidelines.md`](mcp-tool-guidelines.md).
+
 For data sources without a built-in connector, add the credentials as [workflow secrets](#outputs-and-interpolation) and Claude will use `${{ secrets.KEY }}` interpolation in `http` steps instead.

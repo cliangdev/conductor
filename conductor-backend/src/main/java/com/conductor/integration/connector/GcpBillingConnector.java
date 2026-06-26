@@ -98,7 +98,8 @@ public class GcpBillingConnector implements FetchConnector, OAuth2Connector {
                 new ToolOperation("cost_by_service",
                     "Cloud spend per GCP service: current 30d vs prior 30d with MoM delta percentage",
                     Map.of(),
-                    "{services:[{service,cost,currency}], totalCost:number, previousPeriodCost:number, momDeltaPct:number, currency:string}")
+                    "{services:[{service,cost,currency}], totalCost:number, previousPeriodCost:number, momDeltaPct:number, currency:string}",
+                    List.of("services", "totalCost", "previousPeriodCost", "momDeltaPct", "currency"))
             )
         );
     }

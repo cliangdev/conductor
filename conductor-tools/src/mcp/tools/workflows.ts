@@ -136,6 +136,16 @@ export async function dispatchWorkflow(
   )
 }
 
+export async function getWorkflowRun(
+  params: { workflowId: string; runId: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return apiGet<Record<string, unknown>>(
+    `/api/v1/projects/${config.projectId}/workflows/${params.workflowId}/runs/${params.runId}`,
+    config
+  )
+}
+
 export async function reportStepRun(
   params: {
     issueId: string

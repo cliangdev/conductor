@@ -144,11 +144,13 @@ public class AppleSearchAdsConnector implements FetchConnector {
                 new ToolOperation("campaign_report",
                     "Campaign-level installs, downloads, and spend time series (last 30 days)",
                     Map.of(),
-                    "{installs:[{date,installs}], downloads:[{date,downloads}], spend:[{date,spend}]}"),
+                    "{installs:[{date,installs}], downloads:[{date,downloads}], spend:[{date,spend}]}",
+                    List.of("installs", "downloads", "spend")),
                 new ToolOperation("keyword_report",
                     "Top keywords by installs with spend, taps, and TTR (last 30 days; requires campaignId)",
                     Map.of("campaignId", "Campaign ID configured in connection settings"),
-                    "{topKeywords:[{keyword,installs,taps,spend,ttr}]}")
+                    "{topKeywords:[{keyword,installs,taps,spend,ttr}]}",
+                    List.of("topKeywords"))
             )
         );
     }

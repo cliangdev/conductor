@@ -172,11 +172,15 @@ publish_workflow(workflowId)
 
 ### 3d. Test dispatch (optional)
 
-```
 dispatch_workflow(workflowId)
-```
 
-Offer to trigger a test run immediately so the user can see it work. Returns `runId` — tell the user they can monitor the run in the Conductor UI.
+Offer to trigger a test run immediately so the user can see it work. Returns workflowId + runId.
+
+After dispatching, call get_workflow_run once to check the run started:
+
+get_workflow_run(workflowId, runId)
+
+Don't poll — one check is enough since runs are async. Include the status in the final report to the user. A RUNNING or SUCCESS status means the workflow is live and executing.
 
 ---
 

@@ -34,7 +34,7 @@ public class TestFetchConnector implements FetchConnector {
             "Test data source for integration tests",
             List.of(
                 new ToolOperation("fetch_test_data", "Returns fixed test data",
-                    Map.of(), "{value:integer}")
+                    Map.of(), "{value:integer}", List.of("value"))
             )
         );
     }

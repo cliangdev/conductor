@@ -10,5 +10,5 @@ import { apiGet } from '../api.js'
  */
 
 export async function listIntegrationTools(_params: Record<string, never>, config: Config): Promise<unknown[]> {
-  return apiGet<unknown[]>(`/internal/v1/projects/${config.projectId}/integration-tools`, config)
+  return apiGet<unknown[]>(`/api/v1/projects/${config.projectId}/integrations/tools`, config)
 }

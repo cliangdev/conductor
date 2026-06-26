@@ -17,6 +17,7 @@ import {
   updateWorkflow,
   publishWorkflow,
   dispatchWorkflow,
+  getWorkflowRun,
 } from './tools/workflows.js'
 import { listIntegrationTools } from './tools/integrations.js'
 
@@ -166,32 +167,7 @@ const TOOLS = [
   },
   {
     name: 'list_integration_tools',
-    description: `List connected integrations and what data they can provide for workflows. Always call this before designing any workflow to discover available data sources.
-
-Returns ACTIVE connections with their tool metadata, e.g.:
-[
-  {
-    "connectorId": "gsc",
-    "displayLabel": "Google Search Console",
-    "capabilities": ["FETCH"],
-    "toolMetadata": {
-      "description": "Search performance data: clicks, impressions, top queries, top pages",
-      "siteUrl": "https://yoursite.com",
-      "operations": [
-        {"id": "search_analytics", "description": "Daily clicks/impressions (90d), top queries, top pages"},
-        {"id": "top_queries", "description": "Top 50 search queries by clicks"}
-      ]
-    }
-  }
-]
-
-Reference a connected integration in workflow YAML with:
-  steps:
-    - id: seo_data
-      uses: integration
-      with:
-        connector: gsc
-        operation: search_analytics`,
+    description: 'List connected integrations and their available data operations for workflow authoring. Always call before designing a workflow — returns ACTIVE connections with connectorId, displayLabel, capabilities, and toolMetadata (description + operations list with id, outputShape, and outputKeys). Use connectorId in workflow YAML as: uses: integration / with: / connector: <connectorId> / operation: <operationId>',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -255,6 +231,18 @@ Reference a connected integration in workflow YAML with:
         inputs: { type: 'object', description: 'Optional input values passed to the workflow run' },
       },
       required: ['workflowId'],
+    },
+  },
+  {
+    name: 'get_workflow_run',
+    description: 'Get status and step details for a workflow run. Returns status (PENDING/RUNNING/SUCCESS/FAILED), per-job and per-step breakdown, and step logs. Call once after dispatch_workflow to verify the test run started or succeeded before reporting to the user. workflowId and runId come from the dispatch_workflow response.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: { type: 'string', description: 'Workflow definition ID (from dispatch_workflow response)' },
+        runId: { type: 'string', description: 'Run ID (from dispatch_workflow response)' },
+      },
+      required: ['workflowId', 'runId'],
     },
   },
   {
@@ -417,6 +405,17 @@ export async function runMcpServer(): Promise<void> {
               {
                 workflowId: params['workflowId'] as string,
                 inputs: params['inputs'] as Record<string, unknown> | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'get_workflow_run': {
+          return successResponse(
+            await getWorkflowRun(
+              {
+                workflowId: params['workflowId'] as string,
+                runId: params['runId'] as string,
               },
               config
             )

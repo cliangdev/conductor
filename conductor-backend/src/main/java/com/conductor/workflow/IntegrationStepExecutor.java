@@ -2,6 +2,7 @@ package com.conductor.workflow;
 
 import com.conductor.entity.Connection;
 import com.conductor.integration.ConnectorData;
+import com.conductor.integration.ConnectorRegistry;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.IntegrationFetchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -10,8 +11,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Executes workflow steps of type "integration". Resolves the ACTIVE connection for the given
@@ -27,13 +30,16 @@ public class IntegrationStepExecutor implements WorkflowExecutionBackend {
     private final ConnectionRepository connectionRepository;
     private final IntegrationFetchService integrationFetchService;
     private final ObjectMapper objectMapper;
+    private final ConnectorRegistry connectorRegistry;
 
     public IntegrationStepExecutor(ConnectionRepository connectionRepository,
                                    IntegrationFetchService integrationFetchService,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   ConnectorRegistry connectorRegistry) {
         this.connectionRepository = connectionRepository;
         this.integrationFetchService = integrationFetchService;
         this.objectMapper = objectMapper;
+        this.connectorRegistry = connectorRegistry;
     }
 
     @Override
@@ -73,6 +79,22 @@ public class IntegrationStepExecutor implements WorkflowExecutionBackend {
                 return StepResult.failed("Integration setup required: " + msg, msg);
             }
 
+            // Resolve operation output keys for filtering
+            String operationId = (String) withBlock.get("operation");
+            Set<String> filterKeys = null;
+            if (operationId != null && !operationId.isBlank()) {
+                filterKeys = connectorRegistry.findFetch(connectorId)
+                    .map(fetch -> fetch.getToolSpec().operations().stream()
+                        .filter(op -> op.id().equals(operationId))
+                        .findFirst()
+                        .map(op -> op.outputKeys().isEmpty() ? null : new LinkedHashSet<>(op.outputKeys()))
+                        .orElse(null))
+                    .orElse(null);
+                if (filterKeys == null) {
+                    log.warn("Unknown operation '{}' for connector '{}' — returning all keys", operationId, connectorId);
+                }
+            }
+
             String dataJson = objectMapper.writeValueAsString(data.data());
             String logSnippet = dataJson.length() > MAX_LOG_BYTES
                 ? dataJson.substring(0, MAX_LOG_BYTES) + "\n[truncated]"
@@ -82,8 +104,10 @@ public class IntegrationStepExecutor implements WorkflowExecutionBackend {
 
             Map<String, String> outputs = new HashMap<>();
             outputs.put("data", dataJson);
+            final Set<String> finalFilterKeys = filterKeys;
             if (data.data() != null) {
                 data.data().forEach((k, v) -> {
+                    if (finalFilterKeys != null && !finalFilterKeys.contains(k)) return;
                     try {
                         outputs.put(k, v instanceof String s ? s : objectMapper.writeValueAsString(v));
                     } catch (Exception ignored) {}
