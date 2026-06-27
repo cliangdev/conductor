@@ -65,7 +65,9 @@ jobs:
           cache: npm
           cache-dependency-path: conductor-frontend/package-lock.json
       - run: npm ci
-      - run: npm run lint
+      - name: Run lint
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-tests') }}
+        run: npm run lint
       - name: Run tests
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-tests') }}
         run: npm run test
