@@ -28,8 +28,8 @@ jobs:
           cache: npm
           cache-dependency-path: conductor-tools/package-lock.json
 
-      - name: Enable corepack to use pinned npm version
-        run: corepack enable && corepack prepare --activate
+      - name: Install pinned npm version
+        run: npm install -g npm@11.17.0
 
       - name: Read version from package.json
         id: pkg
