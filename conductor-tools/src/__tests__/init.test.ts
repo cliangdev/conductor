@@ -426,9 +426,9 @@ describe('installPluginAssets', () => {
     expect(status).toBe('installed')
     expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'prd.md'))).toBe(true)
     expect(realFs.existsSync(path.join(tmpDir, 'commands', 'conductor', 'implement.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'agents', 'researcher.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'ux-ui-design', 'SKILL.md'))).toBe(true)
-    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'ux-ui-design', 'references', 'design-tokens.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'agents', 'conductor-researcher.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-ux-ui-design', 'SKILL.md'))).toBe(true)
+    expect(realFs.existsSync(path.join(tmpDir, 'skills', 'conductor-ux-ui-design', 'references', 'design-tokens.md'))).toBe(true)
   })
 
   it('returns current when all files already match', async () => {

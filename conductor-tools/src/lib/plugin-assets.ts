@@ -6,10 +6,18 @@ const PLUGIN_FILES = [
   'commands/conductor/prd.md',
   'commands/conductor/implement.md',
   'commands/conductor/fix.md',
+  'commands/conductor/workflow.md',
+  'agents/conductor-researcher.md',
+  'skills/conductor-ux-ui-design/SKILL.md',
+  'skills/conductor-ux-ui-design/references/design-tokens.md',
+  'skills/conductor-coder/SKILL.md',
+]
+
+// Paths removed in previous versions — deleted on `conductor init` to clean up stale installs.
+const LEGACY_PATHS = [
   'agents/researcher.md',
   'skills/ux-ui-design/SKILL.md',
   'skills/ux-ui-design/references/design-tokens.md',
-  'skills/conductor-coder/SKILL.md',
 ]
 
 const CONDUCTOR_PERMISSIONS = ['mcp__conductor__*']
@@ -113,6 +121,11 @@ export function installPluginAssets(
       anyUpdated = true
       fs.writeFileSync(destPath, srcContent, 'utf8')
     }
+  }
+
+  for (const legacy of LEGACY_PATHS) {
+    const legacyPath = path.join(targetDir, legacy)
+    try { fs.rmSync(legacyPath) } catch { /* already gone */ }
   }
 
   mergeSettingsJson(path.join(targetDir, 'settings.json'))
