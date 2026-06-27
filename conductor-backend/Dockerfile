@@ -1,5 +1,6 @@
 # Stage 1: Build
-FROM maven:3-eclipse-temurin-26 AS build
+# JDK 21 — matches pom <java.version> and the CI test JVM (test what we ship).
+FROM maven:3-eclipse-temurin-21 AS build
 WORKDIR /app
 COPY pom.xml .
 RUN mvn dependency:go-offline -q
@@ -7,7 +8,7 @@ COPY src ./src
 RUN mvn package -DskipTests -q
 
 # Stage 2: Runtime
-FROM eclipse-temurin:25-jre-alpine AS runtime
+FROM eclipse-temurin:21-jre-alpine AS runtime
 WORKDIR /app
 COPY --from=build /app/target/conductor-backend-0.0.1-SNAPSHOT.jar app.jar
 EXPOSE 8080
