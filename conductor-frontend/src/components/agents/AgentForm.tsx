@@ -117,7 +117,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
+    <form onSubmit={handleSubmit} noValidate className="space-y-6 max-w-2xl">
       {/* Identity */}
       <div className="space-y-4">
         <div>

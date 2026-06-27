@@ -406,7 +406,11 @@ export interface CreateAgentBody {
   state?: AgentState
 }
 
-/** Partial update — only supplied fields change. Note: an empty toolIds is treated as "unchanged". */
+/**
+ * Partial update — only supplied fields change. For `toolIds`: omit the key to leave bindings
+ * unchanged, or send an empty array to clear all bindings (e.g. a state-only toggle must NOT send
+ * `toolIds`, or it would be sent as `[]` and wipe the bindings).
+ */
 export type UpdateAgentBody = Partial<CreateAgentBody>
 
 /** A tool an agent can be bound to, from any source (connector, http, builtin, mcp). */

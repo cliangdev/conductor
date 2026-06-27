@@ -21,7 +21,16 @@ interface ProviderRow {
   configured: boolean
 }
 
-export function ProviderKeysPanel({ projectId, canMutate }: { projectId: string; canMutate: boolean }) {
+export function ProviderKeysPanel({
+  projectId,
+  canMutate,
+  roleLoading = false,
+}: {
+  projectId: string
+  canMutate: boolean
+  /** True while the viewer's role is still resolving — suppresses the read-only notice flash. */
+  roleLoading?: boolean
+}) {
   const { accessToken } = useAuth()
   const { showToast } = useToast()
   const [rows, setRows] = useState<ProviderRow[]>([])
@@ -135,6 +144,8 @@ export function ProviderKeysPanel({ projectId, canMutate }: { projectId: string;
                     </Button>
                   )}
                 </div>
+              ) : roleLoading ? (
+                <p className="text-xs text-muted-foreground">Loading…</p>
               ) : (
                 <p className="text-xs text-muted-foreground">Only admins and creators can manage provider keys.</p>
               )}

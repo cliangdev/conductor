@@ -7311,6 +7311,10 @@ components:
           $ref: '#/components/schemas/AgentConfig'
         toolIds:
           type: array
+          nullable: true
+          description: >-
+            Replaces the agent's tool bindings. Omit (or send null) to leave
+            bindings unchanged; send an empty array to clear all bindings.
           items:
             type: string
         state:

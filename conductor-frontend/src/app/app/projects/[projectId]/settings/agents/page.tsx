@@ -61,7 +61,7 @@ export default function ManageAgentsPage() {
   const { accessToken } = useAuth()
   const router = useRouter()
   const { showToast } = useToast()
-  const { canMutate } = useCanMutate(projectId)
+  const { canMutate, loading: roleLoading } = useCanMutate(projectId)
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null)
@@ -114,7 +114,7 @@ export default function ManageAgentsPage() {
       />
 
       <div className="space-y-6">
-        <ProviderKeysPanel projectId={projectId} canMutate={canMutate} />
+        <ProviderKeysPanel projectId={projectId} canMutate={canMutate} roleLoading={roleLoading} />
 
         {loading ? (
           <div className="text-muted-foreground">Loading...</div>
@@ -138,8 +138,8 @@ export default function ManageAgentsPage() {
                 {agents.map((agent) => (
                   <tr
                     key={agent.id}
-                    className="border-t hover:bg-muted/25 cursor-pointer"
-                    onClick={() => router.push(editHref(agent.id))}
+                    className={`border-t hover:bg-muted/25 ${canMutate ? 'cursor-pointer' : ''}`}
+                    onClick={canMutate ? () => router.push(editHref(agent.id)) : undefined}
                   >
                     <td className="p-3">
                       <div className="font-medium">{agent.name}</div>
