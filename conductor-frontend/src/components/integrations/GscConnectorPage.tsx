@@ -103,16 +103,6 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Pre-populate siteUrl from a previously saved (but now broken) property, so the user can see
-  // and correct it without having to remember or retype the exact string.
-  useEffect(() => {
-    const savedSiteUrl = (response?.data as GscData | null)?.siteUrl;
-    if (response?.healthStatus === 'SETUP_REQUIRED' && savedSiteUrl && !siteUrl) {
-      setSiteUrl(savedSiteUrl);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [response]);
-
   // Once OAuth is complete but the property isn't configured yet, load the verified properties for
   // the picker. Falls back to manual entry if the list can't be fetched or is empty.
   useEffect(() => {
@@ -148,7 +138,8 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
   };
 
   const handleSaveConfig = async () => {
-    if (!accessToken || !connectionId || !siteUrl.trim()) return;
+    const urlToSave = siteUrl.trim() || ((response?.data as GscData | null)?.siteUrl ?? '');
+    if (!accessToken || !connectionId || !urlToSave) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -156,7 +147,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
         projectId,
         'gsc',
         connectionId,
-        { config: { siteUrl: siteUrl.trim(), brandTerm: brandTerm.trim() } },
+        { config: { siteUrl: urlToSave, brandTerm: brandTerm.trim() } },
         accessToken
       );
       await loadData(true);
@@ -184,6 +175,10 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
   // The actual reason a live fetch failed: a thrown request error, or the soft error the backend
   // returns in a 200 body (cached data served, live refresh failed).
   const errorBanner = saveError ?? fetchError ?? response?.errorMessage ?? null;
+  // Pre-populate the property picker with a previously saved (but broken) siteUrl so the user
+  // can see and correct it without retyping. Derived rather than stored to avoid setState-in-effect.
+  const savedSiteUrl = health === 'SETUP_REQUIRED' ? (data?.siteUrl ?? '') : '';
+  const effectiveSiteUrl = siteUrl || savedSiteUrl;
 
   if (health === 'SETUP_REQUIRED' || !response) {
     const oauthConnected = connectionId != null;
@@ -238,7 +233,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
                 {!manualEntry && sites.length > 0 ? (
                   <>
                     <select
-                      value={siteUrl}
+                      value={effectiveSiteUrl}
                       onChange={e => setSiteUrl(e.target.value)}
                       disabled={loadingSites}
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -263,7 +258,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
                   <>
                     <input
                       type="text"
-                      value={siteUrl}
+                      value={effectiveSiteUrl}
                       onChange={e => setSiteUrl(e.target.value)}
                       placeholder="sc-domain:example.com or https://example.com/"
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -319,7 +314,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
             ) : null}
             <button
               onClick={handleSaveConfig}
-              disabled={saving || !siteUrl.trim()}
+              disabled={saving || !effectiveSiteUrl.trim()}
               className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? 'Saving…' : 'Save & Connect'}
