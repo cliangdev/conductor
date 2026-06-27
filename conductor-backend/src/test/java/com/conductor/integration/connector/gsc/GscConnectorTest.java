@@ -3,6 +3,7 @@ package com.conductor.integration.connector.gsc;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorHealth;
+import com.conductor.integration.connector.gsc.model.*;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -31,9 +32,8 @@ class GscConnectorTest {
         return new ConnectionContext("proj", "gsc", "conn", "gsc-token", null, null, config, null);
     }
 
-    @SuppressWarnings("unchecked")
-    private static ResponseEntity<Map> rowsResponse(List<Map<String, Object>> rows) {
-        return ResponseEntity.ok(Map.of("rows", rows));
+    private static ResponseEntity<GscAnalyticsResponse> rowsResponse(List<GscAnalyticsRow> rows) {
+        return ResponseEntity.ok(new GscAnalyticsResponse(rows));
     }
 
     @Test
@@ -59,31 +59,27 @@ class GscConnectorTest {
         RestTemplate restTemplate = mock(RestTemplate.class);
 
         // 1. trend (date) — one row.
-        ResponseEntity<Map> trend = rowsResponse(List.of(Map.of(
-                "keys", List.of("2026-06-01"),
-                "clicks", 100.0, "impressions", 2000.0, "ctr", 0.05, "position", 3.2)));
+        ResponseEntity<GscAnalyticsResponse> trend = rowsResponse(List.of(
+                new GscAnalyticsRow(List.of("2026-06-01"), 100.0, 2000.0, 0.05, 3.2)));
 
         // 2. top queries (query) — total clicks 100 + 300 = 400.
-        ResponseEntity<Map> queries = rowsResponse(List.of(
-                Map.of("keys", List.of("acme analytics"), "clicks", 100.0,
-                        "impressions", 1000.0, "ctr", 0.1, "position", 2.0),
-                Map.of("keys", List.of("session replay"), "clicks", 300.0,
-                        "impressions", 5000.0, "ctr", 0.06, "position", 6.0)));
+        ResponseEntity<GscAnalyticsResponse> queries = rowsResponse(List.of(
+                new GscAnalyticsRow(List.of("acme analytics"), 100.0, 1000.0, 0.1, 2.0),
+                new GscAnalyticsRow(List.of("session replay"), 300.0, 5000.0, 0.06, 6.0)));
 
         // 3. branded share (filtered query) — branded clicks 100 → share 100/400 = 0.25.
-        ResponseEntity<Map> branded = rowsResponse(List.of(
-                Map.of("keys", List.of("acme analytics"), "clicks", 100.0,
-                        "impressions", 1000.0, "ctr", 0.1, "position", 2.0)));
+        ResponseEntity<GscAnalyticsResponse> branded = rowsResponse(List.of(
+                new GscAnalyticsRow(List.of("acme analytics"), 100.0, 1000.0, 0.1, 2.0)));
 
         // 4. pages, 5. countries, 6. devices.
-        ResponseEntity<Map> pages = rowsResponse(List.of(Map.of(
-                "keys", List.of("https://example.com/"), "clicks", 250.0, "impressions", 4000.0)));
-        ResponseEntity<Map> countries = rowsResponse(List.of(Map.of(
-                "keys", List.of("usa"), "clicks", 320.0)));
-        ResponseEntity<Map> devices = rowsResponse(List.of(Map.of(
-                "keys", List.of("DESKTOP"), "clicks", 280.0)));
+        ResponseEntity<GscAnalyticsResponse> pages = rowsResponse(List.of(
+                new GscAnalyticsRow(List.of("https://example.com/"), 250.0, 4000.0, 0.0, 0.0)));
+        ResponseEntity<GscAnalyticsResponse> countries = rowsResponse(List.of(
+                new GscAnalyticsRow(List.of("usa"), 320.0, 0.0, 0.0, 0.0)));
+        ResponseEntity<GscAnalyticsResponse> devices = rowsResponse(List.of(
+                new GscAnalyticsRow(List.of("DESKTOP"), 280.0, 0.0, 0.0, 0.0)));
 
-        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(), eq(Map.class)))
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(), eq(GscAnalyticsResponse.class)))
                 .thenReturn(trend, queries, branded, pages, countries, devices);
 
         GscConnector connector = new GscConnector(restTemplate);
@@ -95,7 +91,7 @@ class GscConnectorTest {
         // String would let RestTemplate re-encode the '%' to %253A — Google 404s that. See queryUri.
         ArgumentCaptor<URI> uriCaptor = ArgumentCaptor.forClass(URI.class);
         verify(restTemplate, org.mockito.Mockito.atLeastOnce())
-                .exchange(uriCaptor.capture(), eq(HttpMethod.POST), any(), eq(Map.class));
+                .exchange(uriCaptor.capture(), eq(HttpMethod.POST), any(), eq(GscAnalyticsResponse.class));
         assertThat(uriCaptor.getValue().toString())
                 .contains("www.googleapis.com/webmasters/v3/sites/sc-domain%3Aexample.com/searchAnalytics")
                 .doesNotContain("%253A");
@@ -125,7 +121,7 @@ class GscConnectorTest {
     @Test
     void notFoundPropertyRoutesToPropertyPicker() {
         RestTemplate restTemplate = mock(RestTemplate.class);
-        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(), eq(Map.class)))
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(), eq(GscAnalyticsResponse.class)))
                 .thenThrow(HttpClientErrorException.create(
                         HttpStatus.NOT_FOUND, "Not Found", null, null, null));
 
@@ -146,13 +142,12 @@ class GscConnectorTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
     void listSitesReturnsVerifiedPropertiesOnly() {
         RestTemplate restTemplate = mock(RestTemplate.class);
-        ResponseEntity<Map> sites = ResponseEntity.ok(Map.of("siteEntry", List.of(
-                Map.of("siteUrl", "sc-domain:example.com", "permissionLevel", "siteOwner"),
-                Map.of("siteUrl", "https://blog.example.com/", "permissionLevel", "siteUnverifiedUser"))));
-        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(), eq(Map.class)))
+        ResponseEntity<GscSitesResponse> sites = ResponseEntity.ok(new GscSitesResponse(List.of(
+                new GscSiteEntry("sc-domain:example.com", "siteOwner"),
+                new GscSiteEntry("https://blog.example.com/", "siteUnverifiedUser"))));
+        when(restTemplate.exchange(any(String.class), eq(HttpMethod.GET), any(), eq(GscSitesResponse.class)))
                 .thenReturn(sites);
 
         GscConnector connector = new GscConnector(restTemplate);

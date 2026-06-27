@@ -1,6 +1,7 @@
 package com.conductor.integration.connector.gsc;
 
 import com.conductor.integration.*;
+import com.conductor.integration.connector.gsc.model.*;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -56,7 +57,6 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
 
     @Override
     public ConnectorSpec getSpec() {
-        // OAuth captures the token; siteUrl + brandTerm are populated post-auth via a config PATCH.
         return ConnectorSpec.oauth2(true, List.of(
             ConnectorConfigField.userInput("siteUrl", "Search Console property",
                 "Verified GSC property, e.g. sc-domain:example.com or https://example.com/",
@@ -69,24 +69,18 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
 
     /**
      * Lists the Search Console properties the authorized account can read, for the post-OAuth property
-     * picker. Unverified properties are dropped — they can't be queried. Mirrors GcpBillingConnector's
-     * project/dataset pickers.
+     * picker. Unverified properties are dropped — they can't be queried.
      */
-    @SuppressWarnings("unchecked")
     public List<Map<String, String>> listSites(String accessToken) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
-        ResponseEntity<Map> response = restTemplate.exchange(
+        ResponseEntity<GscSitesResponse> response = restTemplate.exchange(
                 "https://www.googleapis.com/webmasters/v3/sites",
-                HttpMethod.GET, new HttpEntity<>(headers), Map.class);
-        List<Map<String, Object>> entries = response.getBody() != null
-                ? (List<Map<String, Object>>) response.getBody().getOrDefault("siteEntry", List.of())
-                : List.of();
-        return entries.stream()
-                .filter(e -> !"siteUnverifiedUser".equals(String.valueOf(e.get("permissionLevel"))))
-                .map(e -> Map.of(
-                        "siteUrl", String.valueOf(e.get("siteUrl")),
-                        "permissionLevel", String.valueOf(e.get("permissionLevel"))))
+                HttpMethod.GET, new HttpEntity<>(headers), GscSitesResponse.class);
+        GscSitesResponse body = response.getBody();
+        return body == null ? List.of() : body.siteEntryOrEmpty().stream()
+                .filter(e -> !"siteUnverifiedUser".equals(e.permissionLevel()))
+                .map(e -> Map.of("siteUrl", e.siteUrl(), "permissionLevel", e.permissionLevel()))
                 .toList();
     }
 
@@ -114,20 +108,18 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             // 1. Daily trend (~90d).
             List<Map<String, Object>> trend = new ArrayList<>();
             try {
-                List<Map<String, Object>> rows = queryRows(url, ctx.accessToken(), Map.of(
-                        "startDate", trendStart, "endDate", end,
-                        "dimensions", List.of("date"), "type", "web", "rowLimit", 90));
-                for (Map<String, Object> row : rows) {
-                    List<?> keys = (List<?>) row.get("keys");
+                List<GscAnalyticsRow> rows = queryRows(url, ctx.accessToken(),
+                        new GscAnalyticsRequest(trendStart, end, List.of("date"), "web", 90, null));
+                for (GscAnalyticsRow row : rows) {
                     trend.add(Map.of(
-                            "date", keys != null && !keys.isEmpty() ? String.valueOf(keys.get(0)) : "",
-                            "clicks", num(row.get("clicks")),
-                            "impressions", num(row.get("impressions")),
-                            "ctr", num(row.get("ctr")),
-                            "position", num(row.get("position"))));
+                            "date", row.firstKey(),
+                            "clicks", row.clicks(),
+                            "impressions", row.impressions(),
+                            "ctr", row.ctr(),
+                            "position", row.position()));
                 }
             } catch (HttpClientErrorException e) {
-                throw e; // fatal auth/permission errors surface below
+                throw e;
             } catch (Exception e) {
                 log.warn("GSC trend query failed: {}", e.getMessage());
             }
@@ -136,19 +128,16 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             List<Map<String, Object>> allQueries = new ArrayList<>();
             double totalQueryClicks = 0;
             try {
-                List<Map<String, Object>> rows = queryRows(url, ctx.accessToken(), Map.of(
-                        "startDate", breakdownStart, "endDate", end,
-                        "dimensions", List.of("query"), "rowLimit", 25000));
-                for (Map<String, Object> row : rows) {
-                    List<?> keys = (List<?>) row.get("keys");
-                    double clicks = num(row.get("clicks"));
-                    totalQueryClicks += clicks;
+                List<GscAnalyticsRow> rows = queryRows(url, ctx.accessToken(),
+                        new GscAnalyticsRequest(breakdownStart, end, List.of("query"), 25000));
+                for (GscAnalyticsRow row : rows) {
+                    totalQueryClicks += row.clicks();
                     allQueries.add(Map.of(
-                            "query", keys != null && !keys.isEmpty() ? String.valueOf(keys.get(0)) : "",
-                            "clicks", clicks,
-                            "impressions", num(row.get("impressions")),
-                            "ctr", num(row.get("ctr")),
-                            "position", num(row.get("position"))));
+                            "query", row.firstKey(),
+                            "clicks", row.clicks(),
+                            "impressions", row.impressions(),
+                            "ctr", row.ctr(),
+                            "position", row.position()));
                 }
             } catch (Exception e) {
                 log.warn("GSC query breakdown failed: {}", e.getMessage());
@@ -162,19 +151,11 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             double brandedClickShare = 0;
             if (brandTerm != null && !brandTerm.isBlank() && totalQueryClicks > 0) {
                 try {
-                    List<Map<String, Object>> rows = queryRows(url, ctx.accessToken(), Map.of(
-                            "startDate", breakdownStart, "endDate", end,
-                            "dimensions", List.of("query"), "rowLimit", 25000,
-                            "dimensionFilterGroups", List.of(Map.of(
-                                    "groupType", "and",
-                                    "filters", List.of(Map.of(
-                                            "dimension", "query",
-                                            "operator", "contains",
-                                            "expression", brandTerm))))));
-                    double brandedClicks = 0;
-                    for (Map<String, Object> row : rows) {
-                        brandedClicks += num(row.get("clicks"));
-                    }
+                    List<GscDimensionFilterGroup> filters = List.of(new GscDimensionFilterGroup("and",
+                            List.of(new GscDimensionFilter("query", "contains", brandTerm))));
+                    List<GscAnalyticsRow> rows = queryRows(url, ctx.accessToken(),
+                            new GscAnalyticsRequest(breakdownStart, end, List.of("query"), null, 25000, filters));
+                    double brandedClicks = rows.stream().mapToDouble(GscAnalyticsRow::clicks).sum();
                     brandedClickShare = brandedClicks / totalQueryClicks;
                 } catch (Exception e) {
                     log.warn("GSC branded-share query failed: {}", e.getMessage());
@@ -184,19 +165,15 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             // 4. Top pages (28d).
             List<Map<String, Object>> topPages = new ArrayList<>();
             try {
-                List<Map<String, Object>> rows = queryRows(url, ctx.accessToken(), Map.of(
-                        "startDate", breakdownStart, "endDate", end,
-                        "dimensions", List.of("page"), "rowLimit", 25000));
+                List<GscAnalyticsRow> rows = queryRows(url, ctx.accessToken(),
+                        new GscAnalyticsRequest(breakdownStart, end, List.of("page"), 25000));
                 rows.stream()
-                        .sorted(Comparator.comparingDouble(r -> -num(r.get("clicks"))))
+                        .sorted(Comparator.comparingDouble(r -> -r.clicks()))
                         .limit(25)
-                        .forEach(row -> {
-                            List<?> keys = (List<?>) row.get("keys");
-                            topPages.add(Map.of(
-                                    "page", keys != null && !keys.isEmpty() ? String.valueOf(keys.get(0)) : "",
-                                    "clicks", num(row.get("clicks")),
-                                    "impressions", num(row.get("impressions"))));
-                        });
+                        .forEach(row -> topPages.add(Map.of(
+                                "page", row.firstKey(),
+                                "clicks", row.clicks(),
+                                "impressions", row.impressions())));
             } catch (Exception e) {
                 log.warn("GSC page breakdown failed: {}", e.getMessage());
             }
@@ -204,18 +181,14 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             // 5. Countries (28d).
             List<Map<String, Object>> countries = new ArrayList<>();
             try {
-                List<Map<String, Object>> rows = queryRows(url, ctx.accessToken(), Map.of(
-                        "startDate", breakdownStart, "endDate", end,
-                        "dimensions", List.of("country"), "rowLimit", 250));
+                List<GscAnalyticsRow> rows = queryRows(url, ctx.accessToken(),
+                        new GscAnalyticsRequest(breakdownStart, end, List.of("country"), 250));
                 rows.stream()
-                        .sorted(Comparator.comparingDouble(r -> -num(r.get("clicks"))))
+                        .sorted(Comparator.comparingDouble(r -> -r.clicks()))
                         .limit(10)
-                        .forEach(row -> {
-                            List<?> keys = (List<?>) row.get("keys");
-                            countries.add(Map.of(
-                                    "country", keys != null && !keys.isEmpty() ? String.valueOf(keys.get(0)) : "",
-                                    "clicks", num(row.get("clicks"))));
-                        });
+                        .forEach(row -> countries.add(Map.of(
+                                "country", row.firstKey(),
+                                "clicks", row.clicks())));
             } catch (Exception e) {
                 log.warn("GSC country breakdown failed: {}", e.getMessage());
             }
@@ -223,14 +196,10 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             // 6. Devices (28d).
             List<Map<String, Object>> devices = new ArrayList<>();
             try {
-                List<Map<String, Object>> rows = queryRows(url, ctx.accessToken(), Map.of(
-                        "startDate", breakdownStart, "endDate", end,
-                        "dimensions", List.of("device"), "rowLimit", 10));
-                for (Map<String, Object> row : rows) {
-                    List<?> keys = (List<?>) row.get("keys");
-                    devices.add(Map.of(
-                            "device", keys != null && !keys.isEmpty() ? String.valueOf(keys.get(0)) : "",
-                            "clicks", num(row.get("clicks"))));
+                List<GscAnalyticsRow> rows = queryRows(url, ctx.accessToken(),
+                        new GscAnalyticsRequest(breakdownStart, end, List.of("device"), 10));
+                for (GscAnalyticsRow row : rows) {
+                    devices.add(Map.of("device", row.firstKey(), "clicks", row.clicks()));
                 }
             } catch (Exception e) {
                 log.warn("GSC device breakdown failed: {}", e.getMessage());
@@ -248,8 +217,7 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
 
         } catch (HttpClientErrorException e) {
             int status = e.getStatusCode().value();
-            // 404 = the property string isn't a property this account can access; 403 = not granted.
-            // Both are configuration problems, so route the user back to the property picker.
+            // 404 = property not found for this account; 403 = not granted. Both are config problems.
             if (status == 404) {
                 return ConnectorData.setupRequired(
                         "Property \"" + siteUrl + "\" wasn't found for your Google account. "
@@ -268,8 +236,6 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             if (status == 429) {
                 return ConnectorData.degraded("Rate limited — try again later", Map.of());
             }
-            // Log Google's response body too — the bare status code wasn't enough to diagnose past
-            // issues (e.g. a double-encoded property URL surfaced only as a generic 404).
             log.warn("GSC API error {}: {}", e.getStatusCode(), e.getResponseBodyAsString());
             return ConnectorData.degraded("Search Console API error: " + e.getStatusCode(), Map.of());
         } catch (Exception e) {
@@ -287,14 +253,12 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
         try {
             DateTimeFormatter iso = DateTimeFormatter.ISO_LOCAL_DATE;
             LocalDate endDate = LocalDate.now().minusDays(LAG_DAYS);
-            queryRows(queryUri(siteUrl), ctx.accessToken(), Map.of(
-                    "startDate", endDate.minusDays(BREAKDOWN_DAYS).format(iso),
-                    "endDate", endDate.format(iso),
-                    "dimensions", List.of("date"), "rowLimit", 1));
+            queryRows(queryUri(siteUrl), ctx.accessToken(), new GscAnalyticsRequest(
+                    endDate.minusDays(BREAKDOWN_DAYS).format(iso),
+                    endDate.format(iso),
+                    List.of("date"), 1));
             return ConnectorHealth.HEALTHY;
         } catch (HttpClientErrorException e) {
-            // 403 = property not granted; 404 = property not found for this account. Both are setup
-            // problems (wrong/inaccessible property), not faults.
             int status = e.getStatusCode().value();
             if (status == 403 || status == 404) {
                 return ConnectorHealth.SETUP_REQUIRED;
@@ -316,21 +280,14 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
         return URI.create("https://www.googleapis.com/webmasters/v3/sites/" + encoded + "/searchAnalytics/query");
     }
 
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> queryRows(URI url, String accessToken, Map<String, Object> body) {
+    private List<GscAnalyticsRow> queryRows(URI url, String accessToken, GscAnalyticsRequest request) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         headers.setContentType(MediaType.APPLICATION_JSON);
-        ResponseEntity<Map> response = restTemplate.exchange(
-                url, HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
-        Map<String, Object> respBody = response.getBody();
-        if (respBody == null) return List.of();
-        Object rows = respBody.get("rows");
-        return rows instanceof List ? (List<Map<String, Object>>) rows : List.of();
-    }
-
-    private static double num(Object o) {
-        return o instanceof Number n ? n.doubleValue() : 0;
+        ResponseEntity<GscAnalyticsResponse> response = restTemplate.exchange(
+                url, HttpMethod.POST, new HttpEntity<>(request, headers), GscAnalyticsResponse.class);
+        GscAnalyticsResponse body = response.getBody();
+        return body != null ? body.rowsOrEmpty() : List.of();
     }
 
     private static String stringConfig(ConnectionContext ctx, String key) {
