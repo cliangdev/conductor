@@ -154,6 +154,8 @@ export default function ManageAgentsPage() {
                     <td className="p-3" onClick={(e) => e.stopPropagation()}>
                       {canMutate ? (
                         <button
+                          role="switch"
+                          aria-checked={agent.state === 'ACTIVE'}
                           onClick={() => handleToggleState(agent)}
                           aria-label={agent.state === 'ACTIVE' ? 'Set to draft' : 'Set to active'}
                           className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${

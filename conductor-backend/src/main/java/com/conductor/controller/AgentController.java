@@ -3,10 +3,6 @@ package com.conductor.controller;
 import com.conductor.agent.Agent;
 import com.conductor.agent.AgentService;
 import com.conductor.agent.credential.ProviderCredentialService;
-import com.conductor.agent.provider.ChatModelProvider;
-import com.conductor.agent.provider.ModelProviderRegistry;
-import com.conductor.agent.tool.AgentTool;
-import com.conductor.agent.tool.AgentToolRegistry;
 import com.conductor.entity.User;
 import com.conductor.generated.api.AgentsApi;
 import com.conductor.generated.model.AgentConfig;
@@ -41,21 +37,15 @@ public class AgentController implements AgentsApi {
 
     private final AgentService agentService;
     private final ProviderCredentialService providerCredentialService;
-    private final AgentToolRegistry agentToolRegistry;
-    private final ModelProviderRegistry modelProviderRegistry;
     private final ProjectSecurityService projectSecurityService;
     private final ObjectMapper objectMapper;
 
     public AgentController(AgentService agentService,
                            ProviderCredentialService providerCredentialService,
-                           AgentToolRegistry agentToolRegistry,
-                           ModelProviderRegistry modelProviderRegistry,
                            ProjectSecurityService projectSecurityService,
                            ObjectMapper objectMapper) {
         this.agentService = agentService;
         this.providerCredentialService = providerCredentialService;
-        this.agentToolRegistry = agentToolRegistry;
-        this.modelProviderRegistry = modelProviderRegistry;
         this.projectSecurityService = projectSecurityService;
         this.objectMapper = objectMapper;
     }
@@ -85,7 +75,7 @@ public class AgentController implements AgentsApi {
                 request.getModel(),
                 request.getSystemPrompt(),
                 toConfigMap(request.getConfig()),
-                request.getToolIds() == null || request.getToolIds().isEmpty() ? null : request.getToolIds(),
+                request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null);
         Agent created = agentService.create(projectId, input);
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(created));
@@ -102,7 +92,7 @@ public class AgentController implements AgentsApi {
                 request.getModel(),
                 request.getSystemPrompt(),
                 toConfigMap(request.getConfig()),
-                request.getToolIds() == null || request.getToolIds().isEmpty() ? null : request.getToolIds(),
+                request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null);
         Agent updated = agentService.update(projectId, agentId, input);
         return ResponseEntity.ok(toResponse(updated));
@@ -139,38 +129,26 @@ public class AgentController implements AgentsApi {
     @Override
     public ResponseEntity<List<AvailableAgentTool>> listAgentTools(String projectId) {
         requireMember(projectId);
-        List<AvailableAgentTool> tools = agentToolRegistry.availableTools(projectId).stream()
-                .map(this::toToolItem).toList();
+        List<AvailableAgentTool> tools = agentService.listAvailableTools(projectId).stream()
+                .map(t -> new AvailableAgentTool()
+                        .id(t.id())
+                        .name(t.name())
+                        .description(t.description())
+                        .source(t.source()))
+                .toList();
         return ResponseEntity.ok(tools);
     }
 
     @Override
     public ResponseEntity<List<AgentProviderInfo>> listAgentProviders(String projectId) {
         requireMember(projectId);
-        List<AgentProviderInfo> providers = modelProviderRegistry.providerIds().stream()
-                .map(id -> new AgentProviderInfo()
-                        .id(id)
-                        .defaultModel(modelProviderRegistry.findById(id)
-                                .map(ChatModelProvider::defaultModel).orElse(null)))
+        List<AgentProviderInfo> providers = agentService.listProviders().stream()
+                .map(p -> new AgentProviderInfo().id(p.id()).defaultModel(p.defaultModel()))
                 .toList();
         return ResponseEntity.ok(providers);
     }
 
     // ---- mapping ----
-
-    private AvailableAgentTool toToolItem(AgentTool tool) {
-        return new AvailableAgentTool()
-                .id(tool.id())
-                .name(tool.name())
-                .description(tool.description())
-                .source(sourceOf(tool.id()));
-    }
-
-    /** Tool ids are namespaced {@code "<source>:<rest>"}; the prefix is the tool source. */
-    private String sourceOf(String toolId) {
-        int idx = toolId == null ? -1 : toolId.indexOf(':');
-        return idx <= 0 ? "" : toolId.substring(0, idx);
-    }
 
     private AgentResponse toResponse(Agent agent) {
         return new AgentResponse()

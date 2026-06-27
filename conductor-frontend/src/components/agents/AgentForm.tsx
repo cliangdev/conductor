@@ -96,27 +96,25 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
     }
     setNameError(null)
 
-    const config: CreateAgentBody['config'] = {}
-    const t = numOrUndef(temperature)
-    const mt = numOrUndef(maxTokens)
-    const mtt = numOrUndef(maxToolTurns)
-    if (t !== undefined) config.temperature = t
-    if (mt !== undefined) config.maxTokens = mt
-    if (mtt !== undefined) config.maxToolTurns = mtt
+    // Send the full form state so a PATCH saves exactly what's on screen: blanked text fields and
+    // guardrails clear (the backend normalizes blanks), and an empty tool set clears the bindings.
+    const config: CreateAgentBody['config'] = {
+      temperature: numOrUndef(temperature) ?? null,
+      maxTokens: numOrUndef(maxTokens) ?? null,
+      maxToolTurns: numOrUndef(maxToolTurns) ?? null,
+    }
 
     onSubmit({
       name: name.trim(),
-      description: description.trim() || undefined,
+      description: description.trim(),
       provider,
-      model: model.trim() || undefined,
-      systemPrompt: systemPrompt.trim() || undefined,
-      config: Object.keys(config).length > 0 ? config : undefined,
+      model: model.trim(),
+      systemPrompt: systemPrompt.trim(),
+      config,
       toolIds: Array.from(selectedTools),
       state,
     })
   }
-
-  const hadTools = (initial?.toolIds?.length ?? 0) > 0
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6 max-w-2xl">
@@ -162,7 +160,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
           >
             {providers.length === 0 && <option value="">Loading…</option>}
             {providers.map((p) => (
-              <option key={p.id} value={p.id}>{p.id}</option>
+              <option key={p.id} value={p.id}>{p.id.charAt(0).toUpperCase() + p.id.slice(1)}</option>
             ))}
           </select>
         </div>
@@ -242,7 +240,6 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
         <h3 className="text-sm font-medium text-foreground mb-1">Tools</h3>
         <p className="text-xs text-muted-foreground mb-3">
           Tools this agent may call during a run.
-          {initial && hadTools && ' Note: un-checking every tool will not persist yet — at least one must stay selected.'}
         </p>
         {!toolsLoaded ? (
           <div className="text-sm text-muted-foreground">Loading tools…</div>

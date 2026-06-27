@@ -40,4 +40,9 @@ public class ModelProviderRegistry {
     public List<String> providerIds() {
         return new ArrayList<>(registry.keySet());
     }
+
+    /** All registered providers — for read surfaces that need id + default model without a per-id lookup. */
+    public List<ChatModelProvider> providers() {
+        return new ArrayList<>(registry.values());
+    }
 }

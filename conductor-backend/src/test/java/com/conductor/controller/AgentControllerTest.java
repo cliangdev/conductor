@@ -2,10 +2,6 @@ package com.conductor.controller;
 
 import com.conductor.agent.AgentService;
 import com.conductor.agent.credential.ProviderCredentialService;
-import com.conductor.agent.provider.ChatModelProvider;
-import com.conductor.agent.provider.ModelProviderRegistry;
-import com.conductor.agent.tool.AgentTool;
-import com.conductor.agent.tool.AgentToolRegistry;
 import com.conductor.config.SecurityConfig;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
@@ -17,7 +13,6 @@ import com.conductor.service.ProjectSecurityService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -25,7 +20,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
-import java.util.Optional;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -44,8 +38,6 @@ class AgentControllerTest {
     // AgentController collaborators
     @MockitoBean private AgentService agentService;
     @MockitoBean private ProviderCredentialService providerCredentialService;
-    @MockitoBean private AgentToolRegistry agentToolRegistry;
-    @MockitoBean private ModelProviderRegistry modelProviderRegistry;
     @MockitoBean private ProjectSecurityService projectSecurityService;
     @MockitoBean private ObjectMapper objectMapper;
 
@@ -64,19 +56,20 @@ class AgentControllerTest {
 
         when(jwtService.validateToken("member-token")).thenReturn(true);
         when(jwtService.getUserIdFromToken("member-token")).thenReturn("member-user-id");
-        when(userRepository.findById("member-user-id")).thenReturn(Optional.of(memberUser));
+        when(userRepository.findById("member-user-id")).thenReturn(java.util.Optional.of(memberUser));
     }
 
     // ---- listAgentTools ----
 
     @Test
-    void listAgentTools_happyPath_returnsToolsWithSourceDerivedFromId() throws Exception {
+    void listAgentTools_happyPath_returnsToolsTaggedWithSource() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
-        AgentTool tool = Mockito.mock(AgentTool.class);
-        when(tool.id()).thenReturn("connector:posthog/web_analytics_summary");
-        when(tool.name()).thenReturn("posthog_web_analytics_summary");
-        when(tool.description()).thenReturn("Summarize web analytics");
-        when(agentToolRegistry.availableTools(PROJECT_ID)).thenReturn(List.of(tool));
+        when(agentService.listAvailableTools(PROJECT_ID)).thenReturn(List.of(
+                new AgentService.ToolOption(
+                        "connector:posthog/web_analytics_summary",
+                        "posthog_web_analytics_summary",
+                        "Summarize web analytics",
+                        "connector")));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/tools")
                         .header("Authorization", "Bearer member-token"))
@@ -101,10 +94,8 @@ class AgentControllerTest {
     @Test
     void listAgentProviders_happyPath_returnsProvidersWithDefaultModel() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
-        ChatModelProvider claude = Mockito.mock(ChatModelProvider.class);
-        when(claude.defaultModel()).thenReturn("claude-opus-4-8");
-        when(modelProviderRegistry.providerIds()).thenReturn(List.of("claude"));
-        when(modelProviderRegistry.findById("claude")).thenReturn(Optional.of(claude));
+        when(agentService.listProviders()).thenReturn(List.of(
+                new AgentService.ProviderOption("claude", "claude-opus-4-8")));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers")
                         .header("Authorization", "Bearer member-token"))

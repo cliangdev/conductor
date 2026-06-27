@@ -6,9 +6,12 @@ import { useAuth } from '@/contexts/AuthContext'
 import type { Member, MemberRole } from '@/types'
 
 /**
- * Resolves the signed-in user's role in a project and whether they may mutate
- * (ADMIN/CREATOR). Mirrors the inline role-gating the Settings pages use, shared
- * across the agent pages so write controls hide for REVIEWERs.
+ * Resolves the signed-in user's role in a project and whether they may mutate.
+ *
+ * Agents are authored content that bind integration tools and run inside workflows, so the write
+ * gate is ADMIN||CREATOR — deliberately matching Integrations and Workflows (its closest analogs),
+ * not the ADMIN-only gate used by members/notifications/general. REVIEWERs get read-only browse.
+ * Centralized here so the rule (and any future change) lives in one place.
  */
 export function useCanMutate(projectId: string): { role: MemberRole | undefined; canMutate: boolean } {
   const { accessToken, user } = useAuth()
