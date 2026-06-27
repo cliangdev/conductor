@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'conductor-backend/**'
+      - '.github/workflows/backend-ci.yml'
 
 jobs:
   build-and-test:
