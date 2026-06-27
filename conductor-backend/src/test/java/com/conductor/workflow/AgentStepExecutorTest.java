@@ -1,14 +1,12 @@
 package com.conductor.workflow;
 
-import com.conductor.agent.Agent;
-import com.conductor.agent.AgentRepository;
 import com.conductor.agent.provider.TokenUsage;
 import com.conductor.agent.run.AgentExecutionService;
-import com.conductor.agent.run.AgentRunRequest;
 import com.conductor.agent.run.AgentRunResult;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,10 +16,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -30,26 +31,13 @@ class AgentStepExecutorTest {
     private static final String PROJECT_ID = "proj-1";
 
     @Mock
-    private AgentRepository agentRepository;
-    @Mock
     private AgentExecutionService agentExecutionService;
 
     private AgentStepExecutor executor;
-    private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
-        objectMapper = new ObjectMapper();
-        executor = new AgentStepExecutor(agentRepository, agentExecutionService,
-                new WorkflowInterpolator(), objectMapper);
-    }
-
-    private Agent agent(String id, String slug) {
-        Agent a = new Agent();
-        a.setId(id);
-        a.setSlug(slug);
-        a.setProjectId(PROJECT_ID);
-        return a;
+        executor = new AgentStepExecutor(agentExecutionService, new WorkflowInterpolator(), new ObjectMapper());
     }
 
     /** Builds a flattened stepDef (the orchestrator flattens `with` into the stepDef before execute). */
@@ -73,13 +61,11 @@ class AgentStepExecutorTest {
 
     @Test
     void successfulRunMapsTextAndStructuredFieldsToOutputs() {
-        when(agentRepository.findByProjectIdAndSlug(PROJECT_ID, "marketing-agent"))
-                .thenReturn(Optional.of(agent("agent-1", "marketing-agent")));
         Map<String, Object> structured = new LinkedHashMap<>();
         structured.put("report", "SEO is healthy");
         structured.put("action_items", java.util.List.of("Fix titles", "Add alt text"));
-        when(agentExecutionService.run(any(AgentRunRequest.class))).thenReturn(
-                new AgentRunResult("run-9", "Final answer text", structured,
+        when(agentExecutionService.run(eq(PROJECT_ID), eq("marketing-agent"), anyString(), anyMap(), any()))
+                .thenReturn(new AgentRunResult("run-9", "Final answer text", structured,
                         new TokenUsage(100, 50), "SUCCEEDED"));
 
         Map<String, Object> with = new LinkedHashMap<>();
@@ -96,9 +82,8 @@ class AgentStepExecutorTest {
 
     @Test
     void missingAgentYieldsFailed() {
-        when(agentRepository.findByProjectIdAndSlug(PROJECT_ID, "ghost"))
-                .thenReturn(Optional.empty());
-        when(agentRepository.findById("ghost")).thenReturn(Optional.empty());
+        when(agentExecutionService.run(eq(PROJECT_ID), eq("ghost"), anyString(), anyMap(), any()))
+                .thenThrow(new EntityNotFoundException("Agent not found: ghost"));
 
         Map<String, Object> with = new LinkedHashMap<>();
         with.put("agent", "ghost");
@@ -111,10 +96,8 @@ class AgentStepExecutorTest {
 
     @Test
     void interpolatesTaskAndContextRefsFromUpstreamOutputs() {
-        when(agentRepository.findByProjectIdAndSlug(PROJECT_ID, "marketing-agent"))
-                .thenReturn(Optional.of(agent("agent-1", "marketing-agent")));
-        when(agentExecutionService.run(any(AgentRunRequest.class))).thenReturn(
-                new AgentRunResult("run-1", "ok", null, TokenUsage.ZERO, "SUCCEEDED"));
+        when(agentExecutionService.run(eq(PROJECT_ID), eq("marketing-agent"), anyString(), anyMap(), any()))
+                .thenReturn(new AgentRunResult("run-1", "ok", null, TokenUsage.ZERO, "SUCCEEDED"));
 
         // steps.collect.outputs.summary -> "42 clicks"; needs.collect.outputs.data -> JSON string
         RuntimeContext ctx = new RuntimeContext(
@@ -132,22 +115,21 @@ class AgentStepExecutorTest {
         StepResult result = executor.execute(context(with, ctx));
         assertThat(result.getStatus().name()).isEqualTo("SUCCESS");
 
-        ArgumentCaptor<AgentRunRequest> captor = ArgumentCaptor.forClass(AgentRunRequest.class);
-        org.mockito.Mockito.verify(agentExecutionService).run(captor.capture());
-        AgentRunRequest req = captor.getValue();
-        assertThat(req.task()).isEqualTo("Summarize: 42 clicks");
-        assertThat(req.context().get("gsc")).isEqualTo("{\"pageviews\":99}");
-        assertThat(req.agentId()).isEqualTo("agent-1");
+        ArgumentCaptor<String> taskCap = ArgumentCaptor.forClass(String.class);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> ctxCap = ArgumentCaptor.forClass(Map.class);
+        verify(agentExecutionService).run(eq(PROJECT_ID), eq("marketing-agent"),
+                taskCap.capture(), ctxCap.capture(), any());
+        assertThat(taskCap.getValue()).isEqualTo("Summarize: 42 clicks");
+        assertThat(ctxCap.getValue().get("gsc")).isEqualTo("{\"pageviews\":99}");
     }
 
     @Test
     void declaredOutputsDotPathExtractsStructuredFields() {
-        when(agentRepository.findByProjectIdAndSlug(PROJECT_ID, "marketing-agent"))
-                .thenReturn(Optional.of(agent("agent-1", "marketing-agent")));
         Map<String, Object> structured = new LinkedHashMap<>();
         structured.put("report", "All good");
-        when(agentExecutionService.run(any(AgentRunRequest.class))).thenReturn(
-                new AgentRunResult("run-2", "final", structured, TokenUsage.ZERO, "SUCCEEDED"));
+        when(agentExecutionService.run(eq(PROJECT_ID), eq("marketing-agent"), anyString(), anyMap(), any()))
+                .thenReturn(new AgentRunResult("run-2", "final", structured, TokenUsage.ZERO, "SUCCEEDED"));
 
         Map<String, Object> with = new LinkedHashMap<>();
         with.put("agent", "marketing-agent");

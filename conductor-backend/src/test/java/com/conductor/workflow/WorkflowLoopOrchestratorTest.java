@@ -2,6 +2,7 @@ package com.conductor.workflow;
 
 import com.conductor.entity.*;
 import com.conductor.repository.*;
+import com.conductor.service.LogRedactionService;
 import com.conductor.service.WorkflowSecretsService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;

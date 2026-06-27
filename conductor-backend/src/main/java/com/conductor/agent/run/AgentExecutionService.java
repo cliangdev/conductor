@@ -16,7 +16,7 @@ import com.conductor.agent.tool.AgentTool;
 import com.conductor.agent.tool.AgentToolRegistry;
 import com.conductor.agent.tool.ToolInvocationContext;
 import com.conductor.agent.tool.ToolResult;
-import com.conductor.workflow.LogRedactionService;
+import com.conductor.service.LogRedactionService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -77,10 +77,27 @@ public class AgentExecutionService {
         this.objectMapper = objectMapper;
     }
 
-    /** Run an agent to completion (or a guardrail). Never throws for ordinary failures. */
+    /** Run an agent (resolved by id) to completion or a guardrail. Never throws for ordinary failures. */
     public AgentRunResult run(AgentRunRequest request) {
         Agent agent = agentRepository.findById(request.agentId())
                 .orElseThrow(() -> new EntityNotFoundException("Agent not found: " + request.agentId()));
+        return runForAgent(agent, request);
+    }
+
+    /**
+     * Resolve an agent by slug (then id) within a project and run it. This is the facade the workflow
+     * {@code agent} step uses, so the workflow package depends only on this service plus the
+     * request/result records — never on agent persistence — and the agent is loaded exactly once.
+     */
+    public AgentRunResult run(String projectId, String agentRef, String task,
+                              Map<String, Object> context, Map<String, Object> outputSchema) {
+        Agent agent = agentRepository.findByProjectIdAndSlug(projectId, agentRef)
+                .or(() -> agentRepository.findById(agentRef).filter(a -> projectId.equals(a.getProjectId())))
+                .orElseThrow(() -> new EntityNotFoundException("Agent not found: " + agentRef));
+        return runForAgent(agent, new AgentRunRequest(agent.getId(), task, context, outputSchema));
+    }
+
+    private AgentRunResult runForAgent(Agent agent, AgentRunRequest request) {
         String projectId = agent.getProjectId();
         AgentConfig cfg = parseConfig(agent.getConfigJson());
 

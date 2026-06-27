@@ -1,9 +1,6 @@
 package com.conductor.workflow;
 
-import com.conductor.agent.Agent;
-import com.conductor.agent.AgentRepository;
 import com.conductor.agent.run.AgentExecutionService;
-import com.conductor.agent.run.AgentRunRequest;
 import com.conductor.agent.run.AgentRunResult;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,16 +29,13 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
     private static final int MAX_LOG_BYTES = 2_000;
     private static final String STATUS_SUCCEEDED = "SUCCEEDED";
 
-    private final AgentRepository agentRepository;
     private final AgentExecutionService agentExecutionService;
     private final WorkflowInterpolator interpolator;
     private final ObjectMapper objectMapper;
 
-    public AgentStepExecutor(AgentRepository agentRepository,
-                             AgentExecutionService agentExecutionService,
+    public AgentStepExecutor(AgentExecutionService agentExecutionService,
                              WorkflowInterpolator interpolator,
                              ObjectMapper objectMapper) {
-        this.agentRepository = agentRepository;
         this.agentExecutionService = agentExecutionService;
         this.interpolator = interpolator;
         this.objectMapper = objectMapper;
@@ -94,18 +88,10 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
             outputSchema = sm;
         }
 
-        // Resolve the Agent: slug first (the YAML-friendly reference), then id — both project-scoped.
-        Agent agent = agentRepository.findByProjectIdAndSlug(projectId, agentRef)
-                .or(() -> agentRepository.findById(agentRef)
-                        .filter(a -> projectId.equals(a.getProjectId())))
-                .orElse(null);
-        if (agent == null) {
-            return StepResult.failed("No agent found: " + agentRef, "Agent not found: " + agentRef);
-        }
-
         try {
-            AgentRunResult result = agentExecutionService.run(
-                    new AgentRunRequest(agent.getId(), task, agentContext, outputSchema));
+            // The agent module resolves the agent by slug-then-id internally (single load); the
+            // workflow package depends only on the runner facade, not on agent persistence.
+            AgentRunResult result = agentExecutionService.run(projectId, agentRef, task, agentContext, outputSchema);
 
             String text = result.outputText() == null ? "" : result.outputText();
             Map<String, Object> structured = result.structuredJson();
@@ -123,7 +109,7 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
             // Honor declared `outputs:` dot-paths (body.X) like the http/kestra executors.
             applyDeclaredOutputs(stepDef, text, structured, outputs);
 
-            String stepLog = "→ agent=" + agent.getSlug() + " run=" + result.runId()
+            String stepLog = "→ agent=" + agentRef + " run=" + result.runId()
                     + "\n← " + result.status()
                     + " tokens(in/out)=" + tokenSummary(result)
                     + "\n" + truncate(text);

@@ -58,6 +58,9 @@ public class ClaudeProvider implements ChatModelProvider {
                 ? DEFAULT_MODEL : request.model();
         long maxTokens = request.maxTokens() == null ? DEFAULT_MAX_TOKENS : request.maxTokens();
 
+        // NOTE: temperature is intentionally NOT sent. The current Claude models (Opus 4.8/4.7,
+        // Fable 5) reject sampling params (temperature/top_p/top_k) with a 400. request.temperature()
+        // is kept on the neutral ChatRequest for providers that do support it (Gemini/OpenAI seams).
         MessageCreateParams.Builder params = MessageCreateParams.builder()
                 .model(model)
                 .maxTokens(maxTokens);

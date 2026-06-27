@@ -14,7 +14,7 @@ import com.conductor.agent.tool.AgentToolProvider;
 import com.conductor.agent.tool.AgentToolRegistry;
 import com.conductor.agent.tool.ToolInvocationContext;
 import com.conductor.agent.tool.ToolResult;
-import com.conductor.workflow.LogRedactionService;
+import com.conductor.service.LogRedactionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 

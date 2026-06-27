@@ -14,7 +14,10 @@ CREATE TABLE agent_runs (
     token_usage_json JSONB,
     error_reason     TEXT,
     started_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    finished_at      TIMESTAMPTZ
+    finished_at      TIMESTAMPTZ,
+    CONSTRAINT ck_agent_runs_status CHECK (status IN ('RUNNING', 'SUCCEEDED', 'FAILED'))
 );
 
 CREATE INDEX idx_agent_runs_agent ON agent_runs (agent_id);
+-- Project-scoped, most-recent-first listing (AgentRunRepository.findByProjectId) + retention sweeps.
+CREATE INDEX idx_agent_runs_project ON agent_runs (project_id, started_at DESC);

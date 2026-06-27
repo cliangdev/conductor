@@ -73,7 +73,7 @@ public class AgentController implements AgentsApi {
                 request.getModel(),
                 request.getSystemPrompt(),
                 toConfigMap(request.getConfig()),
-                request.getToolIds().isEmpty() ? null : request.getToolIds(),
+                request.getToolIds() == null || request.getToolIds().isEmpty() ? null : request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null);
         Agent created = agentService.create(projectId, input);
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(created));
@@ -90,7 +90,7 @@ public class AgentController implements AgentsApi {
                 request.getModel(),
                 request.getSystemPrompt(),
                 toConfigMap(request.getConfig()),
-                request.getToolIds().isEmpty() ? null : request.getToolIds(),
+                request.getToolIds() == null || request.getToolIds().isEmpty() ? null : request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null);
         Agent updated = agentService.update(projectId, agentId, input);
         return ResponseEntity.ok(toResponse(updated));

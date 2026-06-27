@@ -1,7 +1,7 @@
 -- Agent module, Phase 3: reusable, project-scoped HTTP tool definitions (the generic escape hatch).
 -- Backs HttpToolProvider — a named REST endpoint an agent may call. url_template/headers_json/
--- body_template are rendered at invoke time with the model-supplied args + ${{ secrets.* }} (the
--- project's workflow secrets); input_schema_json is the JSON Schema advertised to the model.
+-- body_template are rendered at invoke time with the model-supplied args plus the project's
+-- workflow secrets; input_schema_json is the JSON Schema advertised to the model.
 
 CREATE TABLE agent_http_tools (
     id                VARCHAR(36)  PRIMARY KEY,
