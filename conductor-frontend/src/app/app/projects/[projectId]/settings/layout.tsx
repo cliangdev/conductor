@@ -12,6 +12,7 @@ const SETTINGS_LABELS: Record<string, string> = {
   'api-keys': 'API Keys',
   notifications: 'Notifications',
   integrations: 'Connect Apps',
+  agents: 'Agents',
 };
 
 /**

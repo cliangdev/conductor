@@ -360,3 +360,134 @@ export async function apiDelete(path: string, token: string): Promise<void> {
     await throwApiError(res!)
   }
 }
+
+// ── AI Agents (named personas, BYO provider keys, tool bindings) ────────────
+//
+// User-managed agents under /projects/{id}/agents. Provider credentials are
+// per-(project, provider) and write-only — the API only reports whether a key
+// is configured, never the key itself.
+
+export type AgentState = 'DRAFT' | 'ACTIVE'
+
+/** Generation guardrails applied at run time. All fields optional. */
+export interface AgentConfig {
+  temperature?: number | null
+  maxTokens?: number | null
+  maxToolTurns?: number | null
+}
+
+export interface Agent {
+  id: string
+  projectId: string
+  name: string
+  slug: string
+  description?: string | null
+  provider: string
+  /** Null means the provider's default model applies. */
+  model?: string | null
+  systemPrompt?: string | null
+  config?: AgentConfig
+  /** Namespaced tool ids (e.g. connector:posthog/web_analytics_summary). */
+  toolIds: string[]
+  state: AgentState
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateAgentBody {
+  name: string
+  slug?: string
+  description?: string
+  provider: string
+  model?: string
+  systemPrompt?: string
+  config?: AgentConfig
+  toolIds?: string[]
+  state?: AgentState
+}
+
+/** Partial update — only supplied fields change. Note: an empty toolIds is treated as "unchanged". */
+export type UpdateAgentBody = Partial<CreateAgentBody>
+
+/** A tool an agent can be bound to, from any source (connector, http, builtin, mcp). */
+export interface AvailableAgentTool {
+  id: string
+  name: string
+  description?: string | null
+  source: string
+}
+
+export interface AgentProviderInfo {
+  id: string
+  defaultModel?: string | null
+}
+
+export interface ProviderCredentialStatus {
+  provider: string
+  configured: boolean
+}
+
+export function listAgents(projectId: string, token: string): Promise<Agent[]> {
+  return apiGet<Agent[]>(`/api/v1/projects/${projectId}/agents`, token)
+}
+
+export function getAgent(projectId: string, agentId: string, token: string): Promise<Agent> {
+  return apiGet<Agent>(`/api/v1/projects/${projectId}/agents/${agentId}`, token)
+}
+
+export function createAgent(projectId: string, body: CreateAgentBody, token: string): Promise<Agent> {
+  return apiPost<Agent>(`/api/v1/projects/${projectId}/agents`, body, token)
+}
+
+export function updateAgent(
+  projectId: string,
+  agentId: string,
+  body: UpdateAgentBody,
+  token: string,
+): Promise<Agent> {
+  return apiPatch<Agent>(`/api/v1/projects/${projectId}/agents/${agentId}`, body, token) as Promise<Agent>
+}
+
+export function deleteAgent(projectId: string, agentId: string, token: string): Promise<void> {
+  return apiDelete(`/api/v1/projects/${projectId}/agents/${agentId}`, token)
+}
+
+export function listAgentTools(projectId: string, token: string): Promise<AvailableAgentTool[]> {
+  return apiGet<AvailableAgentTool[]>(`/api/v1/projects/${projectId}/agents/tools`, token)
+}
+
+export function listAgentProviders(projectId: string, token: string): Promise<AgentProviderInfo[]> {
+  return apiGet<AgentProviderInfo[]>(`/api/v1/projects/${projectId}/agents/providers`, token)
+}
+
+export function getProviderCredentialStatus(
+  projectId: string,
+  provider: string,
+  token: string,
+): Promise<ProviderCredentialStatus> {
+  return apiGet<ProviderCredentialStatus>(
+    `/api/v1/projects/${projectId}/agents/providers/${provider}/credential`,
+    token,
+  )
+}
+
+export function setProviderCredential(
+  projectId: string,
+  provider: string,
+  apiKey: string,
+  token: string,
+): Promise<ProviderCredentialStatus> {
+  return apiPut<ProviderCredentialStatus>(
+    `/api/v1/projects/${projectId}/agents/providers/${provider}/credential`,
+    { apiKey },
+    token,
+  )
+}
+
+export function deleteProviderCredential(
+  projectId: string,
+  provider: string,
+  token: string,
+): Promise<void> {
+  return apiDelete(`/api/v1/projects/${projectId}/agents/providers/${provider}/credential`, token)
+}

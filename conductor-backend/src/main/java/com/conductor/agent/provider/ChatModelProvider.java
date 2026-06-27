@@ -14,6 +14,14 @@ public interface ChatModelProvider {
     String id();
 
     /**
+     * The model applied when an agent does not pin one. Surfaced to clients (e.g. the Agents UI) as a
+     * placeholder/hint. Defaults to {@code null} (no advertised default).
+     */
+    default String defaultModel() {
+        return null;
+    }
+
+    /**
      * Run one model turn. Returns either a final answer or a set of tool calls (see
      * {@link ChatResponse.StopReason}). May throw — the runner classifies and retries transient
      * failures.
