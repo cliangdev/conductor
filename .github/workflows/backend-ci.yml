@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'conductor-backend/**'
+      - '.github/workflows/backend-ci.yml'
 
 jobs:
   build-and-test:
@@ -21,4 +22,9 @@ jobs:
         working-directory: conductor-backend
         env:
           WORKFLOW_SECRETS_KEY: dGVzdC1rZXktZm9yLWNpLW9ubHktMzItYnl0ZXMhIXg=
+          # Skip the Testcontainers Ryuk reaper sidecar (pull + start ≈ 2-3s). Safe
+          # here because the runner is ephemeral and torn down after the job, so
+          # there are no leaked containers to clean up. Do NOT set this locally —
+          # the shared singleton Postgres relies on Ryuk to reap it on JVM exit.
+          TESTCONTAINERS_RYUK_DISABLED: true
         run: mvn test
