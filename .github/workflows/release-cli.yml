@@ -55,9 +55,19 @@ jobs:
         if: steps.tag.outputs.exists == 'false'
         run: npm run build
 
+      - name: Debug npm auth
+        if: steps.tag.outputs.exists == 'false'
+        run: |
+          echo "=== npmrc ==="
+          cat "$NPM_CONFIG_USERCONFIG" || echo "(not found)"
+          echo "=== npm config list ==="
+          npm config list
+          echo "=== npm whoami ==="
+          npm whoami || echo "(whoami failed)"
+
       - name: Publish to npm
         if: steps.tag.outputs.exists == 'false'
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --loglevel verbose
 
       - name: Tag and create GitHub Release
         if: steps.tag.outputs.exists == 'false'
