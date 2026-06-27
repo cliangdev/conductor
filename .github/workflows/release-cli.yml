@@ -24,6 +24,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
           cache: npm
           cache-dependency-path: conductor-tools/package-lock.json
 
@@ -56,7 +57,9 @@ jobs:
 
       - name: Publish to npm
         if: steps.tag.outputs.exists == 'false'
-        run: npm publish --access public --provenance
+        run: |
+          npm config delete //registry.npmjs.org/:_authToken
+          npm publish --access public --provenance
 
       - name: Tag and create GitHub Release
         if: steps.tag.outputs.exists == 'false'
