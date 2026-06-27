@@ -20,6 +20,7 @@ import {
   getWorkflowRun,
 } from './tools/workflows.js'
 import { listIntegrationTools } from './tools/integrations.js'
+import { listAgents } from './tools/agents.js'
 
 const TOOLS = [
   {
@@ -168,6 +169,11 @@ const TOOLS = [
   {
     name: 'list_integration_tools',
     description: 'List connected integrations and their available data operations for workflow authoring. Always call before designing a workflow — returns ACTIVE connections with connectorId, displayLabel, capabilities, and toolMetadata (description + operations list with id, outputShape, and outputKeys). Use connectorId in workflow YAML as: uses: integration / with: / connector: <connectorId> / operation: <operationId>',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'list_agents',
+    description: 'List the project\'s named AI Agents (id, slug, provider, model, state). Discovery for workflow authoring: resolve an agent name to its slug before referencing it from a workflow agent step.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -361,6 +367,9 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'list_workflows': {
           return successResponse(await listWorkflows({}, config))
+        }
+        case 'list_agents': {
+          return successResponse(await listAgents({}, config))
         }
         case 'create_workflow': {
           return successResponse(

@@ -54,6 +54,8 @@ tags:
     description: GitHub App install lifecycle and repository listing endpoints
   - name: webhooks
     description: Generic inbound webhook receiver
+  - name: agents
+    description: User-managed named AI Agents and per-provider BYO credentials
 
 paths:
   /health:
@@ -4769,6 +4771,249 @@ paths:
         '404':
           description: Unknown connector or connection
 
+  /projects/{projectId}/agents:
+    get:
+      tags: [agents]
+      summary: List the project's named AI Agents
+      operationId: listAgents
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [agents]
+      summary: Create a named AI Agent
+      operationId: createAgent
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Slug already in use in this project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{projectId}/agents/{agentId}:
+    get:
+      tags: [agents]
+      summary: Get a named AI Agent
+      operationId: getAgent
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: agentId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [agents]
+      summary: Update a named AI Agent
+      operationId: updateAgent
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: agentId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAgentRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Slug already in use in this project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [agents]
+      summary: Delete a named AI Agent
+      operationId: deleteAgent
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: agentId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /projects/{projectId}/agents/providers/{provider}/credential:
+    get:
+      tags: [agents]
+      summary: Report whether a BYO API key is configured for a provider
+      description: Never returns the key itself — only whether one is stored.
+      operationId: getProviderCredentialStatus
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: provider
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderCredentialStatus'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      tags: [agents]
+      summary: Set (create or replace) the BYO API key for a provider
+      operationId: setProviderCredential
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: provider
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetProviderCredentialRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderCredentialStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      tags: [agents]
+      summary: Remove the stored BYO API key for a provider
+      operationId: deleteProviderCredential
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: provider
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Removed (idempotent — no-op if none stored)
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
 components:
   responses:
     Forbidden:
@@ -6897,3 +7142,142 @@ components:
           type: string
         storageUrl:
           type: string
+
+    AgentConfig:
+      type: object
+      description: Generation guardrails applied at run time. All fields optional.
+      properties:
+        temperature:
+          type: number
+          format: double
+        maxTokens:
+          type: integer
+        maxToolTurns:
+          type: integer
+
+    AgentResponse:
+      type: object
+      required:
+        - id
+        - projectId
+        - name
+        - slug
+        - provider
+        - state
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+          nullable: true
+        provider:
+          type: string
+        model:
+          type: string
+          nullable: true
+          description: Null means the provider's default model applies.
+        systemPrompt:
+          type: string
+          nullable: true
+        config:
+          $ref: '#/components/schemas/AgentConfig'
+        toolIds:
+          type: array
+          items:
+            type: string
+          description: Namespaced tool ids the agent may call (e.g. connector:posthog/web_analytics_summary).
+        state:
+          type: string
+          enum: [DRAFT, ACTIVE]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateAgentRequest:
+      type: object
+      required:
+        - name
+        - provider
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+          description: Optional. Derived from the name when omitted; unique per project.
+        description:
+          type: string
+        provider:
+          type: string
+          description: A registered model provider id (e.g. claude).
+        model:
+          type: string
+          description: Optional. Omit to use the provider default.
+        systemPrompt:
+          type: string
+        config:
+          $ref: '#/components/schemas/AgentConfig'
+        toolIds:
+          type: array
+          items:
+            type: string
+        state:
+          type: string
+          enum: [DRAFT, ACTIVE]
+
+    UpdateAgentRequest:
+      type: object
+      description: Partial update — only supplied fields are changed.
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        systemPrompt:
+          type: string
+        config:
+          $ref: '#/components/schemas/AgentConfig'
+        toolIds:
+          type: array
+          items:
+            type: string
+        state:
+          type: string
+          enum: [DRAFT, ACTIVE]
+
+    SetProviderCredentialRequest:
+      type: object
+      required:
+        - apiKey
+      properties:
+        apiKey:
+          type: string
+          description: The BYO provider API key. Stored encrypted; never returned.
+
+    ProviderCredentialStatus:
+      type: object
+      required:
+        - provider
+        - configured
+      properties:
+        provider:
+          type: string
+        configured:
+          type: boolean
+          description: True when a key is stored for this project + provider.
