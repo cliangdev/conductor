@@ -11,16 +11,20 @@ import {
 } from '@/lib/api';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { ExternalLink } from 'lucide-react';
+import { ConnectorHeader } from './ConnectorHeader';
+import { StatCard } from './StatCard';
+import { formatDuration, formatPercent } from '@/lib/format';
 
-interface DataPoint {
-  date: string;
-  value: number;
-}
-
-/** Shape of the connector-specific `data` blob inside ConnectionDataResponse. */
 interface IntegrationData {
-  series?: DataPoint[];
+  series?: { date: string; count: number }[];
   total?: number;
+  visitors?: number;
+  sessions?: number;
+  bounceRate?: number;
+  avgSessionDuration?: number;
+  topPages?: { path: string; visitors: number; pageviews: number }[];
+  topSources?: { source: string; visitors: number }[];
+  queryErrors?: string[];
 }
 
 interface ConnectFormState {
@@ -44,12 +48,18 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
       const conns = await listConnections(projectId, 'posthog', accessToken);
       const connId = conns[0]?.id ?? null;
       if (!connId) { setResponse(null); return; }
-      const data = await fetchConnectionData(projectId, 'posthog', connId, accessToken, isRefresh);
-      setResponse(data);
+      const cached = await fetchConnectionData(projectId, 'posthog', connId, accessToken, false);
+      setResponse(cached);
+      if (isRefresh || cached.isStale || !cached.healthStatus) {
+        if (!isRefresh) setRefreshing(true);
+        const fresh = await fetchConnectionData(projectId, 'posthog', connId, accessToken, true);
+        setResponse(fresh);
+      }
     } catch (e) {
       console.error(e);
     } finally {
-      if (isRefresh) setRefreshing(false); else setLoading(false);
+      setRefreshing(false);
+      setLoading(false);
     }
   }, [projectId, accessToken]);
 
@@ -152,42 +162,32 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">PostHog</h1>
-          <p className="text-sm text-muted-foreground mt-1">Analytics · 30-day pageview trend</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {health === 'DEGRADED' && (
-            <span className="inline-flex items-center gap-1 text-xs text-yellow-600 dark:text-yellow-400 font-medium">
-              <span className="h-1.5 w-1.5 rounded-full bg-yellow-500 inline-block" />
-              Degraded
-            </span>
-          )}
-          {health === 'HEALTHY' && (
-            <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium">
-              <span className="h-1.5 w-1.5 rounded-full bg-green-500 inline-block" />
-              Connected
-            </span>
-          )}
-          <a
-            href="https://app.posthog.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
-          >
-            <ExternalLink className="h-3 w-3" />
-            Open PostHog
-          </a>
-          <button
-            onClick={() => loadData(true)}
-            disabled={refreshing}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
-          >
-            {refreshing ? 'Refreshing…' : 'Refresh'}
-          </button>
-        </div>
+      <ConnectorHeader
+        title="PostHog"
+        subtitle="Analytics · 30-day web analytics"
+        status={health ?? null}
+        externalUrl="https://app.posthog.com"
+        externalLabel="Open PostHog"
+        onRefresh={() => loadData(true)}
+        refreshing={refreshing}
+      />
+
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+        <StatCard label="Visitors" value={data?.visitors != null ? data.visitors.toLocaleString() : '—'} />
+        <StatCard label="Pageviews" value={total.toLocaleString()} />
+        <StatCard label="Sessions" value={data?.sessions != null ? data.sessions.toLocaleString() : '—'} />
+        <StatCard label="Bounce Rate" value={data?.bounceRate != null ? formatPercent(data.bounceRate) : '—'} />
+        <StatCard label="Avg. Duration" value={data?.avgSessionDuration != null ? formatDuration(data.avgSessionDuration) : '—'} />
       </div>
+
+      {data?.queryErrors && data.queryErrors.length > 0 && (
+        <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 mb-6 text-xs text-yellow-700 dark:text-yellow-400">
+          <p className="font-medium mb-1">Some metrics could not be loaded:</p>
+          <ul className="list-disc list-inside space-y-0.5">
+            {data.queryErrors.map((e, i) => <li key={i}>{e}</li>)}
+          </ul>
+        </div>
+      )}
 
       <div className="bg-card rounded-lg border border-border p-6 mb-6">
         <div className="mb-4">
@@ -213,7 +213,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
                 />
                 <Line
                   type="monotone"
-                  dataKey="value"
+                  dataKey="count"
                   stroke="hsl(var(--primary))"
                   strokeWidth={2}
                   dot={false}
@@ -235,6 +235,52 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
           <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">{response.errorMessage}</p>
         )}
       </div>
+
+      {data?.topPages && data.topPages.length > 0 && (
+        <div className="bg-card rounded-lg border border-border p-6 mb-6">
+          <h2 className="text-sm font-semibold text-foreground mb-4">Top Pages</h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-muted-foreground">
+                <th className="text-left pb-2">Page</th>
+                <th className="text-right pb-2">Visitors</th>
+                <th className="text-right pb-2">Pageviews</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {data.topPages.map((p) => (
+                <tr key={p.path}>
+                  <td className="py-2 font-mono text-xs text-foreground truncate max-w-xs">{p.path}</td>
+                  <td className="py-2 text-right text-foreground">{p.visitors.toLocaleString()}</td>
+                  <td className="py-2 text-right text-muted-foreground">{p.pageviews.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {data?.topSources && data.topSources.length > 0 && (
+        <div className="bg-card rounded-lg border border-border p-6 mb-6">
+          <h2 className="text-sm font-semibold text-foreground mb-4">Top Sources</h2>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-muted-foreground">
+                <th className="text-left pb-2">Source</th>
+                <th className="text-right pb-2">Visitors</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {data.topSources.map((s) => (
+                <tr key={s.source}>
+                  <td className="py-2 text-foreground">{s.source}</td>
+                  <td className="py-2 text-right text-foreground">{s.visitors.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {response.fetchedAt && (
         <p className="text-xs text-muted-foreground">
