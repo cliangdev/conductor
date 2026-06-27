@@ -46,7 +46,27 @@ public class LocalPostHogConnector implements FetchConnector {
             total += fixtureCounts[i];
             series.add(Map.of("date", "Day " + (i + 1), "count", (long) fixtureCounts[i]));
         }
-        return ConnectorData.healthy(Map.of("series", series, "total", total));
+        return ConnectorData.healthy(Map.of(
+            "series", series,
+            "total", total,
+            "visitors", 1234L,
+            "sessions", 567L,
+            "bounceRate", 0.52,
+            "avgSessionDuration", 279.0,
+            "topPages", List.of(
+                Map.of("path", "/", "visitors", 543L, "pageviews", 812L),
+                Map.of("path", "/pricing", "visitors", 234L, "pageviews", 312L),
+                Map.of("path", "/blog", "visitors", 189L, "pageviews", 267L),
+                Map.of("path", "/docs", "visitors", 156L, "pageviews", 234L),
+                Map.of("path", "/about", "visitors", 112L, "pageviews", 145L)
+            ),
+            "topSources", List.of(
+                Map.of("source", "Organic Search", "sessions", 312L, "visitors", 267L),
+                Map.of("source", "Direct", "sessions", 189L, "visitors", 156L),
+                Map.of("source", "Referral", "sessions", 45L, "visitors", 38L),
+                Map.of("source", "Paid Search", "sessions", 21L, "visitors", 18L)
+            )
+        ));
     }
 
     @Override

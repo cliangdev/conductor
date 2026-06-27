@@ -1,26 +1,21 @@
 {
-  "description": "Web analytics and product insights from PostHog",
+  "description": "Web analytics and landing page health from PostHog",
   "operations": [
     {
-      "id": "pageview_trend",
-      "description": "Daily pageview trend (last 30 days)",
+      "id": "web_analytics_summary",
+      "description": "30-day web analytics: pageview trend, unique visitors, sessions, bounce rate, avg session duration, top pages by unique visitors, top traffic sources by channel type (Organic Search, Direct, Referral, etc.)",
       "params": {},
       "outputShape": {
-        "series": [
-          { "date": "2026-06-01", "count": 1234 }
-        ],
-        "total": 38420
+        "series": [{"date": "2026-06-01", "count": 412}],
+        "total": 38420,
+        "visitors": 1234,
+        "sessions": 567,
+        "bounceRate": 0.52,
+        "avgSessionDuration": 279,
+        "topPages": [{"path": "/", "visitors": 100, "pageviews": 200}],
+        "topSources": [{"source": "Organic Search", "sessions": 80, "visitors": 60}]
       },
-      "outputKeys": ["series", "total"]
-    },
-    {
-      "id": "total_pageviews",
-      "description": "Total pageviews for the last 30 days",
-      "params": {},
-      "outputShape": {
-        "total": 38420
-      },
-      "outputKeys": ["total"]
+      "outputKeys": ["series", "total", "visitors", "sessions", "bounceRate", "avgSessionDuration", "topPages", "topSources"]
     }
   ]
 }
