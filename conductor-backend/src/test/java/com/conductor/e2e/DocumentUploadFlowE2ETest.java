@@ -1,61 +1,15 @@
 package com.conductor.e2e;
 
+import com.conductor.support.AbstractE2ETest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.resttestclient.TestRestTemplate;
-import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
-import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.*;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureTestRestTemplate
-
-@ActiveProfiles("local")
-@Testcontainers
-class DocumentUploadFlowE2ETest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:18-alpine");
-
-    static final java.nio.file.Path STORAGE_DIR;
-
-    static {
-        try {
-            STORAGE_DIR = java.nio.file.Files.createTempDirectory("conductor-e2e-storage");
-        } catch (java.io.IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    @DynamicPropertySource
-    static void dbProps(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
-        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
-        registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.PostgreSQLDialect");
-        registry.add("spring.flyway.enabled", () -> "true");
-        registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
-        registry.add("local.storage.path", STORAGE_DIR::toString);
-    }
-
-    @LocalServerPort
-    int port;
-
-    @Autowired
-    TestRestTemplate rest;
+class DocumentUploadFlowE2ETest extends AbstractE2ETest {
 
     HttpHeaders authHeaders;
     String projectId;
@@ -124,9 +78,5 @@ class DocumentUploadFlowE2ETest {
         var fileResp = rest.getForEntity(url(localFilePath), String.class);
         assertThat(fileResp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(fileResp.getBody()).contains("My PRD");
-    }
-
-    private String url(String path) {
-        return "http://localhost:" + port + path;
     }
 }
