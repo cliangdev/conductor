@@ -1,51 +1,16 @@
 package com.conductor.e2e;
 
+import com.conductor.support.AbstractE2ETest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.resttestclient.TestRestTemplate;
-import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
-import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.*;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@AutoConfigureTestRestTemplate
-
-@ActiveProfiles("local")
-@Testcontainers
-class ReviewWorkflowE2ETest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:18-alpine");
-
-    @DynamicPropertySource
-    static void dbProps(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
-        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
-        registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.PostgreSQLDialect");
-        registry.add("spring.flyway.enabled", () -> "true");
-        registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
-    }
-
-    @LocalServerPort
-    int port;
-
-    @Autowired
-    TestRestTemplate rest;
+class ReviewWorkflowE2ETest extends AbstractE2ETest {
 
     HttpHeaders adminHeaders;
     HttpHeaders reviewerHeaders;
@@ -221,9 +186,5 @@ class ReviewWorkflowE2ETest {
         headers.setBearerAuth(token);
         headers.setContentType(MediaType.APPLICATION_JSON);
         return headers;
-    }
-
-    private String url(String path) {
-        return "http://localhost:" + port + path;
     }
 }

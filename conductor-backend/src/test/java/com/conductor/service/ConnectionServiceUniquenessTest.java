@@ -7,17 +7,11 @@ import com.conductor.integration.AuthType;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.support.AbstractNoneWebIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.List;
 import java.util.UUID;
@@ -36,25 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *   #4 a github installation cannot be double-connected within one project, while
  *      cross-project sharing of the same installationId stays allowed.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
-@ActiveProfiles("local")
-@Testcontainers
-class ConnectionServiceUniquenessTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:18-alpine");
-
-    @DynamicPropertySource
-    static void dbProps(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
-        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
-        registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.PostgreSQLDialect");
-        registry.add("spring.flyway.enabled", () -> "true");
-        registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
-        registry.add("workflow.secrets.key", () -> "dGVzdC1zZWNyZXRzLWtleS0zMi1jaGFycy1wYWRkZWQ=");
-    }
+class ConnectionServiceUniquenessTest extends AbstractNoneWebIntegrationTest {
 
     @Autowired
     private ConnectionService connectionService;
