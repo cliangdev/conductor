@@ -313,7 +313,7 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
      */
     private URI queryUri(String siteUrl) {
         String encoded = URLEncoder.encode(siteUrl, StandardCharsets.UTF_8);
-        return URI.create("https://searchconsole.googleapis.com/v1/sites/" + encoded + "/searchAnalytics/query");
+        return URI.create("https://searchconsole.googleapis.com/webmasters/v3/sites/" + encoded + "/searchAnalytics/query");
     }
 
     @SuppressWarnings("unchecked")

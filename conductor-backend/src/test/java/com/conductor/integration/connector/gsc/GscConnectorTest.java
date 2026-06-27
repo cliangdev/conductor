@@ -97,7 +97,7 @@ class GscConnectorTest {
         verify(restTemplate, org.mockito.Mockito.atLeastOnce())
                 .exchange(uriCaptor.capture(), eq(HttpMethod.POST), any(), eq(Map.class));
         assertThat(uriCaptor.getValue().toString())
-                .contains("sites/sc-domain%3Aexample.com/searchAnalytics")
+                .contains("searchconsole.googleapis.com/webmasters/v3/sites/sc-domain%3Aexample.com/searchAnalytics")
                 .doesNotContain("%253A");
 
         List<Map<String, Object>> trendOut = (List<Map<String, Object>>) result.data().get("trend");
