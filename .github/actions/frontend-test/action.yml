@@ -1,0 +1,36 @@
+name: 'Frontend test'
+description: 'Set up Node and run conductor-frontend typecheck, lint, and tests. Assumes the repo is already checked out.'
+
+inputs:
+  run-checks:
+    description: 'Run typecheck/lint/test. Set to "false" to skip (e.g. skip-tests preview deploys).'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+        cache: npm
+        cache-dependency-path: conductor-frontend/package-lock.json
+    - name: Install dependencies
+      working-directory: conductor-frontend
+      shell: bash
+      run: npm ci
+    - name: Typecheck
+      if: ${{ inputs.run-checks == 'true' }}
+      working-directory: conductor-frontend
+      shell: bash
+      run: npm run typecheck
+    - name: Lint
+      if: ${{ inputs.run-checks == 'true' }}
+      working-directory: conductor-frontend
+      shell: bash
+      run: npm run lint
+    - name: Test
+      if: ${{ inputs.run-checks == 'true' }}
+      working-directory: conductor-frontend
+      shell: bash
+      run: npm run test

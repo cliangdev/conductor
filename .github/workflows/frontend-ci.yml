@@ -5,22 +5,21 @@ on:
     branches: [main]
     paths:
       - 'conductor-frontend/**'
+      - '.github/workflows/frontend-ci.yml'
+      - '.github/actions/frontend-test/**'
+
+concurrency:
+  group: frontend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build-and-test:
     name: frontend-ci
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: conductor-frontend
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: conductor-frontend/package-lock.json
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run test
+      - uses: ./.github/actions/frontend-test
