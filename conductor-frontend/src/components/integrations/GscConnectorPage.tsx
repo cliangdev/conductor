@@ -138,7 +138,13 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
   };
 
   const handleSaveConfig = async () => {
-    const urlToSave = siteUrl.trim() || ((response?.data as GscData | null)?.siteUrl ?? '');
+    // In dropdown mode, only an explicit selection counts — never fall back to the saved (broken)
+    // value, which would just re-submit the same property and loop. In manual mode, the pre-filled
+    // text is intentional and usable as-is.
+    const inDropdownMode = !manualEntry && sites.length > 0;
+    const urlToSave = inDropdownMode
+      ? siteUrl.trim()
+      : (siteUrl.trim() || ((response?.data as GscData | null)?.siteUrl ?? ''));
     if (!accessToken || !connectionId || !urlToSave) return;
     setSaving(true);
     setSaveError(null);
@@ -314,7 +320,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
             ) : null}
             <button
               onClick={handleSaveConfig}
-              disabled={saving || !effectiveSiteUrl.trim()}
+              disabled={saving || (!manualEntry && sites.length > 0 ? !siteUrl.trim() : !effectiveSiteUrl.trim())}
               className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? 'Saving…' : 'Save & Connect'}
