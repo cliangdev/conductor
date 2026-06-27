@@ -28,6 +28,9 @@ jobs:
           cache: npm
           cache-dependency-path: conductor-tools/package-lock.json
 
+      - name: Enable corepack to use pinned npm version
+        run: corepack enable && corepack prepare --activate
+
       - name: Read version from package.json
         id: pkg
         run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
