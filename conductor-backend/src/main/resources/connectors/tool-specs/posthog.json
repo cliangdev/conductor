@@ -13,7 +13,7 @@
         "bounceRate": 0.52,
         "avgSessionDuration": 279,
         "topPages": [{"path": "/", "visitors": 100, "pageviews": 200}],
-        "topSources": [{"source": "Organic Search", "sessions": 80, "visitors": 60}]
+        "topSources": [{"source": "$direct", "visitors": 80}]
       },
       "outputKeys": ["series", "total", "visitors", "sessions", "bounceRate", "avgSessionDuration", "topPages", "topSources"]
     }

@@ -66,6 +66,7 @@ public class PostHogConnector implements FetchConnector {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         Map<String, Object> data = new LinkedHashMap<>();
+        List<String> queryErrors = new ArrayList<>();
 
         // Call 1: TrendsQuery — daily pageview series
         try {
@@ -105,14 +106,13 @@ public class PostHogConnector implements FetchConnector {
             log.warn("PostHog TrendsQuery failed: {}", e.getMessage());
         }
 
-        // Call 2: HogQL summary (sessions table)
+        // Call 2: HogQL visitors + sessions from events table
         try {
             String summarySql = """
-                SELECT count() AS sessions, uniq(person_id) AS visitors,
-                  sum($pageview_count) AS pageviews,
-                  round(avg($is_bounce) * 100, 1) AS bounce_rate_pct,
-                  round(avg($session_duration), 1) AS avg_duration_seconds
-                FROM sessions WHERE $start_timestamp >= now() - interval 30 day
+                SELECT count(DISTINCT distinct_id) AS visitors,
+                       count(DISTINCT properties.$session_id) AS sessions
+                FROM events
+                WHERE event = '$pageview' AND timestamp >= now() - interval 30 day
                 """;
             PostHogQueryRequest summaryReq = new PostHogQueryRequest(
                 new PostHogQueryRequest.PostHogInnerQuery("HogQLQuery", summarySql, null, null));
@@ -122,22 +122,46 @@ public class PostHogConnector implements FetchConnector {
             PostHogHogQLResponse body = resp.getBody();
             if (body != null && body.results() != null && !body.results().isEmpty()) {
                 List<Object> row = body.results().get(0);
-                data.put("sessions", rowLong(row, 0));
-                data.put("visitors", rowLong(row, 1));
-                data.put("bounceRate", rowDouble(row, 3) / 100.0);
-                data.put("avgSessionDuration", rowDouble(row, 4));
+                data.put("visitors", rowLong(row, 0));
+                data.put("sessions", rowLong(row, 1));
             }
         } catch (Exception e) {
-            log.warn("PostHog summary query failed: {}", e.getMessage());
+            log.warn("PostHog visitors/sessions query failed: {}", e.getMessage());
+            queryErrors.add("Visitors/sessions: " + truncate(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), 200));
         }
 
-        // Call 3: HogQL top sources
+        // Call 3: HogQL bounce rate + avg duration from sessions table
+        try {
+            String bounceSql = """
+                SELECT round(avg($is_bounce) * 100, 1) AS bounce_rate_pct,
+                       round(avg($session_duration), 1) AS avg_duration_seconds
+                FROM sessions
+                WHERE $start_timestamp >= now() - interval 30 day
+                """;
+            PostHogQueryRequest bounceReq = new PostHogQueryRequest(
+                new PostHogQueryRequest.PostHogInnerQuery("HogQLQuery", bounceSql, null, null));
+            HttpEntity<PostHogQueryRequest> req = new HttpEntity<>(bounceReq, headers);
+            ResponseEntity<PostHogHogQLResponse> resp = restTemplate.exchange(
+                queryUrl, HttpMethod.POST, req, PostHogHogQLResponse.class);
+            PostHogHogQLResponse body = resp.getBody();
+            if (body != null && body.results() != null && !body.results().isEmpty()) {
+                List<Object> row = body.results().get(0);
+                data.put("bounceRate", rowDouble(row, 0) / 100.0);
+                data.put("avgSessionDuration", rowDouble(row, 1));
+            }
+        } catch (Exception e) {
+            log.warn("PostHog bounce rate query failed: {}", e.getMessage());
+            queryErrors.add("Bounce rate: " + truncate(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), 200));
+        }
+
+        // Call 4: HogQL top sources from events table using $referring_domain
         try {
             String sourcesSql = """
-                SELECT $channel_type AS source, count() AS sessions, uniq(person_id) AS visitors
-                FROM sessions
-                WHERE $start_timestamp >= now() - interval 30 day AND $channel_type != ''
-                GROUP BY source ORDER BY sessions DESC LIMIT 10
+                SELECT coalesce(nullIf(properties.$referring_domain, ''), '$direct') AS source,
+                       count(DISTINCT distinct_id) AS visitors
+                FROM events
+                WHERE event = '$pageview' AND timestamp >= now() - interval 30 day
+                GROUP BY source ORDER BY visitors DESC LIMIT 10
                 """;
             PostHogQueryRequest sourcesReq = new PostHogQueryRequest(
                 new PostHogQueryRequest.PostHogInnerQuery("HogQLQuery", sourcesSql, null, null));
@@ -150,16 +174,16 @@ public class PostHogConnector implements FetchConnector {
                 for (List<Object> row : body.results()) {
                     topSources.add(Map.of(
                         "source", String.valueOf(row.get(0)),
-                        "sessions", rowLong(row, 1),
-                        "visitors", rowLong(row, 2)));
+                        "visitors", rowLong(row, 1)));
                 }
                 data.put("topSources", topSources);
             }
         } catch (Exception e) {
             log.warn("PostHog sources query failed: {}", e.getMessage());
+            queryErrors.add("Top sources: " + truncate(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), 200));
         }
 
-        // Call 4: HogQL top pages
+        // Call 5: HogQL top pages
         try {
             String pagesSql = """
                 SELECT properties.$pathname AS path, uniq(distinct_id) AS visitors, count() AS pageviews
@@ -186,9 +210,16 @@ public class PostHogConnector implements FetchConnector {
             }
         } catch (Exception e) {
             log.warn("PostHog pages query failed: {}", e.getMessage());
+            queryErrors.add("Top pages: " + truncate(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), 200));
         }
 
+        if (!queryErrors.isEmpty()) data.put("queryErrors", queryErrors);
+
         return ConnectorData.healthy(data);
+    }
+
+    private String truncate(String s, int max) {
+        return s == null || s.length() <= max ? s : s.substring(0, max) + "…";
     }
 
     private long rowLong(List<Object> row, int idx) {

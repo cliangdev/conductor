@@ -61,10 +61,10 @@ public class LocalPostHogConnector implements FetchConnector {
                 Map.of("path", "/about", "visitors", 112L, "pageviews", 145L)
             ),
             "topSources", List.of(
-                Map.of("source", "Organic Search", "sessions", 312L, "visitors", 267L),
-                Map.of("source", "Direct", "sessions", 189L, "visitors", 156L),
-                Map.of("source", "Referral", "sessions", 45L, "visitors", 38L),
-                Map.of("source", "Paid Search", "sessions", 21L, "visitors", 18L)
+                Map.of("source", "Organic Search", "visitors", 267L),
+                Map.of("source", "Direct", "visitors", 156L),
+                Map.of("source", "google.com", "visitors", 38L),
+                Map.of("source", "github.com", "visitors", 18L)
             )
         ));
     }

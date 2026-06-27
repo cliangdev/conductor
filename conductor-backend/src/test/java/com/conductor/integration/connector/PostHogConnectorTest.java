@@ -79,15 +79,18 @@ class PostHogConnectorTest {
         when(restTemplate.exchange(any(String.class), eq(HttpMethod.POST), any(), eq(PostHogTrendsResponse.class)))
                 .thenReturn(ResponseEntity.ok(trendsResponse));
 
-        PostHogHogQLResponse summaryResponse = new PostHogHogQLResponse(
-            List.of(List.of(567, 1234, 38420, 52.0, 279.0)), List.of());
+        PostHogHogQLResponse visitorsSessionsResponse = new PostHogHogQLResponse(
+            List.of(List.of(543, 234)), List.of());
+        PostHogHogQLResponse bounceResponse = new PostHogHogQLResponse(
+            List.of(List.of(42.0, 145.5)), List.of());
         PostHogHogQLResponse sourcesResponse = new PostHogHogQLResponse(
-            List.of(List.of("Organic Search", 312, 267)), List.of());
+            List.of(List.of("$direct", 80)), List.of());
         PostHogHogQLResponse pagesResponse = new PostHogHogQLResponse(
             List.of(List.of("/", 543, 812)), List.of());
 
         when(restTemplate.exchange(any(String.class), eq(HttpMethod.POST), any(), eq(PostHogHogQLResponse.class)))
-                .thenReturn(ResponseEntity.ok(summaryResponse))
+                .thenReturn(ResponseEntity.ok(visitorsSessionsResponse))
+                .thenReturn(ResponseEntity.ok(bounceResponse))
                 .thenReturn(ResponseEntity.ok(sourcesResponse))
                 .thenReturn(ResponseEntity.ok(pagesResponse));
 
@@ -97,15 +100,15 @@ class PostHogConnectorTest {
         assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.HEALTHY);
         assertThat(result.data()).containsKey("series");
         assertThat(result.data()).containsKey("total");
-        assertThat(result.data().get("visitors")).isEqualTo(1234L);
-        assertThat(result.data().get("sessions")).isEqualTo(567L);
-        assertThat((Double) result.data().get("bounceRate")).isEqualTo(0.52);
-        assertThat(result.data().get("avgSessionDuration")).isEqualTo(279.0);
+        assertThat(result.data().get("visitors")).isEqualTo(543L);
+        assertThat(result.data().get("sessions")).isEqualTo(234L);
+        assertThat((Double) result.data().get("bounceRate")).isEqualTo(0.42);
+        assertThat(result.data().get("avgSessionDuration")).isEqualTo(145.5);
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> topSources = (List<Map<String, Object>>) result.data().get("topSources");
         assertThat(topSources).hasSize(1);
-        assertThat(topSources.get(0).get("source")).isEqualTo("Organic Search");
+        assertThat(topSources.get(0).get("source")).isEqualTo("$direct");
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> topPages = (List<Map<String, Object>>) result.data().get("topPages");
