@@ -58,7 +58,9 @@ jobs:
       - name: Publish to npm
         if: steps.tag.outputs.exists == 'false'
         run: |
+          npm config delete //registry.npmjs.org/:_authToken
           unset NODE_AUTH_TOKEN
+          npm whoami || echo "(no auth — expecting OIDC Trusted Publishing)"
           npm publish --access public --provenance
 
       - name: Tag and create GitHub Release
