@@ -2,6 +2,7 @@ package com.conductor.workflow;
 
 import com.conductor.entity.*;
 import com.conductor.repository.*;
+import com.conductor.service.LogRedactionService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;

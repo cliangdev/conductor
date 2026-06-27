@@ -133,6 +133,13 @@
             <version>2.67.0</version>
         </dependency>
 
+        <!-- Anthropic Java SDK — backs the Claude model provider in the agent module -->
+        <dependency>
+            <groupId>com.anthropic</groupId>
+            <artifactId>anthropic-java</artifactId>
+            <version>2.34.0</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

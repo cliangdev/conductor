@@ -13,6 +13,7 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Outputs and interpolation](#outputs-and-interpolation)
   - [Loops](#loops)
   - [Conditions](#conditions)
+  - [Example: monthly SEO analysis](#example-monthly-seo-analysis)
 - [Execution modes](#execution-modes)
   - [Conductor-hosted](#conductor-hosted)
   - [Self-hosted](#self-hosted)
@@ -311,6 +312,48 @@ jobs:
 
 When the condition is true, `then` job is enqueued and `else` job is skipped (and vice versa). Both jobs must be defined in the same workflow and cannot create circular dependencies.
 
+#### `agent` — Run an AI agent
+
+Hands a task to a project-scoped **AI agent** (a named persona configured under **Settings → Agents**) and exposes its answer as step outputs. The agent runs a tool-calling loop against its configured model provider; the provider API key is resolved at runtime and never appears in the workflow YAML.
+
+```yaml
+- id: analyze
+  uses: agent
+  with:
+    agent: marketing-agent        # Agent slug (or id) in this project
+    task: |
+      Analyze landing-page SEO health from the collected data and produce a
+      report with prioritized, specific action items.
+    context:                      # structured data handed to the agent (interpolated)
+      gsc: ${{ needs.collect.outputs.gsc_data }}
+      posthog: ${{ needs.collect.outputs.posthog_data }}
+    output_schema:                # optional; requests a structured JSON answer
+      report: string
+      action_items: [string]
+  outputs:
+    report: body.report           # same dot-path extraction as http
+    action_items: body.action_items
+```
+
+| Field | Description |
+|-------|-------------|
+| `agent` | Slug (or id) of an agent defined in this project (required). |
+| `task` | The instruction for the agent. Interpolated — may reference `${{ steps.* }}` / `${{ needs.* }}`. |
+| `context` | Optional map of structured data passed to the agent. Each value is interpolated; upstream integration outputs (JSON strings) embed as-is. |
+| `output_schema` | Optional shape that requests a structured JSON answer from the agent. |
+
+The step exposes these outputs:
+
+| Output | Description |
+|--------|-------------|
+| `text` | The agent's final answer (always present). |
+| `data` | The structured JSON answer serialized to a string (present when `output_schema` is set and the agent returns JSON). |
+| *each structured field* | Every top-level field of the structured JSON is also exposed as its own output key. |
+
+Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answer just like the `http` step — `body.text` and `body.data` are also available.
+
+The agent must be created first under **Settings → Agents** (persona, model provider, tool bindings) and a provider API key configured for the project. A run that ends in any non-`SUCCEEDED` state fails the step.
+
 ---
 
 ### Outputs and interpolation
@@ -408,6 +451,65 @@ jobs:
 ```
 
 A skipped job shows in the run history as **SKIPPED**, and any jobs that depend on it are also skipped.
+
+---
+
+### Example: monthly SEO analysis
+
+A complete pipeline that, on the first of every month, collects search + product analytics, hands them to a marketing agent for analysis, and posts the report to Discord. It chains jobs with `needs`: `collect_gsc` + `collect_posthog` (each an `integration` step) → `analyze` (an `agent` step) → `deliver` (an `http` step). Each connector lives in its own collection job so its `data` output is referenced unambiguously via `needs.<job>.outputs.data`.
+
+```yaml
+name: Monthly SEO analysis
+on:
+  schedule:
+    - cron: "0 9 1 * *"        # 09:00 UTC on the 1st of each month
+
+jobs:
+  collect_gsc:
+    steps:
+      - id: gsc
+        uses: integration
+        with:
+          connector: gsc
+          operation: search_analytics
+
+  collect_posthog:
+    steps:
+      - id: posthog
+        uses: integration
+        with:
+          connector: posthog
+          operation: pageview_trend
+
+  analyze:
+    needs: [collect_gsc, collect_posthog]
+    steps:
+      - id: report
+        uses: agent
+        with:
+          agent: marketing-agent
+          task: |
+            Analyze landing-page SEO health from the collected Search Console and
+            PostHog data. Produce a concise health summary and a prioritized list of
+            specific, actionable improvements.
+          context:
+            gsc: ${{ needs.collect_gsc.outputs.data }}
+            posthog: ${{ needs.collect_posthog.outputs.data }}
+
+  deliver:
+    needs: analyze
+    steps:
+      - id: post
+        type: http
+        method: POST
+        url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        headers:
+          Content-Type: application/json
+        body: |
+          { "content": ${{ needs.analyze.outputs.text }} }
+```
+
+`needs.collect_gsc.outputs.data` and `needs.collect_posthog.outputs.data` are the JSON blobs each `integration` step emits; they are embedded into the agent's `context`. The agent's final answer is exposed as `needs.analyze.outputs.text`, which the `deliver` job posts to the Discord webhook (stored as a project secret).
 
 ---
 
