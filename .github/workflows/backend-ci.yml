@@ -6,25 +6,21 @@ on:
     paths:
       - 'conductor-backend/**'
       - '.github/workflows/backend-ci.yml'
+      - '.github/actions/backend-test/**'
+
+# Cancel superseded runs when a PR branch is pushed again.
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build-and-test:
     name: backend-ci
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-          cache: maven
-      - name: Run tests
-        working-directory: conductor-backend
-        env:
-          WORKFLOW_SECRETS_KEY: dGVzdC1rZXktZm9yLWNpLW9ubHktMzItYnl0ZXMhIXg=
-          # Skip the Testcontainers Ryuk reaper sidecar (pull + start ≈ 2-3s). Safe
-          # here because the runner is ephemeral and torn down after the job, so
-          # there are no leaked containers to clean up. Do NOT set this locally —
-          # the shared singleton Postgres relies on Ryuk to reap it on JVM exit.
-          TESTCONTAINERS_RYUK_DISABLED: true
-        run: mvn test
+      - uses: ./.github/actions/backend-test

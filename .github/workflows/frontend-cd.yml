@@ -7,22 +7,20 @@ on:
       - 'conductor-frontend/**'
   workflow_dispatch:
 
+concurrency:
+  group: frontend-cd
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: conductor-frontend
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: conductor-frontend/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run test
+      - uses: ./.github/actions/frontend-test
 
   deploy-frontend:
     needs: build-and-test

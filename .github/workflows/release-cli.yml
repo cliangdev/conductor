@@ -7,10 +7,19 @@ on:
       - 'conductor-tools/package.json'
   workflow_dispatch:
 
+# Never run two releases at once; don't cancel an in-flight publish.
+concurrency:
+  group: release-cli
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: write
@@ -52,6 +61,7 @@ jobs:
     needs: check
     if: needs.check.outputs.skip == 'false'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: conductor-tools
@@ -80,6 +90,7 @@ jobs:
     name: Publish & Release — CLI v${{ needs.check.outputs.version }}
     needs: [check, build-and-test]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       id-token: write

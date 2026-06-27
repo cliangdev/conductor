@@ -5,15 +5,25 @@ on:
     branches: [main]
     paths:
       - 'conductor-tools/**'
+      - '.github/workflows/tools.yml'
   pull_request:
     branches: [main]
     paths:
       - 'conductor-tools/**'
+      - '.github/workflows/tools.yml'
+
+concurrency:
+  group: tools-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   test-cli:
     name: tools
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: conductor-tools
@@ -34,6 +44,7 @@ jobs:
     name: version-bump-check
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:

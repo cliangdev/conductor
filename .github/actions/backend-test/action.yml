@@ -1,0 +1,28 @@
+name: 'Backend test'
+description: 'Set up JDK 21 and run the conductor-backend test suite. Assumes the repo is already checked out.'
+
+inputs:
+  run-tests:
+    description: 'Run mvn test. Set to "false" to skip (e.g. skip-tests preview deploys).'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+        cache: maven
+    - name: Run tests
+      if: ${{ inputs.run-tests == 'true' }}
+      working-directory: conductor-backend
+      shell: bash
+      env:
+        # Test-only dummy 32-byte Base64 AES key (not a secret); the app requires one to boot.
+        WORKFLOW_SECRETS_KEY: dGVzdC1rZXktZm9yLWNpLW9ubHktMzItYnl0ZXMhIXg=
+        # Skip the Testcontainers Ryuk reaper sidecar (~2-3s). Safe on ephemeral CI
+        # runners, which are torn down after the job. Do NOT set this locally.
+        TESTCONTAINERS_RYUK_DISABLED: 'true'
+      run: mvn test

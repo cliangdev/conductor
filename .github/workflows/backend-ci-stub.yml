@@ -11,6 +11,7 @@ on:
     paths-ignore:
       - 'conductor-backend/**'
       - '.github/workflows/backend-ci.yml'
+      - '.github/actions/backend-test/**'
 
 permissions: {}
 
