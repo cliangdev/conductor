@@ -1,0 +1,185 @@
+package com.conductor.controller;
+
+import com.conductor.agent.Agent;
+import com.conductor.agent.AgentService;
+import com.conductor.agent.credential.ProviderCredentialService;
+import com.conductor.config.SecurityConfig;
+import com.conductor.entity.User;
+import com.conductor.exception.GlobalExceptionHandler;
+import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.repository.UserRepository;
+import com.conductor.service.JwtService;
+import com.conductor.service.ProjectSecurityService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+@WebMvcTest(AgentController.class)
+@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+class AgentControllerTest {
+
+    private static final String PROJECT_ID = "proj-1";
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    // AgentController collaborators
+    @MockitoBean private AgentService agentService;
+    @MockitoBean private ProviderCredentialService providerCredentialService;
+    @MockitoBean private ProjectSecurityService projectSecurityService;
+    @MockitoBean private ObjectMapper objectMapper;
+
+    // Security filter chain collaborators
+    @MockitoBean private JwtService jwtService;
+    @MockitoBean private UserRepository userRepository;
+    @MockitoBean private ProjectApiKeyRepository projectApiKeyRepository;
+    @MockitoBean private UserApiKeyRepository userApiKeyRepository;
+
+    @BeforeEach
+    void setUp() {
+        User memberUser = new User();
+        memberUser.setId("member-user-id");
+        memberUser.setEmail("member@example.com");
+        memberUser.setName("Member User");
+
+        when(jwtService.validateToken("member-token")).thenReturn(true);
+        when(jwtService.getUserIdFromToken("member-token")).thenReturn("member-user-id");
+        when(userRepository.findById("member-user-id")).thenReturn(java.util.Optional.of(memberUser));
+    }
+
+    // ---- listAgentTools ----
+
+    @Test
+    void listAgentTools_happyPath_returnsToolsTaggedWithSource() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.listAvailableTools(PROJECT_ID)).thenReturn(List.of(
+                new AgentService.ToolOption(
+                        "connector:posthog/web_analytics_summary",
+                        "posthog_web_analytics_summary",
+                        "Summarize web analytics",
+                        "connector")));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/tools")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value("connector:posthog/web_analytics_summary"))
+                .andExpect(jsonPath("$[0].name").value("posthog_web_analytics_summary"))
+                .andExpect(jsonPath("$[0].source").value("connector"));
+    }
+
+    @Test
+    void listAgentTools_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/tools")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    // ---- listAgentProviders ----
+
+    @Test
+    void listAgentProviders_happyPath_returnsProvidersWithDefaultModel() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.listProviders()).thenReturn(List.of(
+                new AgentService.ProviderOption("claude", "claude-opus-4-8")));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value("claude"))
+                .andExpect(jsonPath("$[0].defaultModel").value("claude-opus-4-8"));
+    }
+
+    @Test
+    void listAgentProviders_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    // ---- updateAgent toolIds partial-update semantics ----
+    // Guards the regression where a partial PATCH that omits toolIds (e.g. the Active/Draft state
+    // toggle) wiped an agent's tool bindings: the generated request defaulted toolIds to an empty
+    // list, so the service's "null == unchanged" guard never fired. UpdateAgentRequest.toolIds is now
+    // nullable, so an omitted array deserializes to null (unchanged) while an explicit [] still clears.
+
+    @Test
+    void updateAgent_omitsToolIds_passesNullToServiceSoBindingsAreUnchanged() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"state\":\"DRAFT\"}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).update(eq(PROJECT_ID), eq("agent-1"), captor.capture());
+        assertThat(captor.getValue().toolIds()).as("omitted toolIds must be null (unchanged)").isNull();
+    }
+
+    @Test
+    void updateAgent_explicitEmptyToolIds_passesEmptyListToServiceSoBindingsClear() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"toolIds\":[]}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).update(eq(PROJECT_ID), eq("agent-1"), captor.capture());
+        assertThat(captor.getValue().toolIds()).as("explicit empty toolIds must clear bindings").isNotNull().isEmpty();
+    }
+
+    @Test
+    void updateAgent_nonAdmin_returns403() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"state\":\"DRAFT\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    /** Minimal persisted agent whose null config/toolIds let the response map without the mocked ObjectMapper. */
+    private Agent stubAgent() {
+        Agent agent = new Agent();
+        agent.setId("agent-1");
+        agent.setProjectId(PROJECT_ID);
+        agent.setName("Marketer");
+        agent.setSlug("marketer");
+        agent.setProvider("claude");
+        agent.setState("DRAFT");
+        return agent;
+    }
+}

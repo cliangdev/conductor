@@ -35,12 +35,30 @@ public class AgentToolRegistry {
         this.bySource = Collections.unmodifiableMap(map);
     }
 
+    /** A tool offered to a project, tagged with its canonical source id (the owning provider's). */
+    public record SourcedTool(AgentTool tool, String source) {}
+
     /** Every tool offered to a project across all sources — for agent authoring/discovery. */
     public List<AgentTool> availableTools(String projectId) {
         List<AgentTool> all = new ArrayList<>();
         for (AgentToolProvider p : bySource.values()) {
             all.addAll(p.available(projectId));
         }
+        return all;
+    }
+
+    /**
+     * Every available tool paired with the canonical {@code sourceId} of the provider that owns it —
+     * taken from the registry's source map, never re-parsed from the id string. For read/discovery
+     * surfaces (e.g. the Agents UI tool picker) that need to group tools by source.
+     */
+    public List<SourcedTool> availableToolsWithSource(String projectId) {
+        List<SourcedTool> all = new ArrayList<>();
+        bySource.forEach((source, provider) -> {
+            for (AgentTool t : provider.available(projectId)) {
+                all.add(new SourcedTool(t, source));
+            }
+        });
         return all;
     }
 

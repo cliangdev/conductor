@@ -6,7 +6,9 @@ import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.entity.User;
 import com.conductor.generated.api.AgentsApi;
 import com.conductor.generated.model.AgentConfig;
+import com.conductor.generated.model.AgentProviderInfo;
 import com.conductor.generated.model.AgentResponse;
+import com.conductor.generated.model.AvailableAgentTool;
 import com.conductor.generated.model.CreateAgentRequest;
 import com.conductor.generated.model.ProviderCredentialStatus;
 import com.conductor.generated.model.SetProviderCredentialRequest;
@@ -73,7 +75,7 @@ public class AgentController implements AgentsApi {
                 request.getModel(),
                 request.getSystemPrompt(),
                 toConfigMap(request.getConfig()),
-                request.getToolIds() == null || request.getToolIds().isEmpty() ? null : request.getToolIds(),
+                request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null);
         Agent created = agentService.create(projectId, input);
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(created));
@@ -90,7 +92,7 @@ public class AgentController implements AgentsApi {
                 request.getModel(),
                 request.getSystemPrompt(),
                 toConfigMap(request.getConfig()),
-                request.getToolIds() == null || request.getToolIds().isEmpty() ? null : request.getToolIds(),
+                request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null);
         Agent updated = agentService.update(projectId, agentId, input);
         return ResponseEntity.ok(toResponse(updated));
@@ -122,6 +124,28 @@ public class AgentController implements AgentsApi {
         requireAdminOrCreator(projectId);
         providerCredentialService.deleteCredential(projectId, provider);
         return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public ResponseEntity<List<AvailableAgentTool>> listAgentTools(String projectId) {
+        requireMember(projectId);
+        List<AvailableAgentTool> tools = agentService.listAvailableTools(projectId).stream()
+                .map(t -> new AvailableAgentTool()
+                        .id(t.id())
+                        .name(t.name())
+                        .description(t.description())
+                        .source(t.source()))
+                .toList();
+        return ResponseEntity.ok(tools);
+    }
+
+    @Override
+    public ResponseEntity<List<AgentProviderInfo>> listAgentProviders(String projectId) {
+        requireMember(projectId);
+        List<AgentProviderInfo> providers = agentService.listProviders().stream()
+                .map(p -> new AgentProviderInfo().id(p.id()).defaultModel(p.defaultModel()))
+                .toList();
+        return ResponseEntity.ok(providers);
     }
 
     // ---- mapping ----

@@ -1,6 +1,7 @@
 package com.conductor.agent;
 
 import com.conductor.agent.provider.ModelProviderRegistry;
+import com.conductor.agent.tool.AgentToolRegistry;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -25,14 +26,38 @@ public class AgentService {
 
     private final AgentRepository repository;
     private final ModelProviderRegistry providerRegistry;
+    private final AgentToolRegistry toolRegistry;
     private final ObjectMapper objectMapper;
 
     public AgentService(AgentRepository repository,
                         ModelProviderRegistry providerRegistry,
+                        AgentToolRegistry toolRegistry,
                         ObjectMapper objectMapper) {
         this.repository = repository;
         this.providerRegistry = providerRegistry;
+        this.toolRegistry = toolRegistry;
         this.objectMapper = objectMapper;
+    }
+
+    /** A model provider available to agents: its id and the model applied when none is pinned. */
+    public record ProviderOption(String id, String defaultModel) {}
+
+    /** A tool an agent can be bound to, tagged with its canonical source. */
+    public record ToolOption(String id, String name, String description, String source) {}
+
+    /** Providers registered with the gateway, id + default model — for the authoring UI. */
+    public List<ProviderOption> listProviders() {
+        return providerRegistry.providers().stream()
+                .map(p -> new ProviderOption(p.id(), p.defaultModel()))
+                .toList();
+    }
+
+    /** Tools available to this project across all sources, tagged with their canonical source. */
+    @Transactional(readOnly = true)
+    public List<ToolOption> listAvailableTools(String projectId) {
+        return toolRegistry.availableToolsWithSource(projectId).stream()
+                .map(st -> new ToolOption(st.tool().id(), st.tool().name(), st.tool().description(), st.source()))
+                .toList();
     }
 
     /**
@@ -75,10 +100,10 @@ public class AgentService {
         agent.setProjectId(projectId);
         agent.setName(input.name().trim());
         agent.setSlug(resolveSlug(projectId, input.slug(), input.name(), null));
-        agent.setDescription(input.description());
+        agent.setDescription(blankToNull(input.description()));
         agent.setProvider(input.provider());
-        agent.setModel(input.model());
-        agent.setSystemPrompt(input.systemPrompt());
+        agent.setModel(blankToNull(input.model()));
+        agent.setSystemPrompt(blankToNull(input.systemPrompt()));
         agent.setConfigJson(writeJson(input.config(), "{}"));
         agent.setToolIds(writeJson(input.toolIds(), "[]"));
         agent.setState(validateState(input.state(), "DRAFT"));
@@ -101,17 +126,18 @@ public class AgentService {
             agent.setSlug(resolveSlug(projectId, input.slug(), agent.getName(), agent.getId()));
         }
         if (input.description() != null) {
-            agent.setDescription(input.description());
+            agent.setDescription(blankToNull(input.description()));
         }
         if (input.provider() != null) {
             validateProvider(input.provider());
             agent.setProvider(input.provider());
         }
         if (input.model() != null) {
-            agent.setModel(input.model());
+            // An explicit blank clears the pin back to the provider default (stored as null).
+            agent.setModel(blankToNull(input.model()));
         }
         if (input.systemPrompt() != null) {
-            agent.setSystemPrompt(input.systemPrompt());
+            agent.setSystemPrompt(blankToNull(input.systemPrompt()));
         }
         if (input.config() != null) {
             agent.setConfigJson(writeJson(input.config(), "{}"));
@@ -186,6 +212,10 @@ public class AgentService {
                 .replaceAll("[^a-z0-9]+", "-")
                 .replaceAll("(^-+)|(-+$)", "");
         return slug.length() > 64 ? slug.substring(0, 64).replaceAll("-+$", "") : slug;
+    }
+
+    private static String blankToNull(String value) {
+        return (value == null || value.isBlank()) ? null : value;
     }
 
     private String writeJson(Object value, String fallback) {

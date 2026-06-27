@@ -4929,6 +4929,62 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /projects/{projectId}/agents/tools:
+    get:
+      tags: [agents]
+      summary: List tools an agent can be bound to
+      description: >-
+        The union of tools available to this project across all sources
+        (connector, http, builtin, mcp). Use the returned ids in an agent's toolIds.
+      operationId: listAgentTools
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AvailableAgentTool'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/agents/providers:
+    get:
+      tags: [agents]
+      summary: List registered model providers
+      description: Model providers available for agents, each with its default model.
+      operationId: listAgentProviders
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentProviderInfo'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /projects/{projectId}/agents/providers/{provider}/credential:
     get:
       tags: [agents]
@@ -7255,6 +7311,10 @@ components:
           $ref: '#/components/schemas/AgentConfig'
         toolIds:
           type: array
+          nullable: true
+          description: >-
+            Replaces the agent's tool bindings. Omit (or send null) to leave
+            bindings unchanged; send an empty array to clear all bindings.
           items:
             type: string
         state:
@@ -7281,3 +7341,36 @@ components:
         configured:
           type: boolean
           description: True when a key is stored for this project + provider.
+
+    AvailableAgentTool:
+      type: object
+      required:
+        - id
+        - name
+        - source
+      properties:
+        id:
+          type: string
+          description: Namespaced tool id to put in an agent's toolIds (e.g. connector:posthog/web_analytics_summary).
+        name:
+          type: string
+          description: Short model-facing tool name.
+        description:
+          type: string
+          nullable: true
+        source:
+          type: string
+          description: Tool source namespace (connector, http, builtin, mcp).
+
+    AgentProviderInfo:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          description: Provider id (e.g. claude).
+        defaultModel:
+          type: string
+          nullable: true
+          description: The model used when an agent does not pin one.

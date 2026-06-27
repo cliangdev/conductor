@@ -50,6 +50,11 @@ public class ClaudeProvider implements ChatModelProvider {
     }
 
     @Override
+    public String defaultModel() {
+        return DEFAULT_MODEL;
+    }
+
+    @Override
     public ChatResponse complete(ChatRequest request, String apiKey) {
         AnthropicClient client = clientCache.computeIfAbsent(apiKey,
                 k -> AnthropicOkHttpClient.builder().apiKey(k).build());

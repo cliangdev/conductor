@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import {
   BellIcon,
   BookOpenIcon,
+  BotIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -293,6 +294,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             >
               Integrations
             </NavItem>
+            <NavItem
+              href={`/app/projects/${currentWorkspace.id}/agents`}
+              icon={<BotIcon className="h-4 w-4" />}
+              onNavigate={onNavigate}
+            >
+              Agents
+            </NavItem>
             <NavGroup
               href={`/app/projects/${currentWorkspace.id}/settings`}
               icon={<SettingsIcon className="h-4 w-4" />}
@@ -341,6 +349,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                     onNavigate={onNavigate}
                   >
                     Connect Apps
+                  </NavItem>
+                  <NavItem
+                    href={`/app/projects/${currentWorkspace.id}/settings/agents`}
+                    icon={<BotIcon className="h-4 w-4" />}
+                    onNavigate={onNavigate}
+                  >
+                    Agents
                   </NavItem>
                 </>
               }
