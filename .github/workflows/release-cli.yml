@@ -8,11 +8,81 @@ on:
   workflow_dispatch:
 
 jobs:
-  release:
+  check:
+    name: Check
     runs-on: ubuntu-latest
     permissions:
-      contents: write       # tag push + gh release create
-      id-token: write       # npm publish --provenance
+      contents: read
+      actions: write
+    defaults:
+      run:
+        working-directory: conductor-tools
+    outputs:
+      version: ${{ steps.pkg.outputs.version }}
+      skip: ${{ steps.tag.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Read version from package.json
+        id: pkg
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Set workflow run title
+        run: |
+          gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }} \
+            -X PATCH -f name="Release CLI v${{ steps.pkg.outputs.version }}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if version is already released
+        id: tag
+        working-directory: ${{ github.workspace }}
+        run: |
+          if git rev-parse "cli-v${{ steps.pkg.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "::notice::cli-v${{ steps.pkg.outputs.version }} already released — skipping."
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-test:
+    name: Build & Test — CLI v${{ needs.check.outputs.version }}
+    needs: check
+    if: needs.check.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: conductor-tools
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: conductor-tools/package-lock.json
+
+      - name: Install pinned npm version
+        run: npm install -g npm@11.17.0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  publish-and-release:
+    name: Publish & Release — CLI v${{ needs.check.outputs.version }}
+    needs: [check, build-and-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     defaults:
       run:
         working-directory: conductor-tools
@@ -31,47 +101,24 @@ jobs:
       - name: Install pinned npm version
         run: npm install -g npm@11.17.0
 
-      - name: Read version from package.json
-        id: pkg
-        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
-
-      - name: Check if version is already released
-        id: tag
-        working-directory: ${{ github.workspace }}
-        run: |
-          if git rev-parse "cli-v${{ steps.pkg.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-            echo "::notice::cli-v${{ steps.pkg.outputs.version }} already released — skipping."
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Install dependencies
-        if: steps.tag.outputs.exists == 'false'
         run: npm ci
 
-      - name: Run tests
-        if: steps.tag.outputs.exists == 'false'
-        run: npm test
-
       - name: Build
-        if: steps.tag.outputs.exists == 'false'
         run: npm run build
 
       - name: Publish to npm
-        if: steps.tag.outputs.exists == 'false'
         run: npm publish --access public --provenance
 
       - name: Tag and create GitHub Release
-        if: steps.tag.outputs.exists == 'false'
         working-directory: ${{ github.workspace }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "cli-v${{ steps.pkg.outputs.version }}"
-          git push origin "cli-v${{ steps.pkg.outputs.version }}"
-          gh release create "cli-v${{ steps.pkg.outputs.version }}" \
+          git tag "cli-v${{ needs.check.outputs.version }}"
+          git push origin "cli-v${{ needs.check.outputs.version }}"
+          gh release create "cli-v${{ needs.check.outputs.version }}" \
             --generate-notes \
-            --title "CLI v${{ steps.pkg.outputs.version }}"
+            --title "CLI v${{ needs.check.outputs.version }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
