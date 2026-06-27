@@ -156,6 +156,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
         { config: { siteUrl: urlToSave, brandTerm: brandTerm.trim() } },
         accessToken
       );
+      setSiteUrl('');
       await loadData(true);
     } catch (e) {
       console.error('Config save failed', e);
