@@ -251,7 +251,7 @@ public class GscConnector implements FetchConnector, OAuth2Connector {
             // 404 = the property string isn't a property this account can access; 403 = not granted.
             // Both are configuration problems, so route the user back to the property picker.
             if (status == 404) {
-                return ConnectorData.degraded(
+                return ConnectorData.setupRequired(
                         "Property \"" + siteUrl + "\" wasn't found for your Google account. "
                                 + "Check the exact format (sc-domain:example.com or https://example.com/).",
                         Map.of("siteUrl", siteUrl));

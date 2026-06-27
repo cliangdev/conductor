@@ -103,6 +103,16 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Pre-populate siteUrl from a previously saved (but now broken) property, so the user can see
+  // and correct it without having to remember or retype the exact string.
+  useEffect(() => {
+    const savedSiteUrl = (response?.data as GscData | null)?.siteUrl;
+    if (response?.healthStatus === 'SETUP_REQUIRED' && savedSiteUrl && !siteUrl) {
+      setSiteUrl(savedSiteUrl);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [response]);
+
   // Once OAuth is complete but the property isn't configured yet, load the verified properties for
   // the picker. Falls back to manual entry if the list can't be fetched or is empty.
   useEffect(() => {
@@ -294,13 +304,15 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
                 </p>
               </div>
             </div>
-            {(saveError ?? fetchError) ? (
-              /* A genuine save/fetch failure — surface it as a warning. */
+            {(saveError ?? fetchError ?? (response?.data as GscData | null)?.siteUrl) ? (
+              /* A save/fetch failure, or a previously configured property that failed — show as amber warning. */
               <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
-                <p className="text-xs text-yellow-700 dark:text-yellow-400">{saveError ?? fetchError}</p>
+                <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                  {saveError ?? fetchError ?? response?.errorMessage}
+                </p>
               </div>
             ) : response?.errorMessage ? (
-              /* The expected "configure your property" setup prompt — informational, not an error. */
+              /* Fresh setup prompt — informational, not an error. */
               <div className="bg-muted/50 border border-border rounded-md p-3">
                 <p className="text-xs text-muted-foreground">{response.errorMessage}</p>
               </div>
