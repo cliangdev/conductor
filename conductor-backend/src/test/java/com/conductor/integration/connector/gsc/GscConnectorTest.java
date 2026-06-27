@@ -97,7 +97,7 @@ class GscConnectorTest {
         verify(restTemplate, org.mockito.Mockito.atLeastOnce())
                 .exchange(uriCaptor.capture(), eq(HttpMethod.POST), any(), eq(Map.class));
         assertThat(uriCaptor.getValue().toString())
-                .contains("sites/sc-domain%3Aexample.com/searchAnalytics")
+                .contains("www.googleapis.com/webmasters/v3/sites/sc-domain%3Aexample.com/searchAnalytics")
                 .doesNotContain("%253A");
 
         List<Map<String, Object>> trendOut = (List<Map<String, Object>>) result.data().get("trend");
@@ -123,7 +123,7 @@ class GscConnectorTest {
     }
 
     @Test
-    void notFoundPropertyReturnsDegraded() {
+    void notFoundPropertyRoutesToPropertyPicker() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         when(restTemplate.exchange(any(URI.class), eq(HttpMethod.POST), any(), eq(Map.class)))
                 .thenThrow(HttpClientErrorException.create(
@@ -132,9 +132,9 @@ class GscConnectorTest {
         GscConnector connector = new GscConnector(restTemplate);
         ConnectorData result = connector.fetchData(ctx(CONFIG));
 
-        // A 404 on a configured property is a DEGRADED connection (wrong format/not found),
-        // not SETUP_REQUIRED — the user should stay on the dashboard and see the error banner.
-        assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.DEGRADED);
+        // A 404 on a configured property is a configuration problem (wrong format / wrong account),
+        // so we return SETUP_REQUIRED to route the user back to the property picker.
+        assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
         assertThat(result.data().get("siteUrl")).isEqualTo("sc-domain:example.com");
         assertThat(result.errorMessage()).contains("sc-domain:example.com");
     }

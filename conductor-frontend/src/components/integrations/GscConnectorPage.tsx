@@ -138,7 +138,14 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
   };
 
   const handleSaveConfig = async () => {
-    if (!accessToken || !connectionId || !siteUrl.trim()) return;
+    // In dropdown mode, only an explicit selection counts — never fall back to the saved (broken)
+    // value, which would just re-submit the same property and loop. In manual mode, the pre-filled
+    // text is intentional and usable as-is.
+    const inDropdownMode = !manualEntry && sites.length > 0;
+    const urlToSave = inDropdownMode
+      ? siteUrl.trim()
+      : (siteUrl.trim() || ((response?.data as GscData | null)?.siteUrl ?? ''));
+    if (!accessToken || !connectionId || !urlToSave) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -146,9 +153,10 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
         projectId,
         'gsc',
         connectionId,
-        { config: { siteUrl: siteUrl.trim(), brandTerm: brandTerm.trim() } },
+        { config: { siteUrl: urlToSave, brandTerm: brandTerm.trim() } },
         accessToken
       );
+      setSiteUrl('');
       await loadData(true);
     } catch (e) {
       console.error('Config save failed', e);
@@ -174,6 +182,10 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
   // The actual reason a live fetch failed: a thrown request error, or the soft error the backend
   // returns in a 200 body (cached data served, live refresh failed).
   const errorBanner = saveError ?? fetchError ?? response?.errorMessage ?? null;
+  // Pre-populate the property picker with a previously saved (but broken) siteUrl so the user
+  // can see and correct it without retyping. Derived rather than stored to avoid setState-in-effect.
+  const savedSiteUrl = health === 'SETUP_REQUIRED' ? (data?.siteUrl ?? '') : '';
+  const effectiveSiteUrl = siteUrl || savedSiteUrl;
 
   if (health === 'SETUP_REQUIRED' || !response) {
     const oauthConnected = connectionId != null;
@@ -253,7 +265,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
                   <>
                     <input
                       type="text"
-                      value={siteUrl}
+                      value={effectiveSiteUrl}
                       onChange={e => setSiteUrl(e.target.value)}
                       placeholder="sc-domain:example.com or https://example.com/"
                       className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
@@ -294,20 +306,22 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
                 </p>
               </div>
             </div>
-            {(saveError ?? fetchError) ? (
-              /* A genuine save/fetch failure — surface it as a warning. */
+            {(saveError ?? fetchError ?? (response?.data as GscData | null)?.siteUrl) ? (
+              /* A save/fetch failure, or a previously configured property that failed — show as amber warning. */
               <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
-                <p className="text-xs text-yellow-700 dark:text-yellow-400">{saveError ?? fetchError}</p>
+                <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                  {saveError ?? fetchError ?? response?.errorMessage}
+                </p>
               </div>
             ) : response?.errorMessage ? (
-              /* The expected "configure your property" setup prompt — informational, not an error. */
+              /* Fresh setup prompt — informational, not an error. */
               <div className="bg-muted/50 border border-border rounded-md p-3">
                 <p className="text-xs text-muted-foreground">{response.errorMessage}</p>
               </div>
             ) : null}
             <button
               onClick={handleSaveConfig}
-              disabled={saving || !siteUrl.trim()}
+              disabled={saving || (!manualEntry && sites.length > 0 ? !siteUrl.trim() : !effectiveSiteUrl.trim())}
               className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? 'Saving…' : 'Save & Connect'}
