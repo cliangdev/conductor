@@ -48,12 +48,18 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
       const conns = await listConnections(projectId, 'posthog', accessToken);
       const connId = conns[0]?.id ?? null;
       if (!connId) { setResponse(null); return; }
-      const data = await fetchConnectionData(projectId, 'posthog', connId, accessToken, isRefresh);
-      setResponse(data);
+      const cached = await fetchConnectionData(projectId, 'posthog', connId, accessToken, false);
+      setResponse(cached);
+      if (isRefresh || cached.isStale || !cached.healthStatus) {
+        if (!isRefresh) setRefreshing(true);
+        const fresh = await fetchConnectionData(projectId, 'posthog', connId, accessToken, true);
+        setResponse(fresh);
+      }
     } catch (e) {
       console.error(e);
     } finally {
-      if (isRefresh) setRefreshing(false); else setLoading(false);
+      setRefreshing(false);
+      setLoading(false);
     }
   }, [projectId, accessToken]);
 
