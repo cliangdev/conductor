@@ -22,6 +22,7 @@ conductor-frontend/.env.local
 
 # Claude Code session data
 .claude/
+.mcp.json
 
 # Flux workflow data
 .flux/
