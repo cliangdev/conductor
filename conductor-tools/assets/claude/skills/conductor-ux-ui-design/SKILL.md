@@ -1,5 +1,5 @@
 ---
-name: flux:ux-ui-design
+name: conductor-ux-ui-design
 description: Expert UX/UI design guidance for creating simple, user-focused experiences with clean, cohesive interfaces. Use when designing or reviewing UI components, layouts, navigation, forms, or any user-facing interface. Applies human-centered design principles and explicitly avoids AI slop patterns (generic, over-designed, feature-bloated interfaces). Triggers on UI implementation, design decisions, component creation, or layout work.
 user-invocable: false
 ---
