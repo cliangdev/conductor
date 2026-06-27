@@ -28,6 +28,9 @@ jobs:
           cache: npm
           cache-dependency-path: conductor-tools/package-lock.json
 
+      - name: Upgrade npm for Trusted Publishing support (requires 11.5.1+)
+        run: npm install -g npm@latest
+
       - name: Read version from package.json
         id: pkg
         run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
@@ -58,8 +61,6 @@ jobs:
       - name: Publish to npm
         if: steps.tag.outputs.exists == 'false'
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Tag and create GitHub Release
         if: steps.tag.outputs.exists == 'false'
