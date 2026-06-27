@@ -23,7 +23,8 @@ interface IntegrationData {
   bounceRate?: number;
   avgSessionDuration?: number;
   topPages?: { path: string; visitors: number; pageviews: number }[];
-  topSources?: { source: string; sessions: number; visitors: number }[];
+  topSources?: { source: string; visitors: number }[];
+  queryErrors?: string[];
 }
 
 interface ConnectFormState {
@@ -173,6 +174,15 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
         <StatCard label="Avg. Duration" value={data?.avgSessionDuration != null ? formatDuration(data.avgSessionDuration) : '—'} />
       </div>
 
+      {data?.queryErrors && data.queryErrors.length > 0 && (
+        <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 mb-6 text-xs text-yellow-700 dark:text-yellow-400">
+          <p className="font-medium mb-1">Some metrics could not be loaded:</p>
+          <ul className="list-disc list-inside space-y-0.5">
+            {data.queryErrors.map((e, i) => <li key={i}>{e}</li>)}
+          </ul>
+        </div>
+      )}
+
       <div className="bg-card rounded-lg border border-border p-6 mb-6">
         <div className="mb-4">
           <div className="text-3xl font-bold text-foreground">{total.toLocaleString()}</div>
@@ -251,7 +261,6 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
             <thead>
               <tr className="text-xs text-muted-foreground">
                 <th className="text-left pb-2">Source</th>
-                <th className="text-right pb-2">Sessions</th>
                 <th className="text-right pb-2">Visitors</th>
               </tr>
             </thead>
@@ -259,8 +268,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
               {data.topSources.map((s) => (
                 <tr key={s.source}>
                   <td className="py-2 text-foreground">{s.source}</td>
-                  <td className="py-2 text-right text-foreground">{s.sessions.toLocaleString()}</td>
-                  <td className="py-2 text-right text-muted-foreground">{s.visitors.toLocaleString()}</td>
+                  <td className="py-2 text-right text-foreground">{s.visitors.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
