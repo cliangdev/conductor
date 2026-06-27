@@ -57,9 +57,7 @@ jobs:
 
       - name: Publish to npm
         if: steps.tag.outputs.exists == 'false'
-        run: |
-          npm config delete //registry.npmjs.org/:_authToken
-          npm publish --access public --provenance
+        run: npm publish --access public --provenance
 
       - name: Tag and create GitHub Release
         if: steps.tag.outputs.exists == 'false'
