@@ -100,6 +100,16 @@ public class WorkflowDefinitionResolver {
                 .orElseThrow(() -> new EntityNotFoundException("Workflow not found: " + slug));
     }
 
+    /**
+     * The latest PUBLISHED snapshot version for a slug, taken from the version table's column (the value a
+     * new Work Item pins to). Empty for a built-in workflow with no DB snapshots — the caller falls back to
+     * the built-in's declared version.
+     */
+    public Optional<Integer> latestPublishedVersion(String projectId, String slug) {
+        return versionRepository.findLatestPublished(projectId, slug)
+                .map(WorkflowDefinitionVersion::getVersion);
+    }
+
     /** Whether a slug names a built-in Workflow (resolvable for every project without a DB row). */
     public boolean isBuiltIn(String slug) {
         return builtIns.containsKey(slug);

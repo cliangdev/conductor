@@ -72,8 +72,12 @@ public class WorkItemWorkflowService {
      * built-in) version. Pinning protects in-flight Work Items from later re-publishes (Wave 5).
      */
     public Integer boundVersion(String projectId, String slug) {
-        Statechart statechart = resolver.resolveRequired(projectId, slug);
-        return statechart.version() != null ? statechart.version() : 1;
+        // Pin to the published snapshot's column version (what resolveFor looks up). Built-in workflows have
+        // no snapshot, so fall back to the built-in statechart's declared version.
+        return resolver.latestPublishedVersion(projectId, slug).orElseGet(() -> {
+            Statechart statechart = resolver.resolveRequired(projectId, slug);
+            return statechart.version() != null ? statechart.version() : 1;
+        });
     }
 
     /**

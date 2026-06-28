@@ -13,9 +13,12 @@ ALTER TABLE issues ALTER COLUMN status DROP NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_issues_project_current_status ON issues(project_id, current_status);
 
 -- 2. item_type (VARCHAR) becomes the type authority, validated against the bound Workflow's `types`.
+--    Kept NULLABLE this release for rolling-deploy / rollback safety: the previous revision's entity has no
+--    item_type field, so its INSERTs omit the column — a NOT NULL here (with no default) would fail every
+--    issue-creation on the old/rolled-back revision during the deploy overlap. New code always sets it; the
+--    NOT NULL is added in the follow-up migration that drops the legacy enum columns, after old pods retire.
 ALTER TABLE issues ADD COLUMN item_type VARCHAR(64);
 UPDATE issues SET item_type = type::text WHERE item_type IS NULL;
-ALTER TABLE issues ALTER COLUMN item_type SET NOT NULL;
 ALTER TABLE issues ALTER COLUMN type DROP NOT NULL;
 
 -- 3. Every Work Item is Workflow-bound (no more nullable binding).

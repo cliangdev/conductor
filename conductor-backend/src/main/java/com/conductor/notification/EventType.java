@@ -7,7 +7,7 @@ public enum EventType {
      * uniformly). The notification provider formats it from the enriched metadata.
      *
      * <p>Required metadata keys: {@code issueId}, {@code issueTitle}, {@code fromStatus}, {@code toStatus}
-     * <p>Optional metadata keys: {@code workflow}, {@code noun}, {@code toCategory}, {@code label},
+     * <p>Optional metadata keys: {@code workflow}, {@code noun}, {@code toStatusLabel}, {@code toCategory},
      * {@code assigneeName}, {@code prUrl}
      */
     ISSUE_STATUS_CHANGED("Work Item status changed"),
