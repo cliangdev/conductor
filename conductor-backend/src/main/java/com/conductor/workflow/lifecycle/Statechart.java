@@ -127,4 +127,15 @@ public final class Statechart {
                 .filter(t -> t.from().equals(fromStatus) && t.to().equals(toStatus))
                 .findFirst();
     }
+
+    /**
+     * The transition out of {@code fromStatus} declared to fire on the given system {@code trigger}
+     * (e.g. {@code pr_merged}), if any. Lets external events (a merged PR) advance a Work Item through the
+     * Workflow-declared edge rather than a hardcoded target status.
+     */
+    public Optional<StatechartTransition> triggeredTransitionFrom(String fromStatus, String trigger) {
+        return transitions.stream()
+                .filter(t -> t.from().equals(fromStatus) && trigger.equals(t.trigger()))
+                .findFirst();
+    }
 }

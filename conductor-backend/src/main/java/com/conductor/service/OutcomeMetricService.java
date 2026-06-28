@@ -78,7 +78,7 @@ public class OutcomeMetricService {
 
     private OutcomeMetricResponse buildResponse(String projectId, Issue issue) {
         OutcomeMetricResponse response = new OutcomeMetricResponse(readObservations(issue));
-        String slug = issue.getWorkflow() != null ? issue.getWorkflow() : WorkItemTransitionService.DEFAULT_WORKFLOW;
+        String slug = issue.getWorkflow() != null ? issue.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
         Statechart statechart = resolver.resolveRequired(projectId, slug);
         StatechartMetric metric = statechart.metric();
         if (metric != null) {

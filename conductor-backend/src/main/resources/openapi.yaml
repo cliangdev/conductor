@@ -613,13 +613,15 @@ paths:
         - name: type
           in: query
           required: false
+          description: Filter by Work Item type (validated against the bound Workflow's types).
           schema:
-            $ref: "#/components/schemas/IssueType"
+            type: string
         - name: status
           in: query
           required: false
+          description: Filter by Work Item status (a Workflow-defined status id, e.g. DRAFT).
           schema:
-            $ref: "#/components/schemas/IssueStatus"
+            type: string
       responses:
         "200":
           description: List of issues
@@ -5622,24 +5624,6 @@ components:
         role:
           type: string
 
-    IssueType:
-      type: string
-      enum:
-        - PRD
-        - FEATURE_REQUEST
-        - BUG_REPORT
-
-    IssueStatus:
-      type: string
-      enum:
-        - DRAFT
-        - IN_REVIEW
-        - READY_FOR_DEVELOPMENT
-        - IN_PROGRESS
-        - CODE_REVIEW
-        - DONE
-        - CLOSED
-
     IssueResponse:
       type: object
       required:
@@ -5659,13 +5643,15 @@ components:
         projectId:
           type: string
         type:
-          $ref: "#/components/schemas/IssueType"
+          type: string
+          description: Work Item type — a Workflow-defined string (e.g. PRD).
         title:
           type: string
         description:
           type: string
         status:
-          $ref: "#/components/schemas/IssueStatus"
+          type: string
+          description: Current status — a Workflow-defined status id (e.g. DRAFT).
         createdBy:
           type: string
         createdAt:
@@ -5708,7 +5694,10 @@ components:
         - title
       properties:
         type:
-          $ref: "#/components/schemas/IssueType"
+          type: string
+          description: >-
+            Work Item type — a Workflow-defined string (e.g. PRD), validated against the
+            chosen Workflow's allowed types.
         title:
           type: string
           maxLength: 255
@@ -5730,7 +5719,10 @@ components:
         description:
           type: string
         status:
-          $ref: "#/components/schemas/IssueStatus"
+          type: string
+          description: >-
+            Target status — a Workflow-defined status id (e.g. IN_REVIEW). The move is
+            validated against the bound Workflow and the Review gate.
         assigneeId:
           type: string
           nullable: true

@@ -101,6 +101,12 @@
           "minLength": 2,
           "maxLength": 48
         },
+        "label": {
+          "description": "Human-friendly display name shown in the UI (e.g. 'Ready for Development'). Falls back to the id when absent.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48
+        },
         "category": {
           "description": "Lane grouping. 'terminal' statuses end the Work Item.",
           "type": "string",
@@ -152,6 +158,11 @@
           "description": "Which existing project role approves this gate. No per-Workflow custom roles in v1.",
           "type": "string",
           "enum": ["ADMIN", "CREATOR", "REVIEWER"]
+        },
+        "trigger": {
+          "description": "System event that fires this edge automatically. 'pr_merged' advances a Work Item when a linked GitHub pull request merges; the merge is the authority, so this bypasses the Review gate. Omit for a human-driven transition.",
+          "type": "string",
+          "enum": ["pr_merged"]
         },
         "steps": {
           "description": "Automated actions on this transition. Hard cap: <= 3 per transition (P0-2).",

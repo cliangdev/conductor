@@ -1,8 +1,6 @@
 package com.conductor.service;
 
 import com.conductor.entity.Issue;
-import com.conductor.entity.IssueStatus;
-import com.conductor.entity.IssueType;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
@@ -21,19 +19,27 @@ import com.conductor.repository.IssueRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.workflow.lifecycle.Statechart;
+import com.conductor.workflow.lifecycle.StatechartTransition;
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class IssueService {
 
-    // COND-18 E2: the status state machine moved out of this hardcoded map into the Workflow definition;
-    // transitions are now validated by WorkItemTransitionService against the bound Statechart.
+    private static final Logger log = LoggerFactory.getLogger(IssueService.class);
+
+    // COND-18: the status state machine and the legal status/type vocabulary live in the bound Workflow
+    // definition (statechart), not in this class or a DB enum; transitions and types are validated by
+    // WorkItemWorkflowService against the resolved Statechart.
 
     private final IssueRepository issueRepository;
     private final ProjectRepository projectRepository;
@@ -42,7 +48,7 @@ public class IssueService {
     private final NotificationDispatcher notificationDispatcher;
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
-    private final WorkItemTransitionService workItemTransitionService;
+    private final WorkItemWorkflowService workItemWorkflowService;
     private final AssetService assetService;
 
     public IssueService(
@@ -53,7 +59,7 @@ public class IssueService {
             NotificationDispatcher notificationDispatcher,
             CommentRepository commentRepository,
             UserRepository userRepository,
-            WorkItemTransitionService workItemTransitionService,
+            WorkItemWorkflowService workItemWorkflowService,
             AssetService assetService) {
         this.issueRepository = issueRepository;
         this.projectRepository = projectRepository;
@@ -62,7 +68,7 @@ public class IssueService {
         this.notificationDispatcher = notificationDispatcher;
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
-        this.workItemTransitionService = workItemTransitionService;
+        this.workItemWorkflowService = workItemWorkflowService;
         this.assetService = assetService;
     }
 
@@ -73,19 +79,21 @@ public class IssueService {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
 
+        // COND-18: bind the Work Item to its Workflow (defaults to the built-in ENGINEERING) and validate
+        // its type + initial status against that Workflow's definition.
+        String workflow = request.getWorkflow() != null && !request.getWorkflow().isBlank()
+                ? request.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
+        workItemWorkflowService.validateType(projectId, workflow, request.getType());
+
         Issue issue = new Issue();
         issue.setProject(project);
-        issue.setType(toEntityIssueType(request.getType()));
+        issue.setType(request.getType());
         issue.setTitle(request.getTitle());
         issue.setDescription(request.getDescription());
         issue.setCreatedBy(caller);
-        issue.setStatus(IssueStatus.DRAFT);
-        // COND-18: bind the Work Item to its Workflow (defaults to the built-in ENGINEERING).
-        String workflow = request.getWorkflow() != null && !request.getWorkflow().isBlank()
-                ? request.getWorkflow() : WorkItemTransitionService.DEFAULT_WORKFLOW;
         issue.setWorkflow(workflow);
-        issue.setWorkflowVersion(1);
-        issue.setCurrentStatus(IssueStatus.DRAFT.name());
+        issue.setWorkflowVersion(workItemWorkflowService.boundVersion(projectId, workflow));
+        issue.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
 
         Integer nextSeq = issueRepository.findMaxSequenceNumberByProjectId(projectId) + 1;
         issue.setSequenceNumber(nextSeq);
@@ -95,23 +103,19 @@ public class IssueService {
     }
 
     @Transactional(readOnly = true)
-    public List<IssueResponse> listIssues(
-            String projectId,
-            com.conductor.generated.model.IssueType type,
-            com.conductor.generated.model.IssueStatus status,
-            User caller) {
+    public List<IssueResponse> listIssues(String projectId, String type, String status, User caller) {
         verifyReadAccess(projectId, caller.getId());
 
-        IssueType entityType = type != null ? toEntityIssueType(type) : null;
-        IssueStatus entityStatus = status != null ? toEntityIssueStatus(status) : null;
+        boolean hasType = type != null && !type.isBlank();
+        boolean hasStatus = status != null && !status.isBlank();
 
         List<Issue> issues;
-        if (entityType != null && entityStatus != null) {
-            issues = issueRepository.findByProjectIdAndTypeAndStatus(projectId, entityType, entityStatus);
-        } else if (entityType != null) {
-            issues = issueRepository.findByProjectIdAndType(projectId, entityType);
-        } else if (entityStatus != null) {
-            issues = issueRepository.findByProjectIdAndStatus(projectId, entityStatus);
+        if (hasType && hasStatus) {
+            issues = issueRepository.findByProjectIdAndTypeAndCurrentStatus(projectId, type, status);
+        } else if (hasType) {
+            issues = issueRepository.findByProjectIdAndType(projectId, type);
+        } else if (hasStatus) {
+            issues = issueRepository.findByProjectIdAndCurrentStatus(projectId, status);
         } else {
             issues = issueRepository.findByProjectId(projectId);
         }
@@ -161,62 +165,21 @@ public class IssueService {
                 issue.setAssignee(assignee);
             }
         }
-        IssueStatus previousStatus = issue.getStatus();
+        String previousStatus = issue.getCurrentStatus();
+        boolean statusChanged = false;
         if (request.getStatus() != null) {
             verifyCallerCanChangeStatus(projectId, caller.getId());
-            IssueStatus newStatus = toEntityIssueStatus(request.getStatus());
-            workItemTransitionService.validateTransition(projectId, issue, newStatus);
-            issue.setStatus(newStatus);
-            issue.setCurrentStatus(newStatus.name());
+            String newStatus = request.getStatus();
+            workItemWorkflowService.validateTransition(projectId, issue, newStatus);
+            issue.setCurrentStatus(newStatus);
+            statusChanged = true;
         }
 
         issueRepository.save(issue);
 
-        if (request.getStatus() != null) {
-            IssueStatus newStatus = issue.getStatus();
-            if (newStatus == IssueStatus.IN_REVIEW && previousStatus != IssueStatus.IN_REVIEW) {
-                notificationDispatcher.dispatch(NotificationEvent.of(
-                        EventType.ISSUE_SUBMITTED, projectId,
-                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
-            } else if (newStatus == IssueStatus.READY_FOR_DEVELOPMENT) {
-                notificationDispatcher.dispatch(NotificationEvent.of(
-                        EventType.ISSUE_APPROVED, projectId,
-                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
-            } else if (newStatus == IssueStatus.IN_PROGRESS) {
-                Map<String, String> inProgressMeta = new HashMap<>();
-                inProgressMeta.put("issueId", issue.getId());
-                inProgressMeta.put("issueTitle", issue.getTitle());
-                if (issue.getAssignee() != null) {
-                    User assignee = issue.getAssignee();
-                    String assigneeName = assignee.getName() != null ? assignee.getName() : assignee.getEmail();
-                    inProgressMeta.put("assigneeName", assigneeName);
-                }
-                notificationDispatcher.dispatch(NotificationEvent.of(
-                        EventType.ISSUE_IN_PROGRESS, projectId, inProgressMeta));
-            } else if (newStatus == IssueStatus.CODE_REVIEW) {
-                Map<String, String> codeReviewMeta = new HashMap<>();
-                codeReviewMeta.put("issueId", issue.getId());
-                codeReviewMeta.put("issueTitle", issue.getTitle());
-                if (issue.getGithubPrUrl() != null) {
-                    codeReviewMeta.put("prUrl", issue.getGithubPrUrl());
-                }
-                notificationDispatcher.dispatch(NotificationEvent.of(
-                        EventType.ISSUE_IN_CODE_REVIEW, projectId,
-                        codeReviewMeta));
-            } else if (newStatus == IssueStatus.DONE) {
-                notificationDispatcher.dispatch(NotificationEvent.of(
-                        EventType.ISSUE_COMPLETED, projectId,
-                        Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
-            }
-            notificationDispatcher.dispatch(NotificationEvent.of(
-                    EventType.ISSUE_STATUS_CHANGED, projectId,
-                    Map.of(
-                            "issueId", issue.getId(),
-                            "issueTitle", issue.getTitle(),
-                            "projectId", projectId,
-                            "fromStatus", previousStatus.name(),
-                            "toStatus", newStatus.name()
-                    )));
+        if (statusChanged) {
+            dispatchStatusChanged(projectId, issue, previousStatus, issue.getCurrentStatus(),
+                    issue.getGithubPrUrl());
         }
 
         long count = commentRepository.countUnresolvedByIssueId(issue.getId());
@@ -224,23 +187,18 @@ public class IssueService {
     }
 
     /**
-     * System-initiated completion of an issue when its linked pull request merges (GitHub webhook
-     * automation). There is intentionally NO {@code User caller} and NO
-     * {@link #verifyCallerCanChangeStatus} / {@link #validateTransition} check: this is an automated,
-     * system action, not a human status edit.
+     * System-initiated transition when a Work Item's linked pull request merges (GitHub webhook automation).
+     * There is intentionally NO {@code User caller} and NO caller-role / Review-gate check: this is an
+     * automated system action and the merge is the authority.
      *
-     * <p><b>Transition policy:</b> a merged PR marks the issue DONE regardless of its current status
-     * (DONE is allowed here from ANY non-terminal state, not only CODE_REVIEW as the human
-     * {@link #patchIssue} flow enforces). This deliberately preserves the pre-refactor real-world
-     * behavior — the old GitHub connector force-set DONE from any state — so that merging a PR is never
-     * silently rejected because the issue skipped CODE_REVIEW. Issues already DONE or CLOSED are left
-     * untouched (CLOSED is terminal and must not be reopened/overwritten by automation).
+     * <p><b>Transition policy:</b> the merge advances the Work Item through the Workflow edge declared with
+     * {@code trigger: pr_merged} from its current status (for ENGINEERING that is {@code CODE_REVIEW → DONE}).
+     * If the bound Workflow declares no such edge from the current status (e.g. the issue is already terminal,
+     * or skipped the review status), the PR is recorded as an Asset and the status is left unchanged. This is
+     * the statechart-driven generalization of the former "force DONE from any state".
      *
-     * <p>Fires the same DONE notifications {@link #patchIssue} fires for a DONE transition
-     * ({@link EventType#ISSUE_COMPLETED} + {@link EventType#ISSUE_STATUS_CHANGED}).
-     *
-     * @param projectId     the project the connection belongs to (cross-project guard already applied by caller)
-     * @param projectKey    the issue's project key (from the PR body "closes conductor/KEY-N")
+     * @param projectId      the project the connection belongs to (cross-project guard already applied by caller)
+     * @param projectKey     the issue's project key (from the PR body "closes conductor/KEY-N")
      * @param sequenceNumber the issue sequence number
      * @param pullRequestUrl the merged PR's html_url (may be null/blank → not stored)
      */
@@ -259,32 +217,56 @@ public class IssueService {
             issue.setGithubPrUrl(pullRequestUrl);
         }
 
-        IssueStatus previousStatus = issue.getStatus();
-        boolean alreadyTerminal = previousStatus == IssueStatus.DONE || previousStatus == IssueStatus.CLOSED;
-        if (!alreadyTerminal) {
-            issue.setStatus(IssueStatus.DONE);
-            issue.setCurrentStatus(IssueStatus.DONE.name());
-        }
+        String previousStatus = issue.getCurrentStatus();
+        Optional<StatechartTransition> applied = workItemWorkflowService.applySystemTransition(
+                projectId, issue, WorkItemWorkflowService.TRIGGER_PR_MERGED);
         issueRepository.save(issue);
 
-        // COND-18 E5: record the merged PR as a github_pr Asset (additive — the column is still written
-        // above for one release). Idempotent on (issue, type, ref).
+        // COND-18 E5: record the merged PR as a github_pr Asset. Idempotent on (issue, type, ref).
         assetService.recordPullRequestAsset(issue, pullRequestUrl);
 
-        if (!alreadyTerminal) {
-            notificationDispatcher.dispatch(NotificationEvent.of(
-                    EventType.ISSUE_COMPLETED, projectId,
-                    Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle())));
-            notificationDispatcher.dispatch(NotificationEvent.of(
-                    EventType.ISSUE_STATUS_CHANGED, projectId,
-                    Map.of(
-                            "issueId", issue.getId(),
-                            "issueTitle", issue.getTitle(),
-                            "projectId", projectId,
-                            "fromStatus", previousStatus.name(),
-                            "toStatus", IssueStatus.DONE.name()
-                    )));
+        if (applied.isPresent()) {
+            dispatchStatusChanged(projectId, issue, previousStatus, issue.getCurrentStatus(), pullRequestUrl);
+        } else {
+            log.info("PR merge for {}-{}: workflow {} declares no '{}' transition from status {}; "
+                            + "recorded PR asset only, status unchanged",
+                    projectKey, sequenceNumber, issue.getWorkflow(),
+                    WorkItemWorkflowService.TRIGGER_PR_MERGED, previousStatus);
         }
+    }
+
+    /**
+     * Fire the single, Workflow-agnostic {@link EventType#ISSUE_STATUS_CHANGED} event, enriched with the
+     * Workflow's {@code noun} and the target status's display label/category so the notification provider can
+     * format it for any Workflow without hardcoded status names.
+     */
+    private void dispatchStatusChanged(String projectId, Issue issue, String fromStatus, String toStatus,
+                                       String prUrl) {
+        Statechart statechart = workItemWorkflowService.resolveFor(projectId, issue);
+        Map<String, String> meta = new HashMap<>();
+        meta.put("issueId", issue.getId());
+        meta.put("issueTitle", issue.getTitle());
+        meta.put("projectId", projectId);
+        if (issue.getWorkflow() != null) {
+            meta.put("workflow", issue.getWorkflow());
+        }
+        meta.put("noun", statechart.noun());
+        meta.put("fromStatus", fromStatus);
+        meta.put("toStatus", toStatus);
+        statechart.status(toStatus).ifPresent(s -> {
+            meta.put("toStatusLabel", s.displayLabel());
+            if (s.category() != null) {
+                meta.put("toCategory", s.category());
+            }
+        });
+        if (issue.getAssignee() != null) {
+            User a = issue.getAssignee();
+            meta.put("assigneeName", a.getName() != null ? a.getName() : a.getEmail());
+        }
+        if (prUrl != null && !prUrl.isBlank()) {
+            meta.put("prUrl", prUrl);
+        }
+        notificationDispatcher.dispatch(NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, projectId, meta));
     }
 
     @Transactional
@@ -344,22 +326,6 @@ public class IssueService {
         return issue;
     }
 
-    private IssueType toEntityIssueType(com.conductor.generated.model.IssueType type) {
-        return IssueType.valueOf(type.getValue());
-    }
-
-    private IssueStatus toEntityIssueStatus(com.conductor.generated.model.IssueStatus status) {
-        return IssueStatus.valueOf(status.getValue());
-    }
-
-    private com.conductor.generated.model.IssueType toApiIssueType(IssueType type) {
-        return com.conductor.generated.model.IssueType.fromValue(type.name());
-    }
-
-    private com.conductor.generated.model.IssueStatus toApiIssueStatus(IssueStatus status) {
-        return com.conductor.generated.model.IssueStatus.fromValue(status.name());
-    }
-
     private IssueResponse toIssueResponse(Issue issue) {
         String displayId = issue.getProject().getKey() + "-" + issue.getSequenceNumber();
         IssueAssignee assignee = null;
@@ -370,9 +336,9 @@ public class IssueService {
         return new IssueResponse(
                 issue.getId(),
                 issue.getProject().getId(),
-                toApiIssueType(issue.getType()),
+                issue.getType(),
                 issue.getTitle(),
-                toApiIssueStatus(issue.getStatus()),
+                issue.getCurrentStatus(),
                 issue.getCreatedBy().getId(),
                 issue.getCreatedAt(),
                 issue.getUpdatedAt(),
