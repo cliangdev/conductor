@@ -115,6 +115,32 @@ The seed `engineering.workflow.json` reproduces today's exact transition set; ex
 because their `current_status`/`item_type` mirror the former enum values and ENGINEERING's `initial` status
 is `DRAFT`.
 
+## Workflow-driven Work Item views & navigation (COND-22)
+The definition's `default_view`, `noun`, `area`, `statuses`, and `types` drive the UI directly — no
+hardcoded Issues page remains.
+
+- **Per-project seeding.** ENGINEERING is now a real `workflow_definitions` row per project (PUBLISHED,
+  `version=1`), not just a classpath fallback, so it appears in the workflow list API. Existing projects
+  are seeded by Flyway migration `V74__seed_engineering_workflow` (reads the canonical classpath JSON);
+  new projects are seeded by `WorkflowSeeder` from `ProjectService.createWorkspace`. Both are idempotent.
+- **Generic Work Item page.** `/app/projects/{projectId}/work/{slug}` resolves the `WorkflowView` and
+  renders Work Items in the `default_view`: `list` (the migrated Issues table — title from `pluralize(noun)`,
+  status/type filters from the view), `board`/`calendar` are placeholders for now. Work Items are always
+  fetched workflow-scoped via `GET /issues?workflow={slug}`. The legacy `/issues` route is a server-side
+  redirect to `/work/ENGINEERING`; the issue detail route (`/issues/{issueId}`) is unchanged.
+- **Dynamic sidebar.** The sidebar lists sidebar-enabled, published lifecycle workflows, grouped by
+  humanized `area`, labelled `pluralize(noun)`, linking to `/work/{slug}`. It falls back to a static
+  Issues entry when none resolve.
+- **`sidebar_enabled`.** A boolean column on `workflow_definitions` — **not** part of the versioned
+  `definition`, so it toggles live via `PATCH /projects/{projectId}/workflows/{workflowId}/sidebar`
+  without republishing. Defaults to `false`; ENGINEERING is seeded `true`. `GET .../workflows?sidebar=true`
+  filters by it (composes with `lifecycle` and `state`).
+- **Explicit `kind`.** `WorkflowDefinitionDto` carries `kind` = `LIFECYCLE | AUTOMATION`, derived
+  server-side (`WorkflowDefinition.isLifecycle()` — a non-empty statechart `definition`). Clients (sidebar,
+  workflows list, lifecycle editor) classify on `kind`, never on the shape of `definition`. The DTO also
+  returns `definition: null` for automations rather than `{}`, so a YAML automation is never mistaken for a
+  statechart workflow.
+
 ## Validating a definition
 The schema and example are checked with ajv (draft 2020-12). From `conductor-tools/`:
 

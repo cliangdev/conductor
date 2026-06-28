@@ -11,11 +11,13 @@ import com.conductor.entity.WorkflowStepRun;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.WorkflowsApi;
 import com.conductor.generated.model.SetWorkflowEnabledRequest;
+import com.conductor.generated.model.SetWorkflowSidebarRequest;
 import com.conductor.generated.model.UpdateWorkflowRunStatusRequest;
 import com.conductor.generated.model.WorkflowCreateRequest;
 import com.conductor.generated.model.WorkflowCreateResponse;
 import com.conductor.generated.model.WorkflowDefinitionDto;
 import com.conductor.generated.model.WorkflowJobRunDto;
+import com.conductor.generated.model.WorkflowKind;
 import com.conductor.generated.model.WorkflowRunDetailDto;
 import com.conductor.generated.model.WorkflowRunDto;
 import com.conductor.generated.model.WorkflowScheduleSkipDto;
@@ -121,12 +123,12 @@ public class WorkflowController implements WorkflowsApi {
 
     @Override
     public ResponseEntity<List<WorkflowDefinitionDto>> listWorkflows(String projectId, Boolean lifecycle,
-                                                                     String state) {
+                                                                     String state, Boolean sidebar) {
         List<WorkflowDefinitionDto> dtos = workflowService.listWorkflows(projectId).stream()
-                // lifecycle (statechart) workflows have a `definition`; automation (YAML) workflows do not.
-                .filter(w -> lifecycle == null
-                        || (lifecycle ? w.getDefinition() != null : w.getDefinition() == null))
+                // Authoritative kind (statechart vs YAML automation) — never inferred from payload shape.
+                .filter(w -> lifecycle == null || w.isLifecycle() == lifecycle)
                 .filter(w -> state == null || state.equalsIgnoreCase(w.getState()))
+                .filter(w -> sidebar == null || w.isSidebarEnabled() == sidebar)
                 .map(this::toDto)
                 .collect(Collectors.toList());
         return ResponseEntity.ok(dtos);
@@ -175,6 +177,13 @@ public class WorkflowController implements WorkflowsApi {
     public ResponseEntity<WorkflowDefinitionDto> setWorkflowEnabled(String projectId, String workflowId, SetWorkflowEnabledRequest setWorkflowEnabledRequest) {
         String userId = currentUserId();
         WorkflowDefinition def = workflowService.setEnabled(projectId, workflowId, userId, setWorkflowEnabledRequest.getEnabled());
+        return ResponseEntity.ok(toDto(def));
+    }
+
+    @Override
+    public ResponseEntity<WorkflowDefinitionDto> setWorkflowSidebar(String projectId, String workflowId, SetWorkflowSidebarRequest setWorkflowSidebarRequest) {
+        String userId = currentUserId();
+        WorkflowDefinition def = workflowService.setSidebarEnabled(projectId, workflowId, userId, setWorkflowSidebarRequest.getSidebarEnabled());
         return ResponseEntity.ok(toDto(def));
     }
 
@@ -392,9 +401,13 @@ public class WorkflowController implements WorkflowsApi {
         dto.setState(def.getState() == null ? null : WorkflowState.fromValue(def.getState()));
         dto.setArea(def.getArea());
         dto.setSchemaVersion(def.getSchemaVersion());
-        if (def.getDefinition() != null) {
-            dto.setDefinition(objectMapper.convertValue(def.getDefinition(), new TypeReference<Map<String, Object>>() {}));
-        }
+        // COND-22: explicit, authoritative kind + sidebar visibility. `definition` is set explicitly to
+        // null for automations — the generated DTO field otherwise defaults to {}, which would mislead
+        // clients into treating a YAML automation as a lifecycle (statechart) Workflow.
+        dto.setKind(def.isLifecycle() ? WorkflowKind.LIFECYCLE : WorkflowKind.AUTOMATION);
+        dto.setSidebarEnabled(def.isSidebarEnabled());
+        dto.setDefinition(def.getDefinition() == null ? null
+                : objectMapper.convertValue(def.getDefinition(), new TypeReference<Map<String, Object>>() {}));
         dto.setCreatedAt(def.getCreatedAt());
         dto.setUpdatedAt(def.getUpdatedAt());
         return dto;

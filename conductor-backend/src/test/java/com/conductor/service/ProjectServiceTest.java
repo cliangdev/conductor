@@ -43,6 +43,9 @@ class ProjectServiceTest {
     @Mock
     private ProjectSecurityService projectSecurityService;
 
+    @Mock
+    private WorkflowSeeder workflowSeeder;
+
     @InjectMocks
     private ProjectService projectService;
 

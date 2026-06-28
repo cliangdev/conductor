@@ -106,8 +106,9 @@ export function StatechartDiagram({
   statuses: StatechartStatus[]
   transitions: StatechartTransition[]
 }) {
+  // Defensive: a malformed or empty definition may omit these arrays — never crash on `.map`.
   const { nodes, edges } = useMemo(
-    () => buildGraph(statuses, transitions),
+    () => buildGraph(statuses ?? [], transitions ?? []),
     [statuses, transitions],
   )
 

@@ -3,12 +3,15 @@ import {
   categoriesForView,
   categoryVariant,
   humanizeId,
+  isLifecycleWorkflow,
+  pluralizeNoun,
   reviewGateForStatus,
   statusHasReviewGate,
   statusMeta,
 } from '@/lib/workflows'
 import { definitionFromWorkflowView } from '@/lib/workflowDefinition'
 import type { WorkflowView } from '@/types/workItem'
+import type { WorkflowDefinitionDto } from '@/types/workflow'
 
 const VIEW: WorkflowView = {
   slug: 'ENGINEERING',
@@ -87,5 +90,29 @@ describe('definitionFromWorkflowView (clone seed)', () => {
     expect(gated?.reviewerRole).toBe('REVIEWER')
     // Non-gated edges carry no outcomes.
     expect(def.transitions.find((t) => t.from === 'CODE_REVIEW')?.reviewOutcomes).toBeUndefined()
+  })
+})
+
+describe('pluralizeNoun', () => {
+  it('pluralizes simple and irregular nouns', () => {
+    expect(pluralizeNoun('Issue')).toBe('Issues')
+    expect(pluralizeNoun('Story')).toBe('Stories')
+    expect(pluralizeNoun('Deal')).toBe('Deals')
+  })
+})
+
+describe('isLifecycleWorkflow', () => {
+  const base: WorkflowDefinitionDto = {
+    id: 'wf', projectId: 'p', name: 'X', enabled: true, createdAt: '', updatedAt: '',
+  }
+
+  it('is true only when the server-derived kind is LIFECYCLE', () => {
+    expect(isLifecycleWorkflow({ ...base, kind: 'LIFECYCLE' })).toBe(true)
+    expect(isLifecycleWorkflow({ ...base, kind: 'AUTOMATION' })).toBe(false)
+  })
+
+  it('does not infer lifecycle from an empty {} definition (the my-workflow regression)', () => {
+    // An automation that leaked definition:{} must not be treated as a lifecycle workflow.
+    expect(isLifecycleWorkflow({ ...base, kind: 'AUTOMATION', definition: {} })).toBe(false)
   })
 })

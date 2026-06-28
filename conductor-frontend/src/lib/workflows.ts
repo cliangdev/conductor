@@ -7,6 +7,7 @@
 // fetches). All status label/color/category rendering flows through the helpers here so there is one
 // place that maps a Workflow-defined status to how it looks.
 
+import pluralize from 'pluralize'
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost, apiPut } from '@/lib/api'
 import type { BadgeProps } from '@/components/ui/badge'
@@ -155,6 +156,19 @@ export function humanizeId(id: string): string {
     .replace(/_/g, ' ')
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+/** Pluralize a Workflow noun for page titles and nav labels, e.g. "Issue" → "Issues", "Story" → "Stories". */
+export function pluralizeNoun(noun: string): string {
+  return pluralize(noun)
+}
+
+/**
+ * Authoritative lifecycle (statechart) vs automation (YAML) check — reads the server-derived `kind`,
+ * never the shape of `definition`. (COND-22)
+ */
+export function isLifecycleWorkflow(wf: WorkflowDefinitionDto): boolean {
+  return wf.kind === 'LIFECYCLE'
 }
 
 /** Resolve a status id to its display label + category, falling back gracefully when unloaded. */

@@ -3632,6 +3632,14 @@ paths:
           description: Filter by lifecycle state (DRAFT | PUBLISHED).
           schema:
             type: string
+        - name: sidebar
+          in: query
+          required: false
+          description: >-
+            true → only Workflows flagged to appear in the sidebar nav; false → only those not flagged;
+            omit for all. Composes with `lifecycle` and `state`.
+          schema:
+            type: boolean
       responses:
         "200":
           description: List of workflows
@@ -3865,6 +3873,42 @@ paths:
       responses:
         "200":
           description: Workflow enabled state updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowDefinitionDto"
+
+  /projects/{projectId}/workflows/{workflowId}/sidebar:
+    patch:
+      tags: [workflows]
+      summary: Show or hide a lifecycle Workflow in the sidebar nav
+      description: >-
+        Toggles sidebar visibility for a lifecycle Workflow. A live setting — it does not change the
+        Workflow's state, version, or statechart definition and requires no republish. (COND-22)
+      operationId: setWorkflowSidebar
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetWorkflowSidebarRequest"
+      responses:
+        "200":
+          description: Workflow sidebar visibility updated
           content:
             application/json:
               schema:
@@ -6365,6 +6409,16 @@ components:
         - DRAFT
         - PUBLISHED
 
+    WorkflowKind:
+      type: string
+      description: >-
+        Explicit kind of a Workflow definition so callers never infer it from payload shape.
+        LIFECYCLE = a statechart that drives Work Item state (has a `definition`); AUTOMATION =
+        a YAML run-automation. Derived server-side and authoritative.
+      enum:
+        - LIFECYCLE
+        - AUTOMATION
+
     MetricObservation:
       type: object
       required:
@@ -6774,6 +6828,13 @@ components:
           deprecated: true
         enabled:
           type: boolean
+        kind:
+          $ref: "#/components/schemas/WorkflowKind"
+        sidebarEnabled:
+          type: boolean
+          description: >-
+            Whether this lifecycle Workflow is shown as a nav entry in the sidebar. Opt-in per
+            Workflow; toggled live via PATCH .../workflows/{id}/sidebar without republishing. (COND-22)
         webhookToken:
           type: string
         version:
@@ -6845,6 +6906,13 @@ components:
       required: [enabled]
       properties:
         enabled:
+          type: boolean
+
+    SetWorkflowSidebarRequest:
+      type: object
+      required: [sidebarEnabled]
+      properties:
+        sidebarEnabled:
           type: boolean
 
     WorkflowValidationError:

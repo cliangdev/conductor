@@ -146,6 +146,18 @@ public class WorkflowService {
         return workflowRepository.save(def);
     }
 
+    /**
+     * Toggles sidebar visibility for a Workflow. A live setting: it must not touch the Workflow's
+     * {@code state}, {@code version}, or statechart {@code definition}. (COND-22)
+     */
+    @Transactional
+    public WorkflowDefinition setSidebarEnabled(String projectId, String workflowId, String userId, boolean sidebarEnabled) {
+        requireAdminOrCreator(projectId, userId);
+        WorkflowDefinition def = findInProject(projectId, workflowId);
+        def.setSidebarEnabled(sidebarEnabled);
+        return workflowRepository.save(def);
+    }
+
     public WorkflowValidationResult validate(String projectId, String yaml) {
         Set<String> secretKeys = secretRepository.findByProjectId(projectId)
                 .stream().map(s -> s.getKey()).collect(Collectors.toSet());
