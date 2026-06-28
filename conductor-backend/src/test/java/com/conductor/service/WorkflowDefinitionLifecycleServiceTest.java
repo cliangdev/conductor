@@ -5,6 +5,7 @@ import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.lifecycle.SkillRegistry;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionValidator;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -32,15 +33,17 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private WorkflowDefinitionRepository repository;
+    private WorkflowDefinitionVersionRepository versionRepository;
     private ProjectSecurityService security;
     private WorkflowDefinitionLifecycleService service;
 
     @BeforeEach
     void setUp() {
         repository = Mockito.mock(WorkflowDefinitionRepository.class);
+        versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
         security = Mockito.mock(ProjectSecurityService.class);
         WorkflowDefinitionValidator validator = new WorkflowDefinitionValidator(new SkillRegistry(mapper));
-        service = new WorkflowDefinitionLifecycleService(repository, security, validator);
+        service = new WorkflowDefinitionLifecycleService(repository, versionRepository, security, validator);
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 

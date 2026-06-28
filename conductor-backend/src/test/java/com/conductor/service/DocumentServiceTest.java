@@ -2,8 +2,6 @@ package com.conductor.service;
 
 import com.conductor.entity.Document;
 import com.conductor.entity.Issue;
-import com.conductor.entity.IssueStatus;
-import com.conductor.entity.IssueType;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.exception.FileTooLargeException;
@@ -78,9 +76,9 @@ class DocumentServiceTest {
         testIssue = new Issue();
         testIssue.setId("issue-1");
         testIssue.setProject(project);
-        testIssue.setType(IssueType.PRD);
+        testIssue.setType("PRD");
         testIssue.setTitle("Test Issue");
-        testIssue.setStatus(IssueStatus.DRAFT);
+        testIssue.setCurrentStatus("DRAFT");
         testIssue.setCreatedBy(user);
         testIssue.setCreatedAt(OffsetDateTime.now());
         testIssue.setUpdatedAt(OffsetDateTime.now());

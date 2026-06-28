@@ -5,8 +5,6 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.generated.model.IssueResponse;
-import com.conductor.generated.model.IssueStatus;
-import com.conductor.generated.model.IssueType;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
@@ -14,7 +12,7 @@ import com.conductor.generated.model.AvailableTransition;
 import com.conductor.generated.model.AvailableTransitionsResponse;
 import com.conductor.service.IssueService;
 import com.conductor.service.JwtService;
-import com.conductor.service.WorkItemTransitionService;
+import com.conductor.service.WorkItemWorkflowService;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -50,7 +48,7 @@ class IssueControllerTest {
     private IssueService issueService;
 
     @MockitoBean
-    private WorkItemTransitionService workItemTransitionService;
+    private WorkItemWorkflowService workItemWorkflowService;
 
     @MockitoBean
     private JwtService jwtService;
@@ -77,7 +75,7 @@ class IssueControllerTest {
         when(userRepository.findById("user-id-123")).thenReturn(Optional.of(testUser));
     }
 
-    private IssueResponse buildIssueResponse(String id, IssueType type, IssueStatus status) {
+    private IssueResponse buildIssueResponse(String id, String type, String status) {
         return new IssueResponse(id, "proj-1", type, "Test Issue", status, "user-id-123",
                 OffsetDateTime.now(), OffsetDateTime.now(), 1, "PROJ-1");
     }
@@ -89,7 +87,7 @@ class IssueControllerTest {
         AvailableTransitionsResponse response =
                 new AvailableTransitionsResponse("ENGINEERING", "DRAFT", List.of(t));
         response.setNoun("Issue");
-        when(workItemTransitionService.availableTransitions(eq("proj-1"), eq("issue-1"), any()))
+        when(workItemWorkflowService.availableTransitions(eq("proj-1"), eq("issue-1"), any()))
                 .thenReturn(response);
 
         mockMvc.perform(get("/api/v1/projects/proj-1/issues/issue-1/available-transitions")
@@ -102,7 +100,7 @@ class IssueControllerTest {
 
     @Test
     void createIssueReturns201WithDraftStatus() throws Exception {
-        IssueResponse response = buildIssueResponse("issue-1", IssueType.PRD, IssueStatus.DRAFT);
+        IssueResponse response = buildIssueResponse("issue-1", "PRD", "DRAFT");
 
         when(issueService.createIssue(eq("proj-1"), any(), eq(testUser))).thenReturn(response);
 
@@ -118,8 +116,8 @@ class IssueControllerTest {
 
     @Test
     void listIssuesFiltersByType() throws Exception {
-        IssueResponse r1 = buildIssueResponse("issue-1", IssueType.PRD, IssueStatus.DRAFT);
-        when(issueService.listIssues(eq("proj-1"), eq(IssueType.PRD), isNull(), eq(testUser)))
+        IssueResponse r1 = buildIssueResponse("issue-1", "PRD", "DRAFT");
+        when(issueService.listIssues(eq("proj-1"), eq("PRD"), isNull(), eq(testUser)))
                 .thenReturn(List.of(r1));
 
         mockMvc.perform(get("/api/v1/projects/proj-1/issues?type=PRD")
@@ -131,8 +129,8 @@ class IssueControllerTest {
 
     @Test
     void listIssuesFiltersByStatus() throws Exception {
-        IssueResponse r1 = buildIssueResponse("issue-1", IssueType.FEATURE_REQUEST, IssueStatus.IN_REVIEW);
-        when(issueService.listIssues(eq("proj-1"), isNull(), eq(IssueStatus.IN_REVIEW), eq(testUser)))
+        IssueResponse r1 = buildIssueResponse("issue-1", "FEATURE_REQUEST", "IN_REVIEW");
+        when(issueService.listIssues(eq("proj-1"), isNull(), eq("IN_REVIEW"), eq(testUser)))
                 .thenReturn(List.of(r1));
 
         mockMvc.perform(get("/api/v1/projects/proj-1/issues?status=IN_REVIEW")
@@ -144,7 +142,7 @@ class IssueControllerTest {
 
     @Test
     void patchIssueValidTransitionReturns200() throws Exception {
-        IssueResponse response = buildIssueResponse("issue-1", IssueType.PRD, IssueStatus.IN_REVIEW);
+        IssueResponse response = buildIssueResponse("issue-1", "PRD", "IN_REVIEW");
         when(issueService.patchIssue(eq("proj-1"), eq("issue-1"), any(), eq(testUser))).thenReturn(response);
 
         mockMvc.perform(patch("/api/v1/projects/proj-1/issues/issue-1")
