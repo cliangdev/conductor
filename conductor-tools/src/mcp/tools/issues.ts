@@ -13,6 +13,27 @@ interface IssueResponse {
   description?: string
 }
 
+/**
+ * Core Work Item resource targeting. The legacy `*_issue` tools hit the v1 `issues`
+ * surface (deprecated); the canonical `*_work_item` tools hit the v2 `work-items`
+ * surface. Body shapes are identical between the two, so the handlers below are
+ * shared and only the endpoint differs.
+ */
+interface WorkItemEndpoint {
+  collection: (projectId: string) => string
+  item: (projectId: string, id: string) => string
+}
+
+const V1: WorkItemEndpoint = {
+  collection: (projectId) => `/api/v1/projects/${projectId}/issues`,
+  item: (projectId, id) => `/api/v1/projects/${projectId}/issues/${id}`,
+}
+
+const V2: WorkItemEndpoint = {
+  collection: (projectId) => `/api/v2/projects/${projectId}/work-items`,
+  item: (projectId, id) => `/api/v2/projects/${projectId}/work-items/${id}`,
+}
+
 function buildIssueFrontmatter(
   issueId: string,
   type: string,
@@ -33,9 +54,10 @@ function updateFrontmatterField(content: string, field: string, value: string): 
   return content
 }
 
-export async function createIssue(
+async function createWorkItemImpl(
   params: { type: string; title: string; description?: string; workflow?: string },
-  config: Config
+  config: Config,
+  endpoint: WorkItemEndpoint
 ): Promise<Record<string, unknown>> {
   if (!config.localPath) {
     return { error: 'Run conductor init to set up local project directory' }
@@ -49,23 +71,21 @@ export async function createIssue(
     workflow: params.workflow,
   }
 
+  const collectionPath = endpoint.collection(config.projectId)
+
   let issueId: string
   let backendResult: IssueResponse | null = null
   let warning: string | undefined
   let queueSize: number | undefined
 
   try {
-    backendResult = await apiPost<IssueResponse>(
-      `/api/v1/projects/${config.projectId}/issues`,
-      body,
-      config
-    )
+    backendResult = await apiPost<IssueResponse>(collectionPath, body, config)
     issueId = backendResult.id
   } catch {
     issueId = `local_${Date.now()}`
     const size = queueChange({
       method: 'POST',
-      path: `/api/v1/projects/${config.projectId}/issues`,
+      path: collectionPath,
       body,
       timestamp: new Date().toISOString(),
     })
@@ -107,27 +127,26 @@ export async function createIssue(
   return result
 }
 
-export async function updateIssue(
+async function updateWorkItemImpl(
   params: { issueId: string; title?: string; description?: string },
-  config: Config
+  config: Config,
+  endpoint: WorkItemEndpoint
 ): Promise<Record<string, unknown>> {
   const body: Record<string, string> = {}
   if (params.title !== undefined) body['title'] = params.title
   if (params.description !== undefined) body['description'] = params.description
 
+  const itemPath = endpoint.item(config.projectId, params.issueId)
+
   let warning: string | undefined
   let queueSize: number | undefined
 
   try {
-    await apiPatch<IssueResponse>(
-      `/api/v1/projects/${config.projectId}/issues/${params.issueId}`,
-      body,
-      config
-    )
+    await apiPatch<IssueResponse>(itemPath, body, config)
   } catch {
     const size = queueChange({
       method: 'PATCH',
-      path: `/api/v1/projects/${config.projectId}/issues/${params.issueId}`,
+      path: itemPath,
       body,
       timestamp: new Date().toISOString(),
     })
@@ -152,23 +171,22 @@ export async function updateIssue(
   return result
 }
 
-export async function setIssueStatus(
+async function setWorkItemStatusImpl(
   params: { issueId: string; status: string },
-  config: Config
+  config: Config,
+  endpoint: WorkItemEndpoint
 ): Promise<Record<string, unknown>> {
+  const itemPath = endpoint.item(config.projectId, params.issueId)
+
   let warning: string | undefined
   let queueSize: number | undefined
 
   try {
-    await apiPatch<IssueResponse>(
-      `/api/v1/projects/${config.projectId}/issues/${params.issueId}`,
-      { status: params.status },
-      config
-    )
+    await apiPatch<IssueResponse>(itemPath, { status: params.status }, config)
   } catch {
     const size = queueChange({
       method: 'PATCH',
-      path: `/api/v1/projects/${config.projectId}/issues/${params.issueId}`,
+      path: itemPath,
       body: { status: params.status },
       timestamp: new Date().toISOString(),
     })
@@ -193,22 +211,25 @@ export async function setIssueStatus(
   return result
 }
 
-export async function listIssues(
-  params: { type?: string; status?: string },
-  config: Config
+async function listWorkItemsImpl(
+  params: { type?: string; status?: string; workflow?: string },
+  config: Config,
+  endpoint: WorkItemEndpoint
 ): Promise<unknown[]> {
   const query = new URLSearchParams()
   if (params.type) query.set('type', params.type)
   if (params.status) query.set('status', params.status)
+  if (params.workflow) query.set('workflow', params.workflow)
 
   const qs = query.toString()
-  const path = `/api/v1/projects/${config.projectId}/issues${qs ? `?${qs}` : ''}`
-  return apiGet<unknown[]>(path, config)
+  const listPath = `${endpoint.collection(config.projectId)}${qs ? `?${qs}` : ''}`
+  return apiGet<unknown[]>(listPath, config)
 }
 
-export async function getIssue(
+async function getWorkItemImpl(
   params: { issueId: string },
-  config: Config
+  config: Config,
+  endpoint: WorkItemEndpoint
 ): Promise<Record<string, unknown>> {
   let absolutePath: string | undefined
   try {
@@ -229,13 +250,84 @@ export async function getIssue(
     }
   }
 
-  const issue = await apiGet<IssueResponse>(
-    `/api/v1/projects/${config.projectId}/issues/${params.issueId}`,
-    config
-  )
+  const issue = await apiGet<IssueResponse>(endpoint.item(config.projectId, params.issueId), config)
   return {
     ...(issue as unknown as Record<string, unknown>),
     localPath,
     ...(absolutePath ? { absolutePath } : {}),
   }
+}
+
+// --- Legacy v1 `issue` handlers (deprecated — hit /api/v1/.../issues) ---
+
+export async function createIssue(
+  params: { type: string; title: string; description?: string; workflow?: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return createWorkItemImpl(params, config, V1)
+}
+
+export async function updateIssue(
+  params: { issueId: string; title?: string; description?: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return updateWorkItemImpl(params, config, V1)
+}
+
+export async function setIssueStatus(
+  params: { issueId: string; status: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return setWorkItemStatusImpl(params, config, V1)
+}
+
+export async function listIssues(
+  params: { type?: string; status?: string },
+  config: Config
+): Promise<unknown[]> {
+  return listWorkItemsImpl(params, config, V1)
+}
+
+export async function getIssue(
+  params: { issueId: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return getWorkItemImpl(params, config, V1)
+}
+
+// --- Canonical v2 `work_item` handlers (hit /api/v2/.../work-items) ---
+
+export async function createWorkItem(
+  params: { type: string; title: string; description?: string; workflow?: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return createWorkItemImpl(params, config, V2)
+}
+
+export async function updateWorkItem(
+  params: { issueId: string; title?: string; description?: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return updateWorkItemImpl(params, config, V2)
+}
+
+export async function setWorkItemStatus(
+  params: { issueId: string; status: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return setWorkItemStatusImpl(params, config, V2)
+}
+
+export async function listWorkItems(
+  params: { type?: string; status?: string; workflow?: string },
+  config: Config
+): Promise<unknown[]> {
+  return listWorkItemsImpl(params, config, V2)
+}
+
+export async function getWorkItem(
+  params: { issueId: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return getWorkItemImpl(params, config, V2)
 }
