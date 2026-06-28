@@ -1,6 +1,6 @@
 package com.conductor.service;
 
-import com.conductor.entity.IssueReviewer;
+import com.conductor.entity.WorkItemReviewer;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
@@ -11,7 +11,7 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.generated.model.AssignReviewerResponse;
 import com.conductor.generated.model.ReviewerResponse;
-import com.conductor.repository.IssueReviewerRepository;
+import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -37,7 +37,7 @@ import static org.mockito.Mockito.when;
 class ReviewerServiceTest {
 
     @Mock
-    private IssueReviewerRepository issueReviewerRepository;
+    private WorkItemReviewerRepository workItemReviewerRepository;
 
     @Mock
     private ProjectMemberRepository projectMemberRepository;
@@ -95,10 +95,10 @@ class ReviewerServiceTest {
         when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerMember));
-        when(issueReviewerRepository.findByIssueIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.empty());
-        when(issueReviewerRepository.save(any(IssueReviewer.class))).thenAnswer(inv -> {
-            IssueReviewer r = inv.getArgument(0);
+        when(workItemReviewerRepository.save(any(WorkItemReviewer.class))).thenAnswer(inv -> {
+            WorkItemReviewer r = inv.getArgument(0);
             r.setAssignedAt(OffsetDateTime.now());
             return r;
         });
@@ -106,11 +106,11 @@ class ReviewerServiceTest {
         AssignReviewerResponse response = reviewerService.assignReviewer(
                 PROJECT_ID, ISSUE_ID, reviewerUser.getId(), adminUser);
 
-        ArgumentCaptor<IssueReviewer> captor = ArgumentCaptor.forClass(IssueReviewer.class);
-        verify(issueReviewerRepository).save(captor.capture());
+        ArgumentCaptor<WorkItemReviewer> captor = ArgumentCaptor.forClass(WorkItemReviewer.class);
+        verify(workItemReviewerRepository).save(captor.capture());
 
-        IssueReviewer saved = captor.getValue();
-        assertThat(saved.getIssueId()).isEqualTo(ISSUE_ID);
+        WorkItemReviewer saved = captor.getValue();
+        assertThat(saved.getWorkItemId()).isEqualTo(ISSUE_ID);
         assertThat(saved.getUserId()).isEqualTo(reviewerUser.getId());
         assertThat(saved.getAssignedBy()).isEqualTo(adminUser.getId());
 
@@ -124,10 +124,10 @@ class ReviewerServiceTest {
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerMember));
 
-        IssueReviewer existing = new IssueReviewer();
-        existing.setIssueId(ISSUE_ID);
+        WorkItemReviewer existing = new WorkItemReviewer();
+        existing.setWorkItemId(ISSUE_ID);
         existing.setUserId(reviewerUser.getId());
-        when(issueReviewerRepository.findByIssueIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(existing));
 
         assertThatThrownBy(() -> reviewerService.assignReviewer(
@@ -179,12 +179,12 @@ class ReviewerServiceTest {
         when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, adminUser.getId()))
                 .thenReturn(true);
 
-        IssueReviewer reviewer = new IssueReviewer();
-        reviewer.setIssueId(ISSUE_ID);
+        WorkItemReviewer reviewer = new WorkItemReviewer();
+        reviewer.setWorkItemId(ISSUE_ID);
         reviewer.setUserId(reviewerUser.getId());
         reviewer.setAssignedAt(OffsetDateTime.now());
 
-        when(issueReviewerRepository.findAllByIssueId(ISSUE_ID))
+        when(workItemReviewerRepository.findAllByWorkItemId(ISSUE_ID))
                 .thenReturn(List.of(reviewer));
         when(userRepository.findById(reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerUser));
@@ -201,21 +201,21 @@ class ReviewerServiceTest {
     void unassignReviewerSuccess() {
         when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
 
-        IssueReviewer existing = new IssueReviewer();
-        existing.setIssueId(ISSUE_ID);
+        WorkItemReviewer existing = new WorkItemReviewer();
+        existing.setWorkItemId(ISSUE_ID);
         existing.setUserId(reviewerUser.getId());
-        when(issueReviewerRepository.findByIssueIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(existing));
 
         reviewerService.unassignReviewer(PROJECT_ID, ISSUE_ID, reviewerUser.getId(), adminUser);
 
-        verify(issueReviewerRepository).deleteByIssueIdAndUserId(ISSUE_ID, reviewerUser.getId());
+        verify(workItemReviewerRepository).deleteByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId());
     }
 
     @Test
     void unassignReviewerNotFoundThrows404() {
         when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
-        when(issueReviewerRepository.findByIssueIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> reviewerService.unassignReviewer(

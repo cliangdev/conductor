@@ -88,7 +88,7 @@ public final class Statechart {
     public Integer version() { return version; }
     public String state() { return state; }
     public Integer schemaVersion() { return schemaVersion; }
-    /** Display noun for this Workflow's Work Items (e.g. {@code Issue}); falls back to "Work Item". */
+    /** Display noun for this Workflow's Work Items (e.g. {@code WorkItem}); falls back to "Work Item". */
     public String noun() { return noun == null ? "Work Item" : noun; }
     public String defaultView() { return defaultView; }
     public List<String> types() { return types; }

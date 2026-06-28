@@ -1,12 +1,12 @@
 package com.conductor.service;
 
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinitionVersion;
 import com.conductor.generated.model.OutcomeMetricResponse;
 import com.conductor.generated.model.RecordMetricObservationRequest;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,7 +25,7 @@ class OutcomeMetricServiceTest {
     private static final String PROJECT_ID = "proj-1";
     private static final String ISSUE_ID = "issue-1";
 
-    private IssueRepository issueRepository;
+    private WorkItemRepository workItemRepository;
     private ProjectSecurityService projectSecurityService;
     private WorkflowDefinitionVersionRepository versionRepository;
     private OutcomeMetricService service;
@@ -34,17 +34,17 @@ class OutcomeMetricServiceTest {
 
     @BeforeEach
     void setUp() {
-        issueRepository = Mockito.mock(IssueRepository.class);
+        workItemRepository = Mockito.mock(WorkItemRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
         versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository, mapper);
-        service = new OutcomeMetricService(issueRepository, projectSecurityService, resolver, mapper);
-        when(issueRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        service = new OutcomeMetricService(workItemRepository, projectSecurityService, resolver, mapper);
+        when(workItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
     }
 
-    private Issue issue(String workflow) {
-        Issue issue = new Issue();
+    private WorkItem issue(String workflow) {
+        WorkItem issue = new WorkItem();
         issue.setId(ISSUE_ID);
         Project project = new Project();
         project.setId(PROJECT_ID);
@@ -61,8 +61,8 @@ class OutcomeMetricServiceTest {
 
     @Test
     void recordsAndAccumulatesObservations() {
-        Issue issue = issue("ENGINEERING");
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        WorkItem issue = issue("ENGINEERING");
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
 
         service.record(PROJECT_ID, ISSUE_ID, new RecordMetricObservationRequest().value(10.0), caller());
         OutcomeMetricResponse response =
@@ -92,7 +92,7 @@ class OutcomeMetricServiceTest {
         snapshot.setVersion(1);
         snapshot.setDefinition(mapper.readTree(def));
         when(versionRepository.findLatestPublished(PROJECT_ID, "GROWTH")).thenReturn(Optional.of(snapshot));
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue("GROWTH")));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue("GROWTH")));
 
         OutcomeMetricResponse response =
                 service.record(PROJECT_ID, ISSUE_ID, new RecordMetricObservationRequest().value(42.0), caller());

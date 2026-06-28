@@ -9,5 +9,5 @@ import java.util.List;
 @Repository
 public interface StepRunRepository extends JpaRepository<StepRun, String> {
 
-    List<StepRun> findAllByIssueIdOrderByCreatedAtDesc(String issueId);
+    List<StepRun> findAllByWorkItemIdOrderByCreatedAtDesc(String issueId);
 }

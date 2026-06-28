@@ -18,8 +18,8 @@ import java.util.UUID;
 import com.fasterxml.jackson.databind.JsonNode;
 
 @Entity
-@Table(name = "issues")
-public class Issue {
+@Table(name = "work_items")
+public class WorkItem {
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)

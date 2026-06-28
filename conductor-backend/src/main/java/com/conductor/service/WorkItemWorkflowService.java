@@ -1,13 +1,13 @@
 package com.conductor.service;
 
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.model.AvailableTransition;
 import com.conductor.generated.model.AvailableTransitionsResponse;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.workflow.lifecycle.Statechart;
@@ -22,10 +22,10 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Applies a Work Item's bound Workflow {@link Statechart} to the {@code Issue} aggregate (COND-18 E2): it
+ * Applies a Work Item's bound Workflow {@link Statechart} to the {@code WorkItem} aggregate (COND-18 E2): it
  * validates status transitions and types, resolves the initial status on creation, projects the doer's
  * available moves behind {@code GET .../available-transitions}, and applies system-initiated transitions
- * (e.g. GitHub PR-merge). It is the seam {@code IssueService} delegates lifecycle decisions to.
+ * (e.g. GitHub PR-merge). It is the seam {@code WorkItemService} delegates lifecycle decisions to.
  *
  * <p>Status and type are Workflow-defined strings — "which statuses/types are legal" lives in the published
  * {@link Statechart}, not a DB/Java enum. For an ENGINEERING-bound issue the resolved statechart reproduces
@@ -41,18 +41,18 @@ public class WorkItemWorkflowService {
     /** System trigger fired when a linked GitHub pull request merges. */
     public static final String TRIGGER_PR_MERGED = "pr_merged";
 
-    private final IssueRepository issueRepository;
+    private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
     private final ReviewRepository reviewRepository;
     private final WorkflowDefinitionResolver resolver;
 
-    public WorkItemWorkflowService(IssueRepository issueRepository,
+    public WorkItemWorkflowService(WorkItemRepository workItemRepository,
                                    ProjectSecurityService projectSecurityService,
                                    ProjectMemberRepository projectMemberRepository,
                                    ReviewRepository reviewRepository,
                                    WorkflowDefinitionResolver resolver) {
-        this.issueRepository = issueRepository;
+        this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
         this.reviewRepository = reviewRepository;
@@ -97,7 +97,7 @@ public class WorkItemWorkflowService {
      * {@code "Invalid status transition from X to Y"} {@link BusinessException} the legacy hardcoded map threw,
      * so existing behavior and tests are preserved.
      */
-    public void validateTransition(String projectId, Issue issue, String newStatus) {
+    public void validateTransition(String projectId, WorkItem issue, String newStatus) {
         Statechart statechart = resolveFor(projectId, issue);
         if (!statechart.hasStatus(newStatus)) {
             throw new BusinessException(
@@ -124,7 +124,7 @@ public class WorkItemWorkflowService {
         if (!projectSecurityService.isProjectMember(projectId, caller.getId())) {
             throw new EntityNotFoundException("Issue not found");
         }
-        Issue issue = issueRepository.findById(issueId)
+        WorkItem issue = workItemRepository.findById(issueId)
                 .filter(i -> i.getProject() != null && projectId.equals(i.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
 
@@ -158,7 +158,7 @@ public class WorkItemWorkflowService {
      * the current status (the caller then records side-effects only, with no status change). Does not persist;
      * the caller's transaction saves.
      */
-    public Optional<StatechartTransition> applySystemTransition(String projectId, Issue issue, String trigger) {
+    public Optional<StatechartTransition> applySystemTransition(String projectId, WorkItem issue, String trigger) {
         Statechart statechart = resolveFor(projectId, issue);
         Optional<StatechartTransition> transition =
                 statechart.triggeredTransitionFrom(issue.getCurrentStatus(), trigger);
@@ -167,7 +167,7 @@ public class WorkItemWorkflowService {
     }
 
     /** Resolve the {@link Statechart} for the workflow a Work Item is bound to, honoring its pinned version. */
-    Statechart resolveFor(String projectId, Issue issue) {
+    Statechart resolveFor(String projectId, WorkItem issue) {
         String slug = issue.getWorkflow() != null ? issue.getWorkflow() : DEFAULT_WORKFLOW;
         return resolver.resolveRequired(projectId, slug, issue.getWorkflowVersion());
     }
@@ -184,16 +184,16 @@ public class WorkItemWorkflowService {
      * transition declares no {@code reviewerRole} — or an unrecognized one — any APPROVED review satisfies the
      * gate.
      */
-    private boolean isReviewSatisfied(String projectId, Issue issue, StatechartTransition transition) {
+    private boolean isReviewSatisfied(String projectId, WorkItem issue, StatechartTransition transition) {
         String role = transition.reviewerRole();
         if (role == null || role.isBlank()) {
-            return reviewRepository.existsByIssueIdAndVerdict(issue.getId(), APPROVED_VERDICT);
+            return reviewRepository.existsByWorkItemIdAndVerdict(issue.getId(), APPROVED_VERDICT);
         }
         MemberRole reviewerRole;
         try {
             reviewerRole = MemberRole.valueOf(role);
         } catch (IllegalArgumentException e) {
-            return reviewRepository.existsByIssueIdAndVerdict(issue.getId(), APPROVED_VERDICT);
+            return reviewRepository.existsByWorkItemIdAndVerdict(issue.getId(), APPROVED_VERDICT);
         }
         // Pass the validated enum NAME — the native query casts it to the member_role PG enum.
         return reviewRepository.existsApprovedByReviewerRole(

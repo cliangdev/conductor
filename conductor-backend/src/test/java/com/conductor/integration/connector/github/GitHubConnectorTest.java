@@ -7,7 +7,7 @@ import com.conductor.integration.WebhookRouting;
 import com.conductor.integration.WebhookVerification;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
-import com.conductor.service.IssueService;
+import com.conductor.service.WorkItemService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,7 +40,7 @@ class GitHubConnectorTest {
     private static final String APP_SECRET = "app-webhook-secret";
     private static final String PROJECT_ID = "proj-1";
 
-    @Mock private IssueService issueService;
+    @Mock private WorkItemService workItemService;
     @Mock private ConnectionRepository connectionRepository;
     @Mock private ConnectionService connectionService;
     @Mock private GitHubAppService gitHubAppService;
@@ -49,7 +49,7 @@ class GitHubConnectorTest {
 
     @BeforeEach
     void setUp() {
-        connector = new GitHubConnector(issueService, connectionRepository, connectionService,
+        connector = new GitHubConnector(workItemService, connectionRepository, connectionService,
                 gitHubAppService, new ObjectMapper(), APP_SECRET);
     }
 
@@ -87,7 +87,7 @@ class GitHubConnectorTest {
 
     @Test
     void verify_failsWhenAppSecretNotConfigured() throws Exception {
-        GitHubConnector noSecret = new GitHubConnector(issueService, connectionRepository, connectionService,
+        GitHubConnector noSecret = new GitHubConnector(workItemService, connectionRepository, connectionService,
                 gitHubAppService, new ObjectMapper(), "");
         byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
         assertThat(noSecret.verify(body, signedHeaders(body), ctx()).valid()).isFalse();
@@ -156,25 +156,25 @@ class GitHubConnectorTest {
         assertThat(consumed).isFalse();
     }
 
-    // --- handleEvent() : delegates issue mutation to IssueService.completeFromPullRequest ---
+    // --- handleEvent() : delegates issue mutation to WorkItemService.completeFromPullRequest ---
 
     @Test
-    void handleEvent_mergedPr_delegatesToIssueService() {
+    void handleEvent_mergedPr_delegatesToWorkItemService() {
         String payload = "{\"action\":\"closed\",\"pull_request\":{\"merged\":true,"
                 + "\"body\":\"closes conductor/PROJ-1\",\"html_url\":\"https://github.com/x/y/pull/3\"}}";
         InboundEvent event = new InboundEvent("delivery-1", "pull_request", payload, Map.of());
 
         connector.handleEvent(event, ctx());
 
-        verify(issueService).completeFromPullRequest(
+        verify(workItemService).completeFromPullRequest(
                 PROJECT_ID, "PROJ", 1, "https://github.com/x/y/pull/3");
     }
 
     @Test
     void handleEvent_crossProjectIssue_isSkippedQuietly() {
-        // IssueService throws EntityNotFoundException for an issue in another project → swallowed, no rethrow.
+        // WorkItemService throws EntityNotFoundException for an issue in another project → swallowed, no rethrow.
         doThrow(new EntityNotFoundException("PROJ-1 does not belong to project proj-1"))
-                .when(issueService).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+                .when(workItemService).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
 
         String payload = "{\"action\":\"closed\",\"pull_request\":{\"merged\":true,"
                 + "\"body\":\"closes conductor/PROJ-1\",\"html_url\":\"https://github.com/x/y/pull/3\"}}";
@@ -182,14 +182,14 @@ class GitHubConnectorTest {
 
         // Must not throw — the dispatcher would otherwise FAIL/retry a permanently-unroutable delivery.
         connector.handleEvent(event, ctx());
-        verify(issueService).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+        verify(workItemService).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
     }
 
     @Test
     void handleEvent_nonPullRequestEvent_isIgnored() {
         InboundEvent event = new InboundEvent("delivery-2", "push", "{}", Map.of());
         connector.handleEvent(event, ctx());
-        verify(issueService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+        verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
     }
 
     @Test
@@ -197,13 +197,13 @@ class GitHubConnectorTest {
         String payload = "{\"action\":\"closed\",\"pull_request\":{\"merged\":false,"
                 + "\"body\":\"closes conductor/PROJ-1\"}}";
         connector.handleEvent(new InboundEvent("d3", "pull_request", payload, Map.of()), ctx());
-        verify(issueService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+        verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
     }
 
     @Test
     void handleEvent_noClosesDirective_isIgnored() {
         String payload = "{\"action\":\"closed\",\"pull_request\":{\"merged\":true,\"body\":\"just a PR\"}}";
         connector.handleEvent(new InboundEvent("d4", "pull_request", payload, Map.of()), ctx());
-        verify(issueService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+        verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
     }
 }

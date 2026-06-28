@@ -1,6 +1,6 @@
 package com.conductor.service;
 
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.Review;
@@ -12,8 +12,8 @@ import com.conductor.generated.model.ReviewWithUserResponse;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
-import com.conductor.repository.IssueRepository;
-import com.conductor.repository.IssueReviewerRepository;
+import com.conductor.repository.WorkItemRepository;
+import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.UserRepository;
@@ -32,23 +32,23 @@ public class ReviewService {
     private static final Set<String> VALID_VERDICTS = Set.of("APPROVED", "CHANGES_REQUESTED", "COMMENTED");
 
     private final ReviewRepository reviewRepository;
-    private final IssueReviewerRepository issueReviewerRepository;
+    private final WorkItemReviewerRepository workItemReviewerRepository;
     private final ProjectMemberRepository projectMemberRepository;
-    private final IssueRepository issueRepository;
+    private final WorkItemRepository workItemRepository;
     private final UserRepository userRepository;
     private final NotificationDispatcher notificationDispatcher;
 
     public ReviewService(
             ReviewRepository reviewRepository,
-            IssueReviewerRepository issueReviewerRepository,
+            WorkItemReviewerRepository workItemReviewerRepository,
             ProjectMemberRepository projectMemberRepository,
-            IssueRepository issueRepository,
+            WorkItemRepository workItemRepository,
             UserRepository userRepository,
             NotificationDispatcher notificationDispatcher) {
         this.reviewRepository = reviewRepository;
-        this.issueReviewerRepository = issueReviewerRepository;
+        this.workItemReviewerRepository = workItemReviewerRepository;
         this.projectMemberRepository = projectMemberRepository;
-        this.issueRepository = issueRepository;
+        this.workItemRepository = workItemRepository;
         this.userRepository = userRepository;
         this.notificationDispatcher = notificationDispatcher;
     }
@@ -66,18 +66,18 @@ public class ReviewService {
             throw new ForbiddenException("CREATOR role cannot submit reviews");
         }
 
-        boolean isAssignedReviewer = issueReviewerRepository
-                .findByIssueIdAndUserId(issueId, currentUser.getId())
+        boolean isAssignedReviewer = workItemReviewerRepository
+                .findByWorkItemIdAndUserId(issueId, currentUser.getId())
                 .isPresent();
 
         if (!isAssignedReviewer) {
             throw new ForbiddenException("You are not an assigned reviewer");
         }
 
-        Review review = reviewRepository.findByIssueIdAndReviewerId(issueId, currentUser.getId())
+        Review review = reviewRepository.findByWorkItemIdAndReviewerId(issueId, currentUser.getId())
                 .orElseGet(() -> {
                     Review r = new Review();
-                    r.setIssueId(issueId);
+                    r.setWorkItemId(issueId);
                     r.setReviewerId(currentUser.getId());
                     return r;
                 });
@@ -88,7 +88,7 @@ public class ReviewService {
 
         reviewRepository.save(review);
 
-        Issue issue = issueRepository.findById(issueId).orElse(null);
+        WorkItem issue = workItemRepository.findById(issueId).orElse(null);
         String issueTitle = issue != null ? issue.getTitle() : issueId;
         notificationDispatcher.dispatch(NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, projectId,
@@ -103,7 +103,7 @@ public class ReviewService {
             throw new EntityNotFoundException("Project not found");
         }
 
-        return reviewRepository.findAllByIssueId(issueId).stream()
+        return reviewRepository.findAllByWorkItemId(issueId).stream()
                 .map(this::toReviewWithUserResponse)
                 .toList();
     }

@@ -7,7 +7,7 @@ import com.conductor.integration.connector.github.GitHubConnector;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.WebhookEventRepository;
 import com.conductor.service.ConnectionService;
-import com.conductor.service.IssueService;
+import com.conductor.service.WorkItemService;
 import com.conductor.service.WebhookDispatchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,7 +49,7 @@ class WebhookReceiverControllerTest {
     @Mock private ConnectionRepository connectionRepository;
     @Mock private WebhookEventRepository eventRepository;
     @Mock private WebhookDispatchService dispatchService;
-    @Mock private IssueService issueService;
+    @Mock private WorkItemService workItemService;
 
     private WebhookReceiverController controller;
 
@@ -62,7 +62,7 @@ class WebhookReceiverControllerTest {
     /** Register a REAL GitHub connector so verify/route/handleLifecycle run for "github". */
     private void registerGitHub() {
         GitHubConnector connector = new GitHubConnector(
-                issueService, connectionRepository, connectionService,
+                workItemService, connectionRepository, connectionService,
                 org.mockito.Mockito.mock(com.conductor.integration.connector.github.GitHubAppService.class),
                 new ObjectMapper(), SECRET);
         when(connectorRegistry.findWebhook("github")).thenReturn(Optional.of(connector));

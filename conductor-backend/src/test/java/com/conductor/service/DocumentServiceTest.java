@@ -1,7 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.Document;
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.exception.FileTooLargeException;
@@ -13,7 +13,7 @@ import com.conductor.generated.model.UpsertDocumentByFilenameRequest;
 import com.conductor.entity.Comment;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,7 +46,7 @@ class DocumentServiceTest {
     private DocumentRepository documentRepository;
 
     @Mock
-    private IssueRepository issueRepository;
+    private WorkItemRepository workItemRepository;
 
     @Mock
     private StorageService gcpStorageService;
@@ -56,12 +56,12 @@ class DocumentServiceTest {
 
     private DocumentService documentService;
 
-    private Issue testIssue;
+    private WorkItem testIssue;
     private Document testDocument;
 
     @BeforeEach
     void setUp() {
-        documentService = new DocumentService(documentRepository, issueRepository, gcpStorageService, commentRepository, 15);
+        documentService = new DocumentService(documentRepository, workItemRepository, gcpStorageService, commentRepository, 15);
 
         org.mockito.Mockito.lenient().when(commentRepository.findAllByDocumentId(anyString())).thenReturn(List.of());
 
@@ -73,7 +73,7 @@ class DocumentServiceTest {
         project.setCreatedAt(OffsetDateTime.now());
         project.setUpdatedAt(OffsetDateTime.now());
 
-        testIssue = new Issue();
+        testIssue = new WorkItem();
         testIssue.setId("issue-1");
         testIssue.setProject(project);
         testIssue.setType("PRD");
@@ -85,7 +85,7 @@ class DocumentServiceTest {
 
         testDocument = new Document();
         testDocument.setId("doc-1");
-        testDocument.setIssue(testIssue);
+        testDocument.setWorkItem(testIssue);
         testDocument.setFilename("spec.md");
         testDocument.setContentType("text/markdown");
         testDocument.setContent("# Original Content");
@@ -98,7 +98,7 @@ class DocumentServiceTest {
 
     @Test
     void createDocumentSavesWithCorrectFields() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> {
             Document d = invocation.getArgument(0);
             if (d.getCreatedAt() == null) d.setCreatedAt(OffsetDateTime.now());
@@ -121,7 +121,7 @@ class DocumentServiceTest {
 
     @Test
     void createDocumentSetsStoragePath() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> {
             Document d = invocation.getArgument(0);
             if (d.getCreatedAt() == null) d.setCreatedAt(OffsetDateTime.now());
@@ -145,7 +145,7 @@ class DocumentServiceTest {
 
     @Test
     void createDocumentUploadsToGcsBeforeSavingToDb() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> {
             Document d = invocation.getArgument(0);
             if (d.getCreatedAt() == null) d.setCreatedAt(OffsetDateTime.now());
@@ -162,7 +162,7 @@ class DocumentServiceTest {
 
     @Test
     void createDocumentWhenGcsUploadThrowsDocumentNotSaved() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         doThrow(new RuntimeException("GCS unavailable"))
                 .when(gcpStorageService).upload(anyString(), any(byte[].class), anyString());
 
@@ -177,7 +177,7 @@ class DocumentServiceTest {
 
     @Test
     void createDocumentContentOver50MbThrowsFileTooLargeBeforeUpload() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
 
         String oversizedContent = "x".repeat(DocumentService.MAX_CONTENT_BYTES + 1);
         CreateDocumentRequest request = new CreateDocumentRequest("big.md").content(oversizedContent);
@@ -193,8 +193,8 @@ class DocumentServiceTest {
 
     @Test
     void putUpdatesDocumentContent() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         UpdateDocumentRequest request = new UpdateDocumentRequest("# Updated Content");
@@ -207,8 +207,8 @@ class DocumentServiceTest {
 
     @Test
     void putUpdatesGcsAndThenDb() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         UpdateDocumentRequest request = new UpdateDocumentRequest("# Updated Content");
@@ -220,8 +220,8 @@ class DocumentServiceTest {
 
     @Test
     void putWhenGcsUploadThrowsDbRecordUnchanged() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
         doThrow(new RuntimeException("GCS error"))
                 .when(gcpStorageService).upload(anyString(), any(byte[].class), anyString());
 
@@ -237,8 +237,8 @@ class DocumentServiceTest {
 
     @Test
     void putUpdatesContentTypeWhenProvided() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         UpdateDocumentRequest request = new UpdateDocumentRequest("content").contentType("text/plain");
@@ -252,8 +252,8 @@ class DocumentServiceTest {
 
     @Test
     void updateDocumentMarksCommentsStaleWhenLineNumberExceedsNewLineCount() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         Comment staleComment = new Comment();
@@ -279,8 +279,8 @@ class DocumentServiceTest {
 
     @Test
     void updateDocumentDoesNotSaveWhenNoCommentsAreStale() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         Comment validComment = new Comment();
@@ -297,8 +297,8 @@ class DocumentServiceTest {
 
     @Test
     void updateDocumentSkipsAlreadyStaleComments() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         Comment alreadyStale = new Comment();
@@ -314,8 +314,8 @@ class DocumentServiceTest {
 
     @Test
     void upsertByFilenameMarksCommentsStaleOnUpdate() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIssueIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         Comment staleComment = new Comment();
@@ -333,8 +333,8 @@ class DocumentServiceTest {
 
     @Test
     void deleteDocumentRemovesRecord() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
 
         documentService.deleteDocument("proj-1", "issue-1", "doc-1");
 
@@ -343,8 +343,8 @@ class DocumentServiceTest {
 
     @Test
     void deleteDocumentCallsGcsDeleteWithStoragePath() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
 
         documentService.deleteDocument("proj-1", "issue-1", "doc-1");
 
@@ -354,8 +354,8 @@ class DocumentServiceTest {
     @Test
     void deleteDocumentSkipsGcsDeleteWhenStoragePathIsNull() {
         testDocument.setStoragePath(null);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
 
         documentService.deleteDocument("proj-1", "issue-1", "doc-1");
 
@@ -364,8 +364,8 @@ class DocumentServiceTest {
 
     @Test
     void deleteDocumentThrows404WhenNotFound() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("nonexistent", "issue-1")).thenReturn(Optional.empty());
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("nonexistent", "issue-1")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> documentService.deleteDocument("proj-1", "issue-1", "nonexistent"))
                 .isInstanceOf(EntityNotFoundException.class)
@@ -374,8 +374,8 @@ class DocumentServiceTest {
 
     @Test
     void getDocumentThrows404WhenNotFound() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("nonexistent", "issue-1")).thenReturn(Optional.empty());
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("nonexistent", "issue-1")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> documentService.getDocument("proj-1", "issue-1", "nonexistent"))
                 .isInstanceOf(EntityNotFoundException.class)
@@ -384,8 +384,8 @@ class DocumentServiceTest {
 
     @Test
     void listDocumentsReturnsAllForIssue() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIssueId("issue-1")).thenReturn(List.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemId("issue-1")).thenReturn(List.of(testDocument));
 
         List<DocumentResponse> results = documentService.listDocuments("proj-1", "issue-1");
 
@@ -395,8 +395,8 @@ class DocumentServiceTest {
 
     @Test
     void getDocumentReturnsStorageUrlAndExpiresAtWhenStoragePathSet() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
         when(gcpStorageService.generateSignedUrl(eq("proj-1/issues/issue-1/doc-1/spec.md"), eq(15)))
                 .thenReturn("https://storage.googleapis.com/signed-url");
 
@@ -416,8 +416,8 @@ class DocumentServiceTest {
         when(gcpStorageService.generateSignedUrl(anyString(), anyInt())).thenReturn("https://signed-url");
 
         // text/markdown — content should be populated
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
 
         DocumentResponse textResponse = documentService.getDocument("proj-1", "issue-1", "doc-1");
         assertThat(textResponse.getContent()).isEqualTo("# Original Content");
@@ -425,7 +425,7 @@ class DocumentServiceTest {
         // image/png — content should be null
         Document imageDocument = new Document();
         imageDocument.setId("doc-2");
-        imageDocument.setIssue(testIssue);
+        imageDocument.setWorkItem(testIssue);
         imageDocument.setFilename("photo.png");
         imageDocument.setContentType("image/png");
         imageDocument.setContent("binary-data");
@@ -433,7 +433,7 @@ class DocumentServiceTest {
         imageDocument.setCreatedAt(OffsetDateTime.now());
         imageDocument.setUpdatedAt(OffsetDateTime.now());
 
-        when(documentRepository.findByIdAndIssueId("doc-2", "issue-1")).thenReturn(Optional.of(imageDocument));
+        when(documentRepository.findByIdAndWorkItemId("doc-2", "issue-1")).thenReturn(Optional.of(imageDocument));
 
         DocumentResponse imageResponse = documentService.getDocument("proj-1", "issue-1", "doc-2");
         assertThat(imageResponse.getContent()).isNull();
@@ -443,8 +443,8 @@ class DocumentServiceTest {
 
     @Test
     void upsertByFilenameCreatesNewDocumentWhenNotFound() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIssueIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
         when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> {
             Document d = invocation.getArgument(0);
             if (d.getCreatedAt() == null) d.setCreatedAt(OffsetDateTime.now());
@@ -462,8 +462,8 @@ class DocumentServiceTest {
 
     @Test
     void upsertByFilenameUpdatesExistingDocumentWhenFound() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIssueIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         UpsertDocumentByFilenameRequest request = new UpsertDocumentByFilenameRequest("# Updated Content");
@@ -477,8 +477,8 @@ class DocumentServiceTest {
 
     @Test
     void upsertByFilenameUploadsToGcsOnCreate() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIssueIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
         when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> {
             Document d = invocation.getArgument(0);
             if (d.getCreatedAt() == null) d.setCreatedAt(OffsetDateTime.now());
@@ -496,8 +496,8 @@ class DocumentServiceTest {
 
     @Test
     void deleteByFilenameRemovesDocument() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIssueIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
 
         documentService.deleteDocumentByFilename("proj-1", "issue-1", "spec.md");
 
@@ -507,8 +507,8 @@ class DocumentServiceTest {
 
     @Test
     void deleteByFilenameThrows404WhenNotFound() {
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIssueIdAndFilename("issue-1", "nonexistent.md")).thenReturn(Optional.empty());
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "nonexistent.md")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> documentService.deleteDocumentByFilename("proj-1", "issue-1", "nonexistent.md"))
                 .isInstanceOf(EntityNotFoundException.class)
@@ -519,7 +519,7 @@ class DocumentServiceTest {
     void getDocumentStorageUrlNullWhenStoragePathIsNull() {
         Document legacyDocument = new Document();
         legacyDocument.setId("doc-3");
-        legacyDocument.setIssue(testIssue);
+        legacyDocument.setWorkItem(testIssue);
         legacyDocument.setFilename("legacy.md");
         legacyDocument.setContentType("text/markdown");
         legacyDocument.setContent("# Legacy");
@@ -527,8 +527,8 @@ class DocumentServiceTest {
         legacyDocument.setCreatedAt(OffsetDateTime.now());
         legacyDocument.setUpdatedAt(OffsetDateTime.now());
 
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndIssueId("doc-3", "issue-1")).thenReturn(Optional.of(legacyDocument));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-3", "issue-1")).thenReturn(Optional.of(legacyDocument));
 
         DocumentResponse response = documentService.getDocument("proj-1", "issue-1", "doc-3");
 

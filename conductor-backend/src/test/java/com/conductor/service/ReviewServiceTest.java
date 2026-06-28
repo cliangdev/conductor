@@ -1,7 +1,7 @@
 package com.conductor.service;
 
-import com.conductor.entity.Issue;
-import com.conductor.entity.IssueReviewer;
+import com.conductor.entity.WorkItem;
+import com.conductor.entity.WorkItemReviewer;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
@@ -9,8 +9,8 @@ import com.conductor.entity.Review;
 import com.conductor.entity.User;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.ReviewResponse;
-import com.conductor.repository.IssueRepository;
-import com.conductor.repository.IssueReviewerRepository;
+import com.conductor.repository.WorkItemRepository;
+import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.repository.ReviewRepository;
@@ -39,13 +39,13 @@ class ReviewServiceTest {
     private ReviewRepository reviewRepository;
 
     @Mock
-    private IssueReviewerRepository issueReviewerRepository;
+    private WorkItemReviewerRepository workItemReviewerRepository;
 
     @Mock
     private ProjectMemberRepository projectMemberRepository;
 
     @Mock
-    private IssueRepository issueRepository;
+    private WorkItemRepository workItemRepository;
 
     @Mock
     private UserRepository userRepository;
@@ -63,8 +63,8 @@ class ReviewServiceTest {
     private User creatorUser;
     private ProjectMember reviewerMember;
     private ProjectMember creatorMember;
-    private IssueReviewer issueReviewer;
-    private Issue issue;
+    private WorkItemReviewer issueReviewer;
+    private WorkItem issue;
 
     @BeforeEach
     void setUp() {
@@ -93,11 +93,11 @@ class ReviewServiceTest {
         creatorMember.setUser(creatorUser);
         creatorMember.setRole(MemberRole.CREATOR);
 
-        issueReviewer = new IssueReviewer();
-        issueReviewer.setIssueId(ISSUE_ID);
+        issueReviewer = new WorkItemReviewer();
+        issueReviewer.setWorkItemId(ISSUE_ID);
         issueReviewer.setUserId(reviewerUser.getId());
 
-        issue = new Issue();
+        issue = new WorkItem();
         issue.setId(ISSUE_ID);
         issue.setProject(project);
         issue.setType("PRD");
@@ -112,11 +112,11 @@ class ReviewServiceTest {
     void submitReviewCreatesNewReview() {
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerMember));
-        when(issueReviewerRepository.findByIssueIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(issueReviewer));
-        when(reviewRepository.findByIssueIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.empty());
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
         when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> {
             Review r = inv.getArgument(0);
             if (r.getId() == null) r.setId("review-1");
@@ -132,7 +132,7 @@ class ReviewServiceTest {
         Review saved = captor.getValue();
         assertThat(saved.getVerdict()).isEqualTo("APPROVED");
         assertThat(saved.getBody()).isEqualTo("Looks good");
-        assertThat(saved.getIssueId()).isEqualTo(ISSUE_ID);
+        assertThat(saved.getWorkItemId()).isEqualTo(ISSUE_ID);
         assertThat(saved.getReviewerId()).isEqualTo(reviewerUser.getId());
         assertThat(response.getVerdict()).isEqualTo("APPROVED");
     }
@@ -143,18 +143,18 @@ class ReviewServiceTest {
 
         Review existingReview = new Review();
         existingReview.setId("review-1");
-        existingReview.setIssueId(ISSUE_ID);
+        existingReview.setWorkItemId(ISSUE_ID);
         existingReview.setReviewerId(reviewerUser.getId());
         existingReview.setVerdict("COMMENTED");
         existingReview.setSubmittedAt(originalTime);
 
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerMember));
-        when(issueReviewerRepository.findByIssueIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(issueReviewer));
-        when(reviewRepository.findByIssueIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(existingReview));
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
         when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
 
         reviewService.submitReview(PROJECT_ID, ISSUE_ID, "APPROVED", "Updated", reviewerUser);
@@ -173,7 +173,7 @@ class ReviewServiceTest {
     void submitReviewNonAssignedReviewerThrowsForbidden() {
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerMember));
-        when(issueReviewerRepository.findByIssueIdAndUserId(ISSUE_ID, reviewerUser.getId()))
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> reviewService.submitReview(

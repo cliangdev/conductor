@@ -1,11 +1,11 @@
 package com.conductor.service;
 
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.User;
 import com.conductor.generated.model.MetricObservation;
 import com.conductor.generated.model.OutcomeMetricResponse;
 import com.conductor.generated.model.RecordMetricObservationRequest;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartMetric;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
@@ -28,16 +28,16 @@ import java.util.List;
 @Service
 public class OutcomeMetricService {
 
-    private final IssueRepository issueRepository;
+    private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
     private final WorkflowDefinitionResolver resolver;
     private final ObjectMapper objectMapper;
 
-    public OutcomeMetricService(IssueRepository issueRepository,
+    public OutcomeMetricService(WorkItemRepository workItemRepository,
                                 ProjectSecurityService projectSecurityService,
                                 WorkflowDefinitionResolver resolver,
                                 ObjectMapper objectMapper) {
-        this.issueRepository = issueRepository;
+        this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.resolver = resolver;
         this.objectMapper = objectMapper;
@@ -46,7 +46,7 @@ public class OutcomeMetricService {
     @Transactional(readOnly = true)
     public OutcomeMetricResponse getMetric(String projectId, String issueId, User caller) {
         verifyMembership(projectId, caller.getId());
-        Issue issue = findIssueInProject(projectId, issueId);
+        WorkItem issue = findIssueInProject(projectId, issueId);
         return buildResponse(projectId, issue);
     }
 
@@ -54,7 +54,7 @@ public class OutcomeMetricService {
     public OutcomeMetricResponse record(String projectId, String issueId,
                                         RecordMetricObservationRequest request, User caller) {
         verifyMembership(projectId, caller.getId());
-        Issue issue = findIssueInProject(projectId, issueId);
+        WorkItem issue = findIssueInProject(projectId, issueId);
 
         List<MetricObservation> observations = readObservations(issue);
         MetricObservation observation = new MetricObservation(
@@ -64,11 +64,11 @@ public class OutcomeMetricService {
         observations.add(observation);
 
         issue.setOutcomeMetric(objectMapper.valueToTree(observations));
-        issueRepository.save(issue);
+        workItemRepository.save(issue);
         return buildResponse(projectId, issue);
     }
 
-    private List<MetricObservation> readObservations(Issue issue) {
+    private List<MetricObservation> readObservations(WorkItem issue) {
         JsonNode stored = issue.getOutcomeMetric();
         if (stored == null || stored.isNull()) {
             return new ArrayList<>();
@@ -76,7 +76,7 @@ public class OutcomeMetricService {
         return new ArrayList<>(objectMapper.convertValue(stored, new TypeReference<List<MetricObservation>>() {}));
     }
 
-    private OutcomeMetricResponse buildResponse(String projectId, Issue issue) {
+    private OutcomeMetricResponse buildResponse(String projectId, WorkItem issue) {
         OutcomeMetricResponse response = new OutcomeMetricResponse(readObservations(issue));
         String slug = issue.getWorkflow() != null ? issue.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
         Statechart statechart = resolver.resolveRequired(projectId, slug, issue.getWorkflowVersion());
@@ -95,8 +95,8 @@ public class OutcomeMetricService {
         }
     }
 
-    private Issue findIssueInProject(String projectId, String issueId) {
-        return issueRepository.findById(issueId)
+    private WorkItem findIssueInProject(String projectId, String issueId) {
+        return workItemRepository.findById(issueId)
                 .filter(i -> i.getProject() != null && projectId.equals(i.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
     }

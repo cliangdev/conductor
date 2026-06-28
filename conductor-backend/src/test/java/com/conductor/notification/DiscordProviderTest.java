@@ -42,7 +42,7 @@ class DiscordProviderTest {
     }
 
     /**
-     * Build the enriched metadata IssueService now sends on a status change. Pass an explicit status label and
+     * Build the enriched metadata WorkItemService now sends on a status change. Pass an explicit status label and
      * category to mimic a resolved {@code Statechart} status; assignee/prUrl are optional.
      */
     private Map<String, String> statusChangedMeta(String noun, String toStatus, String toStatusLabel,
