@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import { PageContainer } from '@/components/layout/PageContainer'
-import { PageHeader } from '@/components/layout/PageHeader'
+import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
 import {
   categoriesForView,
   categoryVariant,
@@ -456,9 +456,15 @@ export function WorkItemListView({
 
   const lowerNoun = noun.toLowerCase()
 
+  // Breadcrumb trail: area (non-link) › this Workflow's pluralized noun (current page). The area is
+  // sourced from the bound Workflow's view; it is omitted until the view loads or when unset.
+  const crumbs: Crumb[] = []
+  if (workflowView?.area) crumbs.push({ label: humanizeId(workflowView.area) })
+  crumbs.push({ label: title })
+
   return (
     <PageContainer>
-      <PageHeader title={title} />
+      <PageHeader title={title} breadcrumbs={crumbs} />
 
       {/* View tabs */}
       <div
@@ -570,7 +576,7 @@ export function WorkItemListView({
             {filteredIssues.map((issue) => (
               <Link
                 key={issue.id}
-                href={`/app/projects/${projectId}/issues/${issue.id}`}
+                href={`/app/projects/${projectId}/work/${slug}/${issue.displayId}`}
                 className="block bg-card border border-border rounded-lg p-4 hover:border-border-strong transition-colors"
               >
                 <div className="flex items-start justify-between gap-2 mb-2">
@@ -635,7 +641,7 @@ export function WorkItemListView({
                 {filteredIssues.map((issue) => (
                   <tr
                     key={issue.id}
-                    onClick={() => router.push(`/app/projects/${projectId}/issues/${issue.id}`)}
+                    onClick={() => router.push(`/app/projects/${projectId}/work/${slug}/${issue.displayId}`)}
                     className="hover:bg-muted/50 transition-colors cursor-pointer"
                   >
                     <td className="px-4 py-3 whitespace-nowrap">

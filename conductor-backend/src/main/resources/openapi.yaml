@@ -6733,6 +6733,10 @@ components:
         noun:
           type: string
           description: Display noun for this Workflow's Work Items (e.g. "Issue").
+        area:
+          type: string
+          nullable: true
+          description: Nav-grouping slug from the statechart (e.g. "ENGINEERING"); used for breadcrumbs.
         defaultView:
           type: string
           description: Default Work Item list rendering (list | board | calendar).

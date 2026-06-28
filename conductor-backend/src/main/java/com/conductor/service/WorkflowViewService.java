@@ -76,6 +76,7 @@ public class WorkflowViewService {
         WorkflowView view = new WorkflowView();
         view.setSlug(statechart.slug());
         view.setNoun(statechart.noun());
+        view.setArea(statechart.area());
         view.setDefaultView(statechart.defaultView());
         view.setVersion(statechart.version());
         view.setTypes(statechart.types());
