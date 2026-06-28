@@ -45,9 +45,16 @@ semantics:
 | `types` | ✓ | Allowed Work Item types (strings, not a DB enum). |
 | `asset_types` | – | Allowed produced-output Asset types. |
 | `metric` | – | `null` to opt out, else `{name, unit?, direction}`. |
-| `statuses` | ✓ | `{id, category, initial?, terminal?}`; ≤10. |
-| `transitions` | ✓ | `{from, to, label, requiresReview?, reviewOutcomes?, reviewerRole?, steps?}`. |
+| `statuses` | ✓ | `{id, label?, category, initial?, terminal?}`; ≤10. `label` is the human display name (falls back to a humanized id). |
+| `transitions` | ✓ | `{from, to, label, requiresReview?, reviewOutcomes?, reviewerRole?, trigger?, steps?}`. |
 | `triggers` | – | `{type: manual\|schedule\|status_changed\|webhook, …}`. |
+
+**Transition `trigger` (system-advanced edges):** a transition may declare `"trigger": "pr_merged"` to be
+fired automatically by an external event instead of a human action. When a linked GitHub pull request
+merges, the engine advances the Work Item along the `pr_merged` edge **out of its current status** (for
+ENGINEERING that is `CODE_REVIEW → DONE`), bypassing the Review gate (the merge is the authority). If the
+Work Item is not at a status that has a `pr_merged` edge, the merge is recorded as a `github_pr` Asset and
+the status is left unchanged. `pr_merged` is the only system trigger in v1; it is extensible.
 
 **Step kinds (v1):** `skill`, `http`, `notify`, `set_field`, `create_sub_items` (each `BLOCKING` or
 `ASYNC`, with a `type_version`). A `skill` step names a bindable skill (e.g. `conductor:implement`); for a
@@ -66,19 +73,47 @@ non-terminal status **and** the `IN_REVIEW → DRAFT` back-edge. It binds `condu
 `READY_FOR_DEVELOPMENT → IN_PROGRESS` (advisory). This is the seed for **Phase 1 (Engineering-no-regression)**,
 whose bar is `AC-P0-1.1` — existing issues must transition **identically** after the engine swap.
 
-### Deliberate Phase-2 diff — the review gate
-The seed ships the `CODE_REVIEW → DONE` transition **ungated**, because today that approval is *not*
-enforced (`IssueService` has no `ReviewRepository` dependency; reviews are advisory). Turning it into a
-**server-enforced Review gate** is the *one true behavior change* in the foundation and is shipped in
-**Phase 2 (P0-1.3 / P0-6)** as an explicit, separately-reviewed change — set on that transition:
+### The review gate — now enforced and role-scoped
+The `CODE_REVIEW → DONE` transition is a **server-enforced, role-scoped Review gate**:
 
 ```json
 { "from": "CODE_REVIEW", "to": "DONE", "label": "Merge",
-  "requiresReview": true, "reviewOutcomes": ["approve", "request_changes"], "reviewerRole": "REVIEWER" }
+  "requiresReview": true, "reviewOutcomes": ["approve", "request_changes"],
+  "reviewerRole": "REVIEWER", "trigger": "pr_merged" }
 ```
 
-Keeping the gate out of the no-regression seed is what lets Phase 1 honestly claim "no behavior change,"
-and makes the gate an auditable, opt-in step rather than a silent change to every project's Engineering flow.
+`WorkItemWorkflowService.validateTransition` blocks a `requiresReview` transition until an **APPROVED**
+review exists from a project member holding the transition's `reviewerRole` — or an `ADMIN`, who outranks
+any review role. When a transition declares no `reviewerRole`, any APPROVED review satisfies the gate. The
+doer projection (`available-transitions`) hides a review-gated edge until the gate is satisfied. Note the
+gate is bypassed for the system `pr_merged` trigger (the merge is the authority).
+
+## Generalization runtime model (Waves 1–6)
+The whole stack now runs on the Workflow definition rather than hardcoded enums:
+
+- **Status/type are Workflow-defined strings.** The `issues.current_status` and `issues.item_type` columns
+  are authoritative (the legacy `status`/`type` PG-enum columns are retained nullable for one release and
+  dropped in a follow-up). A new Work Item's initial status is the chart's `initial` status; `type` is
+  validated against the chart's `types`. The REST surface (`IssueResponse`, `PatchIssueRequest`, list
+  filters) carries plain strings, so any custom Workflow's statuses/types flow end-to-end.
+- **Version pinning.** Each publish writes an immutable snapshot to `workflow_definition_versions` and
+  advances the version. A Work Item pins `workflow_version` at creation and always resolves that snapshot,
+  so re-publishing never changes the rules under an in-flight Work Item. The resolver is DB-snapshot-first
+  with a built-in classpath fallback.
+- **Notifications.** Status changes fire a single, Workflow-agnostic `ISSUE_STATUS_CHANGED` event enriched
+  with `noun`, `toStatus`, `toStatusLabel`, and `toCategory`; the Discord provider formats it generically
+  (color by status category). The legacy per-status events were removed.
+- **Read model for the UI.** `GET /projects/{projectId}/workflows/by-slug/{slug}?version=` returns a lean
+  `WorkflowView` (noun, statuses with labels+categories, transitions, types, asset types, metric) resolved
+  for built-in and project-authored workflows alike. `GET .../workflows/{workflowId}/versions` lists the
+  published history. The Active/Done split in the UI is derived from status `category`
+  (`open`/`in_progress` = active, `terminal` = done).
+- **Authoring.** Lifecycle workflows are created/edited as DRAFTs and promoted via
+  `POST .../workflows/{id}/publish` (ADMIN/CREATOR only), which runs the validator before snapshotting.
+
+The seed `engineering.workflow.json` reproduces today's exact transition set; existing issues keep working
+because their `current_status`/`item_type` mirror the former enum values and ENGINEERING's `initial` status
+is `DRAFT`.
 
 ## Validating a definition
 The schema and example are checked with ajv (draft 2020-12). From `conductor-tools/`:
