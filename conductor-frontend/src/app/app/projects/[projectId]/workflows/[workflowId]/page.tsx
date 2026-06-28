@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost } from '@/lib/api';
 import { WorkflowRunDto } from '@/types/workflow';
@@ -140,20 +139,12 @@ export default function WorkflowDetailPage() {
         }
         description={triggers.length > 0 ? `Triggers: ${triggers.join(', ')}` : undefined}
         actions={
-          <>
-            <Link
-              href={`/app/projects/${projectId}/settings/workflows/${workflowId}/edit`}
-              className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
-            >
-              Edit in Settings →
-            </Link>
-            <Button
-              onClick={handleRunNow}
-              disabled={!workflow.enabled || dispatching}
-            >
-              {dispatching ? 'Starting...' : '▶ Run Now'}
-            </Button>
-          </>
+          <Button
+            onClick={handleRunNow}
+            disabled={!workflow.enabled || dispatching}
+          >
+            {dispatching ? 'Starting...' : '▶ Run Now'}
+          </Button>
         }
       />
 

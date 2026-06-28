@@ -18,6 +18,15 @@ vi.mock('@/contexts/ProjectContext', () => ({
   }),
 }))
 
+vi.mock('@/contexts/PermissionsContext', () => ({
+  usePermissions: () => ({
+    role: mockCanManageWorkspace ? 'ADMIN' : 'CREATOR',
+    loading: false,
+    can: (cap: string) => (cap === 'workspace.manage' ? mockCanManageWorkspace : false),
+    refresh: vi.fn(),
+  }),
+}))
+
 vi.mock('@/components/ui/toast', () => ({
   useToast: () => ({ showToast: mockShowToast }),
 }))
@@ -51,21 +60,17 @@ let mockAuthContext = {
   loading: false,
 }
 
-function mockRole(role: string) {
-  vi.mocked(api.apiGet).mockResolvedValue([
-    { userId: 'user-admin', name: 'Admin', email: 'a@x.com', avatarUrl: null, role, joinedAt: '' },
-  ])
-}
+let mockCanManageWorkspace = true
 
 describe('GeneralSettingsPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockCanManageWorkspace = true
     mockAuthContext = {
       user: { id: 'user-admin', name: 'Admin', email: 'a@x.com', avatarUrl: null, displayName: null },
       accessToken: 'test-token',
       loading: false,
     }
-    mockRole('ADMIN')
   })
 
   it('renders the workspace name in an editable field', async () => {
@@ -105,14 +110,7 @@ describe('GeneralSettingsPage', () => {
   })
 
   it('non-admin sees Leave but not Delete and cannot edit the name', async () => {
-    mockAuthContext = {
-      user: { id: 'user-creator', name: 'Creator', email: 'c@x.com', avatarUrl: null, displayName: null },
-      accessToken: 'test-token',
-      loading: false,
-    }
-    vi.mocked(api.apiGet).mockResolvedValue([
-      { userId: 'user-creator', name: 'Creator', email: 'c@x.com', avatarUrl: null, role: 'CREATOR', joinedAt: '' },
-    ])
+    mockCanManageWorkspace = false
 
     render(<GeneralSettingsPage />)
     await waitFor(() => {

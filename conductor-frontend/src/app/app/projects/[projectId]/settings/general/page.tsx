@@ -2,16 +2,17 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
-import { apiDelete, apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
+import { usePermissions } from '@/contexts/PermissionsContext'
+import { apiDelete, apiPatch, apiErrorMessage } from '@/lib/api'
 import { PageHeader } from '@/components/layout/PageHeader'
-import type { Member, Project } from '@/types'
+import type { Project } from '@/types'
 
 export default function GeneralSettingsPage() {
   const params = useParams()
@@ -21,10 +22,11 @@ export default function GeneralSettingsPage() {
   const { activeProject, updateProject, removeProject } = useProject()
   const { showToast } = useToast()
 
+  const { can } = usePermissions()
+
   const [name, setName] = useState(activeProject?.name ?? '')
   const [saving, setSaving] = useState(false)
 
-  const [role, setRole] = useState<Member['role'] | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [dangerError, setDangerError] = useState<string | null>(null)
@@ -34,21 +36,7 @@ export default function GeneralSettingsPage() {
     if (activeProject?.id === projectId) setName(activeProject.name)
   }, [activeProject?.id, activeProject?.name, projectId])
 
-  const fetchRole = useCallback(async () => {
-    if (!accessToken || !user) return
-    try {
-      const members = await apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken)
-      setRole(members.find((m) => m.userId === user.id)?.role ?? null)
-    } catch {
-      setRole(null)
-    }
-  }, [accessToken, projectId, user])
-
-  useEffect(() => {
-    fetchRole()
-  }, [fetchRole])
-
-  const isAdmin = role === 'ADMIN'
+  const isAdmin = can('workspace.manage')
   const dirty = name.trim() !== '' && name.trim() !== (activeProject?.name ?? '')
 
   async function handleSave(e: React.FormEvent) {

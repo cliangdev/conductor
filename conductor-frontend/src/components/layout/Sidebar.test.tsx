@@ -52,25 +52,22 @@ describe('Sidebar', () => {
     expect(screen.getByText('Test Workspace')).toBeInTheDocument()
   })
 
-  it('renders the workspace nav links', () => {
+  it('renders the workspace nav links to single top-level homes', () => {
     render(<Sidebar />)
-    expect(screen.getByRole('link', { name: /issues/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /docs/i })).toBeInTheDocument()
-    // Workflows appears both at top level (operate) and under Settings (manage).
-    const workflowsLinks = screen.getAllByRole('link', { name: /workflows/i })
-    expect(workflowsLinks.some((l) => l.getAttribute('href') === '/app/projects/proj-1/workflows')).toBe(true)
+    expect(screen.getByRole('link', { name: /issues/i })).toHaveAttribute('href', '/app/projects/proj-1/issues')
+    expect(screen.getByRole('link', { name: /docs/i })).toHaveAttribute('href', '/app/projects/proj-1/docs')
+    expect(screen.getByRole('link', { name: /workflows/i })).toHaveAttribute('href', '/app/projects/proj-1/workflows')
+    expect(screen.getByRole('link', { name: /agents/i })).toHaveAttribute('href', '/app/projects/proj-1/agents')
+    expect(screen.getByRole('link', { name: /integrations/i })).toHaveAttribute('href', '/app/projects/proj-1/integrations')
   })
 
-  it('renders a Settings → Workflows management link', () => {
+  it('does not duplicate Workflows / Integrations / Agents under Settings', () => {
     render(<Sidebar />)
-    const workflowsLinks = screen.getAllByRole('link', { name: /workflows/i })
-    expect(workflowsLinks.some((l) => l.getAttribute('href') === '/app/projects/proj-1/settings/workflows')).toBe(true)
-  })
-
-  it('renders a Connect Apps link under Settings pointing to settings/integrations', () => {
-    render(<Sidebar />)
-    const connectApps = screen.getByRole('link', { name: /connect apps/i })
-    expect(connectApps).toHaveAttribute('href', '/app/projects/proj-1/settings/integrations')
+    const hrefs = screen.getAllByRole('link').map((l) => l.getAttribute('href'))
+    expect(hrefs).not.toContain('/app/projects/proj-1/settings/workflows')
+    expect(hrefs).not.toContain('/app/projects/proj-1/settings/integrations')
+    expect(hrefs).not.toContain('/app/projects/proj-1/settings/agents')
+    expect(screen.queryByRole('link', { name: /connect apps/i })).not.toBeInTheDocument()
   })
 
   it('renders Settings group when on a workspace settings page', () => {

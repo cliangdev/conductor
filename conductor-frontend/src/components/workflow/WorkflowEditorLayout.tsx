@@ -17,6 +17,8 @@ interface WorkflowEditorLayoutProps {
   onDiscard: () => void;
   saving: boolean;
   error: string | null;
+  /** When true, the editor is contained (for use inside a detail tab) instead of full-screen. */
+  embedded?: boolean;
 }
 
 export default function WorkflowEditorLayout({
@@ -28,6 +30,7 @@ export default function WorkflowEditorLayout({
   onDiscard,
   saving,
   error,
+  embedded = false,
 }: WorkflowEditorLayoutProps) {
   const [yaml, setYaml] = useState(initialYaml);
   const [name, setName] = useState(initialName);
@@ -38,7 +41,7 @@ export default function WorkflowEditorLayout({
   };
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className={embedded ? 'flex flex-col h-[70vh] border rounded-lg overflow-hidden' : 'flex flex-col h-screen'}>
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b bg-background">
         <div className="min-w-0">

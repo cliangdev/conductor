@@ -13,6 +13,15 @@ vi.mock('@/contexts/ProjectContext', () => ({
   useProject: () => ({ activeProject: { id: 'proj-1', name: 'Test Workspace' } }),
 }))
 
+vi.mock('@/contexts/PermissionsContext', () => ({
+  usePermissions: () => ({
+    role: mockCanManageMembers ? 'ADMIN' : 'CREATOR',
+    loading: false,
+    can: (cap: string) => (cap === 'members.manage' ? mockCanManageMembers : false),
+    refresh: vi.fn(),
+  }),
+}))
+
 vi.mock('@/components/ui/toast', () => ({
   useToast: () => ({ showToast: mockShowToast }),
 }))
@@ -42,6 +51,7 @@ import * as api from '@/lib/api'
 import MembersPage from './page'
 
 const mockShowToast = vi.fn()
+let mockCanManageMembers = true
 
 const adminMember = {
   userId: 'user-admin',
@@ -84,6 +94,7 @@ function mockApiGet(invites = [pendingInvite]) {
 describe('MembersPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockCanManageMembers = true
     mockAuthContext = {
       user: { id: 'user-admin', name: 'Admin User', email: 'admin@example.com', avatarUrl: null, displayName: null },
       accessToken: 'test-token',
@@ -106,6 +117,7 @@ describe('MembersPage', () => {
   })
 
   it('non-admin user does not see role dropdown or invite button', async () => {
+    mockCanManageMembers = false
     mockAuthContext = {
       user: { id: 'user-creator', name: 'Creator User', email: 'creator@example.com', avatarUrl: null, displayName: null },
       accessToken: 'test-token',

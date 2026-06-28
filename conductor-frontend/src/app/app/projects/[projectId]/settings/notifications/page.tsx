@@ -5,33 +5,20 @@ export const dynamic = 'force-dynamic'
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
+import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiGet, apiErrorMessage, type ApiError } from '@/lib/api'
-import type { Member } from '@/types'
 import { NotificationSettingsPage } from '@/components/notifications/NotificationSettingsPage'
 import { PageHeader } from '@/components/layout/PageHeader'
 
 export default function NotificationsPage() {
   const params = useParams<{ projectId: string }>()
   const projectId = params.projectId
-  const { accessToken, user } = useAuth()
+  const { accessToken } = useAuth()
+  const { can, loading: roleLoading } = usePermissions()
 
-  const [members, setMembers] = useState<Member[]>([])
-  const [membersLoading, setMembersLoading] = useState(true)
   const [accessDenied, setAccessDenied] = useState(false)
   const [settingsLoading, setSettingsLoading] = useState(true)
   const [settingsError, setSettingsError] = useState<string | null>(null)
-
-  const fetchMembers = useCallback(async () => {
-    if (!accessToken) return
-    try {
-      const data = await apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken)
-      setMembers(data)
-    } catch {
-      // non-fatal; role check will show permission denied
-    } finally {
-      setMembersLoading(false)
-    }
-  }, [accessToken, projectId])
 
   const fetchSettingsAccess = useCallback(async () => {
     if (!accessToken) return
@@ -49,15 +36,13 @@ export default function NotificationsPage() {
     }
   }, [accessToken, projectId])
 
-  useEffect(() => { fetchMembers() }, [fetchMembers])
   useEffect(() => { fetchSettingsAccess() }, [fetchSettingsAccess])
 
-  const currentUserRole = members.find((m) => m.userId === user?.id)?.role
-  const isAdmin = currentUserRole === 'ADMIN'
+  const isAdmin = can('notifications.manage')
 
   const header = <PageHeader title="Notifications" />
 
-  if (membersLoading || settingsLoading) {
+  if (roleLoading || settingsLoading) {
     return (
       <>
         {header}
