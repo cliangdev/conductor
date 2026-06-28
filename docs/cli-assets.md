@@ -19,6 +19,7 @@ Skill frontmatter must set `name: conductor-<name>` to match the directory name.
 1. Create the file under `conductor-tools/assets/claude/` following the naming convention above.
 2. Add its path to `PLUGIN_FILES` in `conductor-tools/src/lib/plugin-assets.ts`.
 3. A Vitest completeness test (`src/__tests__/plugin-assets.test.ts`) will fail CI if you forget step 2.
+4. Add an entry to `conductor-tools/assets/cli-manifest.json` under `claudeIntegration.slashCommands`, `.skills`, or `.agents` so the **Settings → CLI** page in the web app stays current.
 
 ## Renaming or removing an asset
 
@@ -26,9 +27,15 @@ Skill frontmatter must set `name: conductor-<name>` to match the directory name.
 2. Update `PLUGIN_FILES` to point at the new path (or remove the entry).
 3. Add the **old** path to `LEGACY_PATHS` in `plugin-assets.ts` so `conductor init` cleans it up from existing installs.
 
+## Adding or updating a CLI command
+
+CLI commands live in `conductor-tools/src/commands/`. After adding or changing a command, update `conductor-tools/assets/cli-manifest.json` — add or edit the entry in `commands[]` with the command's `name`, `syntax`, `description`, `category`, and any `options`. This file drives the **Settings → CLI** reference page in the web app.
+
 ## Adding or updating an MCP tool
 
 MCP tools live in `conductor-tools/src/mcp/tools/`. The MCP server auto-discovers tools at startup — no registration step required. Follow the guidelines in [`docs/mcp-tool-guidelines.md`](mcp-tool-guidelines.md).
+
+Also update `conductor-tools/assets/cli-manifest.json` — add an entry to `mcpTools[]` with the tool's `name`, `description`, `category`, and any `requiredParams`. This file is published with the npm package and drives the **Settings → CLI** reference page in the web app.
 
 ## Releasing
 

@@ -1,0 +1,270 @@
+{
+  "package": {
+    "name": "@cliangdev/conductor",
+    "version": "0.4.2",
+    "bin": "conductor",
+    "installCommand": "npm install -g @cliangdev/conductor"
+  },
+  "commands": [
+    {
+      "name": "login",
+      "syntax": "conductor login",
+      "description": "Authenticate with Conductor via browser. Opens a browser window to complete OAuth; credentials are saved locally.",
+      "category": "auth",
+      "options": [
+        { "flag": "--force", "description": "Re-authenticate even if already logged in" },
+        { "flag": "--local", "description": "Email/password login (local dev only)" }
+      ]
+    },
+    {
+      "name": "logout",
+      "syntax": "conductor logout",
+      "description": "Clear saved Conductor credentials.",
+      "category": "auth"
+    },
+    {
+      "name": "init",
+      "syntax": "conductor init",
+      "description": "Initialize Conductor in the current project. Links the project, installs the Claude Code plugin, and starts the sync daemon.",
+      "category": "project",
+      "options": [
+        { "flag": "--project-id <id>", "description": "Project ID to link (skips interactive selection)" },
+        { "flag": "--path <dir>", "description": "Project directory to initialize (defaults to current directory)" }
+      ]
+    },
+    {
+      "name": "start",
+      "syntax": "conductor start",
+      "description": "Start the Conductor file watcher daemon. Watches local issue files and syncs changes to the backend.",
+      "category": "daemon"
+    },
+    {
+      "name": "stop",
+      "syntax": "conductor stop",
+      "description": "Stop the file watcher daemon.",
+      "category": "daemon"
+    },
+    {
+      "name": "status",
+      "syntax": "conductor status",
+      "description": "Show daemon running state and sync queue depth.",
+      "category": "daemon",
+      "options": [
+        { "flag": "--json", "description": "Output as JSON" }
+      ]
+    },
+    {
+      "name": "mcp",
+      "syntax": "conductor mcp",
+      "description": "Start the MCP stdio server for Claude Code integration. Claude Code invokes this automatically via the MCP configuration set up by conductor init.",
+      "category": "mcp"
+    },
+    {
+      "name": "dashboard",
+      "syntax": "conductor dashboard",
+      "description": "Show a live Conductor status dashboard in the terminal. Renders as a one-shot status summary when output is piped.",
+      "category": "debug"
+    },
+    {
+      "name": "doctor",
+      "syntax": "conductor doctor",
+      "description": "Run health checks on your Conductor setup: config, API connectivity, MCP server, and plugin installation.",
+      "category": "debug",
+      "options": [
+        { "flag": "--json", "description": "Output results as JSON" }
+      ]
+    },
+    {
+      "name": "lint",
+      "syntax": "conductor lint [issueId]",
+      "description": "Lint local Conductor PRD and tasks.json artifacts against the current schema. Useful for catching format errors before pushing.",
+      "category": "debug",
+      "options": [
+        { "flag": "--json", "description": "Output results as JSON" }
+      ]
+    },
+    {
+      "name": "config show",
+      "syntax": "conductor config show",
+      "description": "Display the current CLI configuration. The API key is redacted.",
+      "category": "config",
+      "options": [
+        { "flag": "--json", "description": "Output as JSON" }
+      ]
+    },
+    {
+      "name": "config use",
+      "syntax": "conductor config use <env>",
+      "description": "Switch to a named environment. Currently supported: prod.",
+      "category": "config"
+    },
+    {
+      "name": "config set-url",
+      "syntax": "conductor config set-url <url>",
+      "description": "Update the API base URL. Use when running a self-hosted backend.",
+      "category": "config"
+    }
+  ],
+  "claudeIntegration": {
+    "description": "Conductor ships a full Claude Code plugin — slash commands, skills, and a background agent — installed automatically by conductor init into your Claude Code configuration.",
+    "mcpConfig": "{\n  \"mcpServers\": {\n    \"conductor\": {\n      \"command\": \"conductor\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}",
+    "slashCommands": [
+      {
+        "name": "conductor:prd",
+        "description": "Create a PRD for the current project through guided discovery, research, and writing."
+      },
+      {
+        "name": "conductor:implement",
+        "description": "Take a PRD issue from BACKLOG to a green PR — status transitions, branch, parallel coding agents, CI monitoring."
+      },
+      {
+        "name": "conductor:fix",
+        "description": "Fix a bug found during PR review — root cause investigation, full build validation, push to the existing PR branch."
+      },
+      {
+        "name": "conductor:workflow",
+        "description": "Design and create a Conductor workflow — YAML automation or statechart lifecycle — via guided discovery and MCP creation."
+      }
+    ],
+    "agents": [
+      {
+        "name": "conductor-researcher",
+        "description": "Researches unfamiliar technologies, libraries, and APIs for PRD creation. Auto-triggered by conductor:prd when confidence is low."
+      }
+    ],
+    "skills": [
+      {
+        "name": "conductor-coder",
+        "description": "Conductor-native coding agent. Implements tasks TDD-style: writes tests first, implements until passing, commits with task ref."
+      },
+      {
+        "name": "conductor-ux-ui-design",
+        "description": "Expert UX/UI design guidance for creating simple, user-focused interfaces. Applies human-centered design principles."
+      }
+    ]
+  },
+  "mcpTools": [
+    {
+      "name": "create_issue",
+      "description": "Create a new issue (Work Item) in the project.",
+      "category": "issues",
+      "requiredParams": ["type", "title"]
+    },
+    {
+      "name": "update_issue",
+      "description": "Update an existing issue's title or description.",
+      "category": "issues",
+      "requiredParams": ["issueId"]
+    },
+    {
+      "name": "set_issue_status",
+      "description": "Update the status of an issue directly (bypasses workflow gate).",
+      "category": "issues",
+      "requiredParams": ["issueId", "status"]
+    },
+    {
+      "name": "list_issues",
+      "description": "List issues in the project, optionally filtered by type or status.",
+      "category": "issues"
+    },
+    {
+      "name": "get_issue",
+      "description": "Get a single issue by ID, including its current status and linked documents.",
+      "category": "issues",
+      "requiredParams": ["issueId"]
+    },
+    {
+      "name": "scaffold_document",
+      "description": "Create an empty document file locally and register it with the backend. Returns absolutePath for use with the Write tool.",
+      "category": "documents",
+      "requiredParams": ["issueId", "filename"]
+    },
+    {
+      "name": "delete_document",
+      "description": "Delete a document from an issue, both locally and from the backend.",
+      "category": "documents",
+      "requiredParams": ["issueId", "documentId", "filename"]
+    },
+    {
+      "name": "list_issue_comments",
+      "description": "List comments on an issue, optionally filtered by resolved status.",
+      "category": "comments",
+      "requiredParams": ["issueId"]
+    },
+    {
+      "name": "list_workflows",
+      "description": "List the project's Workflows. Discovery entry point — resolves workflow names to slugs before creating a Work Item.",
+      "category": "workflows"
+    },
+    {
+      "name": "get_available_transitions",
+      "description": "Get the valid next statuses for a Work Item from its current status. Review-gated transitions are hidden until approved.",
+      "category": "workflows",
+      "requiredParams": ["issueId"]
+    },
+    {
+      "name": "transition_work_item",
+      "description": "Move a Work Item to a new status. Backend validates against the active Workflow and Review gate.",
+      "category": "workflows",
+      "requiredParams": ["issueId", "toStatus"]
+    },
+    {
+      "name": "record_asset",
+      "description": "Record a produced-output Asset on a Work Item (e.g. a github_pr link). Type is validated against the Workflow's asset_types.",
+      "category": "workflows",
+      "requiredParams": ["issueId", "type", "kind", "ref"]
+    },
+    {
+      "name": "report_step_run",
+      "description": "Report an agent-run step on a Work Item for human review at a Review gate: what was asked, what was produced, any flags.",
+      "category": "workflows",
+      "requiredParams": ["issueId", "stepKind", "status", "inputBrief", "reportedBy"]
+    },
+    {
+      "name": "create_workflow",
+      "description": "Create a new workflow definition in DRAFT state. Returns workflowId.",
+      "category": "workflows",
+      "requiredParams": ["name", "area"]
+    },
+    {
+      "name": "get_workflow",
+      "description": "Get a workflow definition by ID. Call after create_workflow or update_workflow to verify the change was stored correctly.",
+      "category": "workflows",
+      "requiredParams": ["workflowId"]
+    },
+    {
+      "name": "update_workflow",
+      "description": "Update a DRAFT workflow definition. Fix validation errors before retrying publish — do not create a second workflow.",
+      "category": "workflows",
+      "requiredParams": ["workflowId"]
+    },
+    {
+      "name": "publish_workflow",
+      "description": "Promote a workflow from DRAFT to PUBLISHED. Returns success and any validation errors.",
+      "category": "workflows",
+      "requiredParams": ["workflowId"]
+    },
+    {
+      "name": "dispatch_workflow",
+      "description": "Manually trigger a workflow run for testing. Returns runId. Only works on PUBLISHED YAML automation workflows.",
+      "category": "workflows",
+      "requiredParams": ["workflowId"]
+    },
+    {
+      "name": "get_workflow_run",
+      "description": "Get status and step details for a workflow run (PENDING/RUNNING/SUCCESS/FAILED). Call after dispatch_workflow to verify the run.",
+      "category": "workflows",
+      "requiredParams": ["workflowId", "runId"]
+    },
+    {
+      "name": "list_integration_tools",
+      "description": "List connected integrations and their available data operations for workflow authoring. Always call before designing a workflow.",
+      "category": "discovery"
+    },
+    {
+      "name": "list_agents",
+      "description": "List the project's named AI Agents (id, slug, provider, model, state). Discovery for workflow authoring.",
+      "category": "discovery"
+    }
+  ]
+}

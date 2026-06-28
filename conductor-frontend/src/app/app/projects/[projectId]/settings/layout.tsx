@@ -11,6 +11,7 @@ const SETTINGS_LABELS: Record<string, string> = {
   members: 'Members & Roles',
   'api-keys': 'API Keys',
   notifications: 'Notifications',
+  cli: 'CLI',
 };
 
 /**
