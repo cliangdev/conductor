@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -45,7 +46,10 @@ public class WorkItemController implements WorkItemsApi {
         this.workItemWorkflowService = workItemWorkflowService;
     }
 
+    // open-in-view is disabled, so the entity→DTO mapping (which touches lazy User/Project associations)
+    // must run inside the transaction — otherwise toResponse throws LazyInitializationException.
     @Override
+    @Transactional
     public ResponseEntity<WorkItemResponse> createWorkItem(String projectId, CreateWorkItemRequest request) {
         User caller = currentUser();
         WorkItem created = workItemService.createWorkItem(
@@ -55,6 +59,7 @@ public class WorkItemController implements WorkItemsApi {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public ResponseEntity<List<WorkItemResponse>> listWorkItems(String projectId, String type, String status,
                                                                 String workflow) {
         User caller = currentUser();
@@ -68,6 +73,7 @@ public class WorkItemController implements WorkItemsApi {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public ResponseEntity<WorkItemResponse> getWorkItem(String projectId, String workItemId) {
         User caller = currentUser();
         WorkItem item = workItemService.getWorkItemEntity(projectId, workItemId, caller);
@@ -75,6 +81,7 @@ public class WorkItemController implements WorkItemsApi {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public ResponseEntity<WorkItemResponse> getWorkItemByDisplayId(String projectId, String displayId) {
         User caller = currentUser();
         WorkItem item = workItemService.resolveByDisplayId(projectId, displayId, caller);
@@ -82,6 +89,7 @@ public class WorkItemController implements WorkItemsApi {
     }
 
     @Override
+    @Transactional
     public ResponseEntity<WorkItemResponse> patchWorkItem(String projectId, String workItemId,
                                                           PatchWorkItemRequest request) {
         User caller = currentUser();
