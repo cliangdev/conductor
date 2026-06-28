@@ -33,6 +33,7 @@ export async function listIssueComments(
   }
 
   const qs = query.toString()
+  // v1 sub-resource until v2 mirror lands (comments are not yet exposed under /api/v2/work-items).
   const path = `/api/v1/projects/${config.projectId}/issues/${params.issueId}/comments${qs ? `?${qs}` : ''}`
 
   try {
@@ -46,3 +47,7 @@ export async function listIssueComments(
     throw err
   }
 }
+
+// Canonical `list_work_item_comments` handler. Comments remain a v1 sub-resource until a
+// v2 mirror lands, so this is a thin alias over listIssueComments (same /api/v1 endpoint).
+export const listWorkItemComments = listIssueComments

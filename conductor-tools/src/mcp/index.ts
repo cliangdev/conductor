@@ -3,9 +3,20 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { getConfig, resolveProject } from './config.js'
-import { createIssue, updateIssue, setIssueStatus, listIssues, getIssue } from './tools/issues.js'
+import {
+  createIssue,
+  updateIssue,
+  setIssueStatus,
+  listIssues,
+  getIssue,
+  createWorkItem,
+  updateWorkItem,
+  setWorkItemStatus,
+  listWorkItems,
+  getWorkItem,
+} from './tools/issues.js'
 import { deleteDocument, scaffoldDocument } from './tools/documents.js'
-import { listIssueComments } from './tools/comments.js'
+import { listIssueComments, listWorkItemComments } from './tools/comments.js'
 import {
   listWorkflows,
   getAvailableTransitions,
@@ -23,9 +34,88 @@ import { listIntegrationTools } from './tools/integrations.js'
 import { listAgents } from './tools/agents.js'
 
 const TOOLS = [
+  // --- Canonical Work Item tools (v2 /work-items surface) ---
+  {
+    name: 'create_work_item',
+    description: 'Create a new Work Item in the project. Canonical tool (targets the v2 work-items API).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', description: 'Work Item type, validated against the Workflow (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
+        title: { type: 'string', description: 'Work Item title' },
+        description: { type: 'string', description: 'Work Item description (optional)' },
+        workflow: { type: 'string', description: 'Workflow slug to run on (optional; defaults to ENGINEERING). Use list_workflows to discover.' },
+      },
+      required: ['type', 'title'],
+    },
+  },
+  {
+    name: 'update_work_item',
+    description: 'Update an existing Work Item. Canonical tool (targets the v2 work-items API).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        title: { type: 'string', description: 'New title (optional)' },
+        description: { type: 'string', description: 'New description (optional)' },
+      },
+      required: ['issueId'],
+    },
+  },
+  {
+    name: 'set_work_item_status',
+    description: 'Update the status of a Work Item. Canonical tool (targets the v2 work-items API). For Workflow-validated moves prefer transition_work_item.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        status: { type: 'string', description: 'New status' },
+      },
+      required: ['issueId', 'status'],
+    },
+  },
+  {
+    name: 'list_work_items',
+    description: 'List Work Items in the project. Canonical tool (targets the v2 work-items API).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        type: { type: 'string', description: 'Filter by type (optional)' },
+        status: { type: 'string', description: 'Filter by status (optional)' },
+        workflow: { type: 'string', description: 'Filter by bound Workflow slug (optional, e.g. ENGINEERING)' },
+      },
+    },
+  },
+  {
+    name: 'get_work_item',
+    description: 'Get a single Work Item by ID. Canonical tool (targets the v2 work-items API).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+      },
+      required: ['issueId'],
+    },
+  },
+  {
+    name: 'list_work_item_comments',
+    description: 'List comments on a Work Item, optionally filtered by resolved status. Canonical tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        resolved: {
+          type: 'boolean',
+          description: 'Filter by resolved status. true = resolved only, false = unresolved only, omit = all comments',
+        },
+      },
+      required: ['issueId'],
+    },
+  },
+  // --- Legacy issue tools (DEPRECATED — v1 /issues surface) ---
   {
     name: 'create_issue',
-    description: 'Create a new issue (Work Item) in the project',
+    description: '(DEPRECATED — use create_work_item) Create a new issue (Work Item) in the project',
     inputSchema: {
       type: 'object',
       properties: {
@@ -39,7 +129,7 @@ const TOOLS = [
   },
   {
     name: 'update_issue',
-    description: 'Update an existing issue',
+    description: '(DEPRECATED — use update_work_item) Update an existing issue',
     inputSchema: {
       type: 'object',
       properties: {
@@ -52,7 +142,7 @@ const TOOLS = [
   },
   {
     name: 'set_issue_status',
-    description: 'Update the status of an issue',
+    description: '(DEPRECATED — use set_work_item_status) Update the status of an issue',
     inputSchema: {
       type: 'object',
       properties: {
@@ -64,7 +154,7 @@ const TOOLS = [
   },
   {
     name: 'list_issues',
-    description: 'List issues in the project',
+    description: '(DEPRECATED — use list_work_items) List issues in the project',
     inputSchema: {
       type: 'object',
       properties: {
@@ -75,7 +165,7 @@ const TOOLS = [
   },
   {
     name: 'get_issue',
-    description: 'Get a single issue by ID',
+    description: '(DEPRECATED — use get_work_item) Get a single issue by ID',
     inputSchema: {
       type: 'object',
       properties: {
@@ -111,7 +201,7 @@ const TOOLS = [
   },
   {
     name: 'list_issue_comments',
-    description: 'List comments on an issue, optionally filtered by resolved status',
+    description: '(DEPRECATED — use list_work_item_comments) List comments on an issue, optionally filtered by resolved status',
     inputSchema: {
       type: 'object',
       properties: {
@@ -349,9 +439,20 @@ export async function runMcpServer(): Promise<void> {
 
     try {
       switch (name) {
-        case 'create_issue':
-        case 'create_work_item': {
+        case 'create_issue': {
           const result = await createIssue(
+            {
+              type: params['type'] as string,
+              title: params['title'] as string,
+              description: params['description'] as string | undefined,
+              workflow: params['workflow'] as string | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'create_work_item': {
+          const result = await createWorkItem(
             {
               type: params['type'] as string,
               title: params['title'] as string,
@@ -542,6 +643,55 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'list_issue_comments': {
           const result = await listIssueComments(
+            {
+              issueId: params['issueId'] as string,
+              resolved: params['resolved'] as boolean | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'update_work_item': {
+          const result = await updateWorkItem(
+            {
+              issueId: params['issueId'] as string,
+              title: params['title'] as string | undefined,
+              description: params['description'] as string | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'set_work_item_status': {
+          const result = await setWorkItemStatus(
+            {
+              issueId: params['issueId'] as string,
+              status: params['status'] as string,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'list_work_items': {
+          const result = await listWorkItems(
+            {
+              type: params['type'] as string | undefined,
+              status: params['status'] as string | undefined,
+              workflow: params['workflow'] as string | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'get_work_item': {
+          const result = await getWorkItem(
+            { issueId: params['issueId'] as string },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'list_work_item_comments': {
+          const result = await listWorkItemComments(
             {
               issueId: params['issueId'] as string,
               resolved: params['resolved'] as boolean | undefined,
