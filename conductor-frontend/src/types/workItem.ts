@@ -45,6 +45,8 @@ export interface WorkflowMetricView {
 export interface WorkflowView {
   slug: string
   noun: string
+  /** Nav-grouping slug from the statechart (e.g. "ENGINEERING"); used for breadcrumbs. Absent when unset. */
+  area?: string | null
   defaultView: string
   version: number
   types: string[]
