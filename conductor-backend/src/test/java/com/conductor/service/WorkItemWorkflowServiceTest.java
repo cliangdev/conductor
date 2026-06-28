@@ -203,14 +203,14 @@ class WorkItemWorkflowServiceTest {
 
         // The gate is role-scoped — it queries the REVIEWER-scoped projection, not the generic verdict check.
         verify(reviewRepository).existsApprovedByReviewerRole(
-                "issue-1", PROJECT_ID, "APPROVED", MemberRole.REVIEWER);
+                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER");
         verify(reviewRepository, never()).existsByIssueIdAndVerdict(any(), any());
     }
 
     @Test
     void reviewGatedMergeIsAllowedWithReviewerApproval() {
         when(reviewRepository.existsApprovedByReviewerRole(
-                "issue-1", PROJECT_ID, "APPROVED", MemberRole.REVIEWER)).thenReturn(true);
+                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(true);
 
         assertThatCode(() ->
                 service.validateTransition(PROJECT_ID, issueAt("CODE_REVIEW"), "DONE"))
@@ -222,7 +222,7 @@ class WorkItemWorkflowServiceTest {
         // A non-REVIEWER (e.g. CREATOR) APPROVED review does NOT satisfy a reviewerRole=REVIEWER gate, so the
         // role-scoped projection returns false and the move is blocked.
         when(reviewRepository.existsApprovedByReviewerRole(
-                "issue-1", PROJECT_ID, "APPROVED", MemberRole.REVIEWER)).thenReturn(false);
+                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(false);
 
         assertThatThrownBy(() ->
                 service.validateTransition(PROJECT_ID, issueAt("CODE_REVIEW"), "DONE"))
@@ -240,13 +240,13 @@ class WorkItemWorkflowServiceTest {
 
         // No approval: the gated DONE edge is hidden; only CLOSED shows.
         when(reviewRepository.existsApprovedByReviewerRole(
-                "issue-1", PROJECT_ID, "APPROVED", MemberRole.REVIEWER)).thenReturn(false);
+                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(false);
         assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).getTransitions())
                 .extracting(AvailableTransition::getToStatus).containsExactly("CLOSED");
 
         // Reviewer-approved: DONE appears.
         when(reviewRepository.existsApprovedByReviewerRole(
-                "issue-1", PROJECT_ID, "APPROVED", MemberRole.REVIEWER)).thenReturn(true);
+                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(true);
         assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).getTransitions())
                 .extracting(AvailableTransition::getToStatus).containsExactlyInAnyOrder("DONE", "CLOSED");
     }

@@ -195,7 +195,8 @@ public class WorkItemWorkflowService {
         } catch (IllegalArgumentException e) {
             return reviewRepository.existsByIssueIdAndVerdict(issue.getId(), APPROVED_VERDICT);
         }
+        // Pass the validated enum NAME — the native query casts it to the member_role PG enum.
         return reviewRepository.existsApprovedByReviewerRole(
-                issue.getId(), projectId, APPROVED_VERDICT, reviewerRole);
+                issue.getId(), projectId, APPROVED_VERDICT, reviewerRole.name());
     }
 }
