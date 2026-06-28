@@ -60,9 +60,6 @@ public class Issue {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
-    @Column(name = "github_pr_url", length = 512)
-    private String githubPrUrl;
-
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "issue_tasks", columnDefinition = "JSONB")
     @ColumnTransformer(write = "?::jsonb")
@@ -148,9 +145,6 @@ public class Issue {
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
-
-    public String getGithubPrUrl() { return githubPrUrl; }
-    public void setGithubPrUrl(String githubPrUrl) { this.githubPrUrl = githubPrUrl; }
 
     public String getWorkflow() { return workflow; }
     public void setWorkflow(String workflow) { this.workflow = workflow; }

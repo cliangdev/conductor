@@ -162,10 +162,10 @@ public class WorkItemWorkflowService {
         return transition;
     }
 
-    /** Resolve the {@link Statechart} for the workflow a Work Item is bound to. */
+    /** Resolve the {@link Statechart} for the workflow a Work Item is bound to, honoring its pinned version. */
     Statechart resolveFor(String projectId, Issue issue) {
         String slug = issue.getWorkflow() != null ? issue.getWorkflow() : DEFAULT_WORKFLOW;
-        return resolver.resolveRequired(projectId, slug);
+        return resolver.resolveRequired(projectId, slug, issue.getWorkflowVersion());
     }
 
     private boolean isReviewer(String projectId, String callerId) {
@@ -175,12 +175,23 @@ public class WorkItemWorkflowService {
     }
 
     /**
-     * A review-gated transition is satisfied when at least one APPROVED Review is recorded on the Work Item.
-     *
-     * <p>DEFERRED until Wave 4: the transition's {@code reviewerRole} (e.g. REVIEWER on ENGINEERING's merge
-     * gate) is parsed into the domain model but NOT enforced here — any APPROVED review satisfies the gate.
+     * A review-gated transition is satisfied when an APPROVED Review is recorded on the Work Item by a member
+     * holding the transition's {@code reviewerRole} (or an ADMIN, who outranks any review role). When the
+     * transition declares no {@code reviewerRole} — or an unrecognized one — any APPROVED review satisfies the
+     * gate.
      */
     private boolean isReviewSatisfied(String projectId, Issue issue, StatechartTransition transition) {
-        return reviewRepository.existsByIssueIdAndVerdict(issue.getId(), APPROVED_VERDICT);
+        String role = transition.reviewerRole();
+        if (role == null || role.isBlank()) {
+            return reviewRepository.existsByIssueIdAndVerdict(issue.getId(), APPROVED_VERDICT);
+        }
+        MemberRole reviewerRole;
+        try {
+            reviewerRole = MemberRole.valueOf(role);
+        } catch (IllegalArgumentException e) {
+            return reviewRepository.existsByIssueIdAndVerdict(issue.getId(), APPROVED_VERDICT);
+        }
+        return reviewRepository.existsApprovedByReviewerRole(
+                issue.getId(), projectId, APPROVED_VERDICT, reviewerRole);
     }
 }

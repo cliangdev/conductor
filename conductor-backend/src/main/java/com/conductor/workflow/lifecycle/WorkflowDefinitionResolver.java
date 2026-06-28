@@ -1,7 +1,7 @@
 package com.conductor.workflow.lifecycle;
 
-import com.conductor.entity.WorkflowDefinition;
-import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.entity.WorkflowDefinitionVersion;
+import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -31,12 +31,12 @@ public class WorkflowDefinitionResolver {
     private static final Map<String, String> BUILT_IN_RESOURCES = Map.of(
             "ENGINEERING", "schema/examples/engineering.workflow.json");
 
-    private final WorkflowDefinitionRepository definitionRepository;
+    private final WorkflowDefinitionVersionRepository versionRepository;
     private final Map<String, Statechart> builtIns;
 
-    public WorkflowDefinitionResolver(WorkflowDefinitionRepository definitionRepository,
+    public WorkflowDefinitionResolver(WorkflowDefinitionVersionRepository versionRepository,
                                       ObjectMapper objectMapper) {
-        this.definitionRepository = definitionRepository;
+        this.versionRepository = versionRepository;
         this.builtIns = loadBuiltIns(objectMapper);
     }
 
@@ -56,20 +56,47 @@ public class WorkflowDefinitionResolver {
     }
 
     /**
-     * Resolve a slug to its Statechart for a project: the latest PUBLISHED project definition with that slug,
-     * else the built-in classpath definition, else empty.
+     * Resolve a slug to its Statechart for a project: the latest PUBLISHED snapshot with that slug, else the
+     * built-in classpath definition, else empty. Used when binding a brand-new Work Item.
      */
     public Optional<Statechart> resolve(String projectId, String slug) {
-        Optional<WorkflowDefinition> dbRow = definitionRepository.findLatestPublishedBySlug(projectId, slug);
-        if (dbRow.isPresent() && dbRow.get().getDefinition() != null) {
-            return Optional.of(Statechart.parse(dbRow.get().getDefinition()));
+        Optional<WorkflowDefinitionVersion> latest = versionRepository.findLatestPublished(projectId, slug);
+        if (latest.isPresent()) {
+            return Optional.of(Statechart.parse(latest.get().getDefinition()));
         }
         return Optional.ofNullable(builtIns.get(slug));
     }
 
-    /** Like {@link #resolve} but throws {@link EntityNotFoundException} when the Workflow cannot be resolved. */
+    /**
+     * Resolve a Work Item's <em>pinned</em> Workflow: the exact published {@code (slug, version)} snapshot, so
+     * re-publishing the Workflow never changes the rules under an in-flight Work Item. Falls back to the
+     * built-in classpath definition (built-ins have no DB snapshots), then to the latest published snapshot
+     * for pre-pinning data. A null version means "latest" ({@link #resolve(String, String)}).
+     */
+    public Optional<Statechart> resolve(String projectId, String slug, Integer version) {
+        if (version == null) {
+            return resolve(projectId, slug);
+        }
+        Optional<WorkflowDefinitionVersion> snapshot =
+                versionRepository.findByProjectSlugAndVersion(projectId, slug, version);
+        if (snapshot.isPresent()) {
+            return Optional.of(Statechart.parse(snapshot.get().getDefinition()));
+        }
+        if (builtIns.containsKey(slug)) {
+            return Optional.of(builtIns.get(slug));
+        }
+        return resolve(projectId, slug);
+    }
+
+    /** Like {@link #resolve(String, String)} but throws {@link EntityNotFoundException} when unresolvable. */
     public Statechart resolveRequired(String projectId, String slug) {
         return resolve(projectId, slug)
+                .orElseThrow(() -> new EntityNotFoundException("Workflow not found: " + slug));
+    }
+
+    /** Like {@link #resolve(String, String, Integer)} but throws when the Workflow cannot be resolved. */
+    public Statechart resolveRequired(String projectId, String slug, Integer version) {
+        return resolve(projectId, slug, version)
                 .orElseThrow(() -> new EntityNotFoundException("Workflow not found: " + slug));
     }
 

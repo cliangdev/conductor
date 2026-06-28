@@ -23,6 +23,8 @@ import com.conductor.generated.model.WorkflowStepRunDto;
 import com.conductor.generated.model.WorkflowState;
 import com.conductor.generated.model.WorkflowUpdateRequest;
 import com.conductor.generated.model.WorkflowValidationWarning;
+import com.conductor.generated.model.WorkflowVersionSummary;
+import com.conductor.generated.model.WorkflowView;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
@@ -32,6 +34,7 @@ import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.WorkflowDefinitionLifecycleService;
 import com.conductor.service.WorkflowService;
+import com.conductor.service.WorkflowViewService;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -71,6 +74,7 @@ public class WorkflowController implements WorkflowsApi {
     private final WorkflowScheduleRepository scheduleRepository;
     private final WorkflowScheduleSkipRepository scheduleSkipRepository;
     private final WorkflowDefinitionLifecycleService lifecycleService;
+    private final WorkflowViewService workflowViewService;
     private final ObjectMapper objectMapper;
 
     public WorkflowController(WorkflowService workflowService,
@@ -83,6 +87,7 @@ public class WorkflowController implements WorkflowsApi {
                                WorkflowScheduleRepository scheduleRepository,
                                WorkflowScheduleSkipRepository scheduleSkipRepository,
                                WorkflowDefinitionLifecycleService lifecycleService,
+                               WorkflowViewService workflowViewService,
                                ObjectMapper objectMapper) {
         this.workflowService = workflowService;
         this.workflowTriggerService = workflowTriggerService;
@@ -94,7 +99,18 @@ public class WorkflowController implements WorkflowsApi {
         this.scheduleRepository = scheduleRepository;
         this.scheduleSkipRepository = scheduleSkipRepository;
         this.lifecycleService = lifecycleService;
+        this.workflowViewService = workflowViewService;
         this.objectMapper = objectMapper;
+    }
+
+    @Override
+    public ResponseEntity<WorkflowView> getWorkflowView(String projectId, String slug, Integer version) {
+        return ResponseEntity.ok(workflowViewService.getView(projectId, slug, version, currentUserId()));
+    }
+
+    @Override
+    public ResponseEntity<List<WorkflowVersionSummary>> listWorkflowVersions(String projectId, String workflowId) {
+        return ResponseEntity.ok(workflowViewService.listVersions(projectId, workflowId, currentUserId()));
     }
 
     @Override

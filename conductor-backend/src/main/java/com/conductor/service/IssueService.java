@@ -178,8 +178,8 @@ public class IssueService {
         issueRepository.save(issue);
 
         if (statusChanged) {
-            dispatchStatusChanged(projectId, issue, previousStatus, issue.getCurrentStatus(),
-                    issue.getGithubPrUrl());
+            // PR link (if any) lives in github_pr Assets now, not on the issue; surfaced on the merge event.
+            dispatchStatusChanged(projectId, issue, previousStatus, issue.getCurrentStatus(), null);
         }
 
         long count = commentRepository.countUnresolvedByIssueId(issue.getId());
@@ -211,10 +211,6 @@ public class IssueService {
         if (!issue.getProject().getId().equals(projectId)) {
             throw new EntityNotFoundException(
                     projectKey + "-" + sequenceNumber + " does not belong to project " + projectId);
-        }
-
-        if (pullRequestUrl != null && !pullRequestUrl.isBlank()) {
-            issue.setGithubPrUrl(pullRequestUrl);
         }
 
         String previousStatus = issue.getCurrentStatus();
@@ -345,7 +341,6 @@ public class IssueService {
                 issue.getSequenceNumber(),
                 displayId)
                 .description(issue.getDescription())
-                .assignee(assignee)
-                .githubPrUrl(issue.getGithubPrUrl());
+                .assignee(assignee);
     }
 }

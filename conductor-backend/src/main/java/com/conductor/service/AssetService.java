@@ -125,7 +125,7 @@ public class AssetService {
 
     private void validateAssetType(String projectId, Issue issue, String type) {
         String slug = issue.getWorkflow() != null ? issue.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
-        Statechart statechart = resolver.resolveRequired(projectId, slug);
+        Statechart statechart = resolver.resolveRequired(projectId, slug, issue.getWorkflowVersion());
         List<String> allowed = statechart.assetTypes();
         if (!allowed.isEmpty() && !allowed.contains(type)) {
             throw new BusinessException("Asset type '" + type + "' is not allowed by workflow " + slug);

@@ -1,11 +1,15 @@
 package com.conductor.service;
 
 import com.conductor.entity.WorkflowDefinition;
+import com.conductor.entity.WorkflowDefinitionVersion;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionValidator;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,13 +27,16 @@ public class WorkflowDefinitionLifecycleService {
     static final String STATE_PUBLISHED = "PUBLISHED";
 
     private final WorkflowDefinitionRepository definitionRepository;
+    private final WorkflowDefinitionVersionRepository versionRepository;
     private final ProjectSecurityService projectSecurityService;
     private final WorkflowDefinitionValidator validator;
 
     public WorkflowDefinitionLifecycleService(WorkflowDefinitionRepository definitionRepository,
+                                              WorkflowDefinitionVersionRepository versionRepository,
                                               ProjectSecurityService projectSecurityService,
                                               WorkflowDefinitionValidator validator) {
         this.definitionRepository = definitionRepository;
+        this.versionRepository = versionRepository;
         this.projectSecurityService = projectSecurityService;
         this.validator = validator;
     }
@@ -67,17 +74,37 @@ public class WorkflowDefinitionLifecycleService {
             }
         }
 
+        int newVersion = definition.getVersion() == null ? 1 : definition.getVersion() + 1;
         definition.setState(STATE_PUBLISHED);
         // Always advance the version on publish so re-publishing an edited definition is observable.
-        // NOTE (deferred to the authoring/Builder phase): WorkflowDefinitionResolver currently resolves
-        // the latest PUBLISHED version by slug and does NOT honor a Work Item's pinned workflow_version,
-        // so in-flight Work Items are not yet pinned to the version they started on. Pinning + in-flight
-        // migration land with the editing experience (no edit/re-publish path exists in the v1 API yet).
-        definition.setVersion(definition.getVersion() == null ? 1 : definition.getVersion() + 1);
+        definition.setVersion(newVersion);
         if (definition.getSchemaVersion() == null && definition.getDefinition() != null
                 && definition.getDefinition().hasNonNull("schemaVersion")) {
             definition.setSchemaVersion(definition.getDefinition().get("schemaVersion").asInt());
         }
-        return definitionRepository.save(definition);
+
+        // Keep the definition JSON self-consistent with the header (its own version/state fields), so a
+        // resolved Statechart reports the published version a Work Item pins to.
+        if (definition.getDefinition() instanceof ObjectNode json) {
+            json.put("version", newVersion);
+            json.put("state", STATE_PUBLISHED);
+        }
+
+        WorkflowDefinition saved = definitionRepository.save(definition);
+
+        // Wave 5: snapshot the published definition immutably so in-flight Work Items pinned to an earlier
+        // version keep resolving the rules they started on.
+        if (saved.getDefinition() != null) {
+            JsonNode snapshotJson = saved.getDefinition().deepCopy();
+            WorkflowDefinitionVersion snapshot = new WorkflowDefinitionVersion();
+            snapshot.setWorkflowDefinition(saved);
+            snapshot.setVersion(newVersion);
+            snapshot.setDefinition(snapshotJson);
+            snapshot.setSchemaVersion(saved.getSchemaVersion());
+            snapshot.setPublishedBy(callerId);
+            versionRepository.save(snapshot);
+        }
+
+        return saved;
     }
 }
