@@ -34,4 +34,11 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
 
     @Query("SELECT i FROM WorkItem i JOIN i.project p WHERE p.key = :projectKey AND i.sequenceNumber = :sequenceNumber")
     Optional<WorkItem> findByProjectKeyAndSequenceNumber(@Param("projectKey") String projectKey, @Param("sequenceNumber") Integer sequenceNumber);
+
+    /**
+     * Resolve a Work Item by its project-scoped sequence number, used by the v2 by-display lookup. The
+     * derived property path is valid on {@link WorkItem}: {@code project} (ManyToOne) → {@code project.id}
+     * plus {@code sequenceNumber}.
+     */
+    Optional<WorkItem> findByProjectIdAndSequenceNumber(String projectId, Integer sequenceNumber);
 }

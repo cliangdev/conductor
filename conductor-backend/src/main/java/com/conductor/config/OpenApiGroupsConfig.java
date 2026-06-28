@@ -21,6 +21,14 @@ public class OpenApiGroupsConfig {
     }
 
     @Bean
+    public GroupedOpenApi externalV2Api() {
+        return GroupedOpenApi.builder()
+                .group("v2")
+                .pathsToMatch(ApiPathConfig.EXTERNAL_V2_BASE + "/**")
+                .build();
+    }
+
+    @Bean
     public GroupedOpenApi internalApi() {
         return GroupedOpenApi.builder()
                 .group("internal")
