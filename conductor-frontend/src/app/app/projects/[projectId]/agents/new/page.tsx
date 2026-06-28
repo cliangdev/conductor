@@ -25,7 +25,7 @@ export default function NewAgentPage() {
     setError(null)
     try {
       const created = await createAgent(projectId, body, accessToken)
-      router.push(`${agentsBase}/${created.id}`)
+      router.push(`${agentsBase}/${created.id}/overview`)
     } catch (e) {
       setError(apiErrorMessage(e, 'Failed to create agent.'))
       setSaving(false)

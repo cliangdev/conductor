@@ -2,7 +2,8 @@
 
 import { useParams, usePathname } from 'next/navigation'
 import { PageContainer } from '@/components/layout/PageContainer'
-import { Breadcrumb, type Crumb } from '@/components/layout/PageHeader'
+import { PageHeader, Breadcrumb, type Crumb } from '@/components/layout/PageHeader'
+import { Badge } from '@/components/ui/badge'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { AgentProvider, useAgent } from '@/contexts/AgentContext'
 import { useCan } from '@/contexts/PermissionsContext'
@@ -13,9 +14,28 @@ function AgentBreadcrumb() {
   const base = `/app/projects/${projectId}/agents`
   const crumbs: Crumb[] = [
     { label: 'Agents', href: base },
-    { label: agent?.name ?? 'Agent', href: `${base}/${agentId}` },
+    { label: agent?.name ?? 'Agent', href: `${base}/${agentId}/overview` },
   ]
   return <Breadcrumb items={crumbs} className="mb-2" />
+}
+
+/** Agent identity (name + state), shared across all tabs. */
+function AgentDetailHeader() {
+  const { agent } = useAgent()
+  if (!agent) {
+    return <PageHeader title={<span className="text-muted-foreground">Loading…</span>} />
+  }
+  return (
+    <PageHeader
+      title={agent.name}
+      status={
+        <Badge variant={agent.state === 'ACTIVE' ? 'status-approved' : 'status-draft'}>
+          {agent.state === 'ACTIVE' ? 'Active' : 'Draft'}
+        </Badge>
+      }
+      description={agent.description ?? undefined}
+    />
+  )
 }
 
 function AgentTabs() {
@@ -26,7 +46,7 @@ function AgentTabs() {
   const active = pathname.includes(`${agentBase}/settings`) ? 'settings' : 'overview'
 
   const items: TabItem[] = [
-    { value: 'overview', label: 'Overview', href: agentBase },
+    { value: 'overview', label: 'Overview', href: `${agentBase}/overview` },
     ...(canManage ? [{ value: 'settings', label: 'Settings', href: `${agentBase}/settings` }] : []),
   ]
 
@@ -38,6 +58,7 @@ export default function AgentLayout({ children }: { children: React.ReactNode })
     <AgentProvider>
       <PageContainer>
         <AgentBreadcrumb />
+        <AgentDetailHeader />
         <AgentTabs />
         {children}
       </PageContainer>

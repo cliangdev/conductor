@@ -107,7 +107,7 @@ export default function WorkflowSettingsPage() {
         initialYaml={workflow.yaml}
         initialName={workflow.name}
         onSave={handleSave}
-        onDiscard={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}`)}
+        onDiscard={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}/overview`)}
         saving={saving}
         error={error}
       />

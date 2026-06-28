@@ -171,7 +171,7 @@ export default function WorkflowsPage() {
                   <tr
                     key={workflow.id}
                     className="border-t hover:bg-muted/25 cursor-pointer"
-                    onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}`)}
+                    onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/overview`)}
                   >
                     <td className="p-3 font-medium">{workflow.name}</td>
                     <td className="p-3">

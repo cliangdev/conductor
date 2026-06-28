@@ -114,7 +114,7 @@ export default function AgentsPage() {
           {agents.map((agent) => (
             <div
               key={agent.id}
-              onClick={() => router.push(`${base}/${agent.id}`)}
+              onClick={() => router.push(`${base}/${agent.id}/overview`)}
               className="bg-card rounded-lg border border-border p-5 h-full flex flex-col gap-2 hover:border-primary/50 transition-colors cursor-pointer"
             >
               <div className="flex items-start justify-between gap-2">

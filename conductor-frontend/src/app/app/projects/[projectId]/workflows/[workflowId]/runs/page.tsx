@@ -3,10 +3,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet, apiPost } from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
-import { PageHeader } from '@/components/layout/PageHeader';
 
 const STATUS_COLORS: Record<string, string> = {
   SUCCESS: 'bg-green-100 text-green-800',
@@ -53,26 +52,13 @@ export default function RunListPage() {
     return () => clearInterval(interval);
   }, [runs, fetchRuns]);
 
-  const handleRunAgain = async () => {
-    if (!accessToken) return;
-    const run = await apiPost<WorkflowRunDto>(
-      `/api/v1/projects/${projectId}/workflows/${workflowId}/dispatch`, {}, accessToken
-    );
-    router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs/${run.id}`);
-  };
-
   return (
     <>
-      <PageHeader
-        title="Run History"
-        actions={<Button onClick={handleRunAgain}>Run Now</Button>}
-      />
-
       {loading ? (
         <div className="text-muted-foreground">Loading...</div>
       ) : runs.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
-          No runs yet. Click &quot;Run Now&quot; to trigger this workflow.
+          No runs yet. Use Run above to trigger this workflow.
         </div>
       ) : (
         <div className="border rounded-lg overflow-x-auto">
