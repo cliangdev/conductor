@@ -20,6 +20,7 @@ import {
   PuzzleIcon,
   SettingsIcon,
   SlidersHorizontalIcon,
+  TerminalIcon,
   UsersIcon,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
@@ -352,6 +353,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                       onNavigate={onNavigate}
                     >
                       Notifications
+                    </NavItem>
+                    <NavItem
+                      href={`/app/projects/${currentWorkspace.id}/settings/cli`}
+                      icon={<TerminalIcon className="h-4 w-4" />}
+                      onNavigate={onNavigate}
+                    >
+                      CLI
                     </NavItem>
                   </>
                 }
