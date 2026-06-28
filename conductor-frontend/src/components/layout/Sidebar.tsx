@@ -37,8 +37,10 @@ import { useSidebar } from '@/contexts/SidebarContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useEditorChrome } from '@/contexts/EditorChromeContext'
+import { humanizeId, isLifecycleWorkflow, listSidebarWorkflows, pluralizeNoun } from '@/lib/workflows'
 import { cn } from '@/lib/utils'
 import type { Project } from '@/types'
+import type { WorkflowDefinitionDto } from '@/types/workflow'
 
 // ─── Primitives ───────────────────────────────────────────────────────────────
 
@@ -252,13 +254,63 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
+/** A sidebar nav entry derived from a sidebar-enabled lifecycle Workflow. */
+interface WorkNavEntry {
+  slug: string
+  label: string
+  area: string
+  createdAt: string
+}
+
+/**
+ * Map sidebar-enabled lifecycle Workflows to nav entries, stably ordered by creation time. Reads the
+ * first-class `slug`/`noun`/`area` fields the server now exposes — never the raw statechart `definition`.
+ */
+function toWorkNav(workflows: WorkflowDefinitionDto[]): WorkNavEntry[] {
+  return workflows
+    .filter(isLifecycleWorkflow)
+    .map((wf) => ({
+      slug: wf.slug ?? wf.name,
+      label: pluralizeNoun(wf.noun ?? wf.name),
+      area: wf.area ?? 'WORK',
+      createdAt: wf.createdAt,
+    }))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+}
+
+/** Group nav entries by area slug, preserving first-seen (creation) order of areas and entries. */
+function groupByArea(entries: WorkNavEntry[]): [string, WorkNavEntry[]][] {
+  const groups = new Map<string, WorkNavEntry[]>()
+  for (const e of entries) {
+    const list = groups.get(e.area) ?? []
+    list.push(e)
+    groups.set(e.area, list)
+  }
+  return [...groups.entries()]
+}
+
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const { projects, activeProject } = useProject()
+  const { accessToken } = useAuth()
 
   // Determine current workspace from URL path
   const projectIdFromPath = pathname.match(/\/app\/projects\/([^/]+)/)?.[1]
   const currentWorkspace = projects.find((p) => p.id === projectIdFromPath) ?? activeProject
+
+  // Dynamic Work nav: one entry per sidebar-enabled, published lifecycle Workflow, grouped by area.
+  // Falls back to a static Issues entry so the app is never navigation-empty.
+  const [workNav, setWorkNav] = useState<WorkNavEntry[]>([])
+  const currentWorkspaceId = currentWorkspace?.id
+
+  useEffect(() => {
+    if (!currentWorkspaceId || !accessToken) return
+    let cancelled = false
+    listSidebarWorkflows(currentWorkspaceId, accessToken)
+      .then((wfs) => { if (!cancelled) setWorkNav(toWorkNav(wfs)) })
+      .catch(() => { if (!cancelled) setWorkNav([]) })
+    return () => { cancelled = true }
+  }, [currentWorkspaceId, accessToken])
 
   return (
     <div className="flex flex-col h-full">
@@ -275,23 +327,58 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <div className="flex-1 overflow-y-auto py-1">
         {currentWorkspace && (
           <div className="px-2 py-1">
-            <SectionLabel>Work</SectionLabel>
-            <div className="space-y-0.5 mb-4">
-              <NavItem
-                href={`/app/projects/${currentWorkspace.id}/issues`}
-                icon={<FileTextIcon className="h-4 w-4" />}
-                onNavigate={onNavigate}
-              >
-                Issues
-              </NavItem>
-              <NavItem
-                href={`/app/projects/${currentWorkspace.id}/docs`}
-                icon={<BookOpenIcon className="h-4 w-4" />}
-                onNavigate={onNavigate}
-              >
-                Docs
-              </NavItem>
-            </div>
+            {workNav.length > 0 ? (
+              <>
+                {groupByArea(workNav).map(([area, entries]) => (
+                  <div key={area}>
+                    <SectionLabel>{humanizeId(area)}</SectionLabel>
+                    <div className="space-y-0.5 mb-4">
+                      {entries.map((entry) => (
+                        <NavItem
+                          key={entry.slug}
+                          href={`/app/projects/${currentWorkspace.id}/work/${entry.slug}`}
+                          icon={<FileTextIcon className="h-4 w-4" />}
+                          onNavigate={onNavigate}
+                        >
+                          {entry.label}
+                        </NavItem>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <SectionLabel>Workspace</SectionLabel>
+                <div className="space-y-0.5 mb-4">
+                  <NavItem
+                    href={`/app/projects/${currentWorkspace.id}/docs`}
+                    icon={<BookOpenIcon className="h-4 w-4" />}
+                    onNavigate={onNavigate}
+                  >
+                    Docs
+                  </NavItem>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Fallback when no sidebar-enabled Workflows resolve yet — never navigation-empty. */}
+                <SectionLabel>Work</SectionLabel>
+                <div className="space-y-0.5 mb-4">
+                  <NavItem
+                    href={`/app/projects/${currentWorkspace.id}/issues`}
+                    icon={<FileTextIcon className="h-4 w-4" />}
+                    onNavigate={onNavigate}
+                  >
+                    Issues
+                  </NavItem>
+                  <NavItem
+                    href={`/app/projects/${currentWorkspace.id}/docs`}
+                    icon={<BookOpenIcon className="h-4 w-4" />}
+                    onNavigate={onNavigate}
+                  >
+                    Docs
+                  </NavItem>
+                </div>
+              </>
+            )}
 
             <SectionLabel>Automation</SectionLabel>
             <div className="space-y-0.5 mb-4">

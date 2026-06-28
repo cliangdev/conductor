@@ -26,11 +26,14 @@ class ProjectServiceKeyTest {
     @Mock
     private ProjectSecurityService projectSecurityService;
 
+    @Mock
+    private WorkflowSeeder workflowSeeder;
+
     private ProjectService projectService;
 
     @BeforeEach
     void setUp() {
-        projectService = new ProjectService(projectRepository, projectMemberRepository, projectSecurityService);
+        projectService = new ProjectService(projectRepository, projectMemberRepository, projectSecurityService, workflowSeeder);
     }
 
     @Test

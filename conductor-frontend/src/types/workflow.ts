@@ -1,15 +1,29 @@
 export type WorkflowState = 'DRAFT' | 'PUBLISHED';
 
+/**
+ * Explicit, server-derived kind of a Workflow. Use this to distinguish lifecycle (statechart) from
+ * automation (YAML) workflows — never infer it from the shape of `definition`. (COND-22)
+ */
+export type WorkflowKind = 'LIFECYCLE' | 'AUTOMATION';
+
 export interface WorkflowDefinitionDto {
   id: string;
   projectId: string;
   name: string;
+  /** Statechart slug (definition.id) for lifecycle workflows; absent for automations. (COND-22) */
+  slug?: string;
+  /** Display noun (singular, server default applied) for lifecycle workflows; absent for automations. (COND-22) */
+  noun?: string;
   /**
    * Legacy automation source. Present for YAML automation workflows; absent for COND-18 lifecycle
    * (statechart) workflows, which carry `definition` instead.
    */
   yaml?: string;
   enabled: boolean;
+  /** Authoritative discriminator — LIFECYCLE (statechart) vs AUTOMATION (YAML). (COND-22) */
+  kind?: WorkflowKind;
+  /** Whether this lifecycle Workflow is shown as a sidebar nav entry. (COND-22) */
+  sidebarEnabled?: boolean;
   webhookToken?: string;
   /** Monotonic version; in-flight Work Items pin to their version. (COND-18) */
   version?: number;

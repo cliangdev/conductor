@@ -35,14 +35,17 @@ public class ProjectService {
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectSecurityService projectSecurityService;
+    private final WorkflowSeeder workflowSeeder;
 
     public ProjectService(
             ProjectRepository projectRepository,
             ProjectMemberRepository projectMemberRepository,
-            ProjectSecurityService projectSecurityService) {
+            ProjectSecurityService projectSecurityService,
+            WorkflowSeeder workflowSeeder) {
         this.projectRepository = projectRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.projectSecurityService = projectSecurityService;
+        this.workflowSeeder = workflowSeeder;
     }
 
     @Transactional
@@ -74,6 +77,10 @@ public class ProjectService {
         project.setCreatedBy(creator);
         project.setKey(resolveUniqueKey(name));
         projectRepository.save(project);
+
+        // Every workspace starts with the built-in ENGINEERING lifecycle Workflow so its Work Items
+        // (Issues) render and the sidebar has a nav entry from day one. (COND-22)
+        workflowSeeder.seedEngineering(project);
 
         ProjectMember adminMember = new ProjectMember();
         adminMember.setProject(project);

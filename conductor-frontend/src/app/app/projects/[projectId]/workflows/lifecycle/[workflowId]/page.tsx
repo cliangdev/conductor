@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiGet, apiErrorMessage } from '@/lib/api'
-import { publishWorkflow, updateLifecycleWorkflow } from '@/lib/workflows'
+import { isLifecycleWorkflow, publishWorkflow, updateLifecycleWorkflow } from '@/lib/workflows'
 import type { StatechartDefinition } from '@/lib/workflowDefinition'
 import type { WorkflowDefinitionDto, WorkflowValidationWarning } from '@/types/workflow'
 import { PageContainer } from '@/components/layout/PageContainer'
@@ -21,6 +21,16 @@ import { useToast } from '@/components/ui/toast'
 import { StatechartEditor } from '@/components/workflow/lifecycle/StatechartEditor'
 import { StatechartDiagram } from '@/components/workflow/lifecycle/StatechartDiagram'
 import { WorkflowVersionHistory } from '@/components/workflow/lifecycle/WorkflowVersionHistory'
+
+/**
+ * The statechart to edit, or null when this is a YAML automation. Gates on the authoritative `kind`
+ * (not the shape of `definition`) and normalizes the arrays so the editor/diagram never see undefined.
+ */
+function statechartOf(wf: WorkflowDefinitionDto): StatechartDefinition | null {
+  if (!isLifecycleWorkflow(wf) || !wf.definition) return null
+  const def = wf.definition as unknown as StatechartDefinition
+  return { ...def, statuses: def.statuses ?? [], transitions: def.transitions ?? [] }
+}
 
 export default function EditLifecycleWorkflowPage() {
   const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>()
@@ -45,7 +55,7 @@ export default function EditLifecycleWorkflowPage() {
     apiGet<WorkflowDefinitionDto>(`/api/v1/projects/${projectId}/workflows/${workflowId}`, accessToken)
       .then((wf) => {
         setWorkflow(wf)
-        if (wf.definition) setDef(wf.definition as unknown as StatechartDefinition)
+        setDef(statechartOf(wf))
       })
       .catch((e) => setError(apiErrorMessage(e, 'Failed to load workflow')))
       .finally(() => setLoaded(true))
@@ -70,7 +80,7 @@ export default function EditLifecycleWorkflowPage() {
         accessToken,
       )
       setWorkflow(res.workflow)
-      if (res.workflow.definition) setDef(res.workflow.definition as unknown as StatechartDefinition)
+      setDef(statechartOf(res.workflow))
       setWarnings(res.warnings ?? [])
       showToast('Workflow saved.', 'success')
     } catch (e) {
@@ -87,7 +97,7 @@ export default function EditLifecycleWorkflowPage() {
     try {
       const published = await publishWorkflow(projectId, workflowId, accessToken)
       setWorkflow(published)
-      if (published.definition) setDef(published.definition as unknown as StatechartDefinition)
+      setDef(statechartOf(published))
       setVersionsKey((k) => k + 1)
       showToast('Workflow published.', 'success')
     } catch (e) {

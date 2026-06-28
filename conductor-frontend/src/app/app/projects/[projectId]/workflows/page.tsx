@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
-import { DEFAULT_WORKFLOW_SLUG } from '@/lib/workflows';
+import { DEFAULT_WORKFLOW_SLUG, isLifecycleWorkflow } from '@/lib/workflows';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TriggerBadges } from '@/components/workflow/TriggerBadges';
@@ -56,10 +56,8 @@ function EnabledIndicator({ enabled }: { enabled: boolean }) {
   );
 }
 
-/** A lifecycle workflow carries a statechart `definition`; an automation workflow carries `yaml`. */
-function isLifecycle(wf: WorkflowDefinitionDto): boolean {
-  return wf.definition != null;
-}
+/** Lifecycle vs automation via the authoritative server-derived `kind` (never the `definition` shape). */
+const isLifecycle = isLifecycleWorkflow;
 
 function statusCount(wf: WorkflowDefinitionDto): number {
   const statuses = (wf.definition as { statuses?: unknown[] } | null | undefined)?.statuses;

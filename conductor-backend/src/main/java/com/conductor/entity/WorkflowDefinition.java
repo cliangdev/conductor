@@ -68,6 +68,11 @@ public class WorkflowDefinition {
     @Column(name = "schema_version")
     private Integer schemaVersion;
 
+    /** Whether this lifecycle Workflow is surfaced as a sidebar nav entry. Opt-in per Workflow;
+     *  not part of the versioned statechart, so it toggles live without republishing. (COND-22) */
+    @Column(name = "sidebar_enabled", nullable = false)
+    private boolean sidebarEnabled = false;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -120,6 +125,17 @@ public class WorkflowDefinition {
 
     public Integer getSchemaVersion() { return schemaVersion; }
     public void setSchemaVersion(Integer schemaVersion) { this.schemaVersion = schemaVersion; }
+
+    public boolean isSidebarEnabled() { return sidebarEnabled; }
+    public void setSidebarEnabled(boolean sidebarEnabled) { this.sidebarEnabled = sidebarEnabled; }
+
+    /**
+     * Authoritative discriminator: a LIFECYCLE Workflow carries a non-empty statechart {@code definition};
+     * an AUTOMATION Workflow carries only {@code yaml} (definition null). Single source of truth for both
+     * the {@code listWorkflows} lifecycle filter and the {@code kind} field on the DTO, so callers never
+     * infer the kind from payload shape. Tolerates a stray empty {@code {}} (treated as AUTOMATION).
+     */
+    public boolean isLifecycle() { return definition != null && !definition.isEmpty(); }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
