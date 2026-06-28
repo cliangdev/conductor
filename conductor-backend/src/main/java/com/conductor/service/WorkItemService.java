@@ -74,6 +74,19 @@ public class WorkItemService {
 
     @Transactional
     public IssueResponse createIssue(String projectId, CreateIssueRequest request, User caller) {
+        WorkItem issue = createWorkItem(projectId, request.getType(), request.getTitle(),
+                request.getDescription(), request.getWorkflow(), caller);
+        return toIssueResponse(issue);
+    }
+
+    /**
+     * Canonical create-Work-Item business logic, returning the persisted entity. The v1 {@link #createIssue}
+     * DTO method and the v2 controller both call this — the logic lives here exactly once. Takes plain
+     * fields so the service stays decoupled from any specific generated request DTO version.
+     */
+    @Transactional
+    public WorkItem createWorkItem(String projectId, String type, String title, String description,
+                                   String workflowSlug, User caller) {
         verifyMembership(projectId, caller.getId());
 
         Project project = projectRepository.findById(projectId)
@@ -81,15 +94,15 @@ public class WorkItemService {
 
         // COND-18: bind the Work Item to its Workflow (defaults to the built-in ENGINEERING) and validate
         // its type + initial status against that Workflow's definition.
-        String workflow = request.getWorkflow() != null && !request.getWorkflow().isBlank()
-                ? request.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
-        workItemWorkflowService.validateType(projectId, workflow, request.getType());
+        String workflow = workflowSlug != null && !workflowSlug.isBlank()
+                ? workflowSlug : WorkItemWorkflowService.DEFAULT_WORKFLOW;
+        workItemWorkflowService.validateType(projectId, workflow, type);
 
         WorkItem issue = new WorkItem();
         issue.setProject(project);
-        issue.setType(request.getType());
-        issue.setTitle(request.getTitle());
-        issue.setDescription(request.getDescription());
+        issue.setType(type);
+        issue.setTitle(title);
+        issue.setDescription(description);
         issue.setCreatedBy(caller);
         issue.setWorkflow(workflow);
         issue.setWorkflowVersion(workItemWorkflowService.boundVersion(projectId, workflow));
@@ -99,7 +112,7 @@ public class WorkItemService {
         issue.setSequenceNumber(nextSeq);
 
         workItemRepository.save(issue);
-        return toIssueResponse(issue);
+        return issue;
     }
 
     @Transactional(readOnly = true)
@@ -137,17 +150,31 @@ public class WorkItemService {
 
     @Transactional
     public IssueResponse patchIssue(String projectId, String issueId, PatchIssueRequest request, User caller) {
-        verifyMembership(projectId, caller.getId());
-        WorkItem issue = findIssueInProject(projectId, issueId);
+        WorkItem issue = patchWorkItem(projectId, issueId, request.getTitle(), request.getDescription(),
+                request.getStatus(), request.getAssigneeId(), caller);
+        long count = commentRepository.countUnresolvedByWorkItemId(issue.getId());
+        return toIssueResponse(issue).unresolvedCommentCount((int) count);
+    }
 
-        if (request.getTitle() != null) {
-            issue.setTitle(request.getTitle());
+    /**
+     * Canonical patch-Work-Item business logic, returning the persisted entity. Shared by the v1
+     * {@link #patchIssue} DTO method and the v2 controller. Each nullable field follows the v1 PATCH
+     * semantics: {@code null} means "field absent — leave unchanged"; for {@code assigneeId} a blank
+     * string unassigns. Takes plain fields so the service stays decoupled from any generated DTO version.
+     */
+    @Transactional
+    public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
+                                  String status, String assigneeId, User caller) {
+        verifyMembership(projectId, caller.getId());
+        WorkItem issue = findIssueInProject(projectId, workItemId);
+
+        if (title != null) {
+            issue.setTitle(title);
         }
-        if (request.getDescription() != null) {
-            issue.setDescription(request.getDescription());
+        if (description != null) {
+            issue.setDescription(description);
         }
-        if (request.getAssigneeId() != null) {
-            String assigneeId = request.getAssigneeId();
+        if (assigneeId != null) {
             if (assigneeId.isBlank()) {
                 issue.setAssignee(null);
             } else {
@@ -161,11 +188,10 @@ public class WorkItemService {
         }
         String previousStatus = issue.getCurrentStatus();
         boolean statusChanged = false;
-        if (request.getStatus() != null) {
+        if (status != null) {
             verifyCallerCanChangeStatus(projectId, caller.getId());
-            String newStatus = request.getStatus();
-            workItemWorkflowService.validateTransition(projectId, issue, newStatus);
-            issue.setCurrentStatus(newStatus);
+            workItemWorkflowService.validateTransition(projectId, issue, status);
+            issue.setCurrentStatus(status);
             statusChanged = true;
         }
 
@@ -176,8 +202,79 @@ public class WorkItemService {
             dispatchStatusChanged(projectId, issue, previousStatus, issue.getCurrentStatus(), null);
         }
 
-        long count = commentRepository.countUnresolvedByWorkItemId(issue.getId());
-        return toIssueResponse(issue).unresolvedCommentCount((int) count);
+        return issue;
+    }
+
+    /**
+     * Read a single Work Item entity in a project, applying the same membership/read-access check the v1
+     * {@code getIssue} uses. Used by the v2 controller, which maps the entity to its v2 response (so it can
+     * surface the bound {@code workflow}).
+     */
+    @Transactional(readOnly = true)
+    public WorkItem getWorkItemEntity(String projectId, String workItemId, User caller) {
+        verifyReadAccess(projectId, caller.getId());
+        return findIssueInProject(projectId, workItemId);
+    }
+
+    /**
+     * List Work Item entities in a project with the same optional type/status/workflow filters as v1
+     * {@code listIssues}. Used by the v2 controller.
+     */
+    @Transactional(readOnly = true)
+    public List<WorkItem> listWorkItemEntities(String projectId, String type, String status, String workflow,
+                                               User caller) {
+        verifyReadAccess(projectId, caller.getId());
+        String typeFilter = (type != null && !type.isBlank()) ? type : null;
+        String statusFilter = (status != null && !status.isBlank()) ? status : null;
+        String workflowFilter = (workflow != null && !workflow.isBlank()) ? workflow : null;
+        return workItemRepository.findByProjectFiltered(projectId, typeFilter, statusFilter, workflowFilter);
+    }
+
+    /**
+     * Resolve a Work Item by its human-readable display id (e.g. "COND-42"). The trailing integer after the
+     * last {@code -} is the project-scoped sequence number; the project key prefix is informational. Applies
+     * the same read-access check as {@link #getWorkItemEntity}. Throws {@link EntityNotFoundException} (→ 404)
+     * when the display id is malformed, the sequence number does not exist, or it belongs to another project.
+     */
+    @Transactional(readOnly = true)
+    public WorkItem resolveByDisplayId(String projectId, String displayId, User caller) {
+        verifyReadAccess(projectId, caller.getId());
+        Integer sequenceNumber = parseSequenceNumber(displayId);
+        if (sequenceNumber == null) {
+            throw new EntityNotFoundException("Work Item not found");
+        }
+        return workItemRepository.findByProjectIdAndSequenceNumber(projectId, sequenceNumber)
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+    }
+
+    private static Integer parseSequenceNumber(String displayId) {
+        if (displayId == null) {
+            return null;
+        }
+        int dash = displayId.lastIndexOf('-');
+        String tail = dash >= 0 ? displayId.substring(dash + 1) : displayId;
+        try {
+            return Integer.valueOf(tail.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** Unresolved comment count for a single Work Item (optional enrichment for v2 responses). */
+    @Transactional(readOnly = true)
+    public long unresolvedCommentCount(String workItemId) {
+        return commentRepository.countUnresolvedByWorkItemId(workItemId);
+    }
+
+    /** Unresolved comment counts keyed by Work Item id, for a batch (optional enrichment for v2 lists). */
+    @Transactional(readOnly = true)
+    public Map<String, Long> unresolvedCommentCounts(List<String> workItemIds) {
+        Map<String, Long> counts = new HashMap<>();
+        if (workItemIds != null && !workItemIds.isEmpty()) {
+            commentRepository.countUnresolvedByWorkItemIds(workItemIds).forEach(row ->
+                    counts.put((String) row[0], (Long) row[1]));
+        }
+        return counts;
     }
 
     /**
