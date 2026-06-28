@@ -39,9 +39,13 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
 
       - name: Set workflow run title
+        # Cosmetic only — the REST API has no supported PATCH for a run's display_title, so this call
+        # 404s. Never let it fail the release (it was silently aborting every publish; npm stuck at 0.4.1).
+        continue-on-error: true
         run: |
           gh api repos/${{ github.repository }}/actions/runs/${{ github.run_id }} \
-            -X PATCH -f display_title="Release CLI v${{ steps.pkg.outputs.version }}"
+            -X PATCH -f display_title="Release CLI v${{ steps.pkg.outputs.version }}" \
+            || echo "::warning::could not set run title (unsupported API) — continuing"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
