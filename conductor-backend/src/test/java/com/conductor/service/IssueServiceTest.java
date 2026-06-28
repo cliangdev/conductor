@@ -164,10 +164,10 @@ class IssueServiceTest {
     void listIssuesFiltersByType() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findByProjectIdAndType("proj-1", "PRD"))
+        when(issueRepository.findByProjectFiltered("proj-1", "PRD", null, null))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = issueService.listIssues("proj-1", "PRD", null, caller);
+        List<IssueResponse> results = issueService.listIssues("proj-1", "PRD", null, null, caller);
 
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getType()).isEqualTo("PRD");
@@ -177,10 +177,10 @@ class IssueServiceTest {
     void listIssuesFiltersByStatus() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findByProjectIdAndCurrentStatus("proj-1", "DRAFT"))
+        when(issueRepository.findByProjectFiltered("proj-1", null, "DRAFT", null))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = issueService.listIssues("proj-1", null, "DRAFT", caller);
+        List<IssueResponse> results = issueService.listIssues("proj-1", null, "DRAFT", null, caller);
 
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getStatus()).isEqualTo("DRAFT");
@@ -190,10 +190,22 @@ class IssueServiceTest {
     void listIssuesFiltersByTypeAndStatus() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findByProjectIdAndTypeAndCurrentStatus("proj-1", "PRD", "DRAFT"))
+        when(issueRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = issueService.listIssues("proj-1", "PRD", "DRAFT", caller);
+        List<IssueResponse> results = issueService.listIssues("proj-1", "PRD", "DRAFT", null, caller);
+
+        assertThat(results).hasSize(1);
+    }
+
+    @Test
+    void listIssuesFiltersByWorkflow() {
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(issueRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING"))
+                .thenReturn(List.of(testIssue));
+
+        List<IssueResponse> results = issueService.listIssues("proj-1", null, null, "ENGINEERING", caller);
 
         assertThat(results).hasSize(1);
     }

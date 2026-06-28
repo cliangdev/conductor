@@ -28,11 +28,16 @@ public interface WorkflowDefinitionVersionRepository extends JpaRepository<Workf
                                                                     @Param("slug") String slug,
                                                                     @Param("version") Integer version);
 
-    /** The latest published snapshot of a Workflow in a project (highest version). */
+    /**
+     * The latest published snapshot of a Workflow in a project (highest version). Guards on the header's
+     * {@code state = 'PUBLISHED'} so a future unpublish stops the resolver from handing out a revoked
+     * definition (today snapshots are only written on publish, so this is defensive).
+     */
     @Query(value = """
             SELECT v.* FROM workflow_definition_versions v
             JOIN workflow_definitions w ON w.id = v.workflow_definition_id
             WHERE w.project_id = :projectId
+              AND w.state = 'PUBLISHED'
               AND v.definition ->> 'id' = :slug
             ORDER BY v.version DESC
             LIMIT 1

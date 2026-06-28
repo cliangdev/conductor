@@ -43,9 +43,10 @@ public class IssueController implements IssuesApi {
     }
 
     @Override
-    public ResponseEntity<List<IssueResponse>> listIssues(String projectId, String type, String status) {
+    public ResponseEntity<List<IssueResponse>> listIssues(String projectId, String type, String status,
+                                                          String workflow) {
         User caller = currentUser();
-        List<IssueResponse> issues = issueService.listIssues(projectId, type, status, caller);
+        List<IssueResponse> issues = issueService.listIssues(projectId, type, status, workflow, caller);
         return ResponseEntity.ok(issues);
     }
 

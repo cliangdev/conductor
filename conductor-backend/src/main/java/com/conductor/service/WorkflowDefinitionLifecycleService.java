@@ -69,6 +69,12 @@ public class WorkflowDefinitionLifecycleService {
         if (!hasStatechart && !hasYaml) {
             throw new UnprocessableEntityException("Workflow has no definition to publish");
         }
+        // A workflow is either a lifecycle statechart or a YAML automation, not both: only the statechart is
+        // validated and version-snapshotted, so a dual-type definition would be partially pinned. Reject it.
+        if (hasStatechart && hasYaml) {
+            throw new UnprocessableEntityException(
+                    "Workflow cannot have both a statechart definition and YAML automation");
+        }
 
         if (hasStatechart) {
             // Built-in slugs (e.g. ENGINEERING) are reserved: a project-authored definition that reused one

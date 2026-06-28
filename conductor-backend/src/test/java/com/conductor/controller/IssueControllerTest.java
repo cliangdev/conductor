@@ -117,7 +117,7 @@ class IssueControllerTest {
     @Test
     void listIssuesFiltersByType() throws Exception {
         IssueResponse r1 = buildIssueResponse("issue-1", "PRD", "DRAFT");
-        when(issueService.listIssues(eq("proj-1"), eq("PRD"), isNull(), eq(testUser)))
+        when(issueService.listIssues(eq("proj-1"), eq("PRD"), isNull(), isNull(), eq(testUser)))
                 .thenReturn(List.of(r1));
 
         mockMvc.perform(get("/api/v1/projects/proj-1/issues?type=PRD")
@@ -130,7 +130,7 @@ class IssueControllerTest {
     @Test
     void listIssuesFiltersByStatus() throws Exception {
         IssueResponse r1 = buildIssueResponse("issue-1", "FEATURE_REQUEST", "IN_REVIEW");
-        when(issueService.listIssues(eq("proj-1"), isNull(), eq("IN_REVIEW"), eq(testUser)))
+        when(issueService.listIssues(eq("proj-1"), isNull(), eq("IN_REVIEW"), isNull(), eq(testUser)))
                 .thenReturn(List.of(r1));
 
         mockMvc.perform(get("/api/v1/projects/proj-1/issues?status=IN_REVIEW")

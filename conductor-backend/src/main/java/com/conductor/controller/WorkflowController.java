@@ -120,9 +120,15 @@ public class WorkflowController implements WorkflowsApi {
     }
 
     @Override
-    public ResponseEntity<List<WorkflowDefinitionDto>> listWorkflows(String projectId) {
-        List<WorkflowDefinitionDto> dtos = workflowService.listWorkflows(projectId)
-                .stream().map(this::toDto).collect(Collectors.toList());
+    public ResponseEntity<List<WorkflowDefinitionDto>> listWorkflows(String projectId, Boolean lifecycle,
+                                                                     String state) {
+        List<WorkflowDefinitionDto> dtos = workflowService.listWorkflows(projectId).stream()
+                // lifecycle (statechart) workflows have a `definition`; automation (YAML) workflows do not.
+                .filter(w -> lifecycle == null
+                        || (lifecycle ? w.getDefinition() != null : w.getDefinition() == null))
+                .filter(w -> state == null || state.equalsIgnoreCase(w.getState()))
+                .map(this::toDto)
+                .collect(Collectors.toList());
         return ResponseEntity.ok(dtos);
     }
 

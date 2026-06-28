@@ -103,22 +103,16 @@ public class IssueService {
     }
 
     @Transactional(readOnly = true)
-    public List<IssueResponse> listIssues(String projectId, String type, String status, User caller) {
+    public List<IssueResponse> listIssues(String projectId, String type, String status, String workflow,
+                                          User caller) {
         verifyReadAccess(projectId, caller.getId());
 
-        boolean hasType = type != null && !type.isBlank();
-        boolean hasStatus = status != null && !status.isBlank();
+        String typeFilter = (type != null && !type.isBlank()) ? type : null;
+        String statusFilter = (status != null && !status.isBlank()) ? status : null;
+        String workflowFilter = (workflow != null && !workflow.isBlank()) ? workflow : null;
 
-        List<Issue> issues;
-        if (hasType && hasStatus) {
-            issues = issueRepository.findByProjectIdAndTypeAndCurrentStatus(projectId, type, status);
-        } else if (hasType) {
-            issues = issueRepository.findByProjectIdAndType(projectId, type);
-        } else if (hasStatus) {
-            issues = issueRepository.findByProjectIdAndCurrentStatus(projectId, status);
-        } else {
-            issues = issueRepository.findByProjectId(projectId);
-        }
+        List<Issue> issues = issueRepository.findByProjectFiltered(
+                projectId, typeFilter, statusFilter, workflowFilter);
 
         List<String> issueIds = issues.stream().map(Issue::getId).toList();
         Map<String, Long> unresolvedCounts = new HashMap<>();

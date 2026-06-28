@@ -622,6 +622,12 @@ paths:
           description: Filter by Work Item status (a Workflow-defined status id, e.g. DRAFT).
           schema:
             type: string
+        - name: workflow
+          in: query
+          required: false
+          description: Filter by bound Workflow slug (e.g. ENGINEERING) — for per-Workflow view pages.
+          schema:
+            type: string
       responses:
         "200":
           description: List of issues
@@ -3598,6 +3604,10 @@ paths:
     get:
       tags: [workflows]
       summary: List workflows for a project
+      description: >-
+        Returns the project's Workflow definitions. Optional filters narrow to lifecycle (statechart) vs
+        automation (YAML) workflows and by lifecycle state — e.g. `?lifecycle=true&state=PUBLISHED` for the
+        published statechart workflows a sidebar/nav needs, so callers don't filter on internal shape.
       operationId: listWorkflows
       security:
         - bearerAuth: []
@@ -3606,6 +3616,20 @@ paths:
         - name: projectId
           in: path
           required: true
+          schema:
+            type: string
+        - name: lifecycle
+          in: query
+          required: false
+          description: >-
+            true → only lifecycle (statechart) workflows (have a `definition`); false → only automation
+            (YAML) workflows; omit for all.
+          schema:
+            type: boolean
+        - name: state
+          in: query
+          required: false
+          description: Filter by lifecycle state (DRAFT | PUBLISHED).
           schema:
             type: string
       responses:
