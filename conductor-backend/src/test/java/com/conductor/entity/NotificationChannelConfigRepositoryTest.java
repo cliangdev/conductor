@@ -71,14 +71,14 @@ class NotificationChannelConfigRepositoryTest extends AbstractNoneWebIntegration
 
     @Test
     void saveAndRetrieveByProjectIdAndEventType() {
-        NotificationChannelConfig config = buildConfig(projectId1, EventType.ISSUE_SUBMITTED, "https://discord.com/webhook/1");
+        NotificationChannelConfig config = buildConfig(projectId1, EventType.ISSUE_STATUS_CHANGED, "https://discord.com/webhook/1");
         repository.save(config);
 
-        Optional<NotificationChannelConfig> found = repository.findByProjectIdAndEventType(projectId1, EventType.ISSUE_SUBMITTED);
+        Optional<NotificationChannelConfig> found = repository.findByProjectIdAndEventType(projectId1, EventType.ISSUE_STATUS_CHANGED);
 
         assertThat(found).isPresent();
         assertThat(found.get().getProjectId()).isEqualTo(projectId1);
-        assertThat(found.get().getEventType()).isEqualTo(EventType.ISSUE_SUBMITTED);
+        assertThat(found.get().getEventType()).isEqualTo(EventType.ISSUE_STATUS_CHANGED);
         assertThat(found.get().getWebhookUrl()).isEqualTo("https://discord.com/webhook/1");
         assertThat(found.get().getProvider()).isEqualTo(ProviderType.DISCORD);
         assertThat(found.get().isEnabled()).isTrue();
@@ -88,9 +88,9 @@ class NotificationChannelConfigRepositoryTest extends AbstractNoneWebIntegration
 
     @Test
     void uniqueConstraintPreventsDuplicateProjectIdAndEventType() {
-        repository.saveAndFlush(buildConfig(projectId2, EventType.ISSUE_APPROVED, "https://discord.com/webhook/2"));
+        repository.saveAndFlush(buildConfig(projectId2, EventType.REVIEW_SUBMITTED, "https://discord.com/webhook/2"));
 
-        NotificationChannelConfig duplicate = buildConfig(projectId2, EventType.ISSUE_APPROVED, "https://discord.com/webhook/3");
+        NotificationChannelConfig duplicate = buildConfig(projectId2, EventType.REVIEW_SUBMITTED, "https://discord.com/webhook/3");
 
         assertThatThrownBy(() -> repository.saveAndFlush(duplicate))
                 .isInstanceOf(DataIntegrityViolationException.class);
@@ -98,17 +98,17 @@ class NotificationChannelConfigRepositoryTest extends AbstractNoneWebIntegration
 
     @Test
     void findByProjectIdReturnsAllConfigsForProject() {
-        repository.save(buildConfig(projectId3, EventType.ISSUE_SUBMITTED, "https://discord.com/webhook/4"));
-        repository.save(buildConfig(projectId3, EventType.ISSUE_APPROVED, "https://discord.com/webhook/5"));
+        repository.save(buildConfig(projectId3, EventType.ISSUE_STATUS_CHANGED, "https://discord.com/webhook/4"));
+        repository.save(buildConfig(projectId3, EventType.REVIEW_SUBMITTED, "https://discord.com/webhook/5"));
         repository.save(buildConfig(projectId3, EventType.MEMBER_JOINED, "https://discord.com/webhook/6"));
-        repository.save(buildConfig(projectId999, EventType.ISSUE_SUBMITTED, "https://discord.com/webhook/7"));
+        repository.save(buildConfig(projectId999, EventType.ISSUE_STATUS_CHANGED, "https://discord.com/webhook/7"));
 
         List<NotificationChannelConfig> configs = repository.findByProjectId(projectId3);
 
         assertThat(configs).hasSize(3);
         assertThat(configs).extracting(NotificationChannelConfig::getProjectId).containsOnly(projectId3);
         assertThat(configs).extracting(NotificationChannelConfig::getEventType)
-                .containsExactlyInAnyOrder(EventType.ISSUE_SUBMITTED, EventType.ISSUE_APPROVED, EventType.MEMBER_JOINED);
+                .containsExactlyInAnyOrder(EventType.ISSUE_STATUS_CHANGED, EventType.REVIEW_SUBMITTED, EventType.MEMBER_JOINED);
     }
 
     @Test

@@ -119,7 +119,7 @@ export default function WorkflowOverviewPage() {
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workflow Diagram</p>
         </div>
         <div className="h-[calc(100%-36px)]">
-          <WorkflowDiagram yaml={workflow.yaml} />
+          <WorkflowDiagram yaml={workflow.yaml ?? ''} />
         </div>
       </div>
     </div>

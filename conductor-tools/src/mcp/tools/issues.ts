@@ -73,11 +73,15 @@ export async function createIssue(
     queueSize = size
   }
 
+  // Initial status comes from the bound Workflow (statechart initial status), returned by the backend.
+  // Offline (queued) we can't know it, so fall back to the Engineering initial status.
+  const initialStatus = backendResult?.status ?? 'DRAFT'
+
   const content = buildIssueFrontmatter(
     issueId,
     params.type,
     params.title,
-    'DRAFT',
+    initialStatus,
     params.description
   )
   writeIssueFile(config, issueId, content)
@@ -90,7 +94,7 @@ export async function createIssue(
     displayId: backendResult?.displayId,
     type: params.type,
     title: params.title,
-    status: 'DRAFT',
+    status: initialStatus,
     localPath,
     absolutePath,
   }

@@ -2,50 +2,15 @@ package com.conductor.notification;
 
 public enum EventType {
     /**
-     * A PRD has been submitted for review.
-     *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}
-     * <p>Optional metadata keys: {@code actorName}
-     */
-    ISSUE_SUBMITTED("PRD submitted for review"),
-
-    /**
-     * A PRD has been approved.
-     *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}
-     * <p>Optional metadata keys: {@code actorName}
-     */
-    ISSUE_APPROVED("PRD approved"),
-
-    /**
-     * An issue has been moved to the In Progress status.
-     *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}
-     * <p>Optional metadata keys: {@code assigneeName}
-     */
-    ISSUE_IN_PROGRESS("Issue moved to In Progress"),
-
-    /**
-     * An issue has been moved to the Code Review status.
-     *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}
-     * <p>Optional metadata keys: {@code prUrl}
-     */
-    ISSUE_IN_CODE_REVIEW("Issue moved to Code Review"),
-
-    /**
-     * An issue has been marked as Done.
-     *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}
-     */
-    ISSUE_COMPLETED("Issue marked as Done"),
-
-    /**
-     * An issue's status has changed from one value to another.
+     * A Work Item's status has changed from one value to another. This is the single, Workflow-agnostic
+     * status event (the legacy per-status events were collapsed into it so any Workflow's statuses notify
+     * uniformly). The notification provider formats it from the enriched metadata.
      *
      * <p>Required metadata keys: {@code issueId}, {@code issueTitle}, {@code fromStatus}, {@code toStatus}
+     * <p>Optional metadata keys: {@code workflow}, {@code noun}, {@code toStatusLabel}, {@code toCategory},
+     * {@code assigneeName}, {@code prUrl}
      */
-    ISSUE_STATUS_CHANGED("Issue status changed"),
+    ISSUE_STATUS_CHANGED("Work Item status changed"),
 
     /**
      * A reviewer has been assigned to a PRD.

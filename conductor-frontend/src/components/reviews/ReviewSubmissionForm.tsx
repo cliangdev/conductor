@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { apiPost, apiErrorMessage } from '@/lib/api'
+import type { ReviewOutcome } from '@/types/workItem'
 
 type Verdict = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'
 
@@ -13,13 +14,18 @@ interface ReviewSubmissionFormProps {
   isAssignedReviewer: boolean
   existingVerdict?: Verdict
   existingBody?: string
+  /**
+   * The review-gated transition's allowed outcomes (from the Workflow). When provided, only those
+   * verdicts are offered; otherwise all three are shown.
+   */
+  reviewOutcomes?: ReviewOutcome[]
   onReviewSubmitted: () => void
 }
 
-const VERDICT_OPTIONS: { value: Verdict; label: string; icon: string }[] = [
-  { value: 'APPROVED', label: 'Approve', icon: '✅' },
-  { value: 'CHANGES_REQUESTED', label: 'Request Changes', icon: '🔄' },
-  { value: 'COMMENTED', label: 'Comment', icon: '💬' },
+const VERDICT_OPTIONS: { value: Verdict; label: string; icon: string; outcome: ReviewOutcome }[] = [
+  { value: 'APPROVED', label: 'Approve', icon: '✅', outcome: 'approve' },
+  { value: 'CHANGES_REQUESTED', label: 'Request Changes', icon: '🔄', outcome: 'request_changes' },
+  { value: 'COMMENTED', label: 'Comment', icon: '💬', outcome: 'comment' },
 ]
 
 export function ReviewSubmissionForm({
@@ -29,8 +35,14 @@ export function ReviewSubmissionForm({
   isAssignedReviewer,
   existingVerdict,
   existingBody,
+  reviewOutcomes,
   onReviewSubmitted,
 }: ReviewSubmissionFormProps) {
+  // Narrow to the Workflow's allowed outcomes when known; fall back to all three.
+  const verdictOptions =
+    reviewOutcomes && reviewOutcomes.length > 0
+      ? VERDICT_OPTIONS.filter((o) => reviewOutcomes.includes(o.outcome))
+      : VERDICT_OPTIONS
   const [selectedVerdict, setSelectedVerdict] = useState<Verdict | null>(existingVerdict ?? null)
   const [body, setBody] = useState(existingBody ?? '')
   const [submitting, setSubmitting] = useState(false)
@@ -63,7 +75,7 @@ export function ReviewSubmissionForm({
       )}
 
       <div className="flex flex-wrap gap-2 mb-3">
-        {VERDICT_OPTIONS.map((option) => (
+        {verdictOptions.map((option) => (
           <button
             key={option.value}
             onClick={() => isAssignedReviewer && setSelectedVerdict(option.value)}

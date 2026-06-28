@@ -5,11 +5,9 @@ import com.conductor.generated.api.IssuesApi;
 import com.conductor.generated.model.AvailableTransitionsResponse;
 import com.conductor.generated.model.CreateIssueRequest;
 import com.conductor.generated.model.IssueResponse;
-import com.conductor.generated.model.IssueStatus;
-import com.conductor.generated.model.IssueType;
 import com.conductor.generated.model.PatchIssueRequest;
 import com.conductor.service.IssueService;
-import com.conductor.service.WorkItemTransitionService;
+import com.conductor.service.WorkItemWorkflowService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -23,17 +21,17 @@ import java.util.List;
 public class IssueController implements IssuesApi {
 
     private final IssueService issueService;
-    private final WorkItemTransitionService workItemTransitionService;
+    private final WorkItemWorkflowService workItemWorkflowService;
 
-    public IssueController(IssueService issueService, WorkItemTransitionService workItemTransitionService) {
+    public IssueController(IssueService issueService, WorkItemWorkflowService workItemWorkflowService) {
         this.issueService = issueService;
-        this.workItemTransitionService = workItemTransitionService;
+        this.workItemWorkflowService = workItemWorkflowService;
     }
 
     @Override
     public ResponseEntity<AvailableTransitionsResponse> listAvailableTransitions(String projectId, String issueId) {
         AvailableTransitionsResponse response =
-                workItemTransitionService.availableTransitions(projectId, issueId, currentUser());
+                workItemWorkflowService.availableTransitions(projectId, issueId, currentUser());
         return ResponseEntity.ok(response);
     }
 
@@ -45,9 +43,10 @@ public class IssueController implements IssuesApi {
     }
 
     @Override
-    public ResponseEntity<List<IssueResponse>> listIssues(String projectId, IssueType type, IssueStatus status) {
+    public ResponseEntity<List<IssueResponse>> listIssues(String projectId, String type, String status,
+                                                          String workflow) {
         User caller = currentUser();
-        List<IssueResponse> issues = issueService.listIssues(projectId, type, status, caller);
+        List<IssueResponse> issues = issueService.listIssues(projectId, type, status, workflow, caller);
         return ResponseEntity.ok(issues);
     }
 

@@ -2,8 +2,6 @@ package com.conductor.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
@@ -31,21 +29,19 @@ public class Issue {
     @JoinColumn(name = "project_id", nullable = false)
     private Project project;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "type", nullable = false, columnDefinition = "issue_type")
-    @ColumnTransformer(write = "?::issue_type")
-    private IssueType type;
+    /**
+     * Work Item type as a Workflow-defined string (e.g. {@code PRD}), validated against the bound
+     * Workflow's {@code types} at creation. Maps to {@code item_type}; the legacy {@code type} PG-enum
+     * column is retained nullable for one release (rolling-deploy safety) and dropped in a follow-up.
+     */
+    @Column(name = "item_type", length = 64, nullable = false)
+    private String type;
 
     @Column(name = "title", length = 255, nullable = false)
     private String title;
 
     @Column(name = "description", columnDefinition = "TEXT")
     private String description;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, columnDefinition = "issue_status")
-    @ColumnTransformer(write = "?::issue_status")
-    private IssueStatus status;
 
     @Column(name = "sequence_number", nullable = false, updatable = false)
     private Integer sequenceNumber;
@@ -64,9 +60,6 @@ public class Issue {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
-    @Column(name = "github_pr_url", length = 512)
-    private String githubPrUrl;
-
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "issue_tasks", columnDefinition = "JSONB")
     @ColumnTransformer(write = "?::jsonb")
@@ -83,14 +76,12 @@ public class Issue {
     private Integer workflowVersion;
 
     /**
-     * Current status as a Workflow-defined string (mirrors {@link #status} for ENGINEERING-bound issues).
-     *
-     * <p>DEFERRED (before custom workflows ship): today {@link #status} (the {@link IssueStatus} enum) is the
-     * authority the engine reads; this column is a denormalized mirror. A custom Workflow with a non-enum status
-     * cannot be stored until workflow-bound issues switch their authority to this string field — a prerequisite
-     * for the Work Item rename / custom-status work, tracked separately.
+     * Current status as a Workflow-defined string (e.g. {@code DRAFT}). This is the authority the engine
+     * reads and writes; transitions are validated against the bound Workflow's {@link
+     * com.conductor.workflow.lifecycle.Statechart}. The legacy {@code status} PG-enum column is retained
+     * nullable for one release (rolling-deploy safety) and dropped in a follow-up.
      */
-    @Column(name = "current_status", length = 48)
+    @Column(name = "current_status", length = 48, nullable = false)
     private String currentStatus;
 
     /** Per-Work-Item engine scratch (step outputs, guard inputs). */
@@ -114,23 +105,14 @@ public class Issue {
         if (id == null) {
             id = UUID.randomUUID().toString();
         }
-        if (status == null) {
-            status = IssueStatus.DRAFT;
-        }
-        // COND-18: keep the current_status string mirror non-null even for rows saved without it
-        // (the enum status remains the authority; current_status is the forward-compat string view).
-        if (currentStatus == null && status != null) {
-            currentStatus = status.name();
-        }
+        // current_status is the authority and is set by the application service from the bound
+        // Workflow's initial status (statechart-driven), not defaulted here.
         createdAt = OffsetDateTime.now();
         updatedAt = OffsetDateTime.now();
     }
 
     @PreUpdate
     protected void onUpdate() {
-        if (currentStatus == null && status != null) {
-            currentStatus = status.name();
-        }
         updatedAt = OffsetDateTime.now();
     }
 
@@ -140,17 +122,14 @@ public class Issue {
     public Project getProject() { return project; }
     public void setProject(Project project) { this.project = project; }
 
-    public IssueType getType() { return type; }
-    public void setType(IssueType type) { this.type = type; }
+    public String getType() { return type; }
+    public void setType(String type) { this.type = type; }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
-
-    public IssueStatus getStatus() { return status; }
-    public void setStatus(IssueStatus status) { this.status = status; }
 
     public Integer getSequenceNumber() { return sequenceNumber; }
     public void setSequenceNumber(Integer sequenceNumber) { this.sequenceNumber = sequenceNumber; }
@@ -166,9 +145,6 @@ public class Issue {
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
-
-    public String getGithubPrUrl() { return githubPrUrl; }
-    public void setGithubPrUrl(String githubPrUrl) { this.githubPrUrl = githubPrUrl; }
 
     public String getWorkflow() { return workflow; }
     public void setWorkflow(String workflow) { this.workflow = workflow; }

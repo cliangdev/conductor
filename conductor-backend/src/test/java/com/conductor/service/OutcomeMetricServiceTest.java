@@ -3,11 +3,11 @@ package com.conductor.service;
 import com.conductor.entity.Issue;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
-import com.conductor.entity.WorkflowDefinition;
+import com.conductor.entity.WorkflowDefinitionVersion;
 import com.conductor.generated.model.OutcomeMetricResponse;
 import com.conductor.generated.model.RecordMetricObservationRequest;
 import com.conductor.repository.IssueRepository;
-import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,7 +27,7 @@ class OutcomeMetricServiceTest {
 
     private IssueRepository issueRepository;
     private ProjectSecurityService projectSecurityService;
-    private WorkflowDefinitionRepository definitionRepository;
+    private WorkflowDefinitionVersionRepository versionRepository;
     private OutcomeMetricService service;
     // Mirror the production ObjectMapper bean (RestTemplateConfig) — JavaTimeModule for OffsetDateTime.
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
@@ -36,8 +36,8 @@ class OutcomeMetricServiceTest {
     void setUp() {
         issueRepository = Mockito.mock(IssueRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
-        definitionRepository = Mockito.mock(WorkflowDefinitionRepository.class);
-        WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(definitionRepository, mapper);
+        versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
+        WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository, mapper);
         service = new OutcomeMetricService(issueRepository, projectSecurityService, resolver, mapper);
         when(issueRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
@@ -88,14 +88,10 @@ class OutcomeMetricServiceTest {
                   "transitions": [ {"from": "OPEN", "to": "DONE", "label": "Close"} ]
                 }
                 """;
-        WorkflowDefinition row = new WorkflowDefinition();
-        Project p = new Project();
-        p.setId(PROJECT_ID);
-        row.setProject(p);
-        row.setState("PUBLISHED");
-        row.setVersion(1);
-        row.setDefinition(mapper.readTree(def));
-        when(definitionRepository.findLatestPublishedBySlug(PROJECT_ID, "GROWTH")).thenReturn(Optional.of(row));
+        WorkflowDefinitionVersion snapshot = new WorkflowDefinitionVersion();
+        snapshot.setVersion(1);
+        snapshot.setDefinition(mapper.readTree(def));
+        when(versionRepository.findLatestPublished(PROJECT_ID, "GROWTH")).thenReturn(Optional.of(snapshot));
         when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue("GROWTH")));
 
         OutcomeMetricResponse response =

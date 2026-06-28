@@ -5,7 +5,9 @@ import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.lifecycle.SkillRegistry;
+import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionValidator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,15 +34,19 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private WorkflowDefinitionRepository repository;
+    private WorkflowDefinitionVersionRepository versionRepository;
     private ProjectSecurityService security;
+    private WorkflowDefinitionResolver resolver;
     private WorkflowDefinitionLifecycleService service;
 
     @BeforeEach
     void setUp() {
         repository = Mockito.mock(WorkflowDefinitionRepository.class);
+        versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
         security = Mockito.mock(ProjectSecurityService.class);
+        resolver = Mockito.mock(WorkflowDefinitionResolver.class);
         WorkflowDefinitionValidator validator = new WorkflowDefinitionValidator(new SkillRegistry(mapper));
-        service = new WorkflowDefinitionLifecycleService(repository, security, validator);
+        service = new WorkflowDefinitionLifecycleService(repository, versionRepository, security, validator, resolver);
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -124,5 +130,18 @@ class WorkflowDefinitionLifecycleServiceTest {
         assertThat(published.getVersion()).isEqualTo(1);
         assertThat(published.getSchemaVersion()).isEqualTo(1);
         verify(repository).save(row);
+    }
+
+    @Test
+    void publishingReservedBuiltInSlugIsRejected() throws Exception {
+        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        WorkflowDefinition row = definitionRow(engineeringDefinition());
+        when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));
+        when(resolver.isBuiltIn("ENGINEERING")).thenReturn(true);
+
+        assertThatThrownBy(() -> service.publish(PROJECT_ID, WORKFLOW_ID, CALLER_ID))
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("reserved");
+        verify(repository, never()).save(any());
     }
 }

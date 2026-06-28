@@ -79,7 +79,7 @@ class NotificationGroupServiceTest {
                 .thenReturn(Optional.empty());
         when(groupConfigRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        NotificationGroupRequest req = buildRequest("https://discord.com/test", List.of("ISSUE_SUBMITTED"));
+        NotificationGroupRequest req = buildRequest("https://discord.com/test", List.of("ISSUE_STATUS_CHANGED"));
         NotificationGroupService.UpsertResult result = service.upsertGroup("proj-1", "ISSUES", req, adminUser);
 
         assertThat(result.isNew()).isTrue();
@@ -88,7 +88,7 @@ class NotificationGroupServiceTest {
         NotificationGroupConfig saved = captor.getValue();
         assertThat(saved.getChannelGroup()).isEqualTo(ChannelGroup.ISSUES);
         assertThat(saved.getWebhookUrl()).isEqualTo("https://discord.com/test");
-        assertThat(saved.getEnabledEventTypes()).containsExactly("ISSUE_SUBMITTED");
+        assertThat(saved.getEnabledEventTypes()).containsExactly("ISSUE_STATUS_CHANGED");
         assertThat(saved.isEnabled()).isTrue();
     }
 
@@ -100,17 +100,17 @@ class NotificationGroupServiceTest {
         when(groupConfigRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         NotificationGroupRequest req = buildRequest("https://discord.com/updated",
-                List.of("ISSUE_SUBMITTED", "ISSUE_APPROVED"));
+                List.of("ISSUE_STATUS_CHANGED", "REVIEW_SUBMITTED"));
         NotificationGroupService.UpsertResult result = service.upsertGroup("proj-1", "ISSUES", req, adminUser);
 
         assertThat(result.isNew()).isFalse();
         assertThat(result.config().getWebhookUrl()).isEqualTo("https://discord.com/updated");
-        assertThat(result.config().getEnabledEventTypes()).containsExactlyInAnyOrder("ISSUE_SUBMITTED", "ISSUE_APPROVED");
+        assertThat(result.config().getEnabledEventTypes()).containsExactlyInAnyOrder("ISSUE_STATUS_CHANGED", "REVIEW_SUBMITTED");
     }
 
     @Test
     void upsertGroupThrowsForBlankWebhookUrl() {
-        NotificationGroupRequest req = buildRequest("  ", List.of("ISSUE_SUBMITTED"));
+        NotificationGroupRequest req = buildRequest("  ", List.of("ISSUE_STATUS_CHANGED"));
 
         assertThatThrownBy(() -> service.upsertGroup("proj-1", "ISSUES", req, adminUser))
                 .isInstanceOf(BusinessException.class)
@@ -120,11 +120,11 @@ class NotificationGroupServiceTest {
     @Test
     void upsertGroupThrowsForEventTypeNotInGroup() {
         NotificationGroupRequest req = buildRequest("https://discord.com/test",
-                List.of("ISSUE_SUBMITTED"));
+                List.of("ISSUE_STATUS_CHANGED"));
 
         assertThatThrownBy(() -> service.upsertGroup("proj-1", "MEMBERS", req, adminUser))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("ISSUE_SUBMITTED");
+                .hasMessageContaining("ISSUE_STATUS_CHANGED");
     }
 
     @Test
@@ -158,7 +158,7 @@ class NotificationGroupServiceTest {
     @Test
     void testGroupReturnsSuccessWhenConfigExists() {
         NotificationGroupConfig config = buildConfig(ChannelGroup.ISSUES);
-        config.setEnabledEventTypes(Set.of("ISSUE_SUBMITTED"));
+        config.setEnabledEventTypes(Set.of("ISSUE_STATUS_CHANGED"));
         when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.ISSUES))
                 .thenReturn(Optional.of(config));
 

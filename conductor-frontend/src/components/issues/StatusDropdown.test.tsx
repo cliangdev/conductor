@@ -1,11 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import type { WorkflowView } from '@/types/workItem'
 import { StatusDropdown } from './StatusDropdown'
 
 vi.mock('@/lib/api', () => ({
   apiGet: vi.fn(),
   apiPatch: vi.fn(),
 }))
+
+// Stub only the network-backed hook; keep the real label/color helpers so we exercise the
+// WorkflowView-driven rendering (COND-18) without hitting the module cache or the API.
+const MOCK_VIEW: WorkflowView = {
+  slug: 'ENGINEERING',
+  noun: 'Issue',
+  defaultView: 'list',
+  version: 1,
+  types: ['PRD', 'TASK'],
+  statuses: [
+    { id: 'DRAFT', label: 'Draft', category: 'open' },
+    { id: 'IN_REVIEW', label: 'In Review', category: 'open' },
+    { id: 'CODE_REVIEW', label: 'Code Review', category: 'in_progress' },
+    { id: 'DONE', label: 'Done', category: 'terminal' },
+    { id: 'CLOSED', label: 'Closed', category: 'terminal' },
+  ],
+  transitions: [],
+}
+
+vi.mock('@/lib/workflows', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/workflows')>()
+  return { ...actual, useWorkflowView: () => MOCK_VIEW }
+})
 
 import { apiGet, apiPatch } from '@/lib/api'
 
@@ -35,7 +59,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
         'tok'
       )
     )
-    // current status badge renders
+    // current status badge renders, resolved from the WorkflowView
     expect(screen.getByText('Draft')).toBeInTheDocument()
   })
 
@@ -54,9 +78,10 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
     expect(apiPatch).not.toHaveBeenCalled()
   })
 
-  it('renders a read-only badge for REVIEWER and does not fetch', () => {
+  it('renders a read-only badge for REVIEWER and does not fetch transitions', () => {
     render(<StatusDropdown {...baseProps} userRole="REVIEWER" />)
     expect(screen.getByText('Draft')).toBeInTheDocument()
+    // REVIEWER never queries available-transitions (the WorkflowView hook is stubbed here).
     expect(apiGet).not.toHaveBeenCalled()
   })
 })

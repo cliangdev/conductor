@@ -75,9 +75,11 @@ export function TaskProgressPanel({ issueId, projectId }: TaskProgressPanelProps
       })
   }, [accessToken, projectId, issueId])
 
-  if (!loaded) return null
+  // Self-hide until loaded, and stay hidden when the Work Item has no implementation plan — the
+  // panel is only meaningful once `/tasks` returns epics (COND-18: not every Workflow has tasks).
+  if (!loaded || !tasksData) return null
 
-  const allTasks = tasksData ? tasksData.epics.flatMap((e) => e.tasks) : []
+  const allTasks = tasksData.epics.flatMap((e) => e.tasks)
   const totalTasks = allTasks.length
   const completedTasks = countCompleted(allTasks)
   const percentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0
@@ -100,19 +102,13 @@ export function TaskProgressPanel({ issueId, projectId }: TaskProgressPanelProps
           )}
         </button>
 
-        {!expanded && tasksData && (
+        {!expanded && (
           <div className="mt-2">
             <ProgressBar percentage={percentage} />
           </div>
         )}
 
-        {!tasksData && expanded && (
-          <p className="mt-2 text-xs text-muted-foreground">
-            No implementation plan yet. Run <code className="font-mono">/conductor:implement</code> to generate one.
-          </p>
-        )}
-
-        {expanded && tasksData && (
+        {expanded && (
           <div className="mt-2 space-y-3">
             <div>
               <p className="text-xs text-muted-foreground mb-1.5">

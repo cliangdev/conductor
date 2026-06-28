@@ -613,13 +613,21 @@ paths:
         - name: type
           in: query
           required: false
+          description: Filter by Work Item type (validated against the bound Workflow's types).
           schema:
-            $ref: "#/components/schemas/IssueType"
+            type: string
         - name: status
           in: query
           required: false
+          description: Filter by Work Item status (a Workflow-defined status id, e.g. DRAFT).
           schema:
-            $ref: "#/components/schemas/IssueStatus"
+            type: string
+        - name: workflow
+          in: query
+          required: false
+          description: Filter by bound Workflow slug (e.g. ENGINEERING) — for per-Workflow view pages.
+          schema:
+            type: string
       responses:
         "200":
           description: List of issues
@@ -3596,6 +3604,10 @@ paths:
     get:
       tags: [workflows]
       summary: List workflows for a project
+      description: >-
+        Returns the project's Workflow definitions. Optional filters narrow to lifecycle (statechart) vs
+        automation (YAML) workflows and by lifecycle state — e.g. `?lifecycle=true&state=PUBLISHED` for the
+        published statechart workflows a sidebar/nav needs, so callers don't filter on internal shape.
       operationId: listWorkflows
       security:
         - bearerAuth: []
@@ -3604,6 +3616,20 @@ paths:
         - name: projectId
           in: path
           required: true
+          schema:
+            type: string
+        - name: lifecycle
+          in: query
+          required: false
+          description: >-
+            true → only lifecycle (statechart) workflows (have a `definition`); false → only automation
+            (YAML) workflows; omit for all.
+          schema:
+            type: boolean
+        - name: state
+          in: query
+          required: false
+          description: Filter by lifecycle state (DRAFT | PUBLISHED).
           schema:
             type: string
       responses:
@@ -3643,6 +3669,84 @@ paths:
                 $ref: "#/components/schemas/WorkflowCreateResponse"
         "422":
           description: Validation error or limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/workflows/by-slug/{slug}:
+    get:
+      tags: [workflows]
+      summary: Get a lean, render-ready view of a Workflow by slug
+      description: >-
+        Resolves a Workflow's statechart by its slug (e.g. ENGINEERING) — including built-in workflows that
+        have no DB row — and returns the display metadata the UI needs to render Work Items: noun, statuses
+        (with labels + categories), transitions, types, asset types, and the optional metric. Pass `version`
+        to resolve a specific pinned version; omit for the latest published.
+      operationId: getWorkflowView
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: The Workflow view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowView"
+        "404":
+          description: Workflow not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/workflows/{workflowId}/versions:
+    get:
+      tags: [workflows]
+      summary: List the published version history of a Workflow
+      operationId: listWorkflowVersions
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Published versions, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkflowVersionSummary"
+        "404":
+          description: Workflow not found
           content:
             application/json:
               schema:
@@ -5622,24 +5726,6 @@ components:
         role:
           type: string
 
-    IssueType:
-      type: string
-      enum:
-        - PRD
-        - FEATURE_REQUEST
-        - BUG_REPORT
-
-    IssueStatus:
-      type: string
-      enum:
-        - DRAFT
-        - IN_REVIEW
-        - READY_FOR_DEVELOPMENT
-        - IN_PROGRESS
-        - CODE_REVIEW
-        - DONE
-        - CLOSED
-
     IssueResponse:
       type: object
       required:
@@ -5659,13 +5745,15 @@ components:
         projectId:
           type: string
         type:
-          $ref: "#/components/schemas/IssueType"
+          type: string
+          description: Work Item type — a Workflow-defined string (e.g. PRD).
         title:
           type: string
         description:
           type: string
         status:
-          $ref: "#/components/schemas/IssueStatus"
+          type: string
+          description: Current status — a Workflow-defined status id (e.g. DRAFT).
         createdBy:
           type: string
         createdAt:
@@ -5683,9 +5771,6 @@ components:
           type: integer
         assignee:
           $ref: "#/components/schemas/IssueAssignee"
-        githubPrUrl:
-          type: string
-          nullable: true
 
     IssueAssignee:
       type: object
@@ -5708,7 +5793,10 @@ components:
         - title
       properties:
         type:
-          $ref: "#/components/schemas/IssueType"
+          type: string
+          description: >-
+            Work Item type — a Workflow-defined string (e.g. PRD), validated against the
+            chosen Workflow's allowed types.
         title:
           type: string
           maxLength: 255
@@ -5730,7 +5818,10 @@ components:
         description:
           type: string
         status:
-          $ref: "#/components/schemas/IssueStatus"
+          type: string
+          description: >-
+            Target status — a Workflow-defined status id (e.g. IN_REVIEW). The move is
+            validated against the bound Workflow and the Review gate.
         assigneeId:
           type: string
           nullable: true
@@ -6565,6 +6656,106 @@ components:
           type: string
         done:
           type: boolean
+
+    WorkflowView:
+      type: object
+      description: >-
+        Lean, render-ready projection of a Workflow's statechart for the UI. Resolved by slug via the
+        Workflow resolver, so it covers built-in workflows (e.g. ENGINEERING) as well as project-authored ones.
+      required: [slug, noun, defaultView, version, types, statuses, transitions]
+      properties:
+        slug:
+          type: string
+        noun:
+          type: string
+          description: Display noun for this Workflow's Work Items (e.g. "Issue").
+        defaultView:
+          type: string
+          description: Default Work Item list rendering (list | board | calendar).
+        version:
+          type: integer
+        types:
+          type: array
+          items:
+            type: string
+        assetTypes:
+          type: array
+          items:
+            type: string
+        statuses:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowStatusView"
+        transitions:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowTransitionView"
+        metric:
+          $ref: "#/components/schemas/WorkflowMetricView"
+
+    WorkflowStatusView:
+      type: object
+      required: [id, label, category]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+          description: Human-friendly display name; falls back to the id.
+        category:
+          type: string
+          description: Lane grouping — open | in_progress | terminal. Drives Active/Done bucketing and color.
+        initial:
+          type: boolean
+        terminal:
+          type: boolean
+
+    WorkflowTransitionView:
+      type: object
+      required: [from, to, label]
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        label:
+          type: string
+        requiresReview:
+          type: boolean
+        reviewerRole:
+          type: string
+          nullable: true
+        trigger:
+          type: string
+          nullable: true
+
+    WorkflowMetricView:
+      type: object
+      required: [name, direction]
+      properties:
+        name:
+          type: string
+        unit:
+          type: string
+          nullable: true
+        direction:
+          type: string
+
+    WorkflowVersionSummary:
+      type: object
+      required: [version, publishedAt]
+      properties:
+        version:
+          type: integer
+        schemaVersion:
+          type: integer
+          nullable: true
+        publishedAt:
+          type: string
+          format: date-time
+        publishedBy:
+          type: string
+          nullable: true
 
     WorkflowDefinitionDto:
       type: object

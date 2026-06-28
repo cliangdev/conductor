@@ -1,8 +1,6 @@
 package com.conductor.repository;
 
 import com.conductor.entity.Issue;
-import com.conductor.entity.IssueStatus;
-import com.conductor.entity.IssueType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,13 +12,22 @@ import java.util.Optional;
 @Repository
 public interface IssueRepository extends JpaRepository<Issue, String> {
 
-    List<Issue> findByProjectId(String projectId);
-
-    List<Issue> findByProjectIdAndType(String projectId, IssueType type);
-
-    List<Issue> findByProjectIdAndStatus(String projectId, IssueStatus status);
-
-    List<Issue> findByProjectIdAndTypeAndStatus(String projectId, IssueType type, IssueStatus status);
+    /**
+     * List a project's Work Items with optional, independent filters on type, current status, and bound
+     * Workflow slug. A null filter is ignored, so all 8 combinations are served by one query (avoids a
+     * combinatorial set of derived finders). Workflow filtering backs per-Workflow view pages.
+     */
+    @Query("""
+            SELECT i FROM Issue i
+            WHERE i.project.id = :projectId
+              AND (:type IS NULL OR i.type = :type)
+              AND (:status IS NULL OR i.currentStatus = :status)
+              AND (:workflow IS NULL OR i.workflow = :workflow)
+            """)
+    List<Issue> findByProjectFiltered(@Param("projectId") String projectId,
+                                      @Param("type") String type,
+                                      @Param("status") String status,
+                                      @Param("workflow") String workflow);
 
     @Query("SELECT COALESCE(MAX(i.sequenceNumber), 0) FROM Issue i WHERE i.project.id = :projectId")
     Integer findMaxSequenceNumberByProjectId(@Param("projectId") String projectId);

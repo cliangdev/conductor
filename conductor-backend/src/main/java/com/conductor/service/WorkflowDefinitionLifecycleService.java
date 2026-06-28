@@ -1,11 +1,16 @@
 package com.conductor.service;
 
 import com.conductor.entity.WorkflowDefinition;
+import com.conductor.entity.WorkflowDefinitionVersion;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.WorkflowValidationResult;
+import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionValidator;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,15 +28,21 @@ public class WorkflowDefinitionLifecycleService {
     static final String STATE_PUBLISHED = "PUBLISHED";
 
     private final WorkflowDefinitionRepository definitionRepository;
+    private final WorkflowDefinitionVersionRepository versionRepository;
     private final ProjectSecurityService projectSecurityService;
     private final WorkflowDefinitionValidator validator;
+    private final WorkflowDefinitionResolver resolver;
 
     public WorkflowDefinitionLifecycleService(WorkflowDefinitionRepository definitionRepository,
+                                              WorkflowDefinitionVersionRepository versionRepository,
                                               ProjectSecurityService projectSecurityService,
-                                              WorkflowDefinitionValidator validator) {
+                                              WorkflowDefinitionValidator validator,
+                                              WorkflowDefinitionResolver resolver) {
         this.definitionRepository = definitionRepository;
+        this.versionRepository = versionRepository;
         this.projectSecurityService = projectSecurityService;
         this.validator = validator;
+        this.resolver = resolver;
     }
 
     /**
@@ -58,8 +69,22 @@ public class WorkflowDefinitionLifecycleService {
         if (!hasStatechart && !hasYaml) {
             throw new UnprocessableEntityException("Workflow has no definition to publish");
         }
+        // A workflow is either a lifecycle statechart or a YAML automation, not both: only the statechart is
+        // validated and version-snapshotted, so a dual-type definition would be partially pinned. Reject it.
+        if (hasStatechart && hasYaml) {
+            throw new UnprocessableEntityException(
+                    "Workflow cannot have both a statechart definition and YAML automation");
+        }
 
         if (hasStatechart) {
+            // Built-in slugs (e.g. ENGINEERING) are reserved: a project-authored definition that reused one
+            // would, once published, shadow the built-in chart for every in-flight Work Item pinned to it
+            // (those have no DB snapshot and resolve DB-first). Reject the collision at the binding gate.
+            JsonNode idNode = definition.getDefinition().get("id");
+            if (idNode != null && resolver.isBuiltIn(idNode.asText())) {
+                throw new UnprocessableEntityException(
+                        "Workflow id '" + idNode.asText() + "' is reserved by a built-in workflow; choose a different id");
+            }
             WorkflowValidationResult result = validator.validate(definition.getDefinition());
             if (result.hasErrors()) {
                 throw new UnprocessableEntityException(
@@ -67,17 +92,39 @@ public class WorkflowDefinitionLifecycleService {
             }
         }
 
+        int newVersion = definition.getVersion() == null ? 1 : definition.getVersion() + 1;
         definition.setState(STATE_PUBLISHED);
         // Always advance the version on publish so re-publishing an edited definition is observable.
-        // NOTE (deferred to the authoring/Builder phase): WorkflowDefinitionResolver currently resolves
-        // the latest PUBLISHED version by slug and does NOT honor a Work Item's pinned workflow_version,
-        // so in-flight Work Items are not yet pinned to the version they started on. Pinning + in-flight
-        // migration land with the editing experience (no edit/re-publish path exists in the v1 API yet).
-        definition.setVersion(definition.getVersion() == null ? 1 : definition.getVersion() + 1);
+        definition.setVersion(newVersion);
         if (definition.getSchemaVersion() == null && definition.getDefinition() != null
                 && definition.getDefinition().hasNonNull("schemaVersion")) {
             definition.setSchemaVersion(definition.getDefinition().get("schemaVersion").asInt());
         }
-        return definitionRepository.save(definition);
+
+        // Keep the definition JSON self-consistent with the header (its own version/state fields). Assign a
+        // fresh node (not an in-place mutation) so Hibernate reliably detects the change and persists it.
+        if (definition.getDefinition() instanceof ObjectNode json) {
+            ObjectNode updated = json.deepCopy();
+            updated.put("version", newVersion);
+            updated.put("state", STATE_PUBLISHED);
+            definition.setDefinition(updated);
+        }
+
+        WorkflowDefinition saved = definitionRepository.save(definition);
+
+        // Wave 5: snapshot the published definition immutably so in-flight Work Items pinned to an earlier
+        // version keep resolving the rules they started on.
+        if (saved.getDefinition() != null) {
+            JsonNode snapshotJson = saved.getDefinition().deepCopy();
+            WorkflowDefinitionVersion snapshot = new WorkflowDefinitionVersion();
+            snapshot.setWorkflowDefinition(saved);
+            snapshot.setVersion(newVersion);
+            snapshot.setDefinition(snapshotJson);
+            snapshot.setSchemaVersion(saved.getSchemaVersion());
+            snapshot.setPublishedBy(callerId);
+            versionRepository.save(snapshot);
+        }
+
+        return saved;
     }
 }

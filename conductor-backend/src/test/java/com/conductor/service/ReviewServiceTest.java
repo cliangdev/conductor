@@ -2,8 +2,6 @@ package com.conductor.service;
 
 import com.conductor.entity.Issue;
 import com.conductor.entity.IssueReviewer;
-import com.conductor.entity.IssueStatus;
-import com.conductor.entity.IssueType;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
@@ -102,9 +100,9 @@ class ReviewServiceTest {
         issue = new Issue();
         issue.setId(ISSUE_ID);
         issue.setProject(project);
-        issue.setType(IssueType.PRD);
+        issue.setType("PRD");
         issue.setTitle("Test Issue");
-        issue.setStatus(IssueStatus.IN_REVIEW);
+        issue.setCurrentStatus("IN_REVIEW");
         issue.setCreatedBy(creatorUser);
         issue.setCreatedAt(OffsetDateTime.now());
         issue.setUpdatedAt(OffsetDateTime.now());

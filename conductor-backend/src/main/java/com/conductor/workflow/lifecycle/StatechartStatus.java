@@ -7,17 +7,24 @@ import com.fasterxml.jackson.databind.JsonNode;
  * {@code statuses[]} entry of a Workflow definition.
  *
  * @param id       UPPER_SNAKE status id (e.g. {@code DRAFT})
+ * @param label    human-friendly display name (e.g. {@code Ready for Development}); falls back to the id
  * @param category lane grouping — {@code open} | {@code in_progress} | {@code terminal}
  * @param initial  whether this is the start status (exactly one per Statechart)
  * @param terminal whether this is an end status
  */
-public record StatechartStatus(String id, String category, boolean initial, boolean terminal) {
+public record StatechartStatus(String id, String label, String category, boolean initial, boolean terminal) {
 
     static StatechartStatus parse(JsonNode node) {
         return new StatechartStatus(
                 Json.text(node, "id"),
+                Json.text(node, "label"),
                 Json.text(node, "category"),
                 Json.bool(node, "initial"),
                 Json.bool(node, "terminal"));
+    }
+
+    /** Display name for this status — the explicit {@code label}, or the id when none is set. */
+    public String displayLabel() {
+        return label == null || label.isBlank() ? id : label;
     }
 }

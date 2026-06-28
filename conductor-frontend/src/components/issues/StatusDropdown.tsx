@@ -9,6 +9,12 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
 import { apiGet, apiPatch } from '@/lib/api'
+import {
+  DEFAULT_WORKFLOW_SLUG,
+  categoryVariant,
+  statusMeta,
+  useWorkflowView,
+} from '@/lib/workflows'
 
 type UserRole = 'ADMIN' | 'CREATOR' | 'REVIEWER'
 
@@ -19,35 +25,8 @@ interface StatusDropdownProps {
   userRole: UserRole
   token: string
   onStatusChanged: (newStatus: string) => void
-}
-
-type StatusVariant =
-  | 'status-draft'
-  | 'status-review'
-  | 'status-approved'
-  | 'status-progress'
-  | 'status-code-review'
-  | 'status-done'
-  | 'status-closed'
-
-const STATUS_VARIANTS: Record<string, StatusVariant> = {
-  DRAFT: 'status-draft',
-  IN_REVIEW: 'status-review',
-  READY_FOR_DEVELOPMENT: 'status-approved',
-  IN_PROGRESS: 'status-progress',
-  CODE_REVIEW: 'status-code-review',
-  DONE: 'status-done',
-  CLOSED: 'status-closed',
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  DRAFT: 'Draft',
-  IN_REVIEW: 'In Review',
-  READY_FOR_DEVELOPMENT: 'Ready for Development',
-  IN_PROGRESS: 'In Progress',
-  CODE_REVIEW: 'Code Review',
-  DONE: 'Done',
-  CLOSED: 'Closed',
+  /** Workflow the Work Item is bound to; defaults to the project's Engineering Workflow. */
+  workflowSlug?: string
 }
 
 interface AvailableTransition {
@@ -63,14 +42,12 @@ interface AvailableTransitionsResponse {
   transitions: AvailableTransition[]
 }
 
-function statusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? status.replace(/_/g, ' ')
-}
-
 /**
- * COND-18: the doer's status control. The valid next moves are computed server-side from the active
- * Workflow definition (GET .../available-transitions) — not a hardcoded table — so a review-gated
- * transition stays hidden until its Review is satisfied, and the same control works for any Workflow.
+ * COND-18: the doer's status control. The current status's label + color come from the bound
+ * Workflow's view (single source — see lib/workflows), and the valid next moves are computed
+ * server-side from the active Workflow definition (GET .../available-transitions) — not a hardcoded
+ * table — so a review-gated transition stays hidden until its Review is satisfied, and the same
+ * control works for any Workflow.
  */
 export function StatusDropdown({
   projectId,
@@ -79,12 +56,14 @@ export function StatusDropdown({
   userRole,
   token,
   onStatusChanged,
+  workflowSlug = DEFAULT_WORKFLOW_SLUG,
 }: StatusDropdownProps) {
   const [loading, setLoading] = useState(false)
   const [transitions, setTransitions] = useState<AvailableTransition[]>([])
 
-  const currentVariant = STATUS_VARIANTS[currentStatus] ?? 'status-draft'
-  const displayLabel = statusLabel(currentStatus)
+  const view = useWorkflowView(projectId, workflowSlug, token)
+  const { label: displayLabel, category } = statusMeta(view, currentStatus)
+  const currentVariant = categoryVariant(category)
 
   useEffect(() => {
     if (userRole === 'REVIEWER' || !token) return
@@ -136,18 +115,21 @@ export function StatusDropdown({
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {transitions.map((t) => (
-          <DropdownMenuItem
-            key={t.toStatus}
-            onClick={() => handleSelect(t.toStatus)}
-            className="cursor-pointer"
-          >
-            <Badge variant={STATUS_VARIANTS[t.toStatus] ?? 'status-draft'} className="mr-2">
-              {t.label || statusLabel(t.toStatus)}
-            </Badge>
-            {t.requiresReview && <span className="text-xs opacity-60">needs review</span>}
-          </DropdownMenuItem>
-        ))}
+        {transitions.map((t) => {
+          const meta = statusMeta(view, t.toStatus)
+          return (
+            <DropdownMenuItem
+              key={t.toStatus}
+              onClick={() => handleSelect(t.toStatus)}
+              className="cursor-pointer"
+            >
+              <Badge variant={categoryVariant(meta.category)} className="mr-2">
+                {t.label || meta.label}
+              </Badge>
+              {t.requiresReview && <span className="text-xs opacity-60">needs review</span>}
+            </DropdownMenuItem>
+          )
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   )

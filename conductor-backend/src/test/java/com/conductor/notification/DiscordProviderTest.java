@@ -12,13 +12,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import java.util.HashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -41,49 +41,158 @@ class DiscordProviderTest {
         discordProvider = new DiscordProvider(restTemplate, FRONTEND_URL);
     }
 
+    /**
+     * Build the enriched metadata IssueService now sends on a status change. Pass an explicit status label and
+     * category to mimic a resolved {@code Statechart} status; assignee/prUrl are optional.
+     */
+    private Map<String, String> statusChangedMeta(String noun, String toStatus, String toStatusLabel,
+                                                  String toCategory) {
+        Map<String, String> meta = new HashMap<>();
+        meta.put("issueId", ISSUE_ID);
+        meta.put("issueTitle", ISSUE_TITLE);
+        meta.put("projectId", PROJECT_ID);
+        meta.put("workflow", "ENGINEERING");
+        if (noun != null) meta.put("noun", noun);
+        meta.put("fromStatus", "DRAFT");
+        meta.put("toStatus", toStatus);
+        if (toStatusLabel != null) meta.put("toStatusLabel", toStatusLabel);
+        if (toCategory != null) meta.put("toCategory", toCategory);
+        return meta;
+    }
+
+    // --- ISSUE_STATUS_CHANGED: the single, Workflow-agnostic status event ---
+
     @Test
-    void formatIssueInProgressWithAssigneeNameIncludesAssigneeInDescription() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_IN_PROGRESS, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "assigneeName", "Alice"));
+    void statusChangedTitleUsesNounAndToStatusLabel() {
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                statusChangedMeta("Issue", "IN_REVIEW", "In Review", "in_progress"));
 
         String result = discordProvider.format(event);
 
-        assertThat(result).contains("Issue In Progress");
-        assertThat(result).contains("Assigned to Alice");
+        assertThat(result).contains("embeds");
+        assertThat(result).contains("Issue moved to In Review");
         assertThat(result).contains(ISSUE_TITLE);
-        assertThat(result).contains("Assigned to Alice \u2014 " + ISSUE_TITLE);
+        assertThat(result).contains(PROJECT_ID);
+        assertThat(result).contains(ISSUE_ID);
+        assertThat(result).contains("timestamp");
     }
 
     @Test
-    void formatIssueInProgressWithoutAssigneeNameUsesIssueTitle() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_IN_PROGRESS, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+    void statusChangedHumanizesToStatusWhenNoLabel() {
+        // No toStatusLabel in metadata → the provider humanizes the UPPER_SNAKE status id.
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                statusChangedMeta("Issue", "CODE_REVIEW", null, "in_progress"));
 
         String result = discordProvider.format(event);
 
-        assertThat(result).contains("Issue In Progress");
+        assertThat(result).contains("Issue moved to Code review");
+    }
+
+    @Test
+    void statusChangedDefaultsNounToWorkItem() {
+        // No noun in metadata → defaults to the generic "Work Item".
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                statusChangedMeta(null, "DONE", "Done", "terminal"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Work Item moved to Done");
+    }
+
+    @Test
+    void statusChangedWithAssigneeIncludesAssigneeInDescription() {
+        Map<String, String> meta = statusChangedMeta("Issue", "IN_PROGRESS", "In Progress", "in_progress");
+        meta.put("assigneeName", "Alice");
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID, meta);
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Issue moved to In Progress");
+        assertThat(result).contains("Assigned to Alice");
+        assertThat(result).contains(ISSUE_TITLE);
+        assertThat(result).contains("Assigned to Alice — " + ISSUE_TITLE);
+    }
+
+    @Test
+    void statusChangedWithoutAssigneeUsesIssueTitle() {
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                statusChangedMeta("Issue", "IN_PROGRESS", "In Progress", "in_progress"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Issue moved to In Progress");
         assertThat(result).contains(ISSUE_TITLE);
         assertThat(result).doesNotContain("Assigned to");
     }
 
     @Test
-    void formatIssueSubmittedContainsCorrectTitleAndDescription() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+    void statusChangedWithPrUrlContainsFieldsWithPrLink() {
+        String prUrl = "https://github.com/org/repo/pull/42";
+        Map<String, String> meta = statusChangedMeta("Issue", "DONE", "Done", "terminal");
+        meta.put("prUrl", prUrl);
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID, meta);
 
         String result = discordProvider.format(event);
 
-        assertThat(result).contains("embeds");
-        assertThat(result).contains("Issue Submitted for Review");
-        assertThat(result).contains(ISSUE_TITLE);
-        assertThat(result).contains(PROJECT_ID);
-        assertThat(result).contains(ISSUE_ID);
-        assertThat(result).contains("10181046"); // 0x9B59B6 purple for ISSUE_SUBMITTED
-        assertThat(result).contains("timestamp");
+        assertThat(result).contains("\"fields\"");
+        assertThat(result).contains("Pull Request");
+        assertThat(result).contains(prUrl);
     }
+
+    @Test
+    void statusChangedWithoutPrUrlDoesNotContainFields() {
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                statusChangedMeta("Issue", "CODE_REVIEW", "Code Review", "in_progress"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).doesNotContain("\"fields\"");
+    }
+
+    // --- ISSUE_STATUS_CHANGED color is derived from the target status category (Workflow-agnostic) ---
+
+    @Test
+    void colorForTerminalCategoryIsGreen() {
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                statusChangedMeta("Issue", "DONE", "Done", "terminal"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":" + 0x57F287); // green 5763719
+    }
+
+    @Test
+    void colorForInProgressCategoryIsBlue() {
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                statusChangedMeta("Issue", "CODE_REVIEW", "Code Review", "in_progress"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":" + 0x5865F2); // blue 5793266
+    }
+
+    @Test
+    void colorForOpenCategoryIsGrey() {
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                statusChangedMeta("Issue", "DRAFT", "Draft", "open"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":" + 0x99AAB5); // grey
+    }
+
+    @Test
+    void colorForMissingCategoryIsDefaultBlue() {
+        // No toCategory → the provider falls back to its default blue.
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                statusChangedMeta("Issue", "BACKLOG", "Backlog", null));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":" + 0x58B9FF); // default blue 5814783
+    }
+
+    // --- Non-status events (unchanged by the COND-18 collapse) ---
 
     @Test
     void formatReviewerAssignedContainsReviewerName() {
@@ -181,30 +290,6 @@ class DiscordProviderTest {
     }
 
     @Test
-    void formatIssueApprovedContainsTitle() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_APPROVED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
-
-        String result = discordProvider.format(event);
-
-        assertThat(result).contains("Issue Approved");
-        assertThat(result).contains(ISSUE_TITLE);
-    }
-
-    @Test
-    void formatIssueCompletedContainsTitle() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_COMPLETED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
-
-        String result = discordProvider.format(event);
-
-        assertThat(result).contains("Issue Completed");
-        assertThat(result).contains(ISSUE_TITLE);
-    }
-
-    @Test
     void formatCommentAddedContainsAuthor() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.COMMENT_ADDED, PROJECT_ID,
@@ -253,11 +338,13 @@ class DiscordProviderTest {
         assertThat(result).contains("ADMIN");
     }
 
+    // --- Embed envelope / escaping / transport ---
+
     @Test
     void formatContainsValidEmbedStructure() {
         NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+                EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                statusChangedMeta("Issue", "IN_REVIEW", "In Review", "in_progress"));
 
         String result = discordProvider.format(event);
 
@@ -271,39 +358,14 @@ class DiscordProviderTest {
 
     @Test
     void formatEscapesSpecialCharacters() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", "Title with \"quotes\" and\nnewline"));
+        Map<String, String> meta = statusChangedMeta("Issue", "IN_REVIEW", "In Review", "in_progress");
+        meta.put("issueTitle", "Title with \"quotes\" and\nnewline");
+        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID, meta);
 
         String result = discordProvider.format(event);
 
         assertThat(result).contains("\\\"quotes\\\"");
         assertThat(result).contains("\\n");
-    }
-
-    @Test
-    void formatIssueInCodeReviewWithPrUrlContainsFieldsWithPrLink() {
-        String prUrl = "https://github.com/org/repo/pull/42";
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_IN_CODE_REVIEW, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "prUrl", prUrl));
-
-        String result = discordProvider.format(event);
-
-        assertThat(result).contains("\"fields\"");
-        assertThat(result).contains("Pull Request");
-        assertThat(result).contains(prUrl);
-    }
-
-    @Test
-    void formatIssueInCodeReviewWithoutPrUrlDoesNotContainFields() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_IN_CODE_REVIEW, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
-
-        String result = discordProvider.format(event);
-
-        assertThat(result).doesNotContain("\"fields\"");
     }
 
     @Test
@@ -378,63 +440,6 @@ class DiscordProviderTest {
                 .thenReturn(ResponseEntity.badRequest().body("error"));
 
         assertThatNoException().isThrownBy(() -> discordProvider.send(WEBHOOK_URL, "{\"embeds\":[]}"));
-    }
-
-    // Color mapping tests
-
-    @Test
-    void colorForIssueApprovedIsGreen() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_APPROVED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
-
-        String result = discordProvider.format(event);
-
-        assertThat(result).contains("\"color\":5763719"); // 0x57F287 green
-    }
-
-    @Test
-    void colorForIssueCompletedIsGreen() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_COMPLETED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
-
-        String result = discordProvider.format(event);
-
-        assertThat(result).contains("\"color\":5763719"); // 0x57F287 green
-    }
-
-    @Test
-    void colorForIssueInCodeReviewIsBlue() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_IN_CODE_REVIEW, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
-
-        String result = discordProvider.format(event);
-
-        assertThat(result).contains("\"color\":5793266"); // 0x5865F2 blue
-    }
-
-    @Test
-    void colorForIssueInProgressIsYellow() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_IN_PROGRESS, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
-
-        String result = discordProvider.format(event);
-
-        assertThat(result).contains("\"color\":16705372"); // 0xFEE75C yellow
-    }
-
-    @Test
-    void colorForIssueSubmittedIsPurple() {
-        NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
-
-        String result = discordProvider.format(event);
-
-        assertThat(result).contains("\"color\":10181046"); // 0x9B59B6 purple
     }
 
     @Test

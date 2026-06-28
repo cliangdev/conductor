@@ -18,21 +18,31 @@ import java.util.Map;
 public class DiscordProvider implements NotificationProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DiscordProvider.class);
-    private static final int COLOR_GREEN  = 0x57F287; // ISSUE_APPROVED, ISSUE_COMPLETED
-    private static final int COLOR_BLUE   = 0x5865F2; // ISSUE_IN_CODE_REVIEW
-    private static final int COLOR_YELLOW = 0xFEE75C; // ISSUE_IN_PROGRESS
-    private static final int COLOR_PURPLE = 0x9B59B6; // ISSUE_SUBMITTED
+    private static final int COLOR_GREEN  = 0x57F287; // terminal statuses
+    private static final int COLOR_BLUE   = 0x5865F2; // in_progress statuses
+    private static final int COLOR_YELLOW = 0xFEE75C;
+    private static final int COLOR_GREY   = 0x99AAB5; // open statuses
     private static final int COLOR_DEFAULT = 0x58B9FF; // all others
     private static final int COLOR_RED    = 0xED4245; // CHANGES_REQUESTED
 
-    private static int colorFor(EventType eventType) {
-        return switch (eventType) {
-            case ISSUE_APPROVED, ISSUE_COMPLETED -> COLOR_GREEN;
-            case ISSUE_IN_CODE_REVIEW -> COLOR_BLUE;
-            case ISSUE_IN_PROGRESS -> COLOR_YELLOW;
-            case ISSUE_SUBMITTED -> COLOR_PURPLE;
+    /**
+     * Embed color derived from a status {@code category} — Workflow-agnostic, so any Workflow's statuses get
+     * a sensible color without per-status configuration.
+     */
+    private static int colorForCategory(String category) {
+        return switch (category == null ? "" : category) {
+            case "terminal" -> COLOR_GREEN;
+            case "in_progress" -> COLOR_BLUE;
+            case "open" -> COLOR_GREY;
             default -> COLOR_DEFAULT;
         };
+    }
+
+    /** Humanize an UPPER_SNAKE status id for display when no explicit label is provided. */
+    private static String humanize(String statusId) {
+        if (statusId == null || statusId.isBlank()) return "";
+        String lower = statusId.replace('_', ' ').toLowerCase();
+        return Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
     }
 
     private final RestTemplate restTemplate;
@@ -53,36 +63,23 @@ public class DiscordProvider implements NotificationProvider {
         String title;
         String description;
         String link = frontendUrl + "/app/projects/" + projectId + "/issues/" + issueId;
-        int color = colorFor(event.getEventType());
+        int color = COLOR_DEFAULT;
 
         switch (event.getEventType()) {
-            case ISSUE_IN_PROGRESS -> {
+            case ISSUE_STATUS_CHANGED -> {
+                String noun = meta.getOrDefault("noun", "Work Item");
+                String toStatusLabel = meta.getOrDefault("toStatusLabel", humanize(meta.getOrDefault("toStatus", "")));
                 String assigneeName = meta.getOrDefault("assigneeName", "");
-                title = "Issue In Progress";
+                title = noun + " moved to " + toStatusLabel;
                 description = (assigneeName != null && !assigneeName.isBlank())
                         ? "Assigned to " + assigneeName + " \u2014 " + issueTitle
                         : issueTitle;
-            }
-            case ISSUE_SUBMITTED -> {
-                title = "Issue Submitted for Review";
-                description = issueTitle;
-            }
-            case ISSUE_APPROVED -> {
-                title = "Issue Approved";
-                description = issueTitle;
-            }
-            case ISSUE_COMPLETED -> {
-                title = "Issue Completed";
-                description = issueTitle;
+                color = colorForCategory(meta.get("toCategory"));
             }
             case REVIEWER_ASSIGNED -> {
                 String reviewerName = meta.getOrDefault("reviewerName", meta.getOrDefault("reviewerId", ""));
                 title = "Reviewer Assigned";
                 description = reviewerName + " assigned to review: " + issueTitle;
-            }
-            case ISSUE_IN_CODE_REVIEW -> {
-                title = "Issue In Code Review";
-                description = issueTitle;
             }
             case REVIEW_SUBMITTED -> {
                 String verdict = meta.getOrDefault("verdict", "");
@@ -152,7 +149,7 @@ public class DiscordProvider implements NotificationProvider {
         String prUrl = meta.getOrDefault("prUrl", null);
         boolean hasPrUrl = prUrl != null && !prUrl.isBlank();
 
-        if (event.getEventType() == EventType.ISSUE_IN_CODE_REVIEW && hasPrUrl) {
+        if (event.getEventType() == EventType.ISSUE_STATUS_CHANGED && hasPrUrl) {
             String fields = String.format(
                 ",\"fields\":[{\"name\":\"Pull Request\",\"value\":\"[View PR](%s)\",\"inline\":false}]",
                 escapeJson(prUrl)

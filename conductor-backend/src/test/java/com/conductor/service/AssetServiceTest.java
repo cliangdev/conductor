@@ -12,7 +12,7 @@ import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.IssueRepository;
-import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,7 +47,7 @@ class AssetServiceTest {
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
         notificationDispatcher = Mockito.mock(NotificationDispatcher.class);
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(
-                Mockito.mock(WorkflowDefinitionRepository.class), new ObjectMapper());
+                Mockito.mock(WorkflowDefinitionVersionRepository.class), new ObjectMapper());
         service = new AssetService(assetRepository, issueRepository, projectSecurityService, resolver,
                 notificationDispatcher);
         when(assetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));

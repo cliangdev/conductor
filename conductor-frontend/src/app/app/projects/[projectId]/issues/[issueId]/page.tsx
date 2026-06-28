@@ -12,7 +12,14 @@ import { ReviewersSummaryPanel } from '@/components/reviews/ReviewersSummaryPane
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import { TaskProgressPanel } from '@/components/issues/TaskProgressPanel'
 import { HtmlViewer } from '@/components/markdown/HtmlViewer'
+import {
+  DEFAULT_WORKFLOW_SLUG,
+  reviewGateForStatus,
+  statusHasReviewGate,
+  useWorkflowView,
+} from '@/lib/workflows'
 import type { Comment } from '@/components/comments/types'
+import type { WorkItemAsset } from '@/types/workItem'
 import type { MemberRole } from '@/types'
 
 export const dynamic = 'force-dynamic'
@@ -24,7 +31,8 @@ interface Issue {
   status: string
   description?: string
   displayId?: string
-  githubPrUrl?: string | null
+  /** Bound Workflow slug; absent in IssueResponse today, so we default to ENGINEERING. */
+  workflow?: string
 }
 
 interface Document {
@@ -92,6 +100,7 @@ export default function IssueDetailPage() {
 
   const [issue, setIssue] = useState<Issue | null>(null)
   const [documents, setDocuments] = useState<Document[]>([])
+  const [assets, setAssets] = useState<WorkItemAsset[]>([])
   const [reviewers, setReviewers] = useState<Reviewer[]>([])
   const [reviews, setReviews] = useState<Review[]>([])
   const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
@@ -104,6 +113,11 @@ export default function IssueDetailPage() {
   const [assignDropdownOpen, setAssignDropdownOpen] = useState(false)
   const [assigning, setAssigning] = useState(false)
   const assignDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Display metadata for the Work Item's Workflow (defaults to ENGINEERING — IssueResponse carries
+  // no slug today). Drives the status badge and whether the review panels are shown.
+  const workflowSlug = issue?.workflow ?? DEFAULT_WORKFLOW_SLUG
+  const workflowView = useWorkflowView(projectId, workflowSlug, accessToken)
 
   const fetchDocuments = useCallback(async () => {
     if (!accessToken) return
@@ -154,6 +168,19 @@ export default function IssueDetailPage() {
     }
   }, [accessToken, projectId, issueId])
 
+  const fetchAssets = useCallback(async () => {
+    if (!accessToken) return
+    try {
+      const data = await apiGet<WorkItemAsset[]>(
+        `/api/v1/projects/${projectId}/issues/${issueId}/assets`,
+        accessToken
+      )
+      setAssets(data)
+    } catch {
+      // Non-fatal — the assets list simply renders nothing.
+    }
+  }, [accessToken, projectId, issueId])
+
   useEffect(() => {
     if (!accessToken) return
 
@@ -169,7 +196,7 @@ export default function IssueDetailPage() {
         setIssue(issueData)
         setReviewers(reviewerData)
 
-        await Promise.all([fetchDocuments(), fetchComments(), fetchReviews()])
+        await Promise.all([fetchDocuments(), fetchComments(), fetchReviews(), fetchAssets()])
 
         try {
           const members = await apiGet<Member[]>(
@@ -190,7 +217,7 @@ export default function IssueDetailPage() {
     }
 
     fetchAll()
-  }, [accessToken, projectId, issueId, fetchDocuments, fetchComments, fetchReviews, user?.id])
+  }, [accessToken, projectId, issueId, fetchDocuments, fetchComments, fetchReviews, fetchAssets, user?.id])
 
   useEffect(() => {
     if (documents.length === 0) return
@@ -213,6 +240,13 @@ export default function IssueDetailPage() {
   const isAssignedReviewer = reviewers.some((r) => r.userId === user?.id)
   const currentUserReview = reviews.find((r) => r.reviewerId === user?.id)
   const canManage = userRole === 'CREATOR' || userRole === 'ADMIN'
+
+  // Review is only relevant when the current status has an outgoing review-gated transition. When it
+  // doesn't, both review panels (and the assign-reviewer affordance) are hidden.
+  const reviewActive = issue ? statusHasReviewGate(workflowView, issue.status) : false
+  const reviewOutcomes = issue
+    ? reviewGateForStatus(workflowView, issue.status)?.reviewOutcomes
+    : undefined
 
   const assignedIds = new Set(reviewers.map((r) => r.userId))
   const assignableMembers = allMembers.filter(
@@ -313,7 +347,7 @@ export default function IssueDetailPage() {
 
       <TaskProgressPanel issueId={issueId} projectId={projectId} />
 
-      {(isAssignedReviewer || userRole === 'REVIEWER') && (
+      {reviewActive && (isAssignedReviewer || userRole === 'REVIEWER') && (
         <div className="mt-auto border-t border-border p-4">
           <ReviewSubmissionForm
             projectId={projectId}
@@ -322,6 +356,7 @@ export default function IssueDetailPage() {
             isAssignedReviewer={isAssignedReviewer}
             existingVerdict={currentUserReview?.verdict}
             existingBody={currentUserReview?.body}
+            reviewOutcomes={reviewOutcomes}
             onReviewSubmitted={async () => {
               await Promise.all([fetchReviewers(), fetchReviews()])
             }}
@@ -390,21 +425,29 @@ export default function IssueDetailPage() {
               currentStatus={issue.status}
               userRole={userRole}
               token={accessToken!}
+              workflowSlug={workflowSlug}
               onStatusChanged={(s) => setIssue((prev) => prev ? { ...prev, status: s } : prev)}
             />
-            {issue.githubPrUrl && (
-              <a
-                href={issue.githubPrUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-                View PR
-              </a>
-            )}
+            {assets
+              .filter((a) => a.kind === 'link')
+              .map((asset) => {
+                const isPr = asset.type === 'github_pr'
+                return (
+                  <a
+                    key={asset.id}
+                    href={asset.ref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    {isPr ? 'View PR' : asset.label || asset.type}
+                  </a>
+                )
+              })}
           </div>
         </div>
+        {reviewActive && (
         <div className="flex items-start gap-3 flex-wrap">
           <div className="flex-1 min-w-0">
             <ReviewersSummaryPanel
@@ -458,6 +501,7 @@ export default function IssueDetailPage() {
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Mobile tab bar */}

@@ -10,13 +10,13 @@
   "asset_types": ["github_pr"],
   "metric": null,
   "statuses": [
-    { "id": "DRAFT", "category": "open", "initial": true },
-    { "id": "IN_REVIEW", "category": "in_progress" },
-    { "id": "READY_FOR_DEVELOPMENT", "category": "in_progress" },
-    { "id": "IN_PROGRESS", "category": "in_progress" },
-    { "id": "CODE_REVIEW", "category": "in_progress" },
-    { "id": "DONE", "category": "terminal", "terminal": true },
-    { "id": "CLOSED", "category": "terminal", "terminal": true }
+    { "id": "DRAFT", "label": "Draft", "category": "open", "initial": true },
+    { "id": "IN_REVIEW", "label": "In Review", "category": "in_progress" },
+    { "id": "READY_FOR_DEVELOPMENT", "label": "Ready for Development", "category": "in_progress" },
+    { "id": "IN_PROGRESS", "label": "In Progress", "category": "in_progress" },
+    { "id": "CODE_REVIEW", "label": "Code Review", "category": "in_progress" },
+    { "id": "DONE", "label": "Done", "category": "terminal", "terminal": true },
+    { "id": "CLOSED", "label": "Closed", "category": "terminal", "terminal": true }
   ],
   "transitions": [
     { "from": "DRAFT", "to": "IN_REVIEW", "label": "Submit for review" },
@@ -41,7 +41,8 @@
       "label": "Merge",
       "requiresReview": true,
       "reviewOutcomes": ["approve", "request_changes"],
-      "reviewerRole": "REVIEWER"
+      "reviewerRole": "REVIEWER",
+      "trigger": "pr_merged"
     },
     { "from": "CODE_REVIEW", "to": "CLOSED", "label": "Close" }
   ]
