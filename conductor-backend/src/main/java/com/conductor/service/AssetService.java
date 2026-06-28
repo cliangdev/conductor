@@ -1,7 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.Asset;
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.generated.model.AssetResponse;
@@ -11,7 +11,7 @@ import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.AssetRepository;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import jakarta.persistence.EntityNotFoundException;
@@ -30,18 +30,18 @@ import java.util.Map;
 public class AssetService {
 
     private final AssetRepository assetRepository;
-    private final IssueRepository issueRepository;
+    private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
     private final WorkflowDefinitionResolver resolver;
     private final NotificationDispatcher notificationDispatcher;
 
     public AssetService(AssetRepository assetRepository,
-                        IssueRepository issueRepository,
+                        WorkItemRepository workItemRepository,
                         ProjectSecurityService projectSecurityService,
                         WorkflowDefinitionResolver resolver,
                         NotificationDispatcher notificationDispatcher) {
         this.assetRepository = assetRepository;
-        this.issueRepository = issueRepository;
+        this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.resolver = resolver;
         this.notificationDispatcher = notificationDispatcher;
@@ -51,17 +51,17 @@ public class AssetService {
     public List<AssetResponse> listAssets(String projectId, String issueId, User caller) {
         verifyMembership(projectId, caller.getId());
         findIssueInProject(projectId, issueId);
-        return assetRepository.findAllByIssueId(issueId).stream().map(this::toAssetResponse).toList();
+        return assetRepository.findAllByWorkItemId(issueId).stream().map(this::toAssetResponse).toList();
     }
 
     @Transactional
     public AssetResponse createAsset(String projectId, String issueId, CreateAssetRequest request, User caller) {
         verifyMembership(projectId, caller.getId());
-        Issue issue = findIssueInProject(projectId, issueId);
+        WorkItem issue = findIssueInProject(projectId, issueId);
         validateAssetType(projectId, issue, request.getType());
 
         Asset asset = new Asset();
-        asset.setIssue(issue);
+        asset.setWorkItem(issue);
         asset.setType(request.getType());
         asset.setLabel(request.getLabel());
         asset.setKind(request.getKind().getValue());
@@ -103,18 +103,18 @@ public class AssetService {
 
     /**
      * System path: record a {@code github_pr} Asset when a PR merges (called from
-     * {@code IssueService.completeFromPullRequest}). No caller/membership check; idempotent on (issue, type, ref).
+     * {@code WorkItemService.completeFromPullRequest}). No caller/membership check; idempotent on (issue, type, ref).
      */
     @Transactional
-    public void recordPullRequestAsset(Issue issue, String pullRequestUrl) {
+    public void recordPullRequestAsset(WorkItem issue, String pullRequestUrl) {
         if (pullRequestUrl == null || pullRequestUrl.isBlank()) {
             return;
         }
-        if (assetRepository.existsByIssueIdAndTypeAndRef(issue.getId(), "github_pr", pullRequestUrl)) {
+        if (assetRepository.existsByWorkItemIdAndTypeAndRef(issue.getId(), "github_pr", pullRequestUrl)) {
             return;
         }
         Asset asset = new Asset();
-        asset.setIssue(issue);
+        asset.setWorkItem(issue);
         asset.setType("github_pr");
         asset.setLabel("Pull Request");
         asset.setKind("link");
@@ -123,7 +123,7 @@ public class AssetService {
         assetRepository.save(asset);
     }
 
-    private void validateAssetType(String projectId, Issue issue, String type) {
+    private void validateAssetType(String projectId, WorkItem issue, String type) {
         String slug = issue.getWorkflow() != null ? issue.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
         Statechart statechart = resolver.resolveRequired(projectId, slug, issue.getWorkflowVersion());
         List<String> allowed = statechart.assetTypes();
@@ -138,21 +138,21 @@ public class AssetService {
         }
     }
 
-    private Issue findIssueInProject(String projectId, String issueId) {
-        return issueRepository.findById(issueId)
+    private WorkItem findIssueInProject(String projectId, String issueId) {
+        return workItemRepository.findById(issueId)
                 .filter(i -> i.getProject() != null && projectId.equals(i.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
     }
 
     private Asset findAssetInIssue(String issueId, String assetId) {
-        return assetRepository.findByIdAndIssueId(assetId, issueId)
+        return assetRepository.findByIdAndWorkItemId(assetId, issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Asset not found in issue"));
     }
 
     private AssetResponse toAssetResponse(Asset asset) {
         AssetResponse response = new AssetResponse(
                 asset.getId(),
-                asset.getIssue().getId(),
+                asset.getWorkItem().getId(),
                 asset.getType(),
                 AssetResponse.KindEnum.fromValue(asset.getKind()),
                 asset.getRef(),

@@ -1,13 +1,13 @@
 package com.conductor.service;
 
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.StepRun;
 import com.conductor.entity.User;
 import com.conductor.generated.model.CreateStepRunRequest;
 import com.conductor.generated.model.StepRunBeforeAfter;
 import com.conductor.generated.model.StepRunProduced;
 import com.conductor.generated.model.StepRunResponse;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.StepRunRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -26,16 +26,16 @@ import java.util.List;
 public class StepRunService {
 
     private final StepRunRepository stepRunRepository;
-    private final IssueRepository issueRepository;
+    private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ObjectMapper objectMapper;
 
     public StepRunService(StepRunRepository stepRunRepository,
-                          IssueRepository issueRepository,
+                          WorkItemRepository workItemRepository,
                           ProjectSecurityService projectSecurityService,
                           ObjectMapper objectMapper) {
         this.stepRunRepository = stepRunRepository;
-        this.issueRepository = issueRepository;
+        this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.objectMapper = objectMapper;
     }
@@ -44,17 +44,17 @@ public class StepRunService {
     public List<StepRunResponse> listStepRuns(String projectId, String issueId, User caller) {
         verifyMembership(projectId, caller.getId());
         findIssueInProject(projectId, issueId);
-        return stepRunRepository.findAllByIssueIdOrderByCreatedAtDesc(issueId).stream()
+        return stepRunRepository.findAllByWorkItemIdOrderByCreatedAtDesc(issueId).stream()
                 .map(this::toResponse).toList();
     }
 
     @Transactional
     public StepRunResponse createStepRun(String projectId, String issueId, CreateStepRunRequest request, User caller) {
         verifyMembership(projectId, caller.getId());
-        Issue issue = findIssueInProject(projectId, issueId);
+        WorkItem issue = findIssueInProject(projectId, issueId);
 
         StepRun stepRun = new StepRun();
-        stepRun.setIssue(issue);
+        stepRun.setWorkItem(issue);
         stepRun.setWorkflow(request.getWorkflow());
         stepRun.setFromStatus(request.getFromStatus());
         stepRun.setToStatus(request.getToStatus());
@@ -78,7 +78,7 @@ public class StepRunService {
 
     private StepRunResponse toResponse(StepRun stepRun) {
         StepRunResponse response = new StepRunResponse(
-                stepRun.getId(), stepRun.getIssue().getId(), stepRun.getStatus(),
+                stepRun.getId(), stepRun.getWorkItem().getId(), stepRun.getStatus(),
                 stepRun.getInputBrief(), stepRun.getReportedBy(), stepRun.getCreatedAt());
         response.setWorkflow(stepRun.getWorkflow());
         response.setFromStatus(stepRun.getFromStatus());
@@ -107,8 +107,8 @@ public class StepRunService {
         }
     }
 
-    private Issue findIssueInProject(String projectId, String issueId) {
-        return issueRepository.findById(issueId)
+    private WorkItem findIssueInProject(String projectId, String issueId) {
+        return workItemRepository.findById(issueId)
                 .filter(i -> i.getProject() != null && projectId.equals(i.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
     }

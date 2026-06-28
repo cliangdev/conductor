@@ -1,7 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.Asset;
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
@@ -11,7 +11,7 @@ import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.AssetRepository;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,7 +35,7 @@ class AssetServiceTest {
     private static final String ISSUE_ID = "issue-1";
 
     private AssetRepository assetRepository;
-    private IssueRepository issueRepository;
+    private WorkItemRepository workItemRepository;
     private ProjectSecurityService projectSecurityService;
     private NotificationDispatcher notificationDispatcher;
     private AssetService service;
@@ -43,19 +43,19 @@ class AssetServiceTest {
     @BeforeEach
     void setUp() {
         assetRepository = Mockito.mock(AssetRepository.class);
-        issueRepository = Mockito.mock(IssueRepository.class);
+        workItemRepository = Mockito.mock(WorkItemRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
         notificationDispatcher = Mockito.mock(NotificationDispatcher.class);
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(
                 Mockito.mock(WorkflowDefinitionVersionRepository.class), new ObjectMapper());
-        service = new AssetService(assetRepository, issueRepository, projectSecurityService, resolver,
+        service = new AssetService(assetRepository, workItemRepository, projectSecurityService, resolver,
                 notificationDispatcher);
         when(assetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
     }
 
-    private Issue issue() {
-        Issue issue = new Issue();
+    private WorkItem issue() {
+        WorkItem issue = new WorkItem();
         issue.setId(ISSUE_ID);
         issue.setTitle("T");
         Project project = new Project();
@@ -73,7 +73,7 @@ class AssetServiceTest {
 
     @Test
     void createsAllowedAssetTypeAndDispatchesEvent() {
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
         CreateAssetRequest req = new CreateAssetRequest("github_pr", CreateAssetRequest.KindEnum.LINK, "https://x/pr/1");
         req.setLabel("PR #1");
 
@@ -88,7 +88,7 @@ class AssetServiceTest {
 
     @Test
     void rejectsAssetTypeNotAllowedByWorkflow() {
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
         // ENGINEERING only allows github_pr.
         CreateAssetRequest req = new CreateAssetRequest("published_url", CreateAssetRequest.KindEnum.LINK, "https://x");
 
@@ -100,8 +100,8 @@ class AssetServiceTest {
 
     @Test
     void recordPullRequestAssetIsIdempotent() {
-        Issue issue = issue();
-        when(assetRepository.existsByIssueIdAndTypeAndRef(ISSUE_ID, "github_pr", "https://x/pr/1")).thenReturn(true);
+        WorkItem issue = issue();
+        when(assetRepository.existsByWorkItemIdAndTypeAndRef(ISSUE_ID, "github_pr", "https://x/pr/1")).thenReturn(true);
 
         service.recordPullRequestAsset(issue, "https://x/pr/1");
 
@@ -110,8 +110,8 @@ class AssetServiceTest {
 
     @Test
     void recordPullRequestAssetCreatesGithubPrAsset() {
-        Issue issue = issue();
-        when(assetRepository.existsByIssueIdAndTypeAndRef(ISSUE_ID, "github_pr", "https://x/pr/1")).thenReturn(false);
+        WorkItem issue = issue();
+        when(assetRepository.existsByWorkItemIdAndTypeAndRef(ISSUE_ID, "github_pr", "https://x/pr/1")).thenReturn(false);
 
         service.recordPullRequestAsset(issue, "https://x/pr/1");
 

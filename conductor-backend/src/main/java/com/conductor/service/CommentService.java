@@ -3,7 +3,7 @@ package com.conductor.service;
 import com.conductor.entity.Comment;
 import com.conductor.entity.CommentReply;
 import com.conductor.entity.Document;
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
@@ -20,7 +20,7 @@ import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentReplyRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -37,7 +37,7 @@ public class CommentService {
 
     private final CommentRepository commentRepository;
     private final CommentReplyRepository commentReplyRepository;
-    private final IssueRepository issueRepository;
+    private final WorkItemRepository workItemRepository;
     private final DocumentRepository documentRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectSecurityService projectSecurityService;
@@ -48,7 +48,7 @@ public class CommentService {
     public CommentService(
             CommentRepository commentRepository,
             CommentReplyRepository commentReplyRepository,
-            IssueRepository issueRepository,
+            WorkItemRepository workItemRepository,
             DocumentRepository documentRepository,
             ProjectMemberRepository projectMemberRepository,
             ProjectSecurityService projectSecurityService,
@@ -57,7 +57,7 @@ public class CommentService {
             ProjectRepository projectRepository) {
         this.commentRepository = commentRepository;
         this.commentReplyRepository = commentReplyRepository;
-        this.issueRepository = issueRepository;
+        this.workItemRepository = workItemRepository;
         this.documentRepository = documentRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.projectSecurityService = projectSecurityService;
@@ -74,15 +74,15 @@ public class CommentService {
 
         verifyMembership(projectId, caller.getId());
 
-        Issue issue = findIssueInProject(projectId, issueId);
+        WorkItem issue = findIssueInProject(projectId, issueId);
 
-        Document document = documentRepository.findByIdAndIssueId(request.getDocumentId(), issueId)
+        Document document = documentRepository.findByIdAndWorkItemId(request.getDocumentId(), issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found in issue"));
 
         String quotedText = extractLineFromDocument(document, request.getLineNumber());
 
         Comment comment = new Comment();
-        comment.setIssue(issue);
+        comment.setWorkItem(issue);
         comment.setDocument(document);
         comment.setAuthor(caller);
         comment.setContent(request.getContent());
@@ -126,11 +126,11 @@ public class CommentService {
 
         List<Comment> comments;
         if (resolved == null) {
-            comments = commentRepository.findAllByIssueId(issueId);
+            comments = commentRepository.findAllByWorkItemId(issueId);
         } else if (resolved) {
-            comments = commentRepository.findAllByIssueIdAndResolvedAtIsNotNull(issueId);
+            comments = commentRepository.findAllByWorkItemIdAndResolvedAtIsNotNull(issueId);
         } else {
-            comments = commentRepository.findAllByIssueIdAndResolvedAtIsNull(issueId);
+            comments = commentRepository.findAllByWorkItemIdAndResolvedAtIsNull(issueId);
         }
 
         return comments.stream()
@@ -173,7 +173,7 @@ public class CommentService {
 
         commentReplyRepository.save(reply);
 
-        Issue issue = comment.getIssue();
+        WorkItem issue = comment.getWorkItem();
         String excerpt = buildExcerpt(request.getContent());
         String authorLabel = caller.getName() != null ? caller.getName() : caller.getEmail();
         notificationDispatcher.dispatch(NotificationEvent.of(
@@ -239,8 +239,8 @@ public class CommentService {
         }
     }
 
-    private Issue findIssueInProject(String projectId, String issueId) {
-        Issue issue = issueRepository.findById(issueId)
+    private WorkItem findIssueInProject(String projectId, String issueId) {
+        WorkItem issue = workItemRepository.findById(issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
         if (!issue.getProject().getId().equals(projectId)) {
             throw new EntityNotFoundException("Issue not found");
@@ -251,7 +251,7 @@ public class CommentService {
     private Comment findCommentInIssue(String issueId, String commentId) {
         Comment comment = commentRepository.findById(commentId)
                 .orElseThrow(() -> new EntityNotFoundException("Comment not found"));
-        if (!comment.getIssue().getId().equals(issueId)) {
+        if (!comment.getWorkItem().getId().equals(issueId)) {
             throw new EntityNotFoundException("Comment not found");
         }
         return comment;

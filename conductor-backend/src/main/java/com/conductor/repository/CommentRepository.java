@@ -11,19 +11,19 @@ import java.util.List;
 @Repository
 public interface CommentRepository extends JpaRepository<Comment, String> {
 
-    List<Comment> findAllByIssueId(String issueId);
+    List<Comment> findAllByWorkItemId(String issueId);
 
-    List<Comment> findAllByIssueIdAndResolvedAtIsNull(String issueId);
+    List<Comment> findAllByWorkItemIdAndResolvedAtIsNull(String issueId);
 
-    List<Comment> findAllByIssueIdAndResolvedAtIsNotNull(String issueId);
+    List<Comment> findAllByWorkItemIdAndResolvedAtIsNotNull(String issueId);
 
-    List<Comment> findAllByIssueIdAndDocumentId(String issueId, String documentId);
+    List<Comment> findAllByWorkItemIdAndDocumentId(String issueId, String documentId);
 
     List<Comment> findAllByDocumentId(String documentId);
 
-    @Query("SELECT c.issue.id, COUNT(c) FROM Comment c WHERE c.issue.id IN :issueIds AND c.resolvedAt IS NULL GROUP BY c.issue.id")
-    List<Object[]> countUnresolvedByIssueIds(@Param("issueIds") List<String> issueIds);
+    @Query("SELECT c.workItem.id, COUNT(c) FROM Comment c WHERE c.workItem.id IN :issueIds AND c.resolvedAt IS NULL GROUP BY c.workItem.id")
+    List<Object[]> countUnresolvedByWorkItemIds(@Param("issueIds") List<String> issueIds);
 
-    @Query("SELECT COUNT(c) FROM Comment c WHERE c.issue.id = :issueId AND c.resolvedAt IS NULL")
-    long countUnresolvedByIssueId(@Param("issueId") String issueId);
+    @Query("SELECT COUNT(c) FROM Comment c WHERE c.workItem.id = :issueId AND c.resolvedAt IS NULL")
+    long countUnresolvedByWorkItemId(@Param("issueId") String issueId);
 }

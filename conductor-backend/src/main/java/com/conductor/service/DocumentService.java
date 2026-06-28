@@ -1,7 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.Document;
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.exception.FileTooLargeException;
 import com.conductor.exception.StorageUploadException;
 import com.conductor.generated.model.CreateDocumentRequest;
@@ -10,7 +10,7 @@ import com.conductor.generated.model.UpdateDocumentRequest;
 import com.conductor.generated.model.UpsertDocumentByFilenameRequest;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -31,18 +31,18 @@ public class DocumentService {
     private static final Set<String> TEXT_CONTENT_TYPES = Set.of("text/markdown", "text/plain", "text/html");
 
     private final DocumentRepository documentRepository;
-    private final IssueRepository issueRepository;
+    private final WorkItemRepository workItemRepository;
     private final StorageService gcpStorageService;
     private final CommentRepository commentRepository;
     private final int signedUrlExpiryMinutes;
 
     public DocumentService(DocumentRepository documentRepository,
-                           IssueRepository issueRepository,
+                           WorkItemRepository workItemRepository,
                            StorageService gcpStorageService,
                            CommentRepository commentRepository,
                            @Value("${gcp.signed-url.expiry-minutes:15}") int signedUrlExpiryMinutes) {
         this.documentRepository = documentRepository;
-        this.issueRepository = issueRepository;
+        this.workItemRepository = workItemRepository;
         this.gcpStorageService = gcpStorageService;
         this.commentRepository = commentRepository;
         this.signedUrlExpiryMinutes = signedUrlExpiryMinutes;
@@ -50,7 +50,7 @@ public class DocumentService {
 
     @Transactional
     public DocumentResponse createDocument(String projectId, String issueId, CreateDocumentRequest request) {
-        Issue issue = findIssueInProject(projectId, issueId);
+        WorkItem issue = findIssueInProject(projectId, issueId);
 
         String content = request.getContent();
         if (content != null) {
@@ -70,7 +70,7 @@ public class DocumentService {
 
         Document document = new Document();
         document.setId(documentId);
-        document.setIssue(issue);
+        document.setWorkItem(issue);
         document.setFilename(request.getFilename());
         document.setContent(content);
         document.setContentType(contentType);
@@ -83,7 +83,7 @@ public class DocumentService {
     @Transactional(readOnly = true)
     public List<DocumentResponse> listDocuments(String projectId, String issueId) {
         findIssueInProject(projectId, issueId);
-        return documentRepository.findByIssueId(issueId).stream()
+        return documentRepository.findByWorkItemId(issueId).stream()
                 .map(this::toDocumentResponse)
                 .toList();
     }
@@ -91,7 +91,7 @@ public class DocumentService {
     @Transactional(readOnly = true)
     public DocumentResponse getDocument(String projectId, String issueId, String docId) {
         findIssueInProject(projectId, issueId);
-        Document document = documentRepository.findByIdAndIssueId(docId, issueId)
+        Document document = documentRepository.findByIdAndWorkItemId(docId, issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         return toEnrichedDocumentResponse(document);
     }
@@ -99,7 +99,7 @@ public class DocumentService {
     @Transactional
     public DocumentResponse updateDocument(String projectId, String issueId, String docId, UpdateDocumentRequest request) {
         findIssueInProject(projectId, issueId);
-        Document document = documentRepository.findByIdAndIssueId(docId, issueId)
+        Document document = documentRepository.findByIdAndWorkItemId(docId, issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
 
         String newContent = request.getContent();
@@ -125,7 +125,7 @@ public class DocumentService {
 
     @Transactional
     public boolean upsertDocumentByFilename(String projectId, String issueId, String filename, UpsertDocumentByFilenameRequest request) {
-        Issue issue = findIssueInProject(projectId, issueId);
+        WorkItem issue = findIssueInProject(projectId, issueId);
         String content = request.getContent();
         String contentType = request.getContentType() != null ? request.getContentType() : "text/markdown";
 
@@ -136,7 +136,7 @@ public class DocumentService {
             }
         }
 
-        return documentRepository.findByIssueIdAndFilename(issueId, filename)
+        return documentRepository.findByWorkItemIdAndFilename(issueId, filename)
                 .map(existing -> {
                     if (existing.getStoragePath() != null) {
                         uploadToGcs(existing.getStoragePath(), content.getBytes(StandardCharsets.UTF_8), contentType);
@@ -157,7 +157,7 @@ public class DocumentService {
                     }
                     Document document = new Document();
                     document.setId(documentId);
-                    document.setIssue(issue);
+                    document.setWorkItem(issue);
                     document.setFilename(filename);
                     document.setContent(content);
                     document.setContentType(contentType);
@@ -170,7 +170,7 @@ public class DocumentService {
     @Transactional
     public DocumentResponse getDocumentByFilename(String projectId, String issueId, String filename) {
         findIssueInProject(projectId, issueId);
-        Document document = documentRepository.findByIssueIdAndFilename(issueId, filename)
+        Document document = documentRepository.findByWorkItemIdAndFilename(issueId, filename)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         return toDocumentResponse(document);
     }
@@ -178,7 +178,7 @@ public class DocumentService {
     @Transactional
     public void deleteDocumentByFilename(String projectId, String issueId, String filename) {
         findIssueInProject(projectId, issueId);
-        Document document = documentRepository.findByIssueIdAndFilename(issueId, filename)
+        Document document = documentRepository.findByWorkItemIdAndFilename(issueId, filename)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         String storagePath = document.getStoragePath();
         documentRepository.delete(document);
@@ -190,7 +190,7 @@ public class DocumentService {
     @Transactional
     public void deleteDocument(String projectId, String issueId, String docId) {
         findIssueInProject(projectId, issueId);
-        Document document = documentRepository.findByIdAndIssueId(docId, issueId)
+        Document document = documentRepository.findByIdAndWorkItemId(docId, issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         String storagePath = document.getStoragePath();
         documentRepository.delete(document);
@@ -223,8 +223,8 @@ public class DocumentService {
         return projectId + "/issues/" + issueId + "/" + documentId + "/" + filename;
     }
 
-    private Issue findIssueInProject(String projectId, String issueId) {
-        Issue issue = issueRepository.findById(issueId)
+    private WorkItem findIssueInProject(String projectId, String issueId) {
+        WorkItem issue = workItemRepository.findById(issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
         if (!issue.getProject().getId().equals(projectId)) {
             throw new EntityNotFoundException("Issue not found");
@@ -235,7 +235,7 @@ public class DocumentService {
     private DocumentResponse toDocumentResponse(Document document) {
         return new DocumentResponse(
                 document.getId(),
-                document.getIssue().getId(),
+                document.getWorkItem().getId(),
                 document.getFilename(),
                 document.getContentType(),
                 document.getCreatedAt())
@@ -260,7 +260,7 @@ public class DocumentService {
 
         return new DocumentResponse(
                 document.getId(),
-                document.getIssue().getId(),
+                document.getWorkItem().getId(),
                 document.getFilename(),
                 document.getContentType(),
                 document.getCreatedAt())

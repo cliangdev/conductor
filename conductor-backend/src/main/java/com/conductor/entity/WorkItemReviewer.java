@@ -12,17 +12,17 @@ import java.util.UUID;
 
 @Entity
 @Table(
-    name = "issue_reviewers",
-    uniqueConstraints = @UniqueConstraint(columnNames = {"issue_id", "user_id"})
+    name = "work_item_reviewers",
+    uniqueConstraints = @UniqueConstraint(columnNames = {"work_item_id", "user_id"})
 )
-public class IssueReviewer {
+public class WorkItemReviewer {
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
     private String id;
 
-    @Column(name = "issue_id", length = 36, nullable = false)
-    private String issueId;
+    @Column(name = "work_item_id", length = 36, nullable = false)
+    private String workItemId;
 
     @Column(name = "user_id", length = 36, nullable = false)
     private String userId;
@@ -46,8 +46,8 @@ public class IssueReviewer {
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
-    public String getIssueId() { return issueId; }
-    public void setIssueId(String issueId) { this.issueId = issueId; }
+    public String getWorkItemId() { return workItemId; }
+    public void setWorkItemId(String workItemId) { this.workItemId = workItemId; }
 
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }

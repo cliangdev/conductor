@@ -1,6 +1,6 @@
 package com.conductor.service;
 
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
@@ -15,7 +15,7 @@ import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentRepository;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
@@ -33,15 +33,15 @@ import java.util.Map;
 import java.util.Optional;
 
 @Service
-public class IssueService {
+public class WorkItemService {
 
-    private static final Logger log = LoggerFactory.getLogger(IssueService.class);
+    private static final Logger log = LoggerFactory.getLogger(WorkItemService.class);
 
     // COND-18: the status state machine and the legal status/type vocabulary live in the bound Workflow
     // definition (statechart), not in this class or a DB enum; transitions and types are validated by
     // WorkItemWorkflowService against the resolved Statechart.
 
-    private final IssueRepository issueRepository;
+    private final WorkItemRepository workItemRepository;
     private final ProjectRepository projectRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
@@ -51,8 +51,8 @@ public class IssueService {
     private final WorkItemWorkflowService workItemWorkflowService;
     private final AssetService assetService;
 
-    public IssueService(
-            IssueRepository issueRepository,
+    public WorkItemService(
+            WorkItemRepository workItemRepository,
             ProjectRepository projectRepository,
             ProjectSecurityService projectSecurityService,
             ProjectMemberRepository projectMemberRepository,
@@ -61,7 +61,7 @@ public class IssueService {
             UserRepository userRepository,
             WorkItemWorkflowService workItemWorkflowService,
             AssetService assetService) {
-        this.issueRepository = issueRepository;
+        this.workItemRepository = workItemRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
@@ -85,7 +85,7 @@ public class IssueService {
                 ? request.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
         workItemWorkflowService.validateType(projectId, workflow, request.getType());
 
-        Issue issue = new Issue();
+        WorkItem issue = new WorkItem();
         issue.setProject(project);
         issue.setType(request.getType());
         issue.setTitle(request.getTitle());
@@ -95,10 +95,10 @@ public class IssueService {
         issue.setWorkflowVersion(workItemWorkflowService.boundVersion(projectId, workflow));
         issue.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
 
-        Integer nextSeq = issueRepository.findMaxSequenceNumberByProjectId(projectId) + 1;
+        Integer nextSeq = workItemRepository.findMaxSequenceNumberByProjectId(projectId) + 1;
         issue.setSequenceNumber(nextSeq);
 
-        issueRepository.save(issue);
+        workItemRepository.save(issue);
         return toIssueResponse(issue);
     }
 
@@ -111,13 +111,13 @@ public class IssueService {
         String statusFilter = (status != null && !status.isBlank()) ? status : null;
         String workflowFilter = (workflow != null && !workflow.isBlank()) ? workflow : null;
 
-        List<Issue> issues = issueRepository.findByProjectFiltered(
+        List<WorkItem> issues = workItemRepository.findByProjectFiltered(
                 projectId, typeFilter, statusFilter, workflowFilter);
 
-        List<String> issueIds = issues.stream().map(Issue::getId).toList();
+        List<String> issueIds = issues.stream().map(WorkItem::getId).toList();
         Map<String, Long> unresolvedCounts = new HashMap<>();
         if (!issueIds.isEmpty()) {
-            commentRepository.countUnresolvedByIssueIds(issueIds).forEach(row ->
+            commentRepository.countUnresolvedByWorkItemIds(issueIds).forEach(row ->
                 unresolvedCounts.put((String) row[0], (Long) row[1]));
         }
 
@@ -130,15 +130,15 @@ public class IssueService {
     @Transactional(readOnly = true)
     public IssueResponse getIssue(String projectId, String issueId, User caller) {
         verifyReadAccess(projectId, caller.getId());
-        Issue issue = findIssueInProject(projectId, issueId);
-        long count = commentRepository.countUnresolvedByIssueId(issue.getId());
+        WorkItem issue = findIssueInProject(projectId, issueId);
+        long count = commentRepository.countUnresolvedByWorkItemId(issue.getId());
         return toIssueResponse(issue).unresolvedCommentCount((int) count);
     }
 
     @Transactional
     public IssueResponse patchIssue(String projectId, String issueId, PatchIssueRequest request, User caller) {
         verifyMembership(projectId, caller.getId());
-        Issue issue = findIssueInProject(projectId, issueId);
+        WorkItem issue = findIssueInProject(projectId, issueId);
 
         if (request.getTitle() != null) {
             issue.setTitle(request.getTitle());
@@ -169,14 +169,14 @@ public class IssueService {
             statusChanged = true;
         }
 
-        issueRepository.save(issue);
+        workItemRepository.save(issue);
 
         if (statusChanged) {
             // PR link (if any) lives in github_pr Assets now, not on the issue; surfaced on the merge event.
             dispatchStatusChanged(projectId, issue, previousStatus, issue.getCurrentStatus(), null);
         }
 
-        long count = commentRepository.countUnresolvedByIssueId(issue.getId());
+        long count = commentRepository.countUnresolvedByWorkItemId(issue.getId());
         return toIssueResponse(issue).unresolvedCommentCount((int) count);
     }
 
@@ -199,7 +199,7 @@ public class IssueService {
     @Transactional
     public void completeFromPullRequest(String projectId, String projectKey, int sequenceNumber,
                                         String pullRequestUrl) {
-        Issue issue = issueRepository.findByProjectKeyAndSequenceNumber(projectKey, sequenceNumber)
+        WorkItem issue = workItemRepository.findByProjectKeyAndSequenceNumber(projectKey, sequenceNumber)
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No issue found for " + projectKey + "-" + sequenceNumber));
         if (!issue.getProject().getId().equals(projectId)) {
@@ -210,7 +210,7 @@ public class IssueService {
         String previousStatus = issue.getCurrentStatus();
         Optional<StatechartTransition> applied = workItemWorkflowService.applySystemTransition(
                 projectId, issue, WorkItemWorkflowService.TRIGGER_PR_MERGED);
-        issueRepository.save(issue);
+        workItemRepository.save(issue);
 
         // COND-18 E5: record the merged PR as a github_pr Asset. Idempotent on (issue, type, ref).
         assetService.recordPullRequestAsset(issue, pullRequestUrl);
@@ -230,7 +230,7 @@ public class IssueService {
      * Workflow's {@code noun} and the target status's display label/category so the notification provider can
      * format it for any Workflow without hardcoded status names.
      */
-    private void dispatchStatusChanged(String projectId, Issue issue, String fromStatus, String toStatus,
+    private void dispatchStatusChanged(String projectId, WorkItem issue, String fromStatus, String toStatus,
                                        String prUrl) {
         Statechart statechart = workItemWorkflowService.resolveFor(projectId, issue);
         Map<String, String> meta = new HashMap<>();
@@ -261,15 +261,15 @@ public class IssueService {
 
     @Transactional
     public void saveIssueTasks(String issueId, JsonNode tasks) {
-        Issue issue = issueRepository.findById(issueId)
+        WorkItem issue = workItemRepository.findById(issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
         issue.setIssueTasks(tasks);
-        issueRepository.save(issue);
+        workItemRepository.save(issue);
     }
 
     @Transactional(readOnly = true)
     public JsonNode getIssueTasks(String issueId) {
-        Issue issue = issueRepository.findById(issueId)
+        WorkItem issue = workItemRepository.findById(issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
         JsonNode tasks = issue.getIssueTasks();
         if (tasks == null) {
@@ -303,12 +303,12 @@ public class IssueService {
 
     @Transactional
     public void deleteIssue(String projectId, String issueId) {
-        Issue issue = findIssueInProject(projectId, issueId);
-        issueRepository.delete(issue);
+        WorkItem issue = findIssueInProject(projectId, issueId);
+        workItemRepository.delete(issue);
     }
 
-    private Issue findIssueInProject(String projectId, String issueId) {
-        Issue issue = issueRepository.findById(issueId)
+    private WorkItem findIssueInProject(String projectId, String issueId) {
+        WorkItem issue = workItemRepository.findById(issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
         if (!issue.getProject().getId().equals(projectId)) {
             throw new EntityNotFoundException("Issue not found");
@@ -316,7 +316,7 @@ public class IssueService {
         return issue;
     }
 
-    private IssueResponse toIssueResponse(Issue issue) {
+    private IssueResponse toIssueResponse(WorkItem issue) {
         String displayId = issue.getProject().getKey() + "-" + issue.getSequenceNumber();
         IssueAssignee assignee = null;
         if (issue.getAssignee() != null) {

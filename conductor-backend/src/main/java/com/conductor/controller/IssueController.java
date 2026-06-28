@@ -6,7 +6,7 @@ import com.conductor.generated.model.AvailableTransitionsResponse;
 import com.conductor.generated.model.CreateIssueRequest;
 import com.conductor.generated.model.IssueResponse;
 import com.conductor.generated.model.PatchIssueRequest;
-import com.conductor.service.IssueService;
+import com.conductor.service.WorkItemService;
 import com.conductor.service.WorkItemWorkflowService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,11 +20,11 @@ import java.util.List;
 @RestController
 public class IssueController implements IssuesApi {
 
-    private final IssueService issueService;
+    private final WorkItemService workItemService;
     private final WorkItemWorkflowService workItemWorkflowService;
 
-    public IssueController(IssueService issueService, WorkItemWorkflowService workItemWorkflowService) {
-        this.issueService = issueService;
+    public IssueController(WorkItemService workItemService, WorkItemWorkflowService workItemWorkflowService) {
+        this.workItemService = workItemService;
         this.workItemWorkflowService = workItemWorkflowService;
     }
 
@@ -38,7 +38,7 @@ public class IssueController implements IssuesApi {
     @Override
     public ResponseEntity<IssueResponse> createIssue(String projectId, CreateIssueRequest createIssueRequest) {
         User caller = currentUser();
-        IssueResponse response = issueService.createIssue(projectId, createIssueRequest, caller);
+        IssueResponse response = workItemService.createIssue(projectId, createIssueRequest, caller);
         return ResponseEntity.status(201).body(response);
     }
 
@@ -46,27 +46,27 @@ public class IssueController implements IssuesApi {
     public ResponseEntity<List<IssueResponse>> listIssues(String projectId, String type, String status,
                                                           String workflow) {
         User caller = currentUser();
-        List<IssueResponse> issues = issueService.listIssues(projectId, type, status, workflow, caller);
+        List<IssueResponse> issues = workItemService.listIssues(projectId, type, status, workflow, caller);
         return ResponseEntity.ok(issues);
     }
 
     @Override
     public ResponseEntity<IssueResponse> getIssue(String projectId, String issueId) {
         User caller = currentUser();
-        IssueResponse response = issueService.getIssue(projectId, issueId, caller);
+        IssueResponse response = workItemService.getIssue(projectId, issueId, caller);
         return ResponseEntity.ok(response);
     }
 
     @Override
     public ResponseEntity<IssueResponse> patchIssue(String projectId, String issueId, PatchIssueRequest patchIssueRequest) {
         User caller = currentUser();
-        IssueResponse response = issueService.patchIssue(projectId, issueId, patchIssueRequest, caller);
+        IssueResponse response = workItemService.patchIssue(projectId, issueId, patchIssueRequest, caller);
         return ResponseEntity.ok(response);
     }
 
     @Override
     public ResponseEntity<Void> deleteIssue(String projectId, String issueId) {
-        issueService.deleteIssue(projectId, issueId);
+        workItemService.deleteIssue(projectId, issueId);
         return ResponseEntity.noContent().build();
     }
 

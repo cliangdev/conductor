@@ -3,7 +3,7 @@ package com.conductor.integration.connector.github;
 import com.conductor.integration.*;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
-import com.conductor.service.IssueService;
+import com.conductor.service.WorkItemService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -32,7 +32,7 @@ import java.util.regex.Pattern;
  *   <li>{@link #handleLifecycle} keeps connections in sync (install deleted → delete matching connections;
  *       installation_repositories is a no-op — repos are listed live).</li>
  *   <li>{@link #handleEvent} maps a merged PR whose body says "closes conductor/KEY-N" → issue DONE,
- *       delegating the aggregate mutation + notifications to {@link IssueService}.</li>
+ *       delegating the aggregate mutation + notifications to {@link WorkItemService}.</li>
  * </ul>
  * Install/callback/repo-listing live in {@link GitHubAppController}.
  */
@@ -47,7 +47,7 @@ public class GitHubConnector implements WebhookConnector {
     private static final Pattern CLOSES_PATTERN =
             Pattern.compile("closes\\s+conductor/([A-Z]+-\\d+)", Pattern.CASE_INSENSITIVE);
 
-    private final IssueService issueService;
+    private final WorkItemService workItemService;
     private final ConnectionRepository connectionRepository;
     private final ConnectionService connectionService;
     private final GitHubAppService gitHubAppService;
@@ -55,13 +55,13 @@ public class GitHubConnector implements WebhookConnector {
     /** App-level webhook signing secret (one per GitHub App, not per connection). */
     private final String appWebhookSecret;
 
-    public GitHubConnector(IssueService issueService,
+    public GitHubConnector(WorkItemService workItemService,
                            ConnectionRepository connectionRepository,
                            ConnectionService connectionService,
                            GitHubAppService gitHubAppService,
                            ObjectMapper objectMapper,
                            @Value("${GITHUB_APP_WEBHOOK_SECRET:}") String appWebhookSecret) {
-        this.issueService = issueService;
+        this.workItemService = workItemService;
         this.connectionRepository = connectionRepository;
         this.connectionService = connectionService;
         this.gitHubAppService = gitHubAppService;
@@ -197,7 +197,7 @@ public class GitHubConnector implements WebhookConnector {
             // Aggregate mutation + DONE notifications live in the domain service. The cross-project guard
             // (issue must belong to this connection's project) is enforced there via projectId.
             try {
-                issueService.completeFromPullRequest(ctx.projectId(), projectKey, sequenceNumber, prUrl);
+                workItemService.completeFromPullRequest(ctx.projectId(), projectKey, sequenceNumber, prUrl);
                 log.info("Event {} - issue {}-{} completed from merged PR {}",
                         event.deliveryId(), projectKey, sequenceNumber, prUrl);
             } catch (jakarta.persistence.EntityNotFoundException notFound) {

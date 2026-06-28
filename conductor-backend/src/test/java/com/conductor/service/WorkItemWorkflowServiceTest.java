@@ -1,6 +1,6 @@
 package com.conductor.service;
 
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
@@ -9,7 +9,7 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.model.AvailableTransition;
 import com.conductor.generated.model.AvailableTransitionsResponse;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
@@ -40,7 +40,7 @@ class WorkItemWorkflowServiceTest {
 
     private static final String PROJECT_ID = "proj-1";
 
-    private IssueRepository issueRepository;
+    private WorkItemRepository workItemRepository;
     private ProjectSecurityService projectSecurityService;
     private ProjectMemberRepository projectMemberRepository;
     private ReviewRepository reviewRepository;
@@ -48,19 +48,19 @@ class WorkItemWorkflowServiceTest {
 
     @BeforeEach
     void setUp() {
-        issueRepository = Mockito.mock(IssueRepository.class);
+        workItemRepository = Mockito.mock(WorkItemRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
         projectMemberRepository = Mockito.mock(ProjectMemberRepository.class);
         reviewRepository = Mockito.mock(ReviewRepository.class);
         // No published snapshots → resolver falls back to the built-in ENGINEERING classpath definition.
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(
                 Mockito.mock(WorkflowDefinitionVersionRepository.class), new ObjectMapper());
-        service = new WorkItemWorkflowService(issueRepository, projectSecurityService, projectMemberRepository,
+        service = new WorkItemWorkflowService(workItemRepository, projectSecurityService, projectMemberRepository,
                 reviewRepository, resolver);
     }
 
-    private Issue issueAt(String status) {
-        Issue issue = new Issue();
+    private WorkItem issueAt(String status) {
+        WorkItem issue = new WorkItem();
         issue.setId("issue-1");
         Project project = new Project();
         project.setId(PROJECT_ID);
@@ -105,7 +105,7 @@ class WorkItemWorkflowServiceTest {
 
     @Test
     void defaultsToEngineeringWhenUnbound() {
-        Issue unbound = issueAt("DRAFT");
+        WorkItem unbound = issueAt("DRAFT");
         unbound.setWorkflow(null);
         unbound.setWorkflowVersion(null);
         assertThatCode(() -> service.validateTransition(PROJECT_ID, unbound, "IN_REVIEW"))
@@ -149,7 +149,7 @@ class WorkItemWorkflowServiceTest {
 
     @Test
     void applySystemTransitionAdvancesOnPrMergedAndBypassesReviewGate() {
-        Issue issue = issueAt("CODE_REVIEW");
+        WorkItem issue = issueAt("CODE_REVIEW");
         // No approved review stubbed: the system trigger is the authority, so the gate must NOT apply.
         Optional<StatechartTransition> applied = service.applySystemTransition(
                 PROJECT_ID, issue, WorkItemWorkflowService.TRIGGER_PR_MERGED);
@@ -159,12 +159,12 @@ class WorkItemWorkflowServiceTest {
         assertThat(issue.getCurrentStatus()).isEqualTo("DONE");
         // gate bypassed → no review lookups at all
         verify(reviewRepository, never()).existsApprovedByReviewerRole(any(), any(), any(), any());
-        verify(reviewRepository, never()).existsByIssueIdAndVerdict(any(), any());
+        verify(reviewRepository, never()).existsByWorkItemIdAndVerdict(any(), any());
     }
 
     @Test
     void applySystemTransitionReturnsEmptyWhenNoTriggeredEdge() {
-        Issue issue = issueAt("DRAFT"); // DRAFT has no pr_merged edge
+        WorkItem issue = issueAt("DRAFT"); // DRAFT has no pr_merged edge
         Optional<StatechartTransition> applied = service.applySystemTransition(
                 PROJECT_ID, issue, WorkItemWorkflowService.TRIGGER_PR_MERGED);
 
@@ -177,7 +177,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void availableTransitionsReturnsEdgesForNonReviewer() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("DRAFT")));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("DRAFT")));
         ProjectMember member = new ProjectMember();
         member.setRole(MemberRole.CREATOR);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
@@ -204,7 +204,7 @@ class WorkItemWorkflowServiceTest {
         // The gate is role-scoped — it queries the REVIEWER-scoped projection, not the generic verdict check.
         verify(reviewRepository).existsApprovedByReviewerRole(
                 "issue-1", PROJECT_ID, "APPROVED", "REVIEWER");
-        verify(reviewRepository, never()).existsByIssueIdAndVerdict(any(), any());
+        verify(reviewRepository, never()).existsByWorkItemIdAndVerdict(any(), any());
     }
 
     @Test
@@ -233,7 +233,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void availableTransitionsHidesGatedMergeUntilApproved() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("CODE_REVIEW")));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("CODE_REVIEW")));
         ProjectMember member = new ProjectMember();
         member.setRole(MemberRole.CREATOR);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
@@ -254,7 +254,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void availableTransitionsIsEmptyForReviewer() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("DRAFT")));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("DRAFT")));
         ProjectMember member = new ProjectMember();
         member.setRole(MemberRole.REVIEWER);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));

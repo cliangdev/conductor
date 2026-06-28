@@ -10,9 +10,9 @@ import java.util.Optional;
 @Repository
 public interface DocumentRepository extends JpaRepository<Document, String> {
 
-    List<Document> findByIssueId(String issueId);
+    List<Document> findByWorkItemId(String issueId);
 
-    Optional<Document> findByIdAndIssueId(String id, String issueId);
+    Optional<Document> findByIdAndWorkItemId(String id, String issueId);
 
-    Optional<Document> findByIssueIdAndFilename(String issueId, String filename);
+    Optional<Document> findByWorkItemIdAndFilename(String issueId, String filename);
 }

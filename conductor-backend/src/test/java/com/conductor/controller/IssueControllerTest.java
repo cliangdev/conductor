@@ -10,7 +10,7 @@ import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.generated.model.AvailableTransition;
 import com.conductor.generated.model.AvailableTransitionsResponse;
-import com.conductor.service.IssueService;
+import com.conductor.service.WorkItemService;
 import com.conductor.service.JwtService;
 import com.conductor.service.WorkItemWorkflowService;
 import jakarta.persistence.EntityNotFoundException;
@@ -45,7 +45,7 @@ class IssueControllerTest {
     private MockMvc mockMvc;
 
     @MockitoBean
-    private IssueService issueService;
+    private WorkItemService workItemService;
 
     @MockitoBean
     private WorkItemWorkflowService workItemWorkflowService;
@@ -102,7 +102,7 @@ class IssueControllerTest {
     void createIssueReturns201WithDraftStatus() throws Exception {
         IssueResponse response = buildIssueResponse("issue-1", "PRD", "DRAFT");
 
-        when(issueService.createIssue(eq("proj-1"), any(), eq(testUser))).thenReturn(response);
+        when(workItemService.createIssue(eq("proj-1"), any(), eq(testUser))).thenReturn(response);
 
         mockMvc.perform(post("/api/v1/projects/proj-1/issues")
                         .header("Authorization", "Bearer valid-token")
@@ -117,7 +117,7 @@ class IssueControllerTest {
     @Test
     void listIssuesFiltersByType() throws Exception {
         IssueResponse r1 = buildIssueResponse("issue-1", "PRD", "DRAFT");
-        when(issueService.listIssues(eq("proj-1"), eq("PRD"), isNull(), isNull(), eq(testUser)))
+        when(workItemService.listIssues(eq("proj-1"), eq("PRD"), isNull(), isNull(), eq(testUser)))
                 .thenReturn(List.of(r1));
 
         mockMvc.perform(get("/api/v1/projects/proj-1/issues?type=PRD")
@@ -130,7 +130,7 @@ class IssueControllerTest {
     @Test
     void listIssuesFiltersByStatus() throws Exception {
         IssueResponse r1 = buildIssueResponse("issue-1", "FEATURE_REQUEST", "IN_REVIEW");
-        when(issueService.listIssues(eq("proj-1"), isNull(), eq("IN_REVIEW"), isNull(), eq(testUser)))
+        when(workItemService.listIssues(eq("proj-1"), isNull(), eq("IN_REVIEW"), isNull(), eq(testUser)))
                 .thenReturn(List.of(r1));
 
         mockMvc.perform(get("/api/v1/projects/proj-1/issues?status=IN_REVIEW")
@@ -143,7 +143,7 @@ class IssueControllerTest {
     @Test
     void patchIssueValidTransitionReturns200() throws Exception {
         IssueResponse response = buildIssueResponse("issue-1", "PRD", "IN_REVIEW");
-        when(issueService.patchIssue(eq("proj-1"), eq("issue-1"), any(), eq(testUser))).thenReturn(response);
+        when(workItemService.patchIssue(eq("proj-1"), eq("issue-1"), any(), eq(testUser))).thenReturn(response);
 
         mockMvc.perform(patch("/api/v1/projects/proj-1/issues/issue-1")
                         .header("Authorization", "Bearer valid-token")
@@ -155,7 +155,7 @@ class IssueControllerTest {
 
     @Test
     void patchIssueInvalidTransitionReturns400() throws Exception {
-        when(issueService.patchIssue(eq("proj-1"), eq("issue-1"), any(), eq(testUser)))
+        when(workItemService.patchIssue(eq("proj-1"), eq("issue-1"), any(), eq(testUser)))
                 .thenThrow(new BusinessException("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT"));
 
         mockMvc.perform(patch("/api/v1/projects/proj-1/issues/issue-1")
@@ -168,7 +168,7 @@ class IssueControllerTest {
 
     @Test
     void getIssueReturns404WhenNotFound() throws Exception {
-        when(issueService.getIssue(eq("proj-1"), eq("nonexistent"), eq(testUser)))
+        when(workItemService.getIssue(eq("proj-1"), eq("nonexistent"), eq(testUser)))
                 .thenThrow(new EntityNotFoundException("Issue not found"));
 
         mockMvc.perform(get("/api/v1/projects/proj-1/issues/nonexistent")

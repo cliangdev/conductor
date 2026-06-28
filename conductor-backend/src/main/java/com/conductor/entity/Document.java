@@ -17,7 +17,7 @@ import java.util.UUID;
 @Entity
 @Table(
     name = "documents",
-    uniqueConstraints = @UniqueConstraint(columnNames = {"issue_id", "filename"})
+    uniqueConstraints = @UniqueConstraint(columnNames = {"work_item_id", "filename"})
 )
 public class Document {
 
@@ -26,8 +26,8 @@ public class Document {
     private String id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "issue_id", nullable = false)
-    private Issue issue;
+    @JoinColumn(name = "work_item_id", nullable = false)
+    private WorkItem workItem;
 
     @Column(name = "filename", length = 255, nullable = false)
     private String filename;
@@ -67,8 +67,8 @@ public class Document {
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
-    public Issue getIssue() { return issue; }
-    public void setIssue(Issue issue) { this.issue = issue; }
+    public WorkItem getWorkItem() { return workItem; }
+    public void setWorkItem(WorkItem workItem) { this.workItem = workItem; }
 
     public String getFilename() { return filename; }
     public void setFilename(String filename) { this.filename = filename; }

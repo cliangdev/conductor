@@ -47,7 +47,7 @@ class StatechartTest {
 
     /**
      * The fidelity bar: the built-in ENGINEERING statechart must reproduce today's hardcoded
-     * IssueService.VALID_TRANSITIONS edge set exactly (incl. CLOSED reachable from all non-terminals and the
+     * WorkItemService.VALID_TRANSITIONS edge set exactly (incl. CLOSED reachable from all non-terminals and the
      * IN_REVIEW -> DRAFT back-edge). This is what makes AC-P0-1.1 (no regression) achievable.
      */
     @Test

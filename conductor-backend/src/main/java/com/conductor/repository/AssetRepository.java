@@ -10,9 +10,9 @@ import java.util.Optional;
 @Repository
 public interface AssetRepository extends JpaRepository<Asset, String> {
 
-    List<Asset> findAllByIssueId(String issueId);
+    List<Asset> findAllByWorkItemId(String issueId);
 
-    Optional<Asset> findByIdAndIssueId(String id, String issueId);
+    Optional<Asset> findByIdAndWorkItemId(String id, String issueId);
 
-    boolean existsByIssueIdAndTypeAndRef(String issueId, String type, String ref);
+    boolean existsByWorkItemIdAndTypeAndRef(String issueId, String type, String ref);
 }

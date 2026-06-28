@@ -3,7 +3,7 @@ package com.conductor.service;
 import com.conductor.entity.Comment;
 import com.conductor.entity.CommentReply;
 import com.conductor.entity.Document;
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
@@ -21,7 +21,7 @@ import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentReplyRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,7 +54,7 @@ class CommentServiceTest {
     private CommentReplyRepository commentReplyRepository;
 
     @Mock
-    private IssueRepository issueRepository;
+    private WorkItemRepository workItemRepository;
 
     @Mock
     private DocumentRepository documentRepository;
@@ -80,7 +80,7 @@ class CommentServiceTest {
     private User author;
     private User otherUser;
     private Project project;
-    private Issue issue;
+    private WorkItem issue;
     private Document document;
     private Comment comment;
 
@@ -103,7 +103,7 @@ class CommentServiceTest {
         project.setCreatedAt(OffsetDateTime.now());
         project.setUpdatedAt(OffsetDateTime.now());
 
-        issue = new Issue();
+        issue = new WorkItem();
         issue.setId("issue-1");
         issue.setProject(project);
         issue.setType("PRD");
@@ -115,7 +115,7 @@ class CommentServiceTest {
 
         document = new Document();
         document.setId("doc-1");
-        document.setIssue(issue);
+        document.setWorkItem(issue);
         document.setFilename("spec.md");
         document.setContentType("text/markdown");
         document.setStoragePath("proj-1/issues/issue-1/doc-1/spec.md");
@@ -124,7 +124,7 @@ class CommentServiceTest {
 
         comment = new Comment();
         comment.setId("comment-1");
-        comment.setIssue(issue);
+        comment.setWorkItem(issue);
         comment.setDocument(document);
         comment.setAuthor(author);
         comment.setContent("This needs work");
@@ -139,8 +139,8 @@ class CommentServiceTest {
     @Test
     void createCommentWithLineNumberSucceeds() {
         String docContent = "line one\nline two\nline three";
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(storageService.download(document.getStoragePath()))
                 .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
@@ -163,8 +163,8 @@ class CommentServiceTest {
     @Test
     void createCommentPersistsQuotedTextFromDocumentLine() {
         String docContent = "# Introduction\nThis is the summary\nMore details here";
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(storageService.download(document.getStoragePath()))
                 .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
@@ -187,8 +187,8 @@ class CommentServiceTest {
     @Test
     void createCommentQuotedTextFirstLine() {
         String docContent = "First line\nSecond line";
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(storageService.download(document.getStoragePath()))
                 .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
@@ -211,8 +211,8 @@ class CommentServiceTest {
     @Test
     void createCommentQuotedTextOutOfBoundsReturnsEmpty() {
         String docContent = "Only one line";
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(storageService.download(document.getStoragePath()))
                 .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
@@ -235,8 +235,8 @@ class CommentServiceTest {
     @Test
     void createCommentDocumentWithNoStoragePathReturnsEmptyQuotedText() {
         document.setStoragePath(null);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
             Comment c = inv.getArgument(0);
             if (c.getId() == null) c.setId("new-comment-id");
@@ -269,7 +269,7 @@ class CommentServiceTest {
     @Test
     void listCommentsReturnsRepliesNested() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
+        when(commentRepository.findAllByWorkItemId("issue-1")).thenReturn(List.of(comment));
 
         CommentReply reply = new CommentReply();
         reply.setId("reply-1");
@@ -359,12 +359,12 @@ class CommentServiceTest {
     @Test
     void listCommentsNullResolvedReturnsAll() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
+        when(commentRepository.findAllByWorkItemId("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 
         List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", null, author);
 
-        verify(commentRepository).findAllByIssueId("issue-1");
+        verify(commentRepository).findAllByWorkItemId("issue-1");
         assertThat(results).hasSize(1);
     }
 
@@ -372,7 +372,7 @@ class CommentServiceTest {
     void listCommentsResolvedTrueReturnsOnlyResolvedComments() {
         Comment resolvedComment = new Comment();
         resolvedComment.setId("comment-resolved");
-        resolvedComment.setIssue(issue);
+        resolvedComment.setWorkItem(issue);
         resolvedComment.setDocument(document);
         resolvedComment.setAuthor(author);
         resolvedComment.setContent("Resolved comment");
@@ -382,13 +382,13 @@ class CommentServiceTest {
         resolvedComment.setUpdatedAt(OffsetDateTime.now());
 
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(commentRepository.findAllByIssueIdAndResolvedAtIsNotNull("issue-1"))
+        when(commentRepository.findAllByWorkItemIdAndResolvedAtIsNotNull("issue-1"))
                 .thenReturn(List.of(resolvedComment));
         when(commentReplyRepository.findAllByCommentId("comment-resolved")).thenReturn(List.of());
 
         List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", true, author);
 
-        verify(commentRepository).findAllByIssueIdAndResolvedAtIsNotNull("issue-1");
+        verify(commentRepository).findAllByWorkItemIdAndResolvedAtIsNotNull("issue-1");
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getResolvedAt()).isNotNull();
     }
@@ -396,12 +396,12 @@ class CommentServiceTest {
     @Test
     void listCommentsResolvedFalseReturnsOnlyUnresolvedComments() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(commentRepository.findAllByIssueIdAndResolvedAtIsNull("issue-1")).thenReturn(List.of(comment));
+        when(commentRepository.findAllByWorkItemIdAndResolvedAtIsNull("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 
         List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", false, author);
 
-        verify(commentRepository).findAllByIssueIdAndResolvedAtIsNull("issue-1");
+        verify(commentRepository).findAllByWorkItemIdAndResolvedAtIsNull("issue-1");
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getResolvedAt()).isNull();
     }
@@ -413,7 +413,7 @@ class CommentServiceTest {
         comment.setLineStale(true);
 
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(commentRepository.findAllByIssueId("issue-1")).thenReturn(List.of(comment));
+        when(commentRepository.findAllByWorkItemId("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 
         List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", null, author);
@@ -498,8 +498,8 @@ class CommentServiceTest {
     void createCommentDispatchesCommentAddedEventWithExcerpt() {
         String longContent = "x".repeat(150);
         String docContent = "line one\nline two";
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(issue));
-        when(documentRepository.findByIdAndIssueId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(storageService.download(document.getStoragePath()))
                 .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {

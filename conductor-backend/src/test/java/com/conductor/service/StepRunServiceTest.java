@@ -1,12 +1,12 @@
 package com.conductor.service;
 
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.generated.model.CreateStepRunRequest;
 import com.conductor.generated.model.StepRunProduced;
 import com.conductor.generated.model.StepRunResponse;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.StepRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,22 +26,22 @@ class StepRunServiceTest {
     private static final String ISSUE_ID = "issue-1";
 
     private StepRunRepository stepRunRepository;
-    private IssueRepository issueRepository;
+    private WorkItemRepository workItemRepository;
     private ProjectSecurityService projectSecurityService;
     private StepRunService service;
 
     @BeforeEach
     void setUp() {
         stepRunRepository = Mockito.mock(StepRunRepository.class);
-        issueRepository = Mockito.mock(IssueRepository.class);
+        workItemRepository = Mockito.mock(WorkItemRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
-        service = new StepRunService(stepRunRepository, issueRepository, projectSecurityService, new ObjectMapper());
+        service = new StepRunService(stepRunRepository, workItemRepository, projectSecurityService, new ObjectMapper());
         when(stepRunRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
     }
 
-    private Issue issue() {
-        Issue issue = new Issue();
+    private WorkItem issue() {
+        WorkItem issue = new WorkItem();
         issue.setId(ISSUE_ID);
         Project project = new Project();
         project.setId(PROJECT_ID);
@@ -57,7 +57,7 @@ class StepRunServiceTest {
 
     @Test
     void createsStepRunRoundTrippingNestedJson() {
-        when(issueRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
         CreateStepRunRequest request = new CreateStepRunRequest(
                 CreateStepRunRequest.StepKindEnum.SKILL,
                 CreateStepRunRequest.StatusEnum.AWAITING_REVIEW,

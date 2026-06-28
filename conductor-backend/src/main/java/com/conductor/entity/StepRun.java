@@ -29,8 +29,8 @@ public class StepRun {
     private String id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "issue_id", nullable = false)
-    private Issue issue;
+    @JoinColumn(name = "work_item_id", nullable = false)
+    private WorkItem workItem;
 
     @Column(name = "workflow", length = 64)
     private String workflow;
@@ -93,8 +93,8 @@ public class StepRun {
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
-    public Issue getIssue() { return issue; }
-    public void setIssue(Issue issue) { this.issue = issue; }
+    public WorkItem getWorkItem() { return workItem; }
+    public void setWorkItem(WorkItem workItem) { this.workItem = workItem; }
 
     public String getWorkflow() { return workflow; }
     public void setWorkflow(String workflow) { this.workflow = workflow; }

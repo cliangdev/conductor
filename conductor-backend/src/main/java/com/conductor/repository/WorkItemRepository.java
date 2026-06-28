@@ -1,6 +1,6 @@
 package com.conductor.repository;
 
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-public interface IssueRepository extends JpaRepository<Issue, String> {
+public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
 
     /**
      * List a project's Work Items with optional, independent filters on type, current status, and bound
@@ -18,20 +18,20 @@ public interface IssueRepository extends JpaRepository<Issue, String> {
      * combinatorial set of derived finders). Workflow filtering backs per-Workflow view pages.
      */
     @Query("""
-            SELECT i FROM Issue i
+            SELECT i FROM WorkItem i
             WHERE i.project.id = :projectId
               AND (:type IS NULL OR i.type = :type)
               AND (:status IS NULL OR i.currentStatus = :status)
               AND (:workflow IS NULL OR i.workflow = :workflow)
             """)
-    List<Issue> findByProjectFiltered(@Param("projectId") String projectId,
+    List<WorkItem> findByProjectFiltered(@Param("projectId") String projectId,
                                       @Param("type") String type,
                                       @Param("status") String status,
                                       @Param("workflow") String workflow);
 
-    @Query("SELECT COALESCE(MAX(i.sequenceNumber), 0) FROM Issue i WHERE i.project.id = :projectId")
+    @Query("SELECT COALESCE(MAX(i.sequenceNumber), 0) FROM WorkItem i WHERE i.project.id = :projectId")
     Integer findMaxSequenceNumberByProjectId(@Param("projectId") String projectId);
 
-    @Query("SELECT i FROM Issue i JOIN i.project p WHERE p.key = :projectKey AND i.sequenceNumber = :sequenceNumber")
-    Optional<Issue> findByProjectKeyAndSequenceNumber(@Param("projectKey") String projectKey, @Param("sequenceNumber") Integer sequenceNumber);
+    @Query("SELECT i FROM WorkItem i JOIN i.project p WHERE p.key = :projectKey AND i.sequenceNumber = :sequenceNumber")
+    Optional<WorkItem> findByProjectKeyAndSequenceNumber(@Param("projectKey") String projectKey, @Param("sequenceNumber") Integer sequenceNumber);
 }

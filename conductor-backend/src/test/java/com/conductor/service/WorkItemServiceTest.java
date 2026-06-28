@@ -1,6 +1,6 @@
 package com.conductor.service;
 
-import com.conductor.entity.Issue;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
@@ -14,7 +14,7 @@ import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentRepository;
-import com.conductor.repository.IssueRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
@@ -48,10 +48,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-class IssueServiceTest {
+class WorkItemServiceTest {
 
     @Mock
-    private IssueRepository issueRepository;
+    private WorkItemRepository workItemRepository;
 
     @Mock
     private ProjectRepository projectRepository;
@@ -78,11 +78,11 @@ class IssueServiceTest {
     private AssetService assetService;
 
     @InjectMocks
-    private IssueService issueService;
+    private WorkItemService workItemService;
 
     private User caller;
     private Project project;
-    private Issue testIssue;
+    private WorkItem testIssue;
 
     @BeforeEach
     void setUp() {
@@ -98,7 +98,7 @@ class IssueServiceTest {
         project.setCreatedAt(OffsetDateTime.now());
         project.setUpdatedAt(OffsetDateTime.now());
 
-        testIssue = new Issue();
+        testIssue = new WorkItem();
         testIssue.setId("issue-1");
         testIssue.setProject(project);
         testIssue.setType("PRD");
@@ -123,10 +123,10 @@ class IssueServiceTest {
     void createIssueSetsInitialStatusFromWorkflow() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
-        when(issueRepository.findMaxSequenceNumberByProjectId("proj-1")).thenReturn(0);
+        when(workItemRepository.findMaxSequenceNumberByProjectId("proj-1")).thenReturn(0);
         when(workItemWorkflowService.initialStatus("proj-1", "ENGINEERING")).thenReturn("DRAFT");
-        when(issueRepository.save(any(Issue.class))).thenAnswer(invocation -> {
-            Issue i = invocation.getArgument(0);
+        when(workItemRepository.save(any(WorkItem.class))).thenAnswer(invocation -> {
+            WorkItem i = invocation.getArgument(0);
             if (i.getId() == null) i.setId("new-issue-id");
             if (i.getCreatedAt() == null) i.setCreatedAt(OffsetDateTime.now());
             if (i.getUpdatedAt() == null) i.setUpdatedAt(OffsetDateTime.now());
@@ -136,11 +136,11 @@ class IssueServiceTest {
 
         CreateIssueRequest request = new CreateIssueRequest("PRD", "My PRD");
 
-        IssueResponse response = issueService.createIssue("proj-1", request, caller);
+        IssueResponse response = workItemService.createIssue("proj-1", request, caller);
 
-        ArgumentCaptor<Issue> captor = ArgumentCaptor.forClass(Issue.class);
-        verify(issueRepository).save(captor.capture());
-        Issue saved = captor.getValue();
+        ArgumentCaptor<WorkItem> captor = ArgumentCaptor.forClass(WorkItem.class);
+        verify(workItemRepository).save(captor.capture());
+        WorkItem saved = captor.getValue();
 
         assertThat(saved.getCurrentStatus()).isEqualTo("DRAFT");
         assertThat(saved.getType()).isEqualTo("PRD");
@@ -155,7 +155,7 @@ class IssueServiceTest {
     void createIssueThrowsForbiddenForNonMember() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(false);
 
-        assertThatThrownBy(() -> issueService.createIssue("proj-1",
+        assertThatThrownBy(() -> workItemService.createIssue("proj-1",
                 new CreateIssueRequest("PRD", "title"), caller))
                 .isInstanceOf(ForbiddenException.class);
     }
@@ -164,10 +164,10 @@ class IssueServiceTest {
     void listIssuesFiltersByType() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findByProjectFiltered("proj-1", "PRD", null, null))
+        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", null, null))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = issueService.listIssues("proj-1", "PRD", null, null, caller);
+        List<IssueResponse> results = workItemService.listIssues("proj-1", "PRD", null, null, caller);
 
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getType()).isEqualTo("PRD");
@@ -177,10 +177,10 @@ class IssueServiceTest {
     void listIssuesFiltersByStatus() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findByProjectFiltered("proj-1", null, "DRAFT", null))
+        when(workItemRepository.findByProjectFiltered("proj-1", null, "DRAFT", null))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = issueService.listIssues("proj-1", null, "DRAFT", null, caller);
+        List<IssueResponse> results = workItemService.listIssues("proj-1", null, "DRAFT", null, caller);
 
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getStatus()).isEqualTo("DRAFT");
@@ -190,10 +190,10 @@ class IssueServiceTest {
     void listIssuesFiltersByTypeAndStatus() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null))
+        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = issueService.listIssues("proj-1", "PRD", "DRAFT", null, caller);
+        List<IssueResponse> results = workItemService.listIssues("proj-1", "PRD", "DRAFT", null, caller);
 
         assertThat(results).hasSize(1);
     }
@@ -202,10 +202,10 @@ class IssueServiceTest {
     void listIssuesFiltersByWorkflow() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING"))
+        when(workItemRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING"))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = issueService.listIssues("proj-1", null, null, "ENGINEERING", caller);
+        List<IssueResponse> results = workItemService.listIssues("proj-1", null, null, "ENGINEERING", caller);
 
         assertThat(results).hasSize(1);
     }
@@ -213,12 +213,12 @@ class IssueServiceTest {
     @Test
     void patchIssueValidTransitionDraftToInReviewSucceeds() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
         PatchIssueRequest request = new PatchIssueRequest().status("IN_REVIEW");
 
-        issueService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchIssue("proj-1", "issue-1", request, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("IN_REVIEW");
         verify(workItemWorkflowService).validateTransition("proj-1", testIssue, "IN_REVIEW");
@@ -227,13 +227,13 @@ class IssueServiceTest {
     @Test
     void patchIssueInvalidTransitionDraftToReadyForDevelopmentThrows400() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         doThrow(new BusinessException("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT"))
                 .when(workItemWorkflowService).validateTransition(any(), any(), any());
 
         PatchIssueRequest request = new PatchIssueRequest().status("READY_FOR_DEVELOPMENT");
 
-        assertThatThrownBy(() -> issueService.patchIssue("proj-1", "issue-1", request, caller))
+        assertThatThrownBy(() -> workItemService.patchIssue("proj-1", "issue-1", request, caller))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT");
     }
@@ -242,13 +242,13 @@ class IssueServiceTest {
     void patchIssueInvalidTransitionReadyForDevelopmentToDraftThrows400() {
         testIssue.setCurrentStatus("READY_FOR_DEVELOPMENT");
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         doThrow(new BusinessException("Invalid status transition from READY_FOR_DEVELOPMENT to DRAFT"))
                 .when(workItemWorkflowService).validateTransition(any(), any(), any());
 
         PatchIssueRequest request = new PatchIssueRequest().status("DRAFT");
 
-        assertThatThrownBy(() -> issueService.patchIssue("proj-1", "issue-1", request, caller))
+        assertThatThrownBy(() -> workItemService.patchIssue("proj-1", "issue-1", request, caller))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid status transition from READY_FOR_DEVELOPMENT to DRAFT");
     }
@@ -257,12 +257,12 @@ class IssueServiceTest {
     void patchIssueValidTransitionInReviewToReadyForDevelopment() {
         testIssue.setCurrentStatus("IN_REVIEW");
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
         PatchIssueRequest request = new PatchIssueRequest().status("READY_FOR_DEVELOPMENT");
 
-        issueService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchIssue("proj-1", "issue-1", request, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("READY_FOR_DEVELOPMENT");
     }
@@ -270,8 +270,8 @@ class IssueServiceTest {
     @Test
     void patchIssueDraftToInReviewSucceeds() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
         ProjectMember adminMember = new ProjectMember();
         adminMember.setRole(MemberRole.ADMIN);
@@ -280,7 +280,7 @@ class IssueServiceTest {
 
         PatchIssueRequest request = new PatchIssueRequest().status("IN_REVIEW");
 
-        issueService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchIssue("proj-1", "issue-1", request, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("IN_REVIEW");
     }
@@ -289,12 +289,12 @@ class IssueServiceTest {
     void patchIssueStatusChangeFiresSingleStatusChangedEvent() {
         testIssue.setCurrentStatus("IN_PROGRESS");
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
         PatchIssueRequest request = new PatchIssueRequest().status("CODE_REVIEW");
 
-        issueService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchIssue("proj-1", "issue-1", request, caller);
 
         ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
@@ -312,12 +312,12 @@ class IssueServiceTest {
         // PR links live in github_pr Assets now; a human status change carries no prUrl.
         testIssue.setCurrentStatus("IN_PROGRESS");
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
         PatchIssueRequest request = new PatchIssueRequest().status("CODE_REVIEW");
 
-        issueService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchIssue("proj-1", "issue-1", request, caller);
 
         ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
@@ -326,9 +326,9 @@ class IssueServiceTest {
     }
 
     @Test
-    void patchIssueReviewerRoleAttemptingStatusChangeThrows403() {
+    void patchWorkItemReviewerRoleAttemptingStatusChangeThrows403() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
 
         ProjectMember reviewerMember = new ProjectMember();
         reviewerMember.setRole(MemberRole.REVIEWER);
@@ -337,7 +337,7 @@ class IssueServiceTest {
 
         PatchIssueRequest request = new PatchIssueRequest().status("IN_REVIEW");
 
-        assertThatThrownBy(() -> issueService.patchIssue("proj-1", "issue-1", request, caller))
+        assertThatThrownBy(() -> workItemService.patchIssue("proj-1", "issue-1", request, caller))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("REVIEWER role cannot change issue status");
     }
@@ -353,12 +353,12 @@ class IssueServiceTest {
         testIssue.setAssignee(assignee);
 
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
         PatchIssueRequest request = new PatchIssueRequest().status("IN_PROGRESS");
 
-        issueService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchIssue("proj-1", "issue-1", request, caller);
 
         ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
@@ -379,12 +379,12 @@ class IssueServiceTest {
         testIssue.setAssignee(assignee);
 
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
         PatchIssueRequest request = new PatchIssueRequest().status("IN_PROGRESS");
 
-        issueService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchIssue("proj-1", "issue-1", request, caller);
 
         ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
@@ -398,12 +398,12 @@ class IssueServiceTest {
         testIssue.setAssignee(null);
 
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(issueRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
         PatchIssueRequest request = new PatchIssueRequest().status("IN_PROGRESS");
 
-        issueService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchIssue("proj-1", "issue-1", request, caller);
 
         ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
@@ -417,8 +417,8 @@ class IssueServiceTest {
     void completeFromPullRequestAdvancesViaPrMergedAndNotifies() {
         // ENGINEERING declares the pr_merged edge CODE_REVIEW -> DONE.
         testIssue.setCurrentStatus("CODE_REVIEW");
-        when(issueRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
         StatechartTransition merged = new StatechartTransition(
                 "CODE_REVIEW", "DONE", "Merge", true, List.of("approve"), "REVIEWER", "pr_merged", List.of());
@@ -429,10 +429,10 @@ class IssueServiceTest {
                     return Optional.of(merged);
                 });
 
-        issueService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
+        workItemService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("DONE");
-        verify(issueRepository).save(testIssue);
+        verify(workItemRepository).save(testIssue);
         verify(assetService).recordPullRequestAsset(testIssue, "https://github.com/x/y/pull/9");
 
         ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
@@ -446,22 +446,22 @@ class IssueServiceTest {
     @Test
     void completeFromPullRequestThrowsForIssueInAnotherProject() {
         // Cross-project guard: issue belongs to proj-1 but the webhook came in for another project.
-        when(issueRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
 
         assertThatThrownBy(() ->
-                issueService.completeFromPullRequest("other-proj", "TEST", 1, "https://github.com/x/y/pull/9"))
+                workItemService.completeFromPullRequest("other-proj", "TEST", 1, "https://github.com/x/y/pull/9"))
                 .isInstanceOf(EntityNotFoundException.class);
 
-        verify(issueRepository, never()).save(any());
+        verify(workItemRepository, never()).save(any());
         verify(notificationDispatcher, never()).dispatch(any());
     }
 
     @Test
     void completeFromPullRequestThrowsWhenIssueMissing() {
-        when(issueRepository.findByProjectKeyAndSequenceNumber("TEST", 7)).thenReturn(Optional.empty());
+        when(workItemRepository.findByProjectKeyAndSequenceNumber("TEST", 7)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() ->
-                issueService.completeFromPullRequest("proj-1", "TEST", 7, "https://github.com/x/y/pull/9"))
+                workItemService.completeFromPullRequest("proj-1", "TEST", 7, "https://github.com/x/y/pull/9"))
                 .isInstanceOf(EntityNotFoundException.class);
     }
 
@@ -469,10 +469,10 @@ class IssueServiceTest {
     void completeFromPullRequestRecordsAssetButLeavesStatusWhenNoPrMergedEdge() {
         // Already terminal: ENGINEERING has no pr_merged edge from DONE → record the PR asset, status unchanged.
         testIssue.setCurrentStatus("DONE");
-        when(issueRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
-        issueService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
+        workItemService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("DONE");
         verify(assetService).recordPullRequestAsset(testIssue, "https://github.com/x/y/pull/9");
@@ -482,10 +482,10 @@ class IssueServiceTest {
     @Test
     void completeFromPullRequestDoesNotReopenClosedIssue() {
         testIssue.setCurrentStatus("CLOSED");
-        when(issueRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
-        when(issueRepository.save(any(Issue.class))).thenReturn(testIssue);
+        when(workItemRepository.findByProjectKeyAndSequenceNumber("TEST", 1)).thenReturn(Optional.of(testIssue));
+        when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
-        issueService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
+        workItemService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("CLOSED");
         verify(notificationDispatcher, never()).dispatch(any());

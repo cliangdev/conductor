@@ -22,8 +22,8 @@ public class Comment {
     private String id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "issue_id", nullable = false)
-    private Issue issue;
+    @JoinColumn(name = "work_item_id", nullable = false)
+    private WorkItem workItem;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "document_id", nullable = false)
@@ -75,8 +75,8 @@ public class Comment {
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
-    public Issue getIssue() { return issue; }
-    public void setIssue(Issue issue) { this.issue = issue; }
+    public WorkItem getWorkItem() { return workItem; }
+    public void setWorkItem(WorkItem workItem) { this.workItem = workItem; }
 
     public Document getDocument() { return document; }
     public void setDocument(Document document) { this.document = document; }
