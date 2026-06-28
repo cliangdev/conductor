@@ -138,6 +138,20 @@ public class WorkflowService {
         return workflowRepository.findByProjectId(projectId);
     }
 
+    /**
+     * List a project's workflows, narrowed by optional filters (any null = no constraint). Filtering is
+     * domain/query logic and lives here, not in the controller: {@code lifecycle} uses the authoritative
+     * {@link WorkflowDefinition#isLifecycle()} predicate, {@code state} matches the lifecycle state, and
+     * {@code sidebar} matches sidebar visibility. Filters compose.
+     */
+    public List<WorkflowDefinition> listWorkflows(String projectId, Boolean lifecycle, String state, Boolean sidebar) {
+        return workflowRepository.findByProjectId(projectId).stream()
+                .filter(w -> lifecycle == null || w.isLifecycle() == lifecycle)
+                .filter(w -> state == null || state.equalsIgnoreCase(w.getState()))
+                .filter(w -> sidebar == null || w.isSidebarEnabled() == sidebar)
+                .collect(Collectors.toList());
+    }
+
     @Transactional
     public WorkflowDefinition setEnabled(String projectId, String workflowId, String userId, boolean enabled) {
         requireAdminOrCreator(projectId, userId);
@@ -148,12 +162,16 @@ public class WorkflowService {
 
     /**
      * Toggles sidebar visibility for a Workflow. A live setting: it must not touch the Workflow's
-     * {@code state}, {@code version}, or statechart {@code definition}. (COND-22)
+     * {@code state}, {@code version}, or statechart {@code definition}. Sidebar nav is lifecycle-only,
+     * so this rejects YAML automations. (COND-22)
      */
     @Transactional
     public WorkflowDefinition setSidebarEnabled(String projectId, String workflowId, String userId, boolean sidebarEnabled) {
         requireAdminOrCreator(projectId, userId);
         WorkflowDefinition def = findInProject(projectId, workflowId);
+        if (!def.isLifecycle()) {
+            throw new BusinessException("Sidebar visibility applies only to lifecycle workflows");
+        }
         def.setSidebarEnabled(sidebarEnabled);
         return workflowRepository.save(def);
     }

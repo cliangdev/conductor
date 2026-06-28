@@ -6820,6 +6820,16 @@ components:
           type: string
         name:
           type: string
+        slug:
+          type: string
+          description: >-
+            Statechart slug (`definition.id`) for lifecycle workflows; null for automations. First-class
+            so nav/clients never parse the raw `definition`. (COND-22)
+        noun:
+          type: string
+          description: >-
+            Display noun (singular, e.g. "Issue") for lifecycle workflows, with the server's default
+            applied; null for automations. (COND-22)
         yaml:
           type: string
           description: >-

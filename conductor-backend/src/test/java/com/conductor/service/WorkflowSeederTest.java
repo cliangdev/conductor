@@ -13,8 +13,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.Optional;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -40,7 +38,7 @@ class WorkflowSeederTest {
 
     @Test
     void seedsEngineeringHeaderAndVersionSnapshot() {
-        when(workflowRepository.findByProjectIdAndName("proj-1", "ENGINEERING")).thenReturn(Optional.empty());
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "ENGINEERING")).thenReturn(false);
         when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
 
         seeder.seedEngineering(project);
@@ -68,8 +66,7 @@ class WorkflowSeederTest {
 
     @Test
     void isIdempotentWhenEngineeringAlreadyExists() {
-        when(workflowRepository.findByProjectIdAndName("proj-1", "ENGINEERING"))
-                .thenReturn(Optional.of(new WorkflowDefinition()));
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "ENGINEERING")).thenReturn(true);
 
         seeder.seedEngineering(project);
 

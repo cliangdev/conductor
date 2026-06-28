@@ -32,7 +32,9 @@ public class V74__seed_engineering_workflow extends BaseJavaMigration {
             SELECT gen_random_uuid()::text, p.id, 'ENGINEERING', NULL, true, ?::jsonb, 1, 'PUBLISHED', 'ENGINEERING', 1, true, NOW(), NOW()
             FROM projects p
             WHERE NOT EXISTS (
-                SELECT 1 FROM workflow_definitions w WHERE w.project_id = p.id AND w.name = 'ENGINEERING'
+                -- Guard on the statechart slug (definition->>'id'), the identity the resolver keys on.
+                SELECT 1 FROM workflow_definitions w
+                WHERE w.project_id = p.id AND w.definition ->> 'id' = 'ENGINEERING'
             )
             """;
 
@@ -41,8 +43,7 @@ public class V74__seed_engineering_workflow extends BaseJavaMigration {
                 (id, workflow_definition_id, version, definition, schema_version, published_at)
             SELECT gen_random_uuid()::text, w.id, 1, w.definition, 1, NOW()
             FROM workflow_definitions w
-            WHERE w.name = 'ENGINEERING'
-              AND w.definition IS NOT NULL
+            WHERE w.definition ->> 'id' = 'ENGINEERING'
               AND NOT EXISTS (
                 SELECT 1 FROM workflow_definition_versions v
                 WHERE v.workflow_definition_id = w.id AND v.version = 1

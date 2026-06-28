@@ -45,7 +45,9 @@ public class WorkflowSeeder {
      * exists. Runs in the caller's transaction.
      */
     public void seedEngineering(Project project) {
-        if (workflowRepository.findByProjectIdAndName(project.getId(), ENGINEERING_SLUG).isPresent()) {
+        // Guard on the statechart slug (definition->>'id') — the identity the resolver and sidebar key on —
+        // not the human-label `name` (they coincide for ENGINEERING but diverge for authored workflows).
+        if (workflowRepository.existsByProjectIdAndDefinitionSlug(project.getId(), ENGINEERING_SLUG)) {
             return;
         }
 

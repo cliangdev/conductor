@@ -10,6 +10,10 @@ export interface WorkflowDefinitionDto {
   id: string;
   projectId: string;
   name: string;
+  /** Statechart slug (definition.id) for lifecycle workflows; absent for automations. (COND-22) */
+  slug?: string;
+  /** Display noun (singular, server default applied) for lifecycle workflows; absent for automations. (COND-22) */
+  noun?: string;
   /**
    * Legacy automation source. Present for YAML automation workflows; absent for COND-18 lifecycle
    * (statechart) workflows, which carry `definition` instead.

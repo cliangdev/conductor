@@ -39,6 +39,7 @@ import com.conductor.service.WorkflowService;
 import com.conductor.service.WorkflowViewService;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
+import com.conductor.workflow.lifecycle.Statechart;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -124,11 +125,8 @@ public class WorkflowController implements WorkflowsApi {
     @Override
     public ResponseEntity<List<WorkflowDefinitionDto>> listWorkflows(String projectId, Boolean lifecycle,
                                                                      String state, Boolean sidebar) {
-        List<WorkflowDefinitionDto> dtos = workflowService.listWorkflows(projectId).stream()
-                // Authoritative kind (statechart vs YAML automation) — never inferred from payload shape.
-                .filter(w -> lifecycle == null || w.isLifecycle() == lifecycle)
-                .filter(w -> state == null || state.equalsIgnoreCase(w.getState()))
-                .filter(w -> sidebar == null || w.isSidebarEnabled() == sidebar)
+        // Filtering is domain/query logic and lives in the service; the controller stays a thin adapter.
+        List<WorkflowDefinitionDto> dtos = workflowService.listWorkflows(projectId, lifecycle, state, sidebar).stream()
                 .map(this::toDto)
                 .collect(Collectors.toList());
         return ResponseEntity.ok(dtos);
@@ -406,6 +404,13 @@ public class WorkflowController implements WorkflowsApi {
         // clients into treating a YAML automation as a lifecycle (statechart) Workflow.
         dto.setKind(def.isLifecycle() ? WorkflowKind.LIFECYCLE : WorkflowKind.AUTOMATION);
         dto.setSidebarEnabled(def.isSidebarEnabled());
+        // Surface slug + noun as first-class fields (with the server's noun default applied) so clients —
+        // the sidebar especially — never parse the raw statechart `definition`. Null for automations.
+        if (def.isLifecycle()) {
+            Statechart chart = Statechart.parse(def.getDefinition());
+            dto.setSlug(chart.slug());
+            dto.setNoun(chart.noun());
+        }
         dto.setDefinition(def.getDefinition() == null ? null
                 : objectMapper.convertValue(def.getDefinition(), new TypeReference<Map<String, Object>>() {}));
         dto.setCreatedAt(def.getCreatedAt());

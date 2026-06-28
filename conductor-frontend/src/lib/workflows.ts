@@ -171,6 +171,17 @@ export function isLifecycleWorkflow(wf: WorkflowDefinitionDto): boolean {
   return wf.kind === 'LIFECYCLE'
 }
 
+/**
+ * Published lifecycle workflows flagged for the sidebar nav (COND-22). Keeps the list query contract
+ * co-located here rather than hand-built at the call site.
+ */
+export function listSidebarWorkflows(projectId: string, token: string): Promise<WorkflowDefinitionDto[]> {
+  return apiGet<WorkflowDefinitionDto[]>(
+    `/api/v1/projects/${projectId}/workflows?lifecycle=true&state=PUBLISHED&sidebar=true`,
+    token,
+  )
+}
+
 /** Resolve a status id to its display label + category, falling back gracefully when unloaded. */
 export function statusMeta(
   view: WorkflowView | undefined,

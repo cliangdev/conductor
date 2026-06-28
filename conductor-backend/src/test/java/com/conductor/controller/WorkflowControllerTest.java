@@ -36,9 +36,9 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -134,45 +134,40 @@ class WorkflowControllerTest {
     }
 
     @Test
-    void listWorkflowsReturnsExplicitKindAndNullDefinitionForAutomation() throws Exception {
-        when(workflowService.listWorkflows(PROJECT_ID))
+    void listWorkflowsMapsKindSlugNounAndNullsDefinitionForAutomation() throws Exception {
+        when(workflowService.listWorkflows(PROJECT_ID, null, null, null))
                 .thenReturn(List.of(lifecycleWorkflow(), automationWorkflow()));
 
         mockMvc.perform(get("/api/v1/projects/{p}/workflows", PROJECT_ID)
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].kind").value("LIFECYCLE"))
+                .andExpect(jsonPath("$[0].slug").value("ENGINEERING"))
+                .andExpect(jsonPath("$[0].noun").value("Issue"))
                 .andExpect(jsonPath("$[0].definition").isNotEmpty())
                 // The regression: an automation must report AUTOMATION + null definition, never {}.
                 .andExpect(jsonPath("$[1].kind").value("AUTOMATION"))
-                .andExpect(jsonPath("$[1].definition").doesNotExist());
+                .andExpect(jsonPath("$[1].definition").doesNotExist())
+                .andExpect(jsonPath("$[1].slug").doesNotExist())
+                .andExpect(jsonPath("$[1].noun").doesNotExist());
     }
 
     @Test
-    void listWorkflowsLifecycleTrueExcludesAutomations() throws Exception {
-        when(workflowService.listWorkflows(PROJECT_ID))
-                .thenReturn(List.of(lifecycleWorkflow(), automationWorkflow()));
+    void listWorkflowsDelegatesFiltersToService() throws Exception {
+        // Filtering lives in the service now; the controller must pass the query params straight through.
+        when(workflowService.listWorkflows(PROJECT_ID, true, "PUBLISHED", true))
+                .thenReturn(List.of(lifecycleWorkflow()));
 
         mockMvc.perform(get("/api/v1/projects/{p}/workflows", PROJECT_ID)
                         .param("lifecycle", "true")
-                        .header("Authorization", "Bearer valid-token"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].kind").value("LIFECYCLE"));
-    }
-
-    @Test
-    void listWorkflowsSidebarTrueReturnsOnlySidebarEnabled() throws Exception {
-        when(workflowService.listWorkflows(PROJECT_ID))
-                .thenReturn(List.of(lifecycleWorkflow(), automationWorkflow()));
-
-        mockMvc.perform(get("/api/v1/projects/{p}/workflows", PROJECT_ID)
+                        .param("state", "PUBLISHED")
                         .param("sidebar", "true")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].id").value("wf-life"))
-                .andExpect(jsonPath("$[0].sidebarEnabled").value(true));
+                .andExpect(jsonPath("$[0].slug").value("ENGINEERING"));
+
+        verify(workflowService).listWorkflows(PROJECT_ID, true, "PUBLISHED", true);
     }
 
     @Test
