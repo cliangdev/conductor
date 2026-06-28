@@ -17,15 +17,15 @@ export default function NewAgentPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const settingsAgents = `/app/projects/${projectId}/settings/agents`
+  const agentsBase = `/app/projects/${projectId}/agents`
 
   async function handleSubmit(body: CreateAgentBody) {
     if (!accessToken) return
     setSaving(true)
     setError(null)
     try {
-      await createAgent(projectId, body, accessToken)
-      router.push(settingsAgents)
+      const created = await createAgent(projectId, body, accessToken)
+      router.push(`${agentsBase}/${created.id}/overview`)
     } catch (e) {
       setError(apiErrorMessage(e, 'Failed to create agent.'))
       setSaving(false)
@@ -36,8 +36,7 @@ export default function NewAgentPage() {
     <PageContainer>
       <PageHeader
         breadcrumbs={[
-          { label: 'Settings', href: `/app/projects/${projectId}/settings/general` },
-          { label: 'Agents', href: settingsAgents },
+          { label: 'Agents', href: agentsBase },
           { label: 'New' },
         ]}
         title="New Agent"

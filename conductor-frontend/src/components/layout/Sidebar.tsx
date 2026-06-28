@@ -243,6 +243,14 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
 
 // ─── Main Content ─────────────────────────────────────────────────────────────
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-2 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+      {children}
+    </div>
+  )
+}
+
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const { projects, activeProject } = useProject()
@@ -265,101 +273,90 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       {/* Scrollable nav */}
       <div className="flex-1 overflow-y-auto py-1">
         {currentWorkspace && (
-          <div className="space-y-0.5 px-2 py-1">
-            <NavItem
-              href={`/app/projects/${currentWorkspace.id}/issues`}
-              icon={<FileTextIcon className="h-4 w-4" />}
-              onNavigate={onNavigate}
-            >
-              Issues
-            </NavItem>
-            <NavItem
-              href={`/app/projects/${currentWorkspace.id}/docs`}
-              icon={<BookOpenIcon className="h-4 w-4" />}
-              onNavigate={onNavigate}
-            >
-              Docs
-            </NavItem>
-            <NavItem
-              href={`/app/projects/${currentWorkspace.id}/workflows`}
-              icon={<GitBranchIcon className="h-4 w-4" />}
-              onNavigate={onNavigate}
-            >
-              Workflows
-            </NavItem>
-            <NavItem
-              href={`/app/projects/${currentWorkspace.id}/integrations`}
-              icon={<PuzzleIcon className="h-4 w-4" />}
-              onNavigate={onNavigate}
-            >
-              Integrations
-            </NavItem>
-            <NavItem
-              href={`/app/projects/${currentWorkspace.id}/agents`}
-              icon={<BotIcon className="h-4 w-4" />}
-              onNavigate={onNavigate}
-            >
-              Agents
-            </NavItem>
-            <NavGroup
-              href={`/app/projects/${currentWorkspace.id}/settings`}
-              icon={<SettingsIcon className="h-4 w-4" />}
-              label="Settings"
-              onNavigate={onNavigate}
-              subLinks={
-                <>
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/settings/general`}
-                    icon={<SlidersHorizontalIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    General
-                  </NavItem>
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/settings/members`}
-                    icon={<UsersIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    Members
-                  </NavItem>
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/settings/workflows`}
-                    icon={<GitBranchIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    Workflows
-                  </NavItem>
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/settings/api-keys`}
-                    icon={<KeyIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    API Keys
-                  </NavItem>
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/settings/notifications`}
-                    icon={<BellIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    Notifications
-                  </NavItem>
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/settings/integrations`}
-                    icon={<PuzzleIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    Connect Apps
-                  </NavItem>
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/settings/agents`}
-                    icon={<BotIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    Agents
-                  </NavItem>
-                </>
-              }
-            />
+          <div className="px-2 py-1">
+            <SectionLabel>Work</SectionLabel>
+            <div className="space-y-0.5 mb-4">
+              <NavItem
+                href={`/app/projects/${currentWorkspace.id}/issues`}
+                icon={<FileTextIcon className="h-4 w-4" />}
+                onNavigate={onNavigate}
+              >
+                Issues
+              </NavItem>
+              <NavItem
+                href={`/app/projects/${currentWorkspace.id}/docs`}
+                icon={<BookOpenIcon className="h-4 w-4" />}
+                onNavigate={onNavigate}
+              >
+                Docs
+              </NavItem>
+            </div>
+
+            <SectionLabel>Automation</SectionLabel>
+            <div className="space-y-0.5 mb-4">
+              <NavItem
+                href={`/app/projects/${currentWorkspace.id}/workflows`}
+                icon={<GitBranchIcon className="h-4 w-4" />}
+                onNavigate={onNavigate}
+              >
+                Workflows
+              </NavItem>
+              <NavItem
+                href={`/app/projects/${currentWorkspace.id}/agents`}
+                icon={<BotIcon className="h-4 w-4" />}
+                onNavigate={onNavigate}
+              >
+                Agents
+              </NavItem>
+              <NavItem
+                href={`/app/projects/${currentWorkspace.id}/integrations`}
+                icon={<PuzzleIcon className="h-4 w-4" />}
+                onNavigate={onNavigate}
+              >
+                Integrations
+              </NavItem>
+            </div>
+
+            <div className="space-y-0.5">
+              <NavGroup
+                href={`/app/projects/${currentWorkspace.id}/settings`}
+                icon={<SettingsIcon className="h-4 w-4" />}
+                label="Settings"
+                onNavigate={onNavigate}
+                subLinks={
+                  <>
+                    <NavItem
+                      href={`/app/projects/${currentWorkspace.id}/settings/general`}
+                      icon={<SlidersHorizontalIcon className="h-4 w-4" />}
+                      onNavigate={onNavigate}
+                    >
+                      General
+                    </NavItem>
+                    <NavItem
+                      href={`/app/projects/${currentWorkspace.id}/settings/members`}
+                      icon={<UsersIcon className="h-4 w-4" />}
+                      onNavigate={onNavigate}
+                    >
+                      Members &amp; Roles
+                    </NavItem>
+                    <NavItem
+                      href={`/app/projects/${currentWorkspace.id}/settings/api-keys`}
+                      icon={<KeyIcon className="h-4 w-4" />}
+                      onNavigate={onNavigate}
+                    >
+                      API Keys
+                    </NavItem>
+                    <NavItem
+                      href={`/app/projects/${currentWorkspace.id}/settings/notifications`}
+                      icon={<BellIcon className="h-4 w-4" />}
+                      onNavigate={onNavigate}
+                    >
+                      Notifications
+                    </NavItem>
+                  </>
+                }
+              />
+            </div>
           </div>
         )}
       </div>

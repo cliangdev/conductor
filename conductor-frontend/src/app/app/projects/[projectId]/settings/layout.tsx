@@ -4,22 +4,18 @@ import { useParams, usePathname } from 'next/navigation';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Breadcrumb } from '@/components/layout/PageHeader';
 
-// Sub-page labels, mirroring the Settings sub-nav in the Sidebar.
+// Sub-page labels, mirroring the Settings sub-nav in the Sidebar. Workspace-scoped
+// only — Workflows / Integrations / Agents now have their own top-level homes.
 const SETTINGS_LABELS: Record<string, string> = {
   general: 'General',
-  members: 'Members',
-  workflows: 'Workflows',
+  members: 'Members & Roles',
   'api-keys': 'API Keys',
   notifications: 'Notifications',
-  integrations: 'Connect Apps',
-  agents: 'Agents',
 };
 
 /**
  * Persistent shell for the Settings section: the `Settings / X` breadcrumb stays
  * mounted while navigating between sub-pages, so only the panel content swaps.
- * Nested editor routes (e.g. workflows/new, workflows/[id]/edit) render their own
- * full-height chrome and bypass this shell.
  */
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
   const { projectId } = useParams<{ projectId: string }>();

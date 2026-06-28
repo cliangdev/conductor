@@ -1,14 +1,66 @@
-import { redirect } from 'next/navigation';
+'use client';
 
-export const dynamic = 'force-dynamic';
+import { useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { apiPost, apiErrorMessage } from '@/lib/api';
+import { WorkflowDefinitionDto } from '@/types/workflow';
+import WorkflowEditorLayout from '@/components/workflow/WorkflowEditorLayout';
 
-// Workflow authoring moved to Settings → Workflows. Keep this route as a
-// redirect so existing links/bookmarks don't break.
-export default async function NewWorkflowRedirect({
-  params,
-}: {
-  params: Promise<{ projectId: string }>;
-}) {
-  const { projectId } = await params;
-  redirect(`/app/projects/${projectId}/settings/workflows/new`);
+const DEFAULT_YAML = `name: my-workflow
+on:
+  workflow_dispatch: {}
+
+jobs:
+  example:
+    steps:
+      - name: Example step
+        type: http
+        method: GET
+        url: https://httpbin.org/get
+`;
+
+export default function NewWorkflowPage() {
+  const { projectId } = useParams<{ projectId: string }>();
+  const { accessToken } = useAuth();
+  const router = useRouter();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = async (name: string, yaml: string) => {
+    if (!accessToken) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await apiPost<WorkflowDefinitionDto>(
+        `/api/v1/projects/${projectId}/workflows`,
+        { name, yaml },
+        accessToken
+      );
+      router.push(`/app/projects/${projectId}/workflows/${created.id}/overview`);
+    } catch (e: unknown) {
+      setError(apiErrorMessage(e, 'Failed to save workflow'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDiscard = () => {
+    router.push(`/app/projects/${projectId}/workflows`);
+  };
+
+  return (
+    <WorkflowEditorLayout
+      title="New Workflow"
+      breadcrumbs={[
+        { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },
+        { label: 'New' },
+      ]}
+      initialYaml={DEFAULT_YAML}
+      onSave={handleSave}
+      onDiscard={handleDiscard}
+      saving={saving}
+      error={error}
+    />
+  );
 }

@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { useProject } from '@/contexts/ProjectContext'
+import { PermissionsProvider } from '@/contexts/PermissionsContext'
 
 export default function ProjectLayout({ children }: { children: React.ReactNode }) {
   const { projectId } = useParams<{ projectId: string }>()
@@ -19,5 +20,5 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, projects, activeProject?.id, setActiveProject])
 
-  return <>{children}</>
+  return <PermissionsProvider projectId={projectId}>{children}</PermissionsProvider>
 }

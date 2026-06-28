@@ -11,6 +11,7 @@ import { MemberRow } from '@/components/members/MemberRow'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
+import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiDelete, apiGet, apiPatch, apiPost, apiErrorMessage } from '@/lib/api'
 import type { Invite, Member, MemberRole } from '@/types'
 
@@ -26,6 +27,7 @@ export default function MembersPage() {
   const projectId = params.projectId as string
   const { accessToken, user } = useAuth()
   const { activeProject } = useProject()
+  const { can } = usePermissions()
   const { showToast } = useToast()
 
   const [members, setMembers] = useState<Member[]>([])
@@ -73,8 +75,7 @@ export default function MembersPage() {
     fetchMembers()
   }, [fetchMembers])
 
-  const currentUserRole = members.find((m) => m.userId === user?.id)?.role
-  const isAdmin = currentUserRole === 'ADMIN'
+  const isAdmin = can('members.manage')
 
   useEffect(() => {
     if (isAdmin) fetchInvites()
@@ -171,7 +172,7 @@ export default function MembersPage() {
   return (
     <>
       <PageHeader
-        title="Members"
+        title="Members & Roles"
         actions={
           isAdmin && (
             <Button onClick={openInviteModal} size="sm">

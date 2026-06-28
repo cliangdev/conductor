@@ -1,12 +1,11 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet, apiPost } from '@/lib/api';
+import { apiGet } from '@/lib/api';
 import { WorkflowRunDetailDto, WorkflowJobRunDto } from '@/types/workflow';
 import dynamic from 'next/dynamic';
-import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { StepRow } from '@/components/workflow/StepRow';
 
@@ -71,7 +70,6 @@ export default function RunDetailPage() {
     projectId: string; workflowId: string; runId: string;
   }>();
   const { accessToken } = useAuth();
-  const router = useRouter();
   const [run, setRun] = useState<WorkflowRunDetailDto | null>(null);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
 
@@ -90,14 +88,6 @@ export default function RunDetailPage() {
     const interval = setInterval(fetchRun, 5000);
     return () => clearInterval(interval);
   }, [run, fetchRun]);
-
-  const handleRunAgain = async () => {
-    if (!accessToken) return;
-    const newRun = await apiPost<{ id: string }>(
-      `/api/v1/projects/${projectId}/workflows/${workflowId}/dispatch`, {}, accessToken!
-    );
-    router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs/${newRun.id}`);
-  };
 
   const toggleJob = (jobId: string) => {
     setExpandedJobs(prev => {
@@ -152,7 +142,6 @@ export default function RunDetailPage() {
           </span>
         }
         description={`Trigger: ${run.triggerType} · Duration: ${formatDuration(run.startedAt, run.completedAt)}`}
-        actions={<Button onClick={handleRunAgain} variant="outline">Run Again</Button>}
       />
 
       <div className="border rounded-lg bg-muted/20 h-64">

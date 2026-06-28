@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  apiGet,
   listConnections,
   deleteConnection,
   listConnectionWebhookEvents,
@@ -14,16 +13,14 @@ import {
   apiErrorMessage,
 } from '@/lib/api';
 import type { ConnectionSummary, WebhookEventSummary, GitHubRepositoriesResponse, ApiError } from '@/lib/api';
-import type { Member } from '@/types';
+import { useCan } from '@/contexts/PermissionsContext';
 
 const CONNECTOR_ID = 'github';
 
 export default function GitHubConnectorPage({ projectId }: { projectId: string }) {
-  const { accessToken, user } = useAuth();
+  const { accessToken } = useAuth();
   const { showToast } = useToast();
-
-  const [members, setMembers] = useState<Member[]>([]);
-  const [membersLoading, setMembersLoading] = useState(true);
+  const canMutate = useCan('integration.manage');
 
   const [connections, setConnections] = useState<ConnectionSummary[]>([]);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
@@ -36,18 +33,6 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
   const [installing, setInstalling] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
-
-  const fetchMembers = useCallback(async () => {
-    if (!accessToken) return;
-    try {
-      const data = await apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken);
-      setMembers(data);
-    } catch {
-      // non-fatal
-    } finally {
-      setMembersLoading(false);
-    }
-  }, [accessToken, projectId]);
 
   const fetchConnections = useCallback(async () => {
     if (!accessToken) return;
@@ -100,12 +85,8 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
     }
   }, [accessToken, projectId]);
 
-  useEffect(() => { fetchMembers(); }, [fetchMembers]);
   useEffect(() => { fetchConnections(); }, [fetchConnections]);
   useEffect(() => { if (!connectionsLoading) fetchEvents(connections); }, [connectionsLoading, connections, fetchEvents]);
-
-  const currentUserRole = members.find((m) => m.userId === user?.id)?.role;
-  const canMutate = currentUserRole === 'ADMIN' || currentUserRole === 'CREATOR';
 
   async function handleInstall() {
     if (!accessToken) return;
@@ -138,7 +119,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
     }
   }
 
-  if (membersLoading || connectionsLoading) {
+  if (connectionsLoading) {
     return (
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <p className="text-sm text-muted-foreground">Loading…</p>
