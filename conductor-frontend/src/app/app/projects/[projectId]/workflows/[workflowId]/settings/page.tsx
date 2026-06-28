@@ -104,7 +104,7 @@ export default function WorkflowSettingsPage() {
       <WorkflowEditorLayout
         embedded
         title="Edit workflow"
-        initialYaml={workflow.yaml}
+        initialYaml={workflow.yaml ?? ''}
         initialName={workflow.name}
         onSave={handleSave}
         onDiscard={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}/overview`)}

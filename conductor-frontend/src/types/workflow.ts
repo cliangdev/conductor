@@ -1,10 +1,28 @@
+export type WorkflowState = 'DRAFT' | 'PUBLISHED';
+
 export interface WorkflowDefinitionDto {
   id: string;
   projectId: string;
   name: string;
-  yaml: string;
+  /**
+   * Legacy automation source. Present for YAML automation workflows; absent for COND-18 lifecycle
+   * (statechart) workflows, which carry `definition` instead.
+   */
+  yaml?: string;
   enabled: boolean;
   webhookToken?: string;
+  /** Monotonic version; in-flight Work Items pin to their version. (COND-18) */
+  version?: number;
+  /** Lifecycle state of the definition. Only PUBLISHED is bindable by Work Items. (COND-18) */
+  state?: WorkflowState;
+  /** Nav-grouping slug; single-Workflow Areas render flat. (COND-18) */
+  area?: string;
+  schemaVersion?: number;
+  /**
+   * The versioned statechart (statuses, transitions, reviews, steps, …). Non-null only for
+   * lifecycle workflows — this is how a lifecycle workflow is distinguished from a YAML automation.
+   */
+  definition?: Record<string, unknown> | null;
   warnings?: WorkflowValidationWarning[];
   createdAt: string;
   updatedAt: string;
@@ -12,6 +30,12 @@ export interface WorkflowDefinitionDto {
 
 export interface WorkflowValidationWarning {
   message: string;
+}
+
+/** Response envelope from create/update — the saved workflow plus any non-fatal validation warnings. */
+export interface WorkflowCreateResponse {
+  workflow: WorkflowDefinitionDto;
+  warnings?: WorkflowValidationWarning[];
 }
 
 export interface WorkflowRunDto {

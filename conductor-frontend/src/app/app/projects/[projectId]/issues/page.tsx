@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
@@ -17,6 +17,14 @@ import {
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
+import {
+  DEFAULT_WORKFLOW_SLUG,
+  categoriesForView,
+  categoryVariant,
+  humanizeId,
+  statusMeta,
+  useWorkflowViews,
+} from '@/lib/workflows'
 import type { MemberRole } from '@/types'
 
 export const dynamic = 'force-dynamic'
@@ -37,6 +45,8 @@ interface Issue {
   displayId?: string
   sequenceNumber?: number
   assignee?: IssueAssignee | null
+  /** Bound Workflow slug; absent in IssueResponse today, so callers default to ENGINEERING. */
+  workflow?: string
 }
 
 interface IssueReviewer {
@@ -58,58 +68,11 @@ interface Member {
   role: MemberRole
 }
 
-type StatusVariant =
-  | 'status-draft'
-  | 'status-review'
-  | 'status-approved'
-  | 'status-progress'
-  | 'status-code-review'
-  | 'status-done'
-  | 'status-closed'
-
-const STATUS_VARIANTS: Record<string, StatusVariant> = {
-  DRAFT: 'status-draft',
-  IN_REVIEW: 'status-review',
-  READY_FOR_DEVELOPMENT: 'status-approved',
-  IN_PROGRESS: 'status-progress',
-  CODE_REVIEW: 'status-code-review',
-  DONE: 'status-done',
-  CLOSED: 'status-closed',
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  DRAFT: 'Draft',
-  IN_REVIEW: 'In Review',
-  READY_FOR_DEVELOPMENT: 'Ready for Development',
-  IN_PROGRESS: 'In Progress',
-  CODE_REVIEW: 'Code Review',
-  DONE: 'Done',
-  CLOSED: 'Closed',
-}
-
-const TYPE_OPTIONS = ['All', 'PRD', 'RFC', 'BUG', 'TASK'] as const
-
-const ACTIVE_STATUSES = [
-  'DRAFT',
-  'IN_REVIEW',
-  'READY_FOR_DEVELOPMENT',
-  'IN_PROGRESS',
-  'CODE_REVIEW',
-] as const
-const DONE_STATUSES = ['DONE', 'CLOSED'] as const
-
 type View = 'active' | 'done' | 'all'
 
-function statusOptionsForView(view: View): readonly string[] {
-  if (view === 'active') return ['All', ...ACTIVE_STATUSES]
-  if (view === 'done') return ['All', ...DONE_STATUSES]
-  return ['All', ...ACTIVE_STATUSES, ...DONE_STATUSES]
-}
-
-function isInView(status: string, view: View): boolean {
-  if (view === 'active') return (ACTIVE_STATUSES as readonly string[]).includes(status)
-  if (view === 'done') return (DONE_STATUSES as readonly string[]).includes(status)
-  return true
+/** Slug of the Workflow a Work Item is bound to (defaults to ENGINEERING when none is carried). */
+function slugOf(issue: Issue): string {
+  return issue.workflow ?? DEFAULT_WORKFLOW_SLUG
 }
 
 const VERDICT_ICONS: Record<string, string> = {
@@ -338,6 +301,15 @@ export default function IssuesListPage() {
   const [typeFilter, setTypeFilter] = useState<string>('All')
   const [statusFilter, setStatusFilter] = useState<string>('All')
 
+  // Resolve the display metadata for every Workflow present in the list (always including the
+  // default ENGINEERING Workflow, so labels/categories are available before the first issue loads).
+  // useWorkflowViews derives a stable key from the slugs, so passing a fresh array is fine.
+  const views = useWorkflowViews(
+    projectId,
+    [DEFAULT_WORKFLOW_SLUG, ...issues.map(slugOf)],
+    accessToken,
+  )
+
   function setView(next: View) {
     if (next === view) return
     setStatusFilter('All')
@@ -397,17 +369,25 @@ export default function IssuesListPage() {
     setIssues((prev) => prev.map((i) => i.id === issueId ? { ...i, reviewers } : i))
   }
 
-  const counts = useMemo(() => {
-    let active = 0
-    let done = 0
-    for (const issue of issues) {
-      if (isInView(issue.status, 'active')) active++
-      else if (isInView(issue.status, 'done')) done++
-    }
-    return { active, done, all: issues.length }
-  }, [issues])
+  // The status's lane category (open | in_progress | terminal), resolved via the bound Workflow.
+  function categoryOf(issue: Issue): string {
+    return statusMeta(views[slugOf(issue)], issue.status).category
+  }
 
-  const issuesInView = issues.filter((issue) => isInView(issue.status, view))
+  function isInView(issue: Issue, target: View): boolean {
+    if (target === 'all') return true
+    return (categoriesForView(target) as string[]).includes(categoryOf(issue))
+  }
+
+  let activeCount = 0
+  let doneCount = 0
+  for (const issue of issues) {
+    if (isInView(issue, 'active')) activeCount++
+    else if (isInView(issue, 'done')) doneCount++
+  }
+  const counts = { active: activeCount, done: doneCount, all: issues.length }
+
+  const issuesInView = issues.filter((issue) => isInView(issue, view))
 
   const filteredIssues = issuesInView.filter((issue) => {
     if (typeFilter !== 'All' && issue.type !== typeFilter) return false
@@ -415,8 +395,29 @@ export default function IssuesListPage() {
     return true
   })
 
-  const statusOptions = statusOptionsForView(view)
-  const statusFilterValue = statusOptions.includes(statusFilter) ? statusFilter : 'All'
+  // Type filter: the union of every present Workflow's allowed types (falling back to the types that
+  // actually appear on Work Items until the views load).
+  const typeSet = new Set<string>()
+  for (const v of Object.values(views)) for (const t of v.types) typeSet.add(t)
+  if (typeSet.size === 0) for (const i of issues) typeSet.add(i.type)
+  const typeOptions = ['All', ...typeSet]
+
+  // Status filter: the union of statuses whose category belongs to the active tab, labelled via the
+  // Workflow view. Value is the status id; the visible text is its label.
+  const statusCats = categoriesForView(view) as string[]
+  const statusOptions: { id: string; label: string }[] = []
+  const seenStatus = new Set<string>()
+  for (const v of Object.values(views)) {
+    for (const s of v.statuses) {
+      if (statusCats.includes(s.category) && !seenStatus.has(s.id)) {
+        seenStatus.add(s.id)
+        statusOptions.push({ id: s.id, label: s.label ?? humanizeId(s.id) })
+      }
+    }
+  }
+
+  const statusFilterValue =
+    statusFilter === 'All' || statusOptions.some((o) => o.id === statusFilter) ? statusFilter : 'All'
 
   if (loading) {
     return (
@@ -510,7 +511,7 @@ export default function IssuesListPage() {
             onChange={(e) => setTypeFilter(e.target.value)}
             className="border border-border bg-background text-foreground rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
-            {TYPE_OPTIONS.map((t) => (
+            {typeOptions.map((t) => (
               <option key={t} value={t}>{t}</option>
             ))}
           </select>
@@ -524,8 +525,9 @@ export default function IssuesListPage() {
             onChange={(e) => setStatusFilter(e.target.value)}
             className="border border-border bg-background text-foreground rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           >
+            <option value="All">{allStatusLabel}</option>
             {statusOptions.map((s) => (
-              <option key={s} value={s}>{s === 'All' ? allStatusLabel : (STATUS_LABELS[s] ?? s.replace(/_/g, ' '))}</option>
+              <option key={s.id} value={s.id}>{s.label}</option>
             ))}
           </select>
         </div>
@@ -573,9 +575,14 @@ export default function IssuesListPage() {
                     )}
                     <span className="font-medium text-foreground text-sm leading-snug">{issue.title}</span>
                   </div>
-                  <Badge variant={STATUS_VARIANTS[issue.status] ?? 'status-draft'} className="shrink-0">
-                    {STATUS_LABELS[issue.status] ?? issue.status.replace(/_/g, ' ')}
-                  </Badge>
+                  {(() => {
+                    const meta = statusMeta(views[slugOf(issue)], issue.status)
+                    return (
+                      <Badge variant={categoryVariant(meta.category)} className="shrink-0">
+                        {meta.label}
+                      </Badge>
+                    )
+                  })()}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant="outline" className="text-xs">{issue.type}</Badge>
@@ -645,6 +652,7 @@ export default function IssuesListPage() {
                           currentStatus={issue.status}
                           userRole={userRole}
                           token={accessToken}
+                          workflowSlug={slugOf(issue)}
                           onStatusChanged={(s) => updateIssueStatus(issue.id, s)}
                         />
                       )}

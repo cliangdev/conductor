@@ -59,7 +59,7 @@ function WorkflowDetailHeader() {
     return <PageHeader title={<span className="text-muted-foreground">Loading…</span>} />
   }
 
-  const triggers = parseTriggers(workflow.yaml)
+  const triggers = parseTriggers(workflow.yaml ?? '')
 
   const handleRun = async () => {
     if (!accessToken) return
