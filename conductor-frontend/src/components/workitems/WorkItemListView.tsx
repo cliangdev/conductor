@@ -307,8 +307,9 @@ export function WorkItemListView({
   const viewParam = searchParams.get('view')
   const view: View = viewParam === 'done' || viewParam === 'all' ? viewParam : 'active'
 
-  // Display mode: list (default) or board. Priority: URL param > localStorage > workflow defaultView.
+  // Display mode: list (default) or board. Priority: URL param > explicit localStorage > workflow defaultView.
   const modeKey = `wv_mode_${projectId}_${slug}`
+  const modeExplicitKey = `wv_mode_explicit_${projectId}_${slug}`
   const [mode, setMode] = useState<DisplayMode>(() => {
     const p = searchParams.get('mode')
     if (p === 'board' || p === 'list') return p
@@ -321,7 +322,10 @@ export function WorkItemListView({
 
   function setDisplayMode(next: DisplayMode) {
     setMode(next)
-    try { localStorage.setItem(modeKey, next) } catch { /* */ }
+    try {
+      localStorage.setItem(modeKey, next)
+      localStorage.setItem(modeExplicitKey, '1')
+    } catch { /* */ }
   }
 
   const [issues, setIssues] = useState<IssueWithReviewers[]>([])
@@ -342,18 +346,18 @@ export function WorkItemListView({
   // allowed status/type option lists.
   const workflowView = useWorkflowView(projectId, slug, accessToken)
 
-  // Apply workflow's defaultView once it loads — only if no URL param or localStorage preference.
+  // Apply workflow's defaultView once it loads — only if no URL param or explicit user preference.
   useEffect(() => {
     const wfDefault = workflowView?.defaultView as DisplayMode | undefined
     if (!wfDefault || (wfDefault !== 'list' && wfDefault !== 'board')) return
     const p = searchParams.get('mode')
     if (p === 'board' || p === 'list') return
     try {
-      const stored = localStorage.getItem(modeKey)
-      if (stored === 'board' || stored === 'list') return
+      const explicit = localStorage.getItem(modeExplicitKey)
+      if (explicit) return
     } catch { /* */ }
     setMode(wfDefault)
-  }, [workflowView?.defaultView, modeKey, searchParams])
+  }, [workflowView?.defaultView, modeExplicitKey, searchParams])
 
   const title = pluralizeNoun(noun)
 
@@ -521,7 +525,7 @@ export function WorkItemListView({
       <div
         role="tablist"
         aria-label={`${title} view`}
-        className="flex items-center gap-1 border-b border-border mb-4 -mx-1 px-1 overflow-x-auto"
+        className="flex items-center gap-1 border-b border-border mb-4 -mx-1 px-1 overflow-x-auto overflow-y-hidden"
       >
         {tabs.map((t) => {
           const selected = t.id === view
