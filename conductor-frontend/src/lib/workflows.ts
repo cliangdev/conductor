@@ -14,7 +14,7 @@ import type { BadgeProps } from '@/components/ui/badge'
 import type {
   WorkflowView,
   WorkflowStatusCategory,
-  WorkflowVersionSummary,
+  WorkflowVersionsResponse,
 } from '@/types/workItem'
 import type {
   WorkflowCreateResponse,
@@ -444,14 +444,40 @@ export function categoriesForView(view: 'active' | 'done' | 'all'): WorkflowStat
 
 // ── Lifecycle (statechart) Workflow CRUD ────────────────────────────────────
 
-/** List the published version history of a Workflow, newest first. */
+/** List the published version history of a Workflow, newest first, with active version + work-item counts. */
 export function listWorkflowVersions(
   projectId: string,
   workflowId: string,
   token: string,
-): Promise<WorkflowVersionSummary[]> {
-  return apiGet<WorkflowVersionSummary[]>(
+): Promise<WorkflowVersionsResponse> {
+  return apiGet<WorkflowVersionsResponse>(
     `/api/v1/projects/${projectId}/workflows/${workflowId}/versions`,
+    token,
+  )
+}
+
+/** Disable a PUBLISHED lifecycle Workflow — existing Work Items keep their version, no new bindings. */
+export function disableWorkflow(
+  projectId: string,
+  workflowId: string,
+  token: string,
+): Promise<WorkflowDefinitionDto> {
+  return apiPost<WorkflowDefinitionDto>(
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/disable`,
+    {},
+    token,
+  )
+}
+
+/** Re-enable a DISABLED lifecycle Workflow so new Work Items can bind to it again. */
+export function enableWorkflow(
+  projectId: string,
+  workflowId: string,
+  token: string,
+): Promise<WorkflowDefinitionDto> {
+  return apiPost<WorkflowDefinitionDto>(
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/enable`,
+    {},
     token,
   )
 }

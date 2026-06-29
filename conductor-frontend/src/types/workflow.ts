@@ -1,4 +1,4 @@
-export type WorkflowState = 'DRAFT' | 'PUBLISHED';
+export type WorkflowState = 'DRAFT' | 'PUBLISHED' | 'DISABLED';
 
 /**
  * Explicit, server-derived kind of a Workflow. Use this to distinguish lifecycle (statechart) from
@@ -31,6 +31,8 @@ export interface WorkflowDefinitionDto {
   state?: WorkflowState;
   /** Nav-grouping slug; single-Workflow Areas render flat. (COND-18) */
   area?: string;
+  /** Work items bound to this workflow (any version); 0 (or absent) for automations. */
+  workItemCount?: number;
   schemaVersion?: number;
   /**
    * The versioned statechart (statuses, transitions, reviews, steps, …). Non-null only for

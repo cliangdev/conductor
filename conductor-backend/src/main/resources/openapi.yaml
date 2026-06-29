@@ -3610,6 +3610,90 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/workflows/{workflowId}/disable:
+    post:
+      tags:
+        - workflows
+      summary: Disable a PUBLISHED lifecycle Workflow
+      description: Transitions a PUBLISHED lifecycle Workflow to DISABLED — hidden from sidebar
+        and new Work Item creation, but existing pinned Work Items keep resolving their
+        version snapshot. Use POST .../enable to reverse.
+      operationId: disableWorkflow
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Workflow disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowDefinitionDto"
+        "400":
+          description: Workflow is not PUBLISHED or is not a lifecycle workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/workflows/{workflowId}/enable:
+    post:
+      tags:
+        - workflows
+      summary: Re-enable a DISABLED lifecycle Workflow
+      description: Transitions a DISABLED lifecycle Workflow back to PUBLISHED (state only — no
+        new version snapshot). Sidebar visibility is restored automatically if sidebarEnabled
+        was true before disabling.
+      operationId: enableWorkflow
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Workflow re-enabled (state is now PUBLISHED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowDefinitionDto"
+        "400":
+          description: Workflow is not DISABLED or is not a lifecycle workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/workflows:
     get:
       tags: [workflows]
@@ -3760,9 +3844,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/WorkflowVersionSummary"
+                $ref: "#/components/schemas/WorkflowVersionsResponse"
         "404":
           description: Workflow not found
           content:
@@ -6418,6 +6500,7 @@ components:
       enum:
         - DRAFT
         - PUBLISHED
+        - DISABLED
 
     WorkflowKind:
       type: string
@@ -6809,6 +6892,38 @@ components:
         direction:
           type: string
 
+    WorkflowVersionChangeSummary:
+      type: object
+      properties:
+        statusesAdded:
+          type: array
+          items:
+            type: string
+          description: Status IDs present in this version but absent from the previous.
+        statusesRemoved:
+          type: array
+          items:
+            type: string
+          description: Status IDs present in the previous version but absent from this one.
+
+    WorkflowVersionsResponse:
+      type: object
+      required:
+        - totalWorkItems
+        - versions
+      properties:
+        activeVersion:
+          type: integer
+          nullable: true
+          description: The current active version number (new Work Items bind to this).
+        totalWorkItems:
+          type: integer
+          description: Total Work Items bound to this workflow across all versions.
+        versions:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowVersionSummary"
+
     WorkflowVersionSummary:
       type: object
       required: [version, publishedAt]
@@ -6824,6 +6939,14 @@ components:
         publishedBy:
           type: string
           nullable: true
+        active:
+          type: boolean
+          description: True when new Work Items bind to this version.
+        workItemCount:
+          type: integer
+          description: Work Items currently pinned to this version.
+        changeSummary:
+          $ref: "#/components/schemas/WorkflowVersionChangeSummary"
 
     WorkflowDefinitionDto:
       type: object
@@ -6872,6 +6995,9 @@ components:
         schemaVersion:
           type: integer
           description: Version of the workflow-definition schema this definition targets. (COND-18)
+        workItemCount:
+          type: integer
+          description: Work Items bound to this workflow across all versions. Lifecycle only; 0 for automations.
         definition:
           type: object
           additionalProperties: true

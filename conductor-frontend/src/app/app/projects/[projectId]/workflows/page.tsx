@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api';
+import { BanIcon, CheckCircleIcon } from 'lucide-react';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
-import { isLifecycleWorkflow } from '@/lib/workflows';
+import { isLifecycleWorkflow, disableWorkflow, enableWorkflow, invalidateSidebarCache } from '@/lib/workflows';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TriggerBadges } from '@/components/workflow/TriggerBadges';
@@ -75,6 +76,7 @@ export default function WorkflowsPage() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkflowDefinitionDto | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [disableTarget, setDisableTarget] = useState<WorkflowDefinitionDto | null>(null);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -132,6 +134,30 @@ export default function WorkflowsPage() {
     );
     if (!updated) return;
     setWorkflows(prev => prev.map(w => (w.id === updated.id ? updated : w)));
+  };
+
+  const handleDisable = async (workflow: WorkflowDefinitionDto) => {
+    if (!accessToken) return;
+    try {
+      const updated = await disableWorkflow(projectId, workflow.id, accessToken);
+      setWorkflows(prev => prev.map(w => (w.id === updated.id ? updated : w)));
+      // Drop the sidebar cache so the disabled workflow disappears from nav immediately.
+      invalidateSidebarCache(projectId);
+    } catch (e) {
+      showToast(apiErrorMessage(e, 'Failed to disable workflow.'), 'error');
+    }
+  };
+
+  const handleEnable = async (workflow: WorkflowDefinitionDto) => {
+    if (!accessToken) return;
+    try {
+      const updated = await enableWorkflow(projectId, workflow.id, accessToken);
+      setWorkflows(prev => prev.map(w => (w.id === updated.id ? updated : w)));
+      // Drop the sidebar cache so the re-enabled workflow re-appears in nav immediately.
+      invalidateSidebarCache(projectId);
+    } catch (e) {
+      showToast(apiErrorMessage(e, 'Failed to enable workflow.'), 'error');
+    }
   };
 
   const handleDelete = async () => {
@@ -195,6 +221,25 @@ export default function WorkflowsPage() {
             <tbody>
               {lifecycle.map(wf => {
                 const noun = (wf.definition as { noun?: string } | null | undefined)?.noun;
+                const hasWorkItems = (wf.workItemCount ?? 0) > 0;
+                const stateVariant =
+                  wf.state === 'PUBLISHED' ? 'status-done' : wf.state === 'DISABLED' ? 'secondary' : 'status-draft';
+                const extraItems =
+                  wf.state === 'PUBLISHED' && hasWorkItems
+                    ? [{
+                        label: 'Disable',
+                        icon: <BanIcon className="h-4 w-4" />,
+                        onSelect: () => setDisableTarget(wf),
+                      }]
+                    : wf.state === 'DISABLED'
+                      ? [{
+                          label: 'Enable',
+                          icon: <CheckCircleIcon className="h-4 w-4" />,
+                          onSelect: () => handleEnable(wf),
+                        }]
+                      : [];
+                // Delete is hidden whenever Work Items are bound (Disable/Enable govern the lifecycle instead).
+                const canDelete = !hasWorkItems;
                 return (
                   <tr
                     key={wf.id}
@@ -204,7 +249,7 @@ export default function WorkflowsPage() {
                     <td className="p-3 font-medium">{wf.name}</td>
                     <td className="p-3 text-muted-foreground">{noun ?? '—'}</td>
                     <td className="p-3">
-                      <Badge variant={wf.state === 'PUBLISHED' ? 'status-done' : 'status-draft'}>
+                      <Badge variant={stateVariant}>
                         {wf.state ?? 'DRAFT'}
                       </Badge>
                     </td>
@@ -213,7 +258,8 @@ export default function WorkflowsPage() {
                       <Can do="workflow.manage">
                         <RowActionsMenu
                           onEdit={() => router.push(`/app/projects/${projectId}/workflows/lifecycle/${wf.id}`)}
-                          onDelete={() => setDeleteTarget(wf)}
+                          onDelete={canDelete ? () => setDeleteTarget(wf) : undefined}
+                          extraItems={extraItems}
                         />
                       </Can>
                     </td>
@@ -325,6 +371,30 @@ export default function WorkflowsPage() {
             {deleting ? 'Deleting…' : 'Delete workflow'}
           </Button>
           <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+            Cancel
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={!!disableTarget}
+        onOpenChange={(o) => { if (!o) setDisableTarget(null); }}
+        title="Disable workflow"
+      >
+        <p className="text-sm text-foreground">
+          Work items using <strong>{disableTarget?.name}</strong> will keep their current version.
+          No new work items can use this workflow while it is disabled.
+        </p>
+        <div className="flex gap-3 mt-4">
+          <Button
+            onClick={async () => {
+              if (disableTarget) await handleDisable(disableTarget);
+              setDisableTarget(null);
+            }}
+          >
+            Disable workflow
+          </Button>
+          <Button variant="outline" onClick={() => setDisableTarget(null)}>
             Cancel
           </Button>
         </div>

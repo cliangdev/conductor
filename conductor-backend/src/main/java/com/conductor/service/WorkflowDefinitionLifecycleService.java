@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowDefinitionVersion;
+import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.WorkflowDefinitionRepository;
@@ -25,6 +26,7 @@ public class WorkflowDefinitionLifecycleService {
 
     static final String STATE_DRAFT = "DRAFT";
     static final String STATE_PUBLISHED = "PUBLISHED";
+    static final String STATE_DISABLED = "DISABLED";
 
     private final WorkflowDefinitionRepository definitionRepository;
     private final WorkflowDefinitionVersionRepository versionRepository;
@@ -116,5 +118,57 @@ public class WorkflowDefinitionLifecycleService {
         }
 
         return saved;
+    }
+
+    /**
+     * Disable a PUBLISHED lifecycle Workflow: the {@code state=PUBLISHED} sidebar/creation filters then hide
+     * it, while in-flight Work Items keep resolving their pinned version snapshot. Reversible via
+     * {@link #enableWorkflow}.
+     */
+    @Transactional
+    public WorkflowDefinition disableWorkflow(String projectId, String workflowId, String callerId) {
+        requireAdminOrCreator(projectId, callerId);
+        WorkflowDefinition def = findInProjectLifecycleOnly(projectId, workflowId);
+        if (!STATE_PUBLISHED.equals(def.getState())) {
+            throw new BusinessException("Only a PUBLISHED workflow can be disabled (current state: " + def.getState() + ")");
+        }
+        def.setState(STATE_DISABLED);
+        // sidebarEnabled is NOT touched — the state=PUBLISHED filter in listSidebarWorkflows
+        // already excludes DISABLED workflows. sidebarEnabled remains the user's sidebar preference.
+        return definitionRepository.save(def);
+    }
+
+    /** Re-enable a DISABLED lifecycle Workflow back to PUBLISHED (state only — no new version snapshot). */
+    @Transactional
+    public WorkflowDefinition enableWorkflow(String projectId, String workflowId, String callerId) {
+        requireAdminOrCreator(projectId, callerId);
+        WorkflowDefinition def = findInProjectLifecycleOnly(projectId, workflowId);
+        if (!STATE_DISABLED.equals(def.getState())) {
+            throw new BusinessException("Only a DISABLED workflow can be re-enabled (current state: " + def.getState() + ")");
+        }
+        def.setState(STATE_PUBLISHED);
+        // sidebarEnabled preserved — if true before disabling, the workflow re-appears in sidebar.
+        // If the user had explicitly hidden it (sidebarEnabled=false), that preference is kept.
+        return definitionRepository.save(def);
+    }
+
+    private void requireAdminOrCreator(String projectId, String callerId) {
+        if (!projectSecurityService.isAdminOrCreator(projectId, callerId)) {
+            throw new ForbiddenException("Only ADMIN or CREATOR can manage workflows");
+        }
+    }
+
+    private WorkflowDefinition findInProject(String projectId, String workflowId) {
+        return definitionRepository.findById(workflowId)
+                .filter(d -> d.getProject() != null && projectId.equals(d.getProject().getId()))
+                .orElseThrow(() -> new EntityNotFoundException("Workflow not found"));
+    }
+
+    private WorkflowDefinition findInProjectLifecycleOnly(String projectId, String workflowId) {
+        WorkflowDefinition def = findInProject(projectId, workflowId);
+        if (!def.isLifecycle()) {
+            throw new BusinessException("This operation applies only to lifecycle workflows");
+        }
+        return def;
     }
 }

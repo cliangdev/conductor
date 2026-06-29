@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { MoreHorizontalIcon, PencilIcon, Trash2Icon } from 'lucide-react'
 import {
   DropdownMenu,
@@ -8,21 +9,32 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
 
+/** An extra menu entry rendered between Edit and Delete. */
+export interface RowActionMenuItem {
+  label: string
+  icon?: ReactNode
+  onSelect: () => void
+  destructive?: boolean
+}
+
 /**
  * A row/card kebab menu (Edit / Delete) built on the shared Radix dropdown. Stops click
  * propagation so it can sit inside a clickable row without triggering the row's navigation.
- * Items are only shown when their handler is provided.
+ * Items are only shown when their handler is provided. Pass `extraItems` to render additional
+ * actions (e.g. Disable/Enable) between Edit and Delete.
  */
 export function RowActionsMenu({
   onEdit,
   onDelete,
   editLabel = 'Edit',
   deleteLabel = 'Delete',
+  extraItems = [],
 }: {
   onEdit?: () => void
   onDelete?: () => void
   editLabel?: string
   deleteLabel?: string
+  extraItems?: RowActionMenuItem[]
 }) {
   return (
     <DropdownMenu>
@@ -43,6 +55,16 @@ export function RowActionsMenu({
             {editLabel}
           </DropdownMenuItem>
         )}
+        {extraItems.map((item) => (
+          <DropdownMenuItem
+            key={item.label}
+            onSelect={item.onSelect}
+            className={`gap-2${item.destructive ? ' text-destructive focus:text-destructive' : ''}`}
+          >
+            {item.icon}
+            {item.label}
+          </DropdownMenuItem>
+        ))}
         {onDelete && (
           <DropdownMenuItem
             onSelect={onDelete}

@@ -10,10 +10,12 @@ import type { WorkflowDefinitionDto } from '@/types/workflow'
 
 export function WorkflowStatusBadge({ workflow }: { workflow: WorkflowDefinitionDto }) {
   if (isLifecycleWorkflow(workflow)) {
-    const published = workflow.state === 'PUBLISHED'
+    const state = workflow.state ?? 'DRAFT'
+    const variant =
+      state === 'PUBLISHED' ? 'status-done' : state === 'DISABLED' ? 'secondary' : 'status-draft'
     return (
       <span className="flex items-center gap-2">
-        <Badge variant={published ? 'status-done' : 'status-draft'}>{workflow.state ?? 'DRAFT'}</Badge>
+        <Badge variant={variant}>{state}</Badge>
         {workflow.version != null && (
           <span className="text-xs text-muted-foreground">v{workflow.version}</span>
         )}

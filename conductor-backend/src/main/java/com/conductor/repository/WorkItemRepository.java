@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -41,4 +42,13 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
      * plus {@code sequenceNumber}.
      */
     Optional<WorkItem> findByProjectIdAndSequenceNumber(String projectId, Integer sequenceNumber);
+
+    @Query("SELECT COUNT(i) FROM WorkItem i WHERE i.workflow = :slug")
+    long countByWorkflowSlug(@Param("slug") String slug);
+
+    @Query("SELECT i.workflow, COUNT(i) FROM WorkItem i WHERE i.workflow IN :slugs GROUP BY i.workflow")
+    List<Object[]> countGroupedByWorkflowSlug(@Param("slugs") Collection<String> slugs);
+
+    @Query("SELECT COUNT(i) FROM WorkItem i WHERE i.workflow = :slug AND i.workflowVersion = :version")
+    long countByWorkflowSlugAndVersion(@Param("slug") String slug, @Param("version") int version);
 }

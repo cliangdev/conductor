@@ -4,6 +4,7 @@ import com.conductor.entity.Project;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.BusinessException;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowSecretRepository;
 import com.conductor.generated.model.WorkflowCreateRequest;
@@ -35,13 +36,14 @@ class WorkflowServiceTest {
     @Mock private WorkflowValidator validator;
     @Mock private WorkflowSecretRepository secretRepository;
     @Mock private WorkflowTriggerService workflowTriggerService;
+    @Mock private WorkItemRepository workItemRepository;
 
     private WorkflowService service;
 
     @BeforeEach
     void setUp() {
         service = new WorkflowService(workflowRepository, projectRepository, projectSecurityService,
-                validator, secretRepository, workflowTriggerService, new ObjectMapper());
+                validator, secretRepository, workflowTriggerService, workItemRepository, new ObjectMapper());
     }
 
     @Test
@@ -182,6 +184,57 @@ class WorkflowServiceTest {
         WorkflowDefinition saved = service.createWorkflow("proj-1", "user-1", request);
         assertThat(saved.getArea()).isEqualTo("SALES_OPS");
         verify(workflowRepository).save(any(WorkflowDefinition.class));
+    }
+
+    @Test
+    void deleteWorkflow_lifecycleWithWorkItems_throws() throws Exception {
+        WorkflowDefinition lifecycle = new WorkflowDefinition();
+        lifecycle.setId("wf-life");
+        lifecycle.setProject(projectWithId("proj-1"));
+        lifecycle.setName("ENGINEERING");
+        lifecycle.setDefinition(new ObjectMapper().readTree("{\"id\":\"ENGINEERING\"}"));
+
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(workflowRepository.findById("wf-life")).thenReturn(Optional.of(lifecycle));
+        when(workItemRepository.countByWorkflowSlug("ENGINEERING")).thenReturn(1L);
+
+        assertThatThrownBy(() -> service.deleteWorkflow("proj-1", "wf-life", "user-1"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("existing Work Items");
+        verify(workflowRepository, never()).delete(any());
+    }
+
+    @Test
+    void deleteWorkflow_lifecycleWithNoWorkItems_succeeds() throws Exception {
+        WorkflowDefinition lifecycle = new WorkflowDefinition();
+        lifecycle.setId("wf-life");
+        lifecycle.setProject(projectWithId("proj-1"));
+        lifecycle.setName("ENGINEERING");
+        lifecycle.setDefinition(new ObjectMapper().readTree("{\"id\":\"ENGINEERING\"}"));
+
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(workflowRepository.findById("wf-life")).thenReturn(Optional.of(lifecycle));
+        when(workItemRepository.countByWorkflowSlug("ENGINEERING")).thenReturn(0L);
+
+        service.deleteWorkflow("proj-1", "wf-life", "user-1");
+
+        verify(workflowRepository).delete(lifecycle);
+    }
+
+    @Test
+    void deleteWorkflow_automation_skipsWorkItemCheck() {
+        WorkflowDefinition automation = new WorkflowDefinition();
+        automation.setId("wf-auto");
+        automation.setProject(projectWithId("proj-1"));
+        automation.setName("my-workflow");
+        automation.setDefinition(null);
+
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(workflowRepository.findById("wf-auto")).thenReturn(Optional.of(automation));
+
+        service.deleteWorkflow("proj-1", "wf-auto", "user-1");
+
+        verify(workflowRepository).delete(automation);
     }
 
     private Project projectWithId(String id) {
