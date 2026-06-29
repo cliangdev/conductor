@@ -13,6 +13,22 @@ servers:
 tags:
   - name: work-items
     description: Work Item management endpoints (canonical successor to v1 issues)
+  - name: work-item-reviewers
+    description: Reviewer assignment for a Work Item
+  - name: work-item-documents
+    description: Documents attached to a Work Item
+  - name: work-item-tasks
+    description: Task breakdown stored on a Work Item
+  - name: work-item-comments
+    description: Comments and replies on a Work Item's documents
+  - name: work-item-reviews
+    description: Review verdicts on a Work Item
+  - name: work-item-assets
+    description: Produced outputs (Assets) on a Work Item
+  - name: work-item-metric
+    description: Outcome Metric series on a Work Item
+  - name: work-item-step-runs
+    description: Step-run records on a Work Item
 
 paths:
   /projects/{projectId}/work-items:
@@ -326,6 +342,1204 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/work-items/{workItemId}/reviewers:
+    post:
+      tags:
+        - work-item-reviewers
+      summary: Assign reviewer to Work Item
+      operationId: assignWorkItemReviewer
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignReviewerRequest"
+      responses:
+        "201":
+          description: Reviewer assigned successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssignReviewerResponse"
+        "400":
+          description: User is not a project member or not a REVIEWER role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Reviewer already assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      tags:
+        - work-item-reviewers
+      summary: List reviewers for a Work Item
+      operationId: listWorkItemReviewers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of reviewers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReviewerResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/reviewers/{userId}:
+    delete:
+      tags:
+        - work-item-reviewers
+      summary: Unassign reviewer from Work Item
+      operationId: unassignWorkItemReviewer
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Reviewer unassigned successfully
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Reviewer assignment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/documents:
+    post:
+      tags:
+        - work-item-documents
+      summary: Create a document for a Work Item
+      operationId: createWorkItemDocument
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDocumentRequest"
+      responses:
+        "201":
+          description: Document created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      tags:
+        - work-item-documents
+      summary: List documents for a Work Item
+      operationId: listWorkItemDocuments
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of documents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DocumentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/documents/{docId}:
+    get:
+      tags:
+        - work-item-documents
+      summary: Get document detail
+      operationId: getWorkItemDocument
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Document detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - work-item-documents
+      summary: Delete a document
+      operationId: deleteWorkItemDocument
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Document deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/documents/{filename}:
+    put:
+      tags:
+        - work-item-documents
+      summary: Upsert a document by filename
+      operationId: upsertWorkItemDocumentByFilename
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertDocumentByFilenameRequest"
+      responses:
+        "201":
+          description: Document created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "200":
+          description: Document updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - work-item-documents
+      summary: Delete a document by filename
+      operationId: deleteWorkItemDocumentByFilename
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Document deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/tasks:
+    put:
+      tags:
+        - work-item-tasks
+      summary: Save tasks for a Work Item
+      operationId: saveWorkItemTasks
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Tasks saved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: saved
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      tags:
+        - work-item-tasks
+      summary: Get tasks for a Work Item
+      operationId: getWorkItemTasks
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tasks object
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Tasks not found for this Work Item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/comments:
+    post:
+      tags:
+        - work-item-comments
+      summary: Create a comment on a Work Item document
+      operationId: createWorkItemComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentRequest"
+      responses:
+        "201":
+          description: Comment created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentResponse"
+        "400":
+          description: Invalid request (lineNumber is required)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item or document not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      tags:
+        - work-item-comments
+      summary: List comments for a Work Item with nested replies
+      operationId: listWorkItemComments
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: resolved
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List of comments with nested replies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CommentWithRepliesResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/comments/{commentId}:
+    delete:
+      tags:
+        - work-item-comments
+      summary: Delete a comment (author or project Admin only)
+      operationId: deleteWorkItemComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Comment deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not the author or an admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/comments/{commentId}/replies:
+    post:
+      tags:
+        - work-item-comments
+      summary: Add a reply to a comment
+      operationId: addWorkItemCommentReply
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCommentReplyRequest"
+      responses:
+        "201":
+          description: Reply created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentReplyResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/comments/{commentId}/resolve:
+    patch:
+      tags:
+        - work-item-comments
+      summary: Resolve a comment
+      operationId: resolveWorkItemComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Comment resolved with resolvedAt set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/reviews:
+    post:
+      tags:
+        - work-item-reviews
+      summary: Submit or update a review verdict
+      operationId: submitWorkItemReview
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitReviewRequest"
+      responses:
+        "201":
+          description: Review submitted or updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewResponse"
+        "400":
+          description: Invalid verdict value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not an assigned reviewer or caller is CREATOR role
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    get:
+      tags:
+        - work-item-reviews
+      summary: List reviews for a Work Item
+      operationId: listWorkItemReviews
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of reviews
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReviewWithUserResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/assets:
+    get:
+      tags:
+        - work-item-assets
+      summary: List Assets (produced outputs) on a Work Item
+      operationId: listWorkItemAssets
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Work Item's Assets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AssetResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - work-item-assets
+      summary: Record an Asset (produced output) on a Work Item
+      description: >-
+        Adds a typed produced output (e.g. github_pr, published_url, file). The type
+        is validated against the active Workflow definition's asset_types. Supersedes
+        the legacy Issue.githubPrUrl column. (COND-18 P0-4.)
+      operationId: createWorkItemAsset
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAssetRequest"
+      responses:
+        "201":
+          description: Asset recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetResponse"
+        "400":
+          description: Validation error (e.g. asset type not allowed by the Workflow)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/assets/{assetId}:
+    patch:
+      tags:
+        - work-item-assets
+      summary: Update an Asset
+      operationId: patchWorkItemAsset
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchAssetRequest"
+      responses:
+        "200":
+          description: Asset updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Asset or Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - work-item-assets
+      summary: Delete an Asset
+      operationId: deleteWorkItemAsset
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Asset deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Asset or Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/metric:
+    get:
+      tags:
+        - work-item-metric
+      summary: Get a Work Item's Outcome Metric series
+      description: >-
+        The append-only metric time series on a Work Item (COND-18 P0-5), with the metric's name/unit/
+        direction from the bound Workflow definition. Empty observations when none recorded.
+      operationId: getWorkItemMetric
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Work Item's metric series
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutcomeMetricResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags:
+        - work-item-metric
+      summary: Record an Outcome Metric observation (append)
+      operationId: recordWorkItemMetric
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordMetricObservationRequest"
+      responses:
+        "200":
+          description: Observation recorded; the updated series is returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutcomeMetricResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/step-runs:
+    get:
+      tags:
+        - work-item-step-runs
+      summary: List the step-run records on a Work Item
+      description: >-
+        Step-run records report what an agent-run Step was asked to do and produced, so a human can judge
+        it at a Review gate (COND-18 P0-6). Reported by the local skill via MCP; stored and served here.
+      operationId: listWorkItemStepRuns
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Work Item's step-run records, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StepRunResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - work-item-step-runs
+      summary: Record a step-run on a Work Item
+      operationId: createWorkItemStepRun
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStepRunRequest"
+      responses:
+        "201":
+          description: Step-run recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StepRunResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -477,6 +1691,535 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AvailableTransition"
+
+    AssignReviewerRequest:
+      type: object
+      required:
+        - userId
+      properties:
+        userId:
+          type: string
+          description: User ID to assign as reviewer
+
+    AssignReviewerResponse:
+      type: object
+      required:
+        - workItemId
+        - userId
+        - assignedAt
+      properties:
+        workItemId:
+          type: string
+        userId:
+          type: string
+        assignedAt:
+          type: string
+          format: date-time
+
+    ReviewerResponse:
+      type: object
+      required:
+        - userId
+        - assignedAt
+      properties:
+        userId:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        avatarUrl:
+          type: string
+        reviewVerdict:
+          type: string
+
+    DocumentResponse:
+      type: object
+      required:
+        - id
+        - workItemId
+        - filename
+        - contentType
+        - createdAt
+      properties:
+        id:
+          type: string
+        workItemId:
+          type: string
+        filename:
+          type: string
+        contentType:
+          type: string
+        content:
+          type: string
+          nullable: true
+          description: Inline content for text/markdown and text/plain; null for binary types
+        storagePath:
+          type: string
+        storageUrl:
+          type: string
+          description: GCP V4 signed URL (valid for configured expiry, default 15 minutes)
+        storageUrlExpiresAt:
+          type: string
+          format: date-time
+          description: ISO timestamp when the signed URL expires
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateDocumentRequest:
+      type: object
+      required:
+        - filename
+      properties:
+        filename:
+          type: string
+        content:
+          type: string
+        contentType:
+          type: string
+
+    UpsertDocumentByFilenameRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+        contentType:
+          type: string
+          default: text/markdown
+
+    CreateCommentRequest:
+      type: object
+      required:
+        - documentId
+        - content
+        - lineNumber
+      properties:
+        documentId:
+          type: string
+        content:
+          type: string
+        lineNumber:
+          type: integer
+
+    CommentResponse:
+      type: object
+      required:
+        - id
+        - documentId
+        - authorId
+        - content
+        - createdAt
+      properties:
+        id:
+          type: string
+        documentId:
+          type: string
+        authorId:
+          type: string
+        content:
+          type: string
+        lineNumber:
+          type: integer
+        quotedText:
+          type: string
+        lineStale:
+          type: boolean
+        resolvedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    CommentReplyResponse:
+      type: object
+      required:
+        - id
+        - commentId
+        - authorId
+        - content
+        - createdAt
+      properties:
+        id:
+          type: string
+        commentId:
+          type: string
+        authorId:
+          type: string
+        authorName:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    CommentWithRepliesResponse:
+      type: object
+      required:
+        - id
+        - documentId
+        - authorId
+        - content
+        - createdAt
+        - replies
+      properties:
+        id:
+          type: string
+        documentId:
+          type: string
+        authorId:
+          type: string
+        authorName:
+          type: string
+        content:
+          type: string
+        lineNumber:
+          type: integer
+        quotedText:
+          type: string
+        lineStale:
+          type: boolean
+        documentName:
+          type: string
+        resolvedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        replies:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentReplyResponse"
+
+    AddCommentReplyRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          nullable: true
+
+    SubmitReviewRequest:
+      type: object
+      required:
+        - verdict
+      properties:
+        verdict:
+          type: string
+          description: "Review verdict: APPROVED, CHANGES_REQUESTED, or COMMENTED"
+        body:
+          type: string
+          nullable: true
+
+    ReviewResponse:
+      type: object
+      required:
+        - id
+        - reviewerId
+        - verdict
+        - submittedAt
+      properties:
+        id:
+          type: string
+        reviewerId:
+          type: string
+        verdict:
+          type: string
+        body:
+          type: string
+          nullable: true
+        submittedAt:
+          type: string
+          format: date-time
+
+    ReviewWithUserResponse:
+      type: object
+      required:
+        - reviewerId
+        - verdict
+        - submittedAt
+      properties:
+        reviewerId:
+          type: string
+        name:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          nullable: true
+        verdict:
+          type: string
+        body:
+          type: string
+          nullable: true
+        submittedAt:
+          type: string
+          format: date-time
+
+    AssetResponse:
+      type: object
+      required:
+        - id
+        - workItemId
+        - type
+        - kind
+        - ref
+        - done
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        workItemId:
+          type: string
+        type:
+          type: string
+          description: Asset type validated against the Workflow's asset_types (e.g. github_pr).
+        label:
+          type: string
+        kind:
+          type: string
+          enum:
+            - link
+            - file
+        ref:
+          type: string
+          description: A URL (kind=link) or a stored-file reference (kind=file).
+        done:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateAssetRequest:
+      type: object
+      required:
+        - type
+        - kind
+        - ref
+      properties:
+        type:
+          type: string
+        label:
+          type: string
+        kind:
+          type: string
+          enum:
+            - link
+            - file
+        ref:
+          type: string
+        done:
+          type: boolean
+          default: false
+
+    PatchAssetRequest:
+      type: object
+      properties:
+        label:
+          type: string
+        ref:
+          type: string
+        done:
+          type: boolean
+
+    MetricObservation:
+      type: object
+      required:
+        - value
+        - observedAt
+      properties:
+        value:
+          type: number
+          format: double
+        observedAt:
+          type: string
+          format: date-time
+        note:
+          type: string
+
+    OutcomeMetricResponse:
+      type: object
+      required:
+        - observations
+      properties:
+        name:
+          type: string
+          description: Metric name from the bound Workflow definition (null if the Workflow defines none).
+        unit:
+          type: string
+        direction:
+          type: string
+          description: higher_better | lower_better (from the Workflow definition).
+        observations:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetricObservation"
+
+    RecordMetricObservationRequest:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: number
+          format: double
+        observedAt:
+          type: string
+          format: date-time
+          description: Defaults to now when omitted.
+        note:
+          type: string
+
+    StepRunProduced:
+      type: object
+      required:
+        - kind
+        - ref
+      properties:
+        kind:
+          type: string
+          enum:
+            - document
+            - asset
+        ref:
+          type: string
+          description: Document filename/id or Asset ref (url or file reference).
+        label:
+          type: string
+        assetType:
+          type: string
+
+    StepRunBeforeAfter:
+      type: object
+      required:
+        - before
+        - after
+      properties:
+        before:
+          type: string
+        after:
+          type: string
+
+    StepRunFlag:
+      type: object
+      required:
+        - level
+        - message
+      properties:
+        level:
+          type: string
+          enum:
+            - info
+            - warn
+        message:
+          type: string
+
+    CreateStepRunRequest:
+      type: object
+      required:
+        - stepKind
+        - status
+        - inputBrief
+        - reportedBy
+      properties:
+        workflow:
+          type: string
+        fromStatus:
+          type: string
+        toStatus:
+          type: string
+        stepKind:
+          type: string
+          enum: [skill, http, notify, set_field, create_sub_items]
+        skill:
+          type: string
+        status:
+          type: string
+          enum: [RUNNING, SUCCEEDED, FAILED, AWAITING_REVIEW]
+        inputBrief:
+          type: string
+          description: Plain-language statement of what the agent was asked to do (P0-6).
+        reportedBy:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        produced:
+          type: array
+          items:
+            $ref: "#/components/schemas/StepRunProduced"
+        beforeAfter:
+          $ref: "#/components/schemas/StepRunBeforeAfter"
+        flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/StepRunFlag"
+
+    StepRunResponse:
+      type: object
+      required:
+        - id
+        - workItemId
+        - status
+        - inputBrief
+        - reportedBy
+        - createdAt
+      properties:
+        id:
+          type: string
+        workItemId:
+          type: string
+        workflow:
+          type: string
+        fromStatus:
+          type: string
+        toStatus:
+          type: string
+        stepKind:
+          type: string
+        skill:
+          type: string
+        status:
+          type: string
+        inputBrief:
+          type: string
+        reportedBy:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        produced:
+          type: array
+          items:
+            $ref: "#/components/schemas/StepRunProduced"
+        beforeAfter:
+          $ref: "#/components/schemas/StepRunBeforeAfter"
+        flags:
+          type: array
+          items:
+            $ref: "#/components/schemas/StepRunFlag"
+        createdAt:
+          type: string
+          format: date-time
 
     ErrorResponse:
       type: object
