@@ -32,6 +32,12 @@
     "testEnvironment": "node",
     "testMatch": [
       "**/*.test.ts"
+    ],
+    "transform": {
+      "^.+\\.(ts|js)$": ["ts-jest", {"allowJs": true}]
+    },
+    "transformIgnorePatterns": [
+      "node_modules/(?!(uuid)/)"
     ]
   }
 }
