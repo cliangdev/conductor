@@ -7,6 +7,7 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.WorkflowCreateRequest;
 import com.conductor.generated.model.WorkflowUpdateRequest;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowSecretRepository;
 import com.conductor.workflow.WorkflowTriggerService;
@@ -44,6 +45,7 @@ public class WorkflowService {
     private final WorkflowValidator validator;
     private final WorkflowSecretRepository secretRepository;
     private final WorkflowTriggerService workflowTriggerService;
+    private final WorkItemRepository workItemRepository;
     private final ObjectMapper objectMapper;
 
     public WorkflowService(WorkflowDefinitionRepository workflowRepository,
@@ -52,6 +54,7 @@ public class WorkflowService {
                            WorkflowValidator validator,
                            WorkflowSecretRepository secretRepository,
                            @Lazy WorkflowTriggerService workflowTriggerService,
+                           WorkItemRepository workItemRepository,
                            ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.projectRepository = projectRepository;
@@ -59,6 +62,7 @@ public class WorkflowService {
         this.validator = validator;
         this.secretRepository = secretRepository;
         this.workflowTriggerService = workflowTriggerService;
+        this.workItemRepository = workItemRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -158,7 +162,25 @@ public class WorkflowService {
     public void deleteWorkflow(String projectId, String workflowId, String userId) {
         requireAdminOrCreator(projectId, userId);
         WorkflowDefinition def = findInProject(projectId, workflowId);
+        // Domain invariant: lifecycle workflows with bound Work Items cannot be deleted.
+        // Work Items reference the workflow by slug+version; deleting the definition orphans them.
+        if (def.isLifecycle()) {
+            String slug = extractSlug(def);
+            if (slug != null && workItemRepository.countByWorkflowSlug(slug) > 0) {
+                throw new BusinessException(
+                        "Cannot delete a lifecycle workflow that has existing Work Items. " +
+                        "Disable it first, then delete after all Work Items are removed.");
+            }
+        }
         workflowRepository.delete(def);
+    }
+
+    /** The statechart slug (its {@code definition.id}) from a persisted definition, or null if absent. */
+    private static String extractSlug(WorkflowDefinition def) {
+        JsonNode definition = def.getDefinition();
+        if (definition == null) return null;
+        JsonNode id = definition.get("id");
+        return id != null && id.isTextual() ? id.asText() : null;
     }
 
     public WorkflowDefinition getWorkflow(String projectId, String workflowId) {

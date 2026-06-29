@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.Project;
 import com.conductor.entity.WorkflowDefinition;
+import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.WorkflowDefinitionRepository;
@@ -127,5 +128,76 @@ class WorkflowDefinitionLifecycleServiceTest {
         assertThat(published.getVersion()).isEqualTo(1);
         assertThat(published.getSchemaVersion()).isEqualTo(1);
         verify(repository).save(row);
+    }
+
+    @Test
+    void disableWorkflow_published_becomesDisabled() throws Exception {
+        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        WorkflowDefinition row = definitionRow(engineeringDefinition());
+        row.setState("PUBLISHED");
+        row.setSidebarEnabled(true);
+        when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));
+
+        WorkflowDefinition disabled = service.disableWorkflow(PROJECT_ID, WORKFLOW_ID, CALLER_ID);
+
+        assertThat(disabled.getState()).isEqualTo("DISABLED");
+        // sidebarEnabled must not be touched by disable.
+        assertThat(disabled.isSidebarEnabled()).isTrue();
+        verify(repository).save(row);
+    }
+
+    @Test
+    void disableWorkflow_draft_throws() throws Exception {
+        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        WorkflowDefinition row = definitionRow(engineeringDefinition());
+        row.setState("DRAFT");
+        when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> service.disableWorkflow(PROJECT_ID, WORKFLOW_ID, CALLER_ID))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Only a PUBLISHED");
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void disableWorkflow_nonLifecycle_throws() {
+        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        WorkflowDefinition row = definitionRow(null);
+        row.setState("PUBLISHED");
+        when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> service.disableWorkflow(PROJECT_ID, WORKFLOW_ID, CALLER_ID))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("only to lifecycle");
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void enableWorkflow_disabled_becomesPublished() throws Exception {
+        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        WorkflowDefinition row = definitionRow(engineeringDefinition());
+        row.setState("DISABLED");
+        row.setSidebarEnabled(true);
+        when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));
+
+        WorkflowDefinition enabled = service.enableWorkflow(PROJECT_ID, WORKFLOW_ID, CALLER_ID);
+
+        assertThat(enabled.getState()).isEqualTo("PUBLISHED");
+        // sidebarEnabled must not be touched by enable.
+        assertThat(enabled.isSidebarEnabled()).isTrue();
+        verify(repository).save(row);
+    }
+
+    @Test
+    void enableWorkflow_published_throws() throws Exception {
+        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        WorkflowDefinition row = definitionRow(engineeringDefinition());
+        row.setState("PUBLISHED");
+        when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));
+
+        assertThatThrownBy(() -> service.enableWorkflow(PROJECT_ID, WORKFLOW_ID, CALLER_ID))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Only a DISABLED");
+        verify(repository, never()).save(any());
     }
 }

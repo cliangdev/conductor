@@ -25,7 +25,7 @@ import com.conductor.generated.model.WorkflowStepRunDto;
 import com.conductor.generated.model.WorkflowState;
 import com.conductor.generated.model.WorkflowUpdateRequest;
 import com.conductor.generated.model.WorkflowValidationWarning;
-import com.conductor.generated.model.WorkflowVersionSummary;
+import com.conductor.generated.model.WorkflowVersionsResponse;
 import com.conductor.generated.model.WorkflowView;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowJobRunRepository;
@@ -112,7 +112,7 @@ public class WorkflowController implements WorkflowsApi {
     }
 
     @Override
-    public ResponseEntity<List<WorkflowVersionSummary>> listWorkflowVersions(String projectId, String workflowId) {
+    public ResponseEntity<WorkflowVersionsResponse> listWorkflowVersions(String projectId, String workflowId) {
         return ResponseEntity.ok(workflowViewService.listVersions(projectId, workflowId, currentUserId()));
     }
 
@@ -123,11 +123,29 @@ public class WorkflowController implements WorkflowsApi {
     }
 
     @Override
+    public ResponseEntity<WorkflowDefinitionDto> disableWorkflow(String projectId, String workflowId) {
+        return ResponseEntity.ok(toDto(lifecycleService.disableWorkflow(projectId, workflowId, currentUserId())));
+    }
+
+    @Override
+    public ResponseEntity<WorkflowDefinitionDto> enableWorkflow(String projectId, String workflowId) {
+        return ResponseEntity.ok(toDto(lifecycleService.enableWorkflow(projectId, workflowId, currentUserId())));
+    }
+
+    @Override
     public ResponseEntity<List<WorkflowDefinitionDto>> listWorkflows(String projectId, Boolean lifecycle,
                                                                      String state, Boolean sidebar) {
         // Filtering is domain/query logic and lives in the service; the controller stays a thin adapter.
-        List<WorkflowDefinitionDto> dtos = workflowService.listWorkflows(projectId, lifecycle, state, sidebar).stream()
-                .map(this::toDto)
+        List<WorkflowDefinition> defs = workflowService.listWorkflows(projectId, lifecycle, state, sidebar);
+        Map<String, Long> wiCounts = workflowViewService.workItemCountsBySlug(defs);
+        List<WorkflowDefinitionDto> dtos = defs.stream()
+                .map(d -> {
+                    WorkflowDefinitionDto dto = toDto(d);
+                    if (dto.getSlug() != null) {
+                        dto.setWorkItemCount(wiCounts.getOrDefault(dto.getSlug(), 0L).intValue());
+                    }
+                    return dto;
+                })
                 .collect(Collectors.toList());
         return ResponseEntity.ok(dtos);
     }

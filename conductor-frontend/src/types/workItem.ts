@@ -62,6 +62,21 @@ export interface WorkflowVersionSummary {
   schemaVersion?: number | null
   publishedAt: string
   publishedBy?: string | null
+  /** True for the currently active version. */
+  active: boolean
+  /** Work items pinned to this version. */
+  workItemCount: number
+  changeSummary: {
+    statusesAdded: string[]
+    statusesRemoved: string[]
+  }
+}
+
+/** Response envelope from GET .../workflows/{workflowId}/versions. */
+export interface WorkflowVersionsResponse {
+  activeVersion?: number | null
+  totalWorkItems: number
+  versions: WorkflowVersionSummary[]
 }
 
 export interface WorkItemAssignee {
