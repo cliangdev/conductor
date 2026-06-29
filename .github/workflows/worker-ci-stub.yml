@@ -1,0 +1,22 @@
+name: Worker CI (no-op)
+
+# Required-status-check stub: `worker-ci` is enforced by branch protection
+# but the real workflow only runs when conductor-worker/** changes. This
+# stub reports the same check name as an immediate success on PRs that
+# don't touch the worker, so branch protection can be satisfied.
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'conductor-worker/**'
+      - '.github/workflows/worker-ci.yml'
+
+permissions: {}
+
+jobs:
+  test:
+    name: worker-ci
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No conductor-worker/** changes; skipping real CI."

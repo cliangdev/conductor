@@ -10,7 +10,7 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - uses: actions/setup-node@v6
+    - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
       with:
         node-version: '22'
         cache: npm
@@ -33,4 +33,11 @@ runs:
       if: ${{ inputs.run-checks == 'true' }}
       working-directory: conductor-frontend
       shell: bash
-      run: npm run test
+      run: npm run test -- --reporter=verbose --reporter=junit --outputFile.junit=junit.xml
+    - name: Upload test report
+      if: ${{ failure() && inputs.run-checks == 'true' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      with:
+        name: frontend-junit
+        path: conductor-frontend/junit.xml
+        if-no-files-found: ignore
