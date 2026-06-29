@@ -1,9 +1,10 @@
 'use client';
 
 import { useMemo } from 'react';
-import { ReactFlow, ReactFlowProvider, Background, useReactFlow, Handle, Position, type Node, type Edge } from '@xyflow/react';
+import { Handle, Position, type Node, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
+import { FlowCanvas } from '@/components/workflow/FlowCanvas';
 
 // ── Node dimensions ────────────────────────────────────────────────────────────
 const TRIGGER_W = 160;
@@ -67,31 +68,6 @@ function ConditionNode({ data }: { data: { label: string; status?: JobStatus } }
       <Handle type="target" position={Position.Top} className="!bg-gray-400" />
       <Handle type="source" position={Position.Bottom} id="true" className="!bg-green-400" style={{ left: '25%' }} />
       <Handle type="source" position={Position.Bottom} id="false" className="!bg-red-400" style={{ left: '75%' }} />
-    </div>
-  );
-}
-
-// ── Zoom controls ──────────────────────────────────────────────────────────────
-// Rendered as an absolute sibling of <ReactFlow> (not inside Panel) so the
-// container's overflow-hidden never clips the buttons.
-function ZoomControls() {
-  const { zoomIn, zoomOut } = useReactFlow();
-  return (
-    <div className="absolute top-4 right-4 z-10 flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-white shadow-md">
-      <button
-        onClick={() => zoomIn()}
-        className="flex h-9 w-9 items-center justify-center border-b border-gray-300 text-lg font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200"
-        aria-label="Zoom in"
-      >
-        +
-      </button>
-      <button
-        onClick={() => zoomOut()}
-        className="flex h-9 w-9 items-center justify-center text-lg font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200"
-        aria-label="Zoom out"
-      >
-        −
-      </button>
     </div>
   );
 }
@@ -325,28 +301,5 @@ export default function WorkflowDiagram({ yaml, jobStatuses, jobRunData }: Workf
     );
   }
 
-  return (
-    <ReactFlowProvider>
-      <div className="relative h-full w-full rounded-md">
-        {/* ReactFlow gets its own overflow-hidden so it clips internally */}
-        <div className="absolute inset-0 overflow-hidden rounded-md">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            fitView
-            fitViewOptions={{ padding: 0.3 }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            elementsSelectable={false}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="#e5e7eb" gap={16} />
-          </ReactFlow>
-        </div>
-        {/* Controls sit outside the overflow-hidden layer — never clipped */}
-        <ZoomControls />
-      </div>
-    </ReactFlowProvider>
-  );
+  return <FlowCanvas nodes={nodes} edges={edges} nodeTypes={nodeTypes} />;
 }

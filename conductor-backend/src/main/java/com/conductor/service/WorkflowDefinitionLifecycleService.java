@@ -7,7 +7,6 @@ import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.WorkflowValidationResult;
-import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionValidator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -31,18 +30,15 @@ public class WorkflowDefinitionLifecycleService {
     private final WorkflowDefinitionVersionRepository versionRepository;
     private final ProjectSecurityService projectSecurityService;
     private final WorkflowDefinitionValidator validator;
-    private final WorkflowDefinitionResolver resolver;
 
     public WorkflowDefinitionLifecycleService(WorkflowDefinitionRepository definitionRepository,
                                               WorkflowDefinitionVersionRepository versionRepository,
                                               ProjectSecurityService projectSecurityService,
-                                              WorkflowDefinitionValidator validator,
-                                              WorkflowDefinitionResolver resolver) {
+                                              WorkflowDefinitionValidator validator) {
         this.definitionRepository = definitionRepository;
         this.versionRepository = versionRepository;
         this.projectSecurityService = projectSecurityService;
         this.validator = validator;
-        this.resolver = resolver;
     }
 
     /**
@@ -77,14 +73,8 @@ public class WorkflowDefinitionLifecycleService {
         }
 
         if (hasStatechart) {
-            // Built-in slugs (e.g. ENGINEERING) are reserved: a project-authored definition that reused one
-            // would, once published, shadow the built-in chart for every in-flight Work Item pinned to it
-            // (those have no DB snapshot and resolve DB-first). Reject the collision at the binding gate.
-            JsonNode idNode = definition.getDefinition().get("id");
-            if (idNode != null && resolver.isBuiltIn(idNode.asText())) {
-                throw new UnprocessableEntityException(
-                        "Workflow id '" + idNode.asText() + "' is reserved by a built-in workflow; choose a different id");
-            }
+            // Slug uniqueness within a project is enforced at create/update (WorkflowService) and by a DB
+            // unique index, so publish only needs to validate the definition itself.
             WorkflowValidationResult result = validator.validate(definition.getDefinition());
             if (result.hasErrors()) {
                 throw new UnprocessableEntityException(

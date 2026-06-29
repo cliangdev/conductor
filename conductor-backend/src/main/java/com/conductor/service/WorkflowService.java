@@ -78,6 +78,13 @@ public class WorkflowService {
 
         rejectReservedRouteNames(request.getArea(), definitionId(request.getDefinition()));
 
+        // A lifecycle workflow's identity is its statechart slug (definition.id), not its human label.
+        // Reject a second workflow reusing an existing slug so a project never has two "same" lifecycles.
+        String slug = definitionId(request.getDefinition());
+        if (slug != null && workflowRepository.existsByProjectIdAndDefinitionSlug(projectId, slug)) {
+            throw new BusinessException("A lifecycle workflow '" + slug + "' already exists in this project");
+        }
+
         if (request.getYaml() != null) {
             Set<String> secretKeys = secretRepository.findByProjectId(projectId)
                     .stream().map(s -> s.getKey()).collect(Collectors.toSet());
@@ -115,6 +122,17 @@ public class WorkflowService {
         }
 
         rejectReservedRouteNames(request.getArea(), definitionId(request.getDefinition()));
+
+        // Slug uniqueness: if the edit changes the statechart slug to one another workflow already owns,
+        // reject it (the slug is the workflow's identity within the project).
+        String slug = definitionId(request.getDefinition());
+        if (slug != null) {
+            workflowRepository.findByProjectIdAndDefinitionSlug(projectId, slug)
+                    .filter(other -> !other.getId().equals(workflowId))
+                    .ifPresent(other -> {
+                        throw new BusinessException("A lifecycle workflow '" + slug + "' already exists in this project");
+                    });
+        }
 
         if (request.getYaml() != null) {
             Set<String> secretKeys = secretRepository.findByProjectId(projectId)

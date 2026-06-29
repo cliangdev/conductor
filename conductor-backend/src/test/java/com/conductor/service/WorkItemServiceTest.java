@@ -18,10 +18,8 @@ import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
-import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
-import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,6 +31,7 @@ import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.io.InputStream;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -111,12 +110,18 @@ class WorkItemServiceTest {
         testIssue.setCreatedAt(OffsetDateTime.now());
         testIssue.setUpdatedAt(OffsetDateTime.now());
 
-        // A status change resolves the bound Workflow to enrich the notification; back it with the real
-        // built-in ENGINEERING statechart. Lenient because read-only / create tests never reach that path.
-        Statechart engineering = new WorkflowDefinitionResolver(
-                Mockito.mock(WorkflowDefinitionVersionRepository.class), new ObjectMapper())
-                .resolveRequired("proj-1", "ENGINEERING");
-        lenient().when(workItemWorkflowService.resolveFor(any(), any())).thenReturn(engineering);
+        // A status change resolves the bound Workflow to enrich the notification; back it with the seeded
+        // ENGINEERING statechart. Lenient because read-only / create tests never reach that path.
+        lenient().when(workItemWorkflowService.resolveFor(any(), any())).thenReturn(engineeringStatechart());
+    }
+
+    private static Statechart engineeringStatechart() {
+        try (InputStream in =
+                     WorkItemServiceTest.class.getResourceAsStream("/schema/examples/engineering.workflow.json")) {
+            return Statechart.parse(new ObjectMapper().readTree(in));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     @Test

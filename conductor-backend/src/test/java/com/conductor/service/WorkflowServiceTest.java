@@ -150,6 +150,24 @@ class WorkflowServiceTest {
     }
 
     @Test
+    void createWorkflowRejectsDuplicateSlug() {
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
+        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.findByProjectIdAndName("proj-1", "Eng v2")).thenReturn(Optional.empty());
+        // A workflow with the same statechart slug already exists — the slug is the workflow's identity.
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "ENGINEERING")).thenReturn(true);
+
+        WorkflowCreateRequest request = new WorkflowCreateRequest("Eng v2");
+        request.setDefinition(java.util.Map.of("id", "ENGINEERING", "statuses", java.util.List.of()));
+
+        assertThatThrownBy(() -> service.createWorkflow("proj-1", "user-1", request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("already exists");
+        verify(workflowRepository, never()).save(any());
+    }
+
+    @Test
     void createWorkflowAllowsNonReservedAreaAndSlug() {
         when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
