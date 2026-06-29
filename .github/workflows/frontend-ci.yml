@@ -14,6 +14,7 @@ concurrency:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   build-and-test:
@@ -21,5 +22,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
       - uses: ./.github/actions/frontend-test
+      - name: Publish test annotations
+        if: always()
+        uses: mikepenz/action-junit-report@db71d41eb79864e25ab0337e395c352e84523afe  # v4
+        with:
+          report_paths: conductor-frontend/junit.xml
+          check_name: frontend-tests
