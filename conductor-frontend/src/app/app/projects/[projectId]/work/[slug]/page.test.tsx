@@ -1,36 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import type { WorkflowView } from '@/types/workItem'
 
-// A plain (non-vi.fn) stub driven per test. Using vi.fn here would make vitest's settled-results
-// tracking flag the rejected promise as unhandled even though the page awaits/catches it.
-let mockBehavior: () => Promise<WorkflowView> = () => Promise.resolve(view({}))
+// Plain (non-vi.fn) stub so the rejected-promise path is not flagged as unhandled.
+let fetchBehavior: () => Promise<WorkflowView> = () => Promise.resolve(view({}))
+const replace = vi.fn()
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'proj-1', slug: 'ENGINEERING' }),
+  useRouter: () => ({ replace }),
 }))
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: 'token' }),
 }))
 
-vi.mock('@/components/workitems/WorkItemListView', () => ({
-  WorkItemListView: ({ noun, slug }: { noun: string; slug: string }) => (
-    <div data-testid="list-view">list:{noun}:{slug}</div>
-  ),
-}))
-
 vi.mock('@/lib/workflows', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/workflows')>()
-  return { ...actual, fetchWorkflowView: () => mockBehavior() }
+  return { ...actual, fetchWorkflowView: () => fetchBehavior() }
 })
 
-import WorkItemPage from './page'
+import LegacyWorkSlugRedirectPage from './page'
 
 function view(overrides: Partial<WorkflowView>): WorkflowView {
   return {
     slug: 'ENGINEERING',
     noun: 'Issue',
+    area: 'ENGINEERING',
     defaultView: 'list',
     version: 1,
     types: [],
@@ -40,29 +36,23 @@ function view(overrides: Partial<WorkflowView>): WorkflowView {
   }
 }
 
-describe('generic Work Item page', () => {
+describe('legacy /work/[slug] redirect shim', () => {
   beforeEach(() => {
-    mockBehavior = () => Promise.resolve(view({}))
+    replace.mockClear()
+    fetchBehavior = () => Promise.resolve(view({}))
   })
 
-  it('renders the list view with the workflow noun and slug', async () => {
-    // The list view owns its own header/title; the page just delegates to it for default_view: list.
-    mockBehavior = () => Promise.resolve(view({ noun: 'Issue', defaultView: 'list' }))
-    render(<WorkItemPage />)
-    expect(await screen.findByTestId('list-view')).toHaveTextContent('list:Issue:ENGINEERING')
+  it('resolves the workflow by slug and replaces with the area/noun list path', async () => {
+    render(<LegacyWorkSlugRedirectPage />)
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/engineering/issues'),
+    )
   })
 
-  it('renders a board placeholder for default_view board', async () => {
-    mockBehavior = () => Promise.resolve(view({ noun: 'Deal', defaultView: 'board' }))
-    render(<WorkItemPage />)
-    expect(await screen.findByText(/board view coming soon/i)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Deals' })).toBeInTheDocument()
-    expect(screen.queryByTestId('list-view')).not.toBeInTheDocument()
-  })
-
-  it('renders a not-found state when the slug resolves to no workflow', async () => {
-    mockBehavior = () => Promise.reject(new Error('404'))
-    render(<WorkItemPage />)
+  it('shows an error when the slug resolves to no workflow', async () => {
+    fetchBehavior = () => Promise.reject(new Error('404'))
+    render(<LegacyWorkSlugRedirectPage />)
     expect(await screen.findByText(/workflow not found/i)).toBeInTheDocument()
+    expect(replace).not.toHaveBeenCalled()
   })
 })

@@ -29,6 +29,15 @@ public class WorkflowService {
 
     private static final int MAX_WORKFLOWS_PER_PROJECT = 20;
 
+    /**
+     * Route names owned by the frontend app shell. A Workflow's {@code area} or statechart slug (its
+     * {@code definition.id}) feeds the workflow-scoped URL (/app/projects/{id}/{area}/{nouns}); reusing one
+     * of these would shadow a real page (e.g. an "issues" area would collide with /.../{area}/issues).
+     * Compared case-insensitively.
+     */
+    private static final Set<String> RESERVED_ROUTE_NAMES = Set.of(
+            "agents", "docs", "integrations", "issues", "settings", "work", "workflows");
+
     private final WorkflowDefinitionRepository workflowRepository;
     private final ProjectRepository projectRepository;
     private final ProjectSecurityService projectSecurityService;
@@ -67,6 +76,8 @@ public class WorkflowService {
         workflowRepository.findByProjectIdAndName(projectId, request.getName())
                 .ifPresent(w -> { throw new BusinessException("A workflow named '" + request.getName() + "' already exists in this project"); });
 
+        rejectReservedRouteNames(request.getArea(), definitionId(request.getDefinition()));
+
         if (request.getYaml() != null) {
             Set<String> secretKeys = secretRepository.findByProjectId(projectId)
                     .stream().map(s -> s.getKey()).collect(Collectors.toSet());
@@ -102,6 +113,8 @@ public class WorkflowService {
             workflowRepository.findByProjectIdAndName(projectId, request.getName())
                     .ifPresent(w -> { throw new BusinessException("A workflow named '" + request.getName() + "' already exists in this project"); });
         }
+
+        rejectReservedRouteNames(request.getArea(), definitionId(request.getDefinition()));
 
         if (request.getYaml() != null) {
             Set<String> secretKeys = secretRepository.findByProjectId(projectId)
@@ -200,5 +213,26 @@ public class WorkflowService {
     private JsonNode toJsonNode(Map<String, Object> map) {
         if (map == null || map.isEmpty()) return null;
         return objectMapper.valueToTree(map);
+    }
+
+    /** The statechart slug (its {@code definition.id}) from a create/update request, or null if absent. */
+    private static String definitionId(Map<String, Object> definition) {
+        if (definition == null) return null;
+        Object id = definition.get("id");
+        return id == null ? null : id.toString();
+    }
+
+    /**
+     * Reject a Workflow whose {@code area} or statechart slug collides with a frontend route name
+     * ({@link #RESERVED_ROUTE_NAMES}), which would shadow a real app page once it drives the
+     * workflow-scoped URL. Compared case-insensitively; null/blank values are ignored.
+     */
+    private static void rejectReservedRouteNames(String area, String slug) {
+        for (String value : new String[]{area, slug}) {
+            if (value != null && RESERVED_ROUTE_NAMES.contains(value.trim().toLowerCase())) {
+                throw new BusinessException(
+                        "'" + value + "' is a reserved name; choose a different workflow area or id");
+            }
+        }
     }
 }

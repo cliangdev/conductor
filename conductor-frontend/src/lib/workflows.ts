@@ -182,6 +182,110 @@ export function listSidebarWorkflows(projectId: string, token: string): Promise<
   )
 }
 
+// ── Area/Noun URL routing (the workflow-scoped URL shape) ───────────────────
+//
+// The Work Item URL is two human-readable segments — `area`/pluralized-`noun` (both lowercased) — plus
+// the Work Item's displayId. The segments are display metadata, NOT the API slug: slug resolution is
+// case-sensitive server-side, so callers resolve a segment pair back to the REAL UPPER_SNAKE slug here
+// (from the sidebar workflows list) before touching any API. Builders centralize the URL shape.
+
+/** `/app/projects/{id}/{area}/{nouns}` — the workflow-scoped Work Item list URL. Both segments lowercased. */
+export function workItemListPath(projectId: string, area: string, noun: string): string {
+  return `/app/projects/${projectId}/${area.toLowerCase()}/${pluralizeNoun(noun).toLowerCase()}`
+}
+
+/** `/app/projects/{id}/{area}/{nouns}/{displayId}` — the workflow-scoped Work Item detail URL. */
+export function workItemDetailPath(
+  projectId: string,
+  area: string,
+  noun: string,
+  displayId: string,
+): string {
+  return `${workItemListPath(projectId, area, noun)}/${displayId}`
+}
+
+// The sidebar workflows list, cached at module scope (workflows change rarely; the area/noun routes and
+// the redirect shims all read it). Concurrent callers share one in-flight request, mirroring the
+// WorkflowView cache above.
+const sidebarListCache = new Map<string, WorkflowDefinitionDto[]>()
+const sidebarListInFlight = new Map<string, Promise<WorkflowDefinitionDto[]>>()
+
+function fetchSidebarWorkflowsCached(
+  projectId: string,
+  token: string,
+): Promise<WorkflowDefinitionDto[]> {
+  const cached = sidebarListCache.get(projectId)
+  if (cached) return Promise.resolve(cached)
+  const pending = sidebarListInFlight.get(projectId)
+  if (pending) return pending
+  const promise = listSidebarWorkflows(projectId, token)
+    .then((list) => {
+      sidebarListCache.set(projectId, list)
+      return list
+    })
+    .finally(() => {
+      sidebarListInFlight.delete(projectId)
+    })
+  sidebarListInFlight.set(projectId, promise)
+  return promise
+}
+
+/**
+ * Resolve an `area`/`noun` URL segment pair back to its Workflow. The match is case-insensitive and
+ * noun-pluralized, mirroring how {@link workItemListPath} builds the URL. Returns `undefined` when no
+ * sidebar Workflow matches. The caller then uses the resolved Workflow's REAL slug for API calls.
+ */
+export async function resolveWorkflowByAreaNoun(
+  projectId: string,
+  areaSeg: string,
+  nounSeg: string,
+  token: string,
+): Promise<WorkflowDefinitionDto | undefined> {
+  const list = await fetchSidebarWorkflowsCached(projectId, token)
+  const area = areaSeg.toLowerCase()
+  const noun = nounSeg.toLowerCase()
+  return list.find(
+    (wf) =>
+      wf.area?.toLowerCase() === area &&
+      pluralizeNoun(wf.noun ?? wf.name).toLowerCase() === noun,
+  )
+}
+
+/** Resolution status for {@link useWorkflowByAreaNoun}. */
+export type AreaNounResolution = {
+  status: 'loading' | 'ready' | 'notfound'
+  workflow?: WorkflowDefinitionDto
+}
+
+/** React hook: resolve a Workflow from `area`/`noun` URL segments, sharing the module cache. */
+export function useWorkflowByAreaNoun(
+  projectId: string | undefined,
+  area: string | undefined,
+  noun: string | undefined,
+  token: string | null | undefined,
+): AreaNounResolution {
+  const [resolution, setResolution] = useState<AreaNounResolution>({ status: 'loading' })
+
+  useEffect(() => {
+    if (!projectId || !area || !noun || !token) return
+    let cancelled = false
+    setResolution({ status: 'loading' })
+    resolveWorkflowByAreaNoun(projectId, area, noun, token)
+      .then((wf) => {
+        if (cancelled) return
+        setResolution(wf ? { status: 'ready', workflow: wf } : { status: 'notfound' })
+      })
+      .catch(() => {
+        if (!cancelled) setResolution({ status: 'notfound' })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, area, noun, token])
+
+  return resolution
+}
+
 /** Resolve a status id to its display label + category, falling back gracefully when unloaded. */
 export function statusMeta(
   view: WorkflowView | undefined,

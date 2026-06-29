@@ -152,14 +152,15 @@ describe('Sidebar', () => {
 
   // ── COND-22: dynamic Work nav from sidebar-enabled lifecycle Workflows ──
 
-  it('renders a single Issues entry linking to /work/ENGINEERING when ENGINEERING is the only sidebar workflow', async () => {
+  it('renders a single Issues entry linking to the area/noun path when ENGINEERING is the only sidebar workflow', async () => {
     (apiGet as Mock).mockResolvedValue([workflow({})])
     render(<Sidebar />)
-    // The static fallback renders first; wait for the dynamic entry to replace it.
+    // The static fallback renders first; wait for the dynamic entry to replace it. The href is the
+    // workflow-scoped /{area}/{nouns} shape (both segments lowercased).
     await waitFor(() =>
       expect(screen.getByRole('link', { name: /issues/i })).toHaveAttribute(
         'href',
-        '/app/projects/proj-1/work/ENGINEERING',
+        '/app/projects/proj-1/engineering/issues',
       ),
     )
   })
@@ -185,7 +186,8 @@ describe('Sidebar', () => {
     ])
     render(<Sidebar />)
     const deals = await screen.findByRole('link', { name: /deals/i })
-    expect(deals).toHaveAttribute('href', '/app/projects/proj-1/work/SALES')
+    // area "SALES_OPS" + noun "Deal" → /sales_ops/deals (both lowercased, noun pluralized).
+    expect(deals).toHaveAttribute('href', '/app/projects/proj-1/sales_ops/deals')
     // Area slug is humanized into a section label.
     expect(screen.getByText('Sales Ops')).toBeInTheDocument()
   })
