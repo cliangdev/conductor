@@ -21,26 +21,46 @@ import type {
   WorkflowDefinitionDto,
 } from '@/types/workflow'
 import type { StatechartDefinition } from '@/lib/workflowDefinition'
+import type { Member } from '@/types'
 
 /** The project's default Workflow. Work Items with no explicit slug resolve to this. */
 export const DEFAULT_WORKFLOW_SLUG = 'ENGINEERING'
 
 // ── WorkflowView cache ──────────────────────────────────────────────────────
+//
+// Two-tier: module-scope Map (fast within session) + localStorage (instant on page refresh).
+// WorkflowViews change only when a workflow is published, so explicit invalidation is sufficient —
+// no TTL needed. Invalidation clears both tiers. Version-pinned lookups are never persisted to
+// localStorage because they are immutable snapshots rather than "latest" live state.
 
 const viewCache = new Map<string, WorkflowView>()
 const inFlight = new Map<string, Promise<WorkflowView>>()
+
+function viewLsKey(projectId: string, slug: string): string {
+  return `wfv_${projectId}::${slug}`
+}
 
 function cacheKey(projectId: string, slug: string, version?: number): string {
   return `${projectId}::${slug}::${version ?? 'latest'}`
 }
 
-/** Synchronously read a cached view, if one has already been fetched. */
+/**
+ * Synchronously read a cached view. For 'latest' lookups, pre-seeds the module cache from
+ * localStorage so the first render after a page refresh also gets a synchronous hit.
+ */
 export function getCachedWorkflowView(
   projectId: string,
   slug: string,
   version?: number,
 ): WorkflowView | undefined {
-  return viewCache.get(cacheKey(projectId, slug, version))
+  const key = cacheKey(projectId, slug, version)
+  if (!viewCache.has(key) && version == null) {
+    try {
+      const raw = localStorage.getItem(viewLsKey(projectId, slug))
+      if (raw) viewCache.set(key, JSON.parse(raw) as WorkflowView)
+    } catch { /* */ }
+  }
+  return viewCache.get(key)
 }
 
 /**
@@ -67,6 +87,11 @@ export function fetchWorkflowView(
   )
     .then((view) => {
       viewCache.set(key, view)
+      // Persist the 'latest' view to localStorage so getCachedWorkflowView() can pre-seed
+      // synchronously on the next page load (eliminates the status-label flash on refresh).
+      if (version == null) {
+        try { localStorage.setItem(viewLsKey(projectId, slug), JSON.stringify(view)) } catch { /* */ }
+      }
       return view
     })
     .finally(() => {
@@ -80,6 +105,9 @@ export function fetchWorkflowView(
 /** Drop a cached view so the next read re-fetches (e.g. after publishing a new version). */
 export function invalidateWorkflowView(projectId: string, slug: string, version?: number): void {
   viewCache.delete(cacheKey(projectId, slug, version))
+  if (version == null) {
+    try { localStorage.removeItem(viewLsKey(projectId, slug)) } catch { /* */ }
+  }
 }
 
 /** React hook: resolve one Workflow's view by slug, sharing the module cache. */
@@ -207,20 +235,50 @@ export function workItemDetailPath(
 // The sidebar workflows list, cached at module scope (workflows change rarely; the area/noun routes and
 // the redirect shims all read it). Concurrent callers share one in-flight request, mirroring the
 // WorkflowView cache above.
+//
+// Persistence layer: the resolved list is also written to localStorage so that on page refresh the
+// sidebar nav can hydrate synchronously before any network call completes (stale-while-revalidate).
 const sidebarListCache = new Map<string, WorkflowDefinitionDto[]>()
 const sidebarListInFlight = new Map<string, Promise<WorkflowDefinitionDto[]>>()
 
-function fetchSidebarWorkflowsCached(
+function sidebarLsKey(projectId: string): string {
+  return `sidebar_workflows_${projectId}`
+}
+
+function loadSidebarFromStorage(projectId: string): WorkflowDefinitionDto[] | null {
+  try {
+    const raw = localStorage.getItem(sidebarLsKey(projectId))
+    return raw ? (JSON.parse(raw) as WorkflowDefinitionDto[]) : null
+  } catch {
+    return null
+  }
+}
+
+function saveSidebarToStorage(projectId: string, list: WorkflowDefinitionDto[]): void {
+  try {
+    localStorage.setItem(sidebarLsKey(projectId), JSON.stringify(list))
+  } catch {
+    // localStorage may be full or unavailable; non-fatal
+  }
+}
+
+/**
+ * Fetch (and cache) the sidebar workflow list for a project. Always makes a network request —
+ * concurrent callers share one in-flight Promise so there is exactly one request per project at
+ * a time. When resolved, the result is written to the module cache and localStorage so that
+ * {@link getSidebarCacheEntry} can serve synchronous initial renders on the next mount.
+ */
+export function fetchSidebarWorkflows(
   projectId: string,
   token: string,
 ): Promise<WorkflowDefinitionDto[]> {
-  const cached = sidebarListCache.get(projectId)
-  if (cached) return Promise.resolve(cached)
   const pending = sidebarListInFlight.get(projectId)
   if (pending) return pending
+
   const promise = listSidebarWorkflows(projectId, token)
     .then((list) => {
       sidebarListCache.set(projectId, list)
+      saveSidebarToStorage(projectId, list)
       return list
     })
     .finally(() => {
@@ -228,6 +286,40 @@ function fetchSidebarWorkflowsCached(
     })
   sidebarListInFlight.set(projectId, promise)
   return promise
+}
+
+/**
+ * Synchronously read the cached sidebar workflow list, pre-seeding from localStorage if the
+ * module cache is cold. Use this for the `useState` initializer to render nav items immediately
+ * on revisit — before any network call completes.
+ */
+export function getSidebarCacheEntry(projectId: string): WorkflowDefinitionDto[] | undefined {
+  if (!sidebarListCache.has(projectId)) {
+    const stored = loadSidebarFromStorage(projectId)
+    if (stored) sidebarListCache.set(projectId, stored)
+  }
+  return sidebarListCache.get(projectId)
+}
+
+/** Invalidate the sidebar cache for a project (call after publishing or deleting a workflow). */
+export function invalidateSidebarCache(projectId: string): void {
+  sidebarListCache.delete(projectId)
+  sidebarListInFlight.delete(projectId)
+  try { localStorage.removeItem(sidebarLsKey(projectId)) } catch { /* */ }
+}
+
+/** Clear all sidebar caches including localStorage (used in tests to prevent cross-test contamination). */
+export function clearAllSidebarCaches(): void {
+  sidebarListCache.clear()
+  sidebarListInFlight.clear()
+  try {
+    const keysToRemove: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k?.startsWith('sidebar_workflows_')) keysToRemove.push(k)
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k))
+  } catch { /* */ }
 }
 
 /**
@@ -241,7 +333,7 @@ export async function resolveWorkflowByAreaNoun(
   nounSeg: string,
   token: string,
 ): Promise<WorkflowDefinitionDto | undefined> {
-  const list = await fetchSidebarWorkflowsCached(projectId, token)
+  const list = await fetchSidebarWorkflows(projectId, token)
   const area = areaSeg.toLowerCase()
   const noun = nounSeg.toLowerCase()
   return list.find(
@@ -264,12 +356,27 @@ export function useWorkflowByAreaNoun(
   noun: string | undefined,
   token: string | null | undefined,
 ): AreaNounResolution {
-  const [resolution, setResolution] = useState<AreaNounResolution>({ status: 'loading' })
+  // Synchronously resolve from the module cache (warmed by fetchSidebarWorkflows or localStorage
+  // pre-seed) so the page skips the loading state on revisit and client-side navigation.
+  const [resolution, setResolution] = useState<AreaNounResolution>(() => {
+    if (!projectId || !area || !noun) return { status: 'loading' }
+    const cached = sidebarListCache.get(projectId)
+    if (!cached) return { status: 'loading' }
+    const wf = cached.find(
+      (w) =>
+        w.area?.toLowerCase() === area.toLowerCase() &&
+        pluralizeNoun(w.noun ?? w.name).toLowerCase() === noun.toLowerCase(),
+    )
+    return wf ? { status: 'ready', workflow: wf } : { status: 'notfound' }
+  })
 
   useEffect(() => {
     if (!projectId || !area || !noun || !token) return
     let cancelled = false
-    setResolution({ status: 'loading' })
+    // Only show loading state when we have no data at all (cold start, no localStorage).
+    if (resolution.status === 'loading') {
+      // status stays 'loading' — we'll update below
+    }
     resolveWorkflowByAreaNoun(projectId, area, noun, token)
       .then((wf) => {
         if (cancelled) return
@@ -281,7 +388,7 @@ export function useWorkflowByAreaNoun(
     return () => {
       cancelled = true
     }
-  }, [projectId, area, noun, token])
+  }, [projectId, area, noun, token]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return resolution
 }
@@ -383,4 +490,58 @@ export function publishWorkflow(
     {},
     token,
   )
+}
+
+// ── Project members cache ────────────────────────────────────────────────────
+//
+// PermissionsContext (mounted at project layout level) and WorkItemListView both call
+// GET /members on every work-item page mount — two identical concurrent requests. Sharing
+// a module-scope cache with in-flight deduplication collapses them to one. The result is
+// also written to localStorage so the member list (and therefore userRole resolution) is
+// available synchronously on the next page refresh.
+
+const membersCache = new Map<string, Member[]>()
+const membersInFlight = new Map<string, Promise<Member[]>>()
+
+function membersLsKey(projectId: string): string {
+  return `members_${projectId}`
+}
+
+/** Load members synchronously from the two-tier cache (module → localStorage). */
+export function getMembersCacheEntry(projectId: string): Member[] | undefined {
+  if (!membersCache.has(projectId)) {
+    try {
+      const raw = localStorage.getItem(membersLsKey(projectId))
+      if (raw) membersCache.set(projectId, JSON.parse(raw) as Member[])
+    } catch { /* */ }
+  }
+  return membersCache.get(projectId)
+}
+
+/**
+ * Fetch the project member list, deduplicating concurrent callers.
+ * Both PermissionsContext and WorkItemListView share the same in-flight Promise so only one
+ * network request fires regardless of component mount order.
+ */
+export function fetchMembersCached(projectId: string, token: string): Promise<Member[]> {
+  const cached = membersCache.get(projectId)
+  if (cached) return Promise.resolve(cached)
+  const pending = membersInFlight.get(projectId)
+  if (pending) return pending
+  const promise = apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, token)
+    .then((list) => {
+      membersCache.set(projectId, list)
+      try { localStorage.setItem(membersLsKey(projectId), JSON.stringify(list)) } catch { /* */ }
+      return list
+    })
+    .finally(() => { membersInFlight.delete(projectId) })
+  membersInFlight.set(projectId, promise)
+  return promise
+}
+
+/** Clear cached members so the next call re-fetches (e.g. after a role change or member removal). */
+export function invalidateMembersCache(projectId: string): void {
+  membersCache.delete(projectId)
+  membersInFlight.delete(projectId)
+  try { localStorage.removeItem(membersLsKey(projectId)) } catch { /* */ }
 }

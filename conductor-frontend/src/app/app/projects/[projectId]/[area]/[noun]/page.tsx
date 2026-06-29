@@ -23,8 +23,12 @@ export default function WorkItemAreaNounPage() {
   if (status === 'loading') {
     return (
       <PageContainer>
-        <PageHeader title="Work Items" />
-        <div className="flex items-center justify-center h-64 text-muted-foreground">Loading…</div>
+        <div className="h-9 w-48 rounded-md bg-muted animate-pulse mb-6" />
+        <div className="space-y-2">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="h-10 rounded-md bg-muted animate-pulse" style={{ opacity: 1 - i * 0.1 }} />
+          ))}
+        </div>
       </PageContainer>
     )
   }
