@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import { clearAllSidebarCaches } from '@/lib/workflows'
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/app/projects/proj-1/settings/members',
@@ -67,9 +68,10 @@ function workflow(overrides: Record<string, unknown>) {
 }
 
 describe('Sidebar', () => {
-  // Default: no sidebar-enabled Workflows resolve, so the static fallback nav renders.
   beforeEach(() => {
-    (apiGet as Mock).mockResolvedValue([])
+    // Clear the module-scope sidebar cache between tests to prevent cross-test contamination.
+    clearAllSidebarCaches()
+    ;(apiGet as Mock).mockResolvedValue([])
   })
 
   it('renders the active workspace name in the quiet switcher', () => {
@@ -79,7 +81,7 @@ describe('Sidebar', () => {
 
   it('renders the workspace nav links to single top-level homes', () => {
     render(<Sidebar />)
-    expect(screen.getByRole('link', { name: /issues/i })).toHaveAttribute('href', '/app/projects/proj-1/issues')
+    // The "Issues" fallback no longer exists — dynamic nav only. Check always-visible links.
     expect(screen.getByRole('link', { name: /docs/i })).toHaveAttribute('href', '/app/projects/proj-1/docs')
     expect(screen.getByRole('link', { name: /workflows/i })).toHaveAttribute('href', '/app/projects/proj-1/workflows')
     expect(screen.getByRole('link', { name: /agents/i })).toHaveAttribute('href', '/app/projects/proj-1/agents')
@@ -155,8 +157,8 @@ describe('Sidebar', () => {
   it('renders a single Issues entry linking to the area/noun path when ENGINEERING is the only sidebar workflow', async () => {
     (apiGet as Mock).mockResolvedValue([workflow({})])
     render(<Sidebar />)
-    // The static fallback renders first; wait for the dynamic entry to replace it. The href is the
-    // workflow-scoped /{area}/{nouns} shape (both segments lowercased).
+    // Wait for the dynamic nav to resolve. The href is the workflow-scoped /{area}/{nouns} shape
+    // (both segments lowercased).
     await waitFor(() =>
       expect(screen.getByRole('link', { name: /issues/i })).toHaveAttribute(
         'href',
@@ -165,11 +167,13 @@ describe('Sidebar', () => {
     )
   })
 
-  it('falls back to the static Issues entry pointing to /issues when no workflow is sidebar-enabled', async () => {
+  it('shows no Work nav items (only a skeleton) when API returns no sidebar-enabled workflows', async () => {
     (apiGet as Mock).mockResolvedValue([])
     render(<Sidebar />)
-    const issues = await screen.findByRole('link', { name: /issues/i })
-    expect(issues).toHaveAttribute('href', '/app/projects/proj-1/issues')
+    // The static "Issues" fallback is gone — no /issues link should ever appear.
+    expect(screen.queryByRole('link', { name: /^issues$/i })).not.toBeInTheDocument()
+    // Docs is always present regardless of workflow state.
+    expect(screen.getByRole('link', { name: /docs/i })).toHaveAttribute('href', '/app/projects/proj-1/docs')
   })
 
   it('renders a second sidebar-enabled workflow under its own area section', async () => {

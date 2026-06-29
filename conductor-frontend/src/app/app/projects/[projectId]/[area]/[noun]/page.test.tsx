@@ -46,9 +46,11 @@ describe('area/noun Work Item list route', () => {
     expect(screen.getByText(/workflow not found/i)).toBeInTheDocument()
   })
 
-  it('renders a loading state while resolving', () => {
+  it('renders a skeleton loading state while resolving', () => {
     resolution = { status: 'loading' }
     render(<WorkItemAreaNounPage />)
-    expect(screen.getByText(/loading/i)).toBeInTheDocument()
+    // The loading state renders skeleton divs, not a text spinner.
+    const skeletons = document.querySelectorAll('.animate-pulse')
+    expect(skeletons.length).toBeGreaterThan(0)
   })
 })

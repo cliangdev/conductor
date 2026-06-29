@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { LayoutDashboardIcon, ListIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -25,13 +26,18 @@ import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
 import {
   categoriesForView,
   categoryVariant,
+  fetchMembersCached,
+  getMembersCacheEntry,
   humanizeId,
   pluralizeNoun,
   statusMeta,
   useWorkflowView,
   workItemDetailPath,
 } from '@/lib/workflows'
+import { WorkItemBoardView } from '@/components/workitems/WorkItemBoardView'
 import type { MemberRole } from '@/types'
+
+type DisplayMode = 'list' | 'board'
 
 interface IssueAssignee {
   userId: string
@@ -301,9 +307,32 @@ export function WorkItemListView({
   const viewParam = searchParams.get('view')
   const view: View = viewParam === 'done' || viewParam === 'all' ? viewParam : 'active'
 
+  // Display mode: list (default) or board. Priority: URL param > localStorage > workflow defaultView.
+  const modeKey = `wv_mode_${projectId}_${slug}`
+  const [mode, setMode] = useState<DisplayMode>(() => {
+    const p = searchParams.get('mode')
+    if (p === 'board' || p === 'list') return p
+    try {
+      const stored = localStorage.getItem(modeKey)
+      if (stored === 'board' || stored === 'list') return stored
+    } catch { /* */ }
+    return 'list'
+  })
+
+  function setDisplayMode(next: DisplayMode) {
+    setMode(next)
+    try { localStorage.setItem(modeKey, next) } catch { /* */ }
+  }
+
   const [issues, setIssues] = useState<IssueWithReviewers[]>([])
-  const [members, setMembers] = useState<Member[]>([])
-  const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
+
+  // Seed members synchronously from the shared two-tier cache (module → localStorage) so that
+  // the assignee dropdown and role-gated UI don't flash empty on revisit or cross-component mount.
+  const [members, setMembers] = useState<Member[]>(() => getMembersCacheEntry(projectId) ?? [])
+  const [userRole, setUserRole] = useState<MemberRole>(() => {
+    const cached = getMembersCacheEntry(projectId)
+    return cached?.find((m) => m.userId === user?.id)?.role ?? 'REVIEWER'
+  })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<string>('All')
@@ -312,6 +341,19 @@ export function WorkItemListView({
   // The bound Workflow's display metadata — the single source of status labels/categories and the
   // allowed status/type option lists.
   const workflowView = useWorkflowView(projectId, slug, accessToken)
+
+  // Apply workflow's defaultView once it loads — only if no URL param or localStorage preference.
+  useEffect(() => {
+    const wfDefault = workflowView?.defaultView as DisplayMode | undefined
+    if (!wfDefault || (wfDefault !== 'list' && wfDefault !== 'board')) return
+    const p = searchParams.get('mode')
+    if (p === 'board' || p === 'list') return
+    try {
+      const stored = localStorage.getItem(modeKey)
+      if (stored === 'board' || stored === 'list') return
+    } catch { /* */ }
+    setMode(wfDefault)
+  }, [workflowView?.defaultView, modeKey, searchParams])
 
   const title = pluralizeNoun(noun)
 
@@ -333,14 +375,17 @@ export function WorkItemListView({
         const [issueData, memberData] = await Promise.all([
           // Always workflow-scoped — this page renders exactly one Workflow's Work Items.
           apiGet<IssueWithReviewers[]>(`/api/v1/projects/${projectId}/issues?workflow=${slug}`, accessToken!),
-          apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken!),
+          // Shared cache: deduplicates the concurrent fetch from PermissionsContext.
+          fetchMembersCached(projectId, accessToken!),
         ])
         setIssues(issueData)
         setMembers(memberData)
         const currentMember = memberData.find((m) => m.userId === user?.id)
         if (currentMember) setUserRole(currentMember.role)
+        // Show the table immediately — reviewer cells fill in after the second round.
+        setLoading(false)
 
-        // Fetch reviewers for all issues in parallel
+        // Fetch reviewers for all issues in parallel (second round, non-blocking)
         const reviewerResults = await Promise.allSettled(
           issueData.map((issue) =>
             apiGet<IssueReviewer[]>(
@@ -355,7 +400,6 @@ export function WorkItemListView({
         })))
       } catch (err) {
         setError(apiErrorMessage(err, `Failed to load ${title.toLowerCase()}`))
-      } finally {
         setLoading(false)
       }
     }
@@ -427,8 +471,10 @@ export function WorkItemListView({
     return (
       <PageContainer>
         <PageHeader title={title} />
-        <div className="flex items-center justify-center h-64 text-muted-foreground">
-          Loading {title.toLowerCase()}...
+        <div className="space-y-2 mt-2">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="h-10 rounded-md bg-muted animate-pulse" style={{ opacity: 1 - i * 0.1 }} />
+          ))}
         </div>
       </PageContainer>
     )
@@ -471,7 +517,7 @@ export function WorkItemListView({
     <PageContainer>
       <PageHeader title={title} breadcrumbs={crumbs} />
 
-      {/* View tabs */}
+      {/* View tabs + display mode toggle */}
       <div
         role="tablist"
         aria-label={`${title} view`}
@@ -515,6 +561,34 @@ export function WorkItemListView({
             </button>
           )
         })}
+
+        {/* Spacer + List/Board toggle pushed to the right */}
+        <div className="ml-auto flex items-center gap-0.5 pb-px shrink-0">
+          <button
+            type="button"
+            title="List view"
+            onClick={() => setDisplayMode('list')}
+            className={`p-1.5 rounded transition-colors ${
+              mode === 'list'
+                ? 'text-foreground bg-foreground/8'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+          >
+            <ListIcon className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title="Board view"
+            onClick={() => setDisplayMode('board')}
+            className={`p-1.5 rounded transition-colors ${
+              mode === 'board'
+                ? 'text-foreground bg-foreground/8'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+          >
+            <LayoutDashboardIcon className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -549,7 +623,19 @@ export function WorkItemListView({
         </div>
       </div>
 
-      {filteredIssues.length === 0 ? (
+      {mode === 'board' && workflowView ? (
+        <WorkItemBoardView
+          projectId={projectId}
+          slug={slug}
+          noun={noun}
+          workflowView={workflowView}
+          issues={filteredIssues}
+          userRole={userRole}
+          accessToken={accessToken!}
+          view={view}
+          onStatusChanged={updateIssueStatus}
+        />
+      ) : filteredIssues.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-48 gap-2 text-muted-foreground border border-dashed border-border rounded-lg">
           {issuesInView.length === 0 ? (
             <span>
@@ -724,3 +810,4 @@ export function WorkItemListView({
     </PageContainer>
   )
 }
+

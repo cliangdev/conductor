@@ -37,7 +37,7 @@ import { useSidebar } from '@/contexts/SidebarContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useEditorChrome } from '@/contexts/EditorChromeContext'
-import { humanizeId, isLifecycleWorkflow, listSidebarWorkflows, pluralizeNoun, workItemListPath } from '@/lib/workflows'
+import { fetchSidebarWorkflows, getSidebarCacheEntry, humanizeId, isLifecycleWorkflow, pluralizeNoun, workItemListPath } from '@/lib/workflows'
 import { cn } from '@/lib/utils'
 import type { Project } from '@/types'
 import type { WorkflowDefinitionDto } from '@/types/workflow'
@@ -254,6 +254,16 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
+function NavSkeleton() {
+  return (
+    <div className="space-y-1 mb-4" aria-hidden="true">
+      {[75, 60, 85].map((w) => (
+        <div key={w} className="h-8 rounded-md bg-muted animate-pulse" style={{ width: `${w}%` }} />
+      ))}
+    </div>
+  )
+}
+
 /** A sidebar nav entry derived from a sidebar-enabled lifecycle Workflow. */
 interface WorkNavEntry {
   slug: string
@@ -301,18 +311,28 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const currentWorkspace = projects.find((p) => p.id === projectIdFromPath) ?? activeProject
 
   // Dynamic Work nav: one entry per sidebar-enabled, published lifecycle Workflow, grouped by area.
-  // Falls back to a static Issues entry so the app is never navigation-empty.
-  const [workNav, setWorkNav] = useState<WorkNavEntry[]>([])
-  const currentWorkspaceId = currentWorkspace?.id
+  // Hydrates synchronously from the module cache (pre-seeded from localStorage) so nav appears
+  // instantly on revisit, then revalidates in the background via fetchSidebarWorkflows.
+  const [workNav, setWorkNav] = useState<WorkNavEntry[]>(() => {
+    if (!projectIdFromPath) return []
+    const cached = getSidebarCacheEntry(projectIdFromPath)
+    return cached ? toWorkNav(cached) : []
+  })
+  const [navLoading, setNavLoading] = useState(workNav.length === 0)
 
   useEffect(() => {
-    if (!currentWorkspaceId || !accessToken) return
+    if (!projectIdFromPath || !accessToken) return
     let cancelled = false
-    listSidebarWorkflows(currentWorkspaceId, accessToken)
-      .then((wfs) => { if (!cancelled) setWorkNav(toWorkNav(wfs)) })
-      .catch(() => { if (!cancelled) setWorkNav([]) })
+    fetchSidebarWorkflows(projectIdFromPath, accessToken)
+      .then((wfs) => {
+        if (!cancelled) {
+          setWorkNav(toWorkNav(wfs))
+          setNavLoading(false)
+        }
+      })
+      .catch(() => { if (!cancelled) setNavLoading(false) })
     return () => { cancelled = true }
-  }, [currentWorkspaceId, accessToken])
+  }, [projectIdFromPath, accessToken])
 
   return (
     <div className="flex flex-col h-full">
@@ -330,57 +350,40 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         {currentWorkspace && (
           <div className="px-2 py-1">
             {workNav.length > 0 ? (
-              <>
-                {groupByArea(workNav).map(([area, entries]) => (
-                  <div key={area}>
-                    <SectionLabel>{humanizeId(area)}</SectionLabel>
-                    <div className="space-y-0.5 mb-4">
-                      {entries.map((entry) => (
-                        <NavItem
-                          key={entry.slug}
-                          href={workItemListPath(currentWorkspace.id, entry.area, entry.noun)}
-                          icon={<FileTextIcon className="h-4 w-4" />}
-                          onNavigate={onNavigate}
-                        >
-                          {entry.label}
-                        </NavItem>
-                      ))}
-                    </div>
+              groupByArea(workNav).map(([area, entries]) => (
+                <div key={area}>
+                  <SectionLabel>{humanizeId(area)}</SectionLabel>
+                  <div className="space-y-0.5 mb-4">
+                    {entries.map((entry) => (
+                      <NavItem
+                        key={entry.slug}
+                        href={workItemListPath(currentWorkspace.id, entry.area, entry.noun)}
+                        icon={<FileTextIcon className="h-4 w-4" />}
+                        onNavigate={onNavigate}
+                      >
+                        {entry.label}
+                      </NavItem>
+                    ))}
                   </div>
-                ))}
-                <SectionLabel>Workspace</SectionLabel>
-                <div className="space-y-0.5 mb-4">
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/docs`}
-                    icon={<BookOpenIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    Docs
-                  </NavItem>
                 </div>
-              </>
-            ) : (
+              ))
+            ) : navLoading ? (
               <>
-                {/* Fallback when no sidebar-enabled Workflows resolve yet — never navigation-empty. */}
                 <SectionLabel>Work</SectionLabel>
-                <div className="space-y-0.5 mb-4">
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/issues`}
-                    icon={<FileTextIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    Issues
-                  </NavItem>
-                  <NavItem
-                    href={`/app/projects/${currentWorkspace.id}/docs`}
-                    icon={<BookOpenIcon className="h-4 w-4" />}
-                    onNavigate={onNavigate}
-                  >
-                    Docs
-                  </NavItem>
-                </div>
+                <NavSkeleton />
               </>
-            )}
+            ) : null}
+
+            <SectionLabel>Workspace</SectionLabel>
+            <div className="space-y-0.5 mb-4">
+              <NavItem
+                href={`/app/projects/${currentWorkspace.id}/docs`}
+                icon={<BookOpenIcon className="h-4 w-4" />}
+                onNavigate={onNavigate}
+              >
+                Docs
+              </NavItem>
+            </div>
 
             <SectionLabel>Automation</SectionLabel>
             <div className="space-y-0.5 mb-4">
