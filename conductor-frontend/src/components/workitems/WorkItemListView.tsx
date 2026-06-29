@@ -29,6 +29,7 @@ import {
   pluralizeNoun,
   statusMeta,
   useWorkflowView,
+  workItemDetailPath,
 } from '@/lib/workflows'
 import type { MemberRole } from '@/types'
 
@@ -456,6 +457,10 @@ export function WorkItemListView({
 
   const lowerNoun = noun.toLowerCase()
 
+  // The Workflow's area drives the workflow-scoped detail URL. The slug (lowercased by the builder) is a
+  // safe fallback until the view loads, since area defaults to the slug for single-Workflow areas.
+  const detailArea = workflowView?.area ?? slug
+
   // Breadcrumb trail: area (non-link) › this Workflow's pluralized noun (current page). The area is
   // sourced from the bound Workflow's view; it is omitted until the view loads or when unset.
   const crumbs: Crumb[] = []
@@ -576,7 +581,7 @@ export function WorkItemListView({
             {filteredIssues.map((issue) => (
               <Link
                 key={issue.id}
-                href={`/app/projects/${projectId}/work/${slug}/${issue.displayId}`}
+                href={workItemDetailPath(projectId, detailArea, noun, issue.displayId ?? '')}
                 className="block bg-card border border-border rounded-lg p-4 hover:border-border-strong transition-colors"
               >
                 <div className="flex items-start justify-between gap-2 mb-2">
@@ -641,7 +646,7 @@ export function WorkItemListView({
                 {filteredIssues.map((issue) => (
                   <tr
                     key={issue.id}
-                    onClick={() => router.push(`/app/projects/${projectId}/work/${slug}/${issue.displayId}`)}
+                    onClick={() => router.push(workItemDetailPath(projectId, detailArea, noun, issue.displayId ?? ''))}
                     className="hover:bg-muted/50 transition-colors cursor-pointer"
                   >
                     <td className="px-4 py-3 whitespace-nowrap">

@@ -64,7 +64,7 @@ describe('WorkItemListView links', () => {
     await waitFor(() => expect(screen.getAllByText('First Work Item').length).toBeGreaterThan(0))
     const links = screen.getAllByRole('link')
     const itemLink = links.find(
-      (l) => l.getAttribute('href') === '/app/projects/proj-1/work/ENGINEERING/COND-1',
+      (l) => l.getAttribute('href') === '/app/projects/proj-1/engineering/issues/COND-1',
     )
     expect(itemLink).toBeDefined()
   })

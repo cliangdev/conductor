@@ -6,6 +6,7 @@ import com.conductor.exception.BusinessException;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowSecretRepository;
+import com.conductor.generated.model.WorkflowCreateRequest;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidator;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -112,6 +113,57 @@ class WorkflowServiceTest {
         assertThat(service.listWorkflows("proj-1", true, "PUBLISHED", true)).containsExactly(lifecycle);
         // No filters → everything (regression: existing behavior preserved).
         assertThat(service.listWorkflows("proj-1", null, null, null)).containsExactly(lifecycle, automation);
+    }
+
+    @Test
+    void createWorkflowRejectsReservedAreaName() {
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
+        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.findByProjectIdAndName("proj-1", "My Flow")).thenReturn(Optional.empty());
+
+        WorkflowCreateRequest request = new WorkflowCreateRequest("My Flow");
+        // "Settings" collides with the /settings route name (case-insensitive).
+        request.setArea("Settings");
+
+        assertThatThrownBy(() -> service.createWorkflow("proj-1", "user-1", request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("reserved");
+        verify(workflowRepository, never()).save(any());
+    }
+
+    @Test
+    void createWorkflowRejectsReservedDefinitionSlug() {
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
+        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.findByProjectIdAndName("proj-1", "My Flow")).thenReturn(Optional.empty());
+
+        WorkflowCreateRequest request = new WorkflowCreateRequest("My Flow");
+        // The statechart slug (definition.id) "issues" collides with the /issues route name.
+        request.setDefinition(java.util.Map.of("id", "issues"));
+
+        assertThatThrownBy(() -> service.createWorkflow("proj-1", "user-1", request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("reserved");
+        verify(workflowRepository, never()).save(any());
+    }
+
+    @Test
+    void createWorkflowAllowsNonReservedAreaAndSlug() {
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
+        when(workflowRepository.countByProjectId("proj-1")).thenReturn(0L);
+        when(workflowRepository.findByProjectIdAndName("proj-1", "My Flow")).thenReturn(Optional.empty());
+        when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        WorkflowCreateRequest request = new WorkflowCreateRequest("My Flow");
+        request.setArea("SALES_OPS");
+        request.setDefinition(java.util.Map.of("id", "SALES", "statuses", java.util.List.of()));
+
+        WorkflowDefinition saved = service.createWorkflow("proj-1", "user-1", request);
+        assertThat(saved.getArea()).isEqualTo("SALES_OPS");
+        verify(workflowRepository).save(any(WorkflowDefinition.class));
     }
 
     private Project projectWithId(String id) {

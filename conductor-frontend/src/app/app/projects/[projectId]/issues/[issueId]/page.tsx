@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet } from '@/lib/api'
+import { DEFAULT_WORKFLOW_SLUG, fetchWorkflowView, workItemDetailPath } from '@/lib/workflows'
 
 export const dynamic = 'force-dynamic'
 
@@ -34,8 +35,13 @@ export default function LegacyIssueRedirectPage() {
           accessToken
         )
         if (cancelled) return
-        const slug = resolved.workflow ?? 'ENGINEERING'
-        router.replace(`/app/projects/${projectId}/work/${slug}/${resolved.displayId}`)
+        const slug = resolved.workflow ?? DEFAULT_WORKFLOW_SLUG
+        // Resolve the Workflow's area + noun (the URL segments) from its slug, then build the new path.
+        const view = await fetchWorkflowView(projectId, slug, accessToken)
+        if (cancelled) return
+        router.replace(
+          workItemDetailPath(projectId, view.area ?? slug, view.noun, resolved.displayId),
+        )
       } catch {
         if (!cancelled) setError('Work Item not found.')
       }

@@ -37,7 +37,7 @@ import { useSidebar } from '@/contexts/SidebarContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useEditorChrome } from '@/contexts/EditorChromeContext'
-import { humanizeId, isLifecycleWorkflow, listSidebarWorkflows, pluralizeNoun } from '@/lib/workflows'
+import { humanizeId, isLifecycleWorkflow, listSidebarWorkflows, pluralizeNoun, workItemListPath } from '@/lib/workflows'
 import { cn } from '@/lib/utils'
 import type { Project } from '@/types'
 import type { WorkflowDefinitionDto } from '@/types/workflow'
@@ -258,6 +258,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 interface WorkNavEntry {
   slug: string
   label: string
+  noun: string
   area: string
   createdAt: string
 }
@@ -272,6 +273,7 @@ function toWorkNav(workflows: WorkflowDefinitionDto[]): WorkNavEntry[] {
     .map((wf) => ({
       slug: wf.slug ?? wf.name,
       label: pluralizeNoun(wf.noun ?? wf.name),
+      noun: wf.noun ?? wf.name,
       area: wf.area ?? 'WORK',
       createdAt: wf.createdAt,
     }))
@@ -336,7 +338,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                       {entries.map((entry) => (
                         <NavItem
                           key={entry.slug}
-                          href={`/app/projects/${currentWorkspace.id}/work/${entry.slug}`}
+                          href={workItemListPath(currentWorkspace.id, entry.area, entry.noun)}
                           icon={<FileTextIcon className="h-4 w-4" />}
                           onNavigate={onNavigate}
                         >

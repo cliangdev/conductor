@@ -1,17 +1,27 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   categoriesForView,
   categoryVariant,
   humanizeId,
   isLifecycleWorkflow,
   pluralizeNoun,
+  resolveWorkflowByAreaNoun,
   reviewGateForStatus,
   statusHasReviewGate,
   statusMeta,
+  workItemDetailPath,
+  workItemListPath,
 } from '@/lib/workflows'
 import { definitionFromWorkflowView } from '@/lib/workflowDefinition'
+import { apiGet } from '@/lib/api'
 import type { WorkflowView } from '@/types/workItem'
 import type { WorkflowDefinitionDto } from '@/types/workflow'
+
+vi.mock('@/lib/api', () => ({
+  apiGet: vi.fn(),
+  apiPost: vi.fn(),
+  apiPut: vi.fn(),
+}))
 
 const VIEW: WorkflowView = {
   slug: 'ENGINEERING',
@@ -98,6 +108,51 @@ describe('pluralizeNoun', () => {
     expect(pluralizeNoun('Issue')).toBe('Issues')
     expect(pluralizeNoun('Story')).toBe('Stories')
     expect(pluralizeNoun('Deal')).toBe('Deals')
+  })
+})
+
+describe('workItem URL builders', () => {
+  it('builds the list path with both segments lowercased and the noun pluralized', () => {
+    expect(workItemListPath('proj-1', 'ENGINEERING', 'Issue')).toBe(
+      '/app/projects/proj-1/engineering/issues',
+    )
+    expect(workItemListPath('proj-1', 'SALES_OPS', 'Deal')).toBe(
+      '/app/projects/proj-1/sales_ops/deals',
+    )
+  })
+
+  it('builds the detail path by appending the displayId', () => {
+    expect(workItemDetailPath('proj-1', 'ENGINEERING', 'Issue', 'COND-22')).toBe(
+      '/app/projects/proj-1/engineering/issues/COND-22',
+    )
+  })
+})
+
+describe('resolveWorkflowByAreaNoun', () => {
+  function wf(overrides: Partial<WorkflowDefinitionDto>): WorkflowDefinitionDto {
+    return {
+      id: 'wf', projectId: 'p', name: 'ENGINEERING', enabled: true,
+      slug: 'ENGINEERING', noun: 'Issue', area: 'ENGINEERING',
+      createdAt: '', updatedAt: '', ...overrides,
+    }
+  }
+
+  it('matches case-insensitively on area and pluralized noun, returning the real slug', async () => {
+    (apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
+      wf({}),
+      wf({ id: 'wf2', slug: 'SALES', noun: 'Deal', area: 'SALES_OPS' }),
+    ])
+    // Distinct projectId per assertion to dodge the module-scope cache.
+    const eng = await resolveWorkflowByAreaNoun('proj-a', 'engineering', 'issues', 'token')
+    expect(eng?.slug).toBe('ENGINEERING')
+
+    const sales = await resolveWorkflowByAreaNoun('proj-b', 'sales_ops', 'deals', 'token')
+    expect(sales?.slug).toBe('SALES')
+  })
+
+  it('returns undefined when no workflow matches the area/noun pair', async () => {
+    (apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([wf({})])
+    expect(await resolveWorkflowByAreaNoun('proj-c', 'marketing', 'campaigns', 'token')).toBeUndefined()
   })
 })
 

@@ -23,6 +23,7 @@ import {
   reviewGateForStatus,
   statusHasReviewGate,
   useWorkflowView,
+  workItemListPath,
 } from '@/lib/workflows'
 import type { Comment } from '@/components/comments/types'
 import type { WorkItemAsset } from '@/types/workItem'
@@ -334,7 +335,7 @@ export function WorkItemDetailView({
   if (workflowView?.noun) {
     crumbs.push({
       label: pluralizeNoun(workflowView.noun),
-      href: `/app/projects/${projectId}/work/${slug}`,
+      href: workItemListPath(projectId, workflowView.area ?? slug, workflowView.noun),
     })
   }
   crumbs.push({ label: issue.displayId ?? issue.title })
