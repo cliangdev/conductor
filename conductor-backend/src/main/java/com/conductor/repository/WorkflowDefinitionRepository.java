@@ -32,4 +32,15 @@ public interface WorkflowDefinitionRepository extends JpaRepository<WorkflowDefi
             )
             """, nativeQuery = true)
     boolean existsByProjectIdAndDefinitionSlug(@Param("projectId") String projectId, @Param("slug") String slug);
+
+    /**
+     * The workflow in a project owning the given statechart slug ({@code definition->>'id'}), if any.
+     * Used to detect slug collisions on update (the owning row may differ from the one being edited).
+     */
+    @Query(value = """
+            SELECT * FROM workflow_definitions w
+            WHERE w.project_id = :projectId AND w.definition ->> 'id' = :slug
+            LIMIT 1
+            """, nativeQuery = true)
+    Optional<WorkflowDefinition> findByProjectIdAndDefinitionSlug(@Param("projectId") String projectId, @Param("slug") String slug);
 }

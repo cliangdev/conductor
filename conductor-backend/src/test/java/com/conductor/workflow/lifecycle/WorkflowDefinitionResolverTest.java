@@ -25,18 +25,18 @@ class WorkflowDefinitionResolverTest {
     @BeforeEach
     void setUp() {
         versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
-        resolver = new WorkflowDefinitionResolver(versionRepository, mapper);
+        resolver = new WorkflowDefinitionResolver(versionRepository);
     }
 
     @Test
-    void resolvesBuiltInEngineeringWhenNoPublishedSnapshot() {
+    void slugWithNoPublishedSnapshotResolvesEmpty() {
+        // Resolution is DB-only: a slug with no published snapshot is simply unresolvable — no classpath
+        // built-in fallback. Every project is seeded its lifecycle workflows as real rows.
         when(versionRepository.findLatestPublished(any(), eq("ENGINEERING"))).thenReturn(Optional.empty());
 
-        Statechart sc = resolver.resolveRequired("project-1", "ENGINEERING");
-
-        assertThat(sc.slug()).isEqualTo("ENGINEERING");
-        assertThat(sc.noun()).isEqualTo("Issue");
-        assertThat(resolver.isBuiltIn("ENGINEERING")).isTrue();
+        assertThat(resolver.resolve("project-1", "ENGINEERING")).isEmpty();
+        assertThatThrownBy(() -> resolver.resolveRequired("project-1", "ENGINEERING"))
+                .isInstanceOf(EntityNotFoundException.class);
     }
 
     @Test
@@ -46,12 +46,11 @@ class WorkflowDefinitionResolverTest {
         assertThat(resolver.resolve("project-1", "MYSTERY")).isEmpty();
         assertThatThrownBy(() -> resolver.resolveRequired("project-1", "MYSTERY"))
                 .isInstanceOf(EntityNotFoundException.class);
-        assertThat(resolver.isBuiltIn("MYSTERY")).isFalse();
     }
 
     @Test
-    void prefersProjectPublishedSnapshotOverBuiltIn() throws Exception {
-        // A project that published its own ENGINEERING (different noun) wins over the built-in.
+    void resolvesProjectPublishedSnapshot() throws Exception {
+        // A project that published its own ENGINEERING (different noun) resolves that snapshot.
         String custom = """
                 {
                   "schemaVersion": 1, "id": "ENGINEERING", "area": "ENGINEERING", "version": 2,

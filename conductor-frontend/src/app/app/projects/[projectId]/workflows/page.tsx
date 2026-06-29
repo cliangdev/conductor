@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
-import { DEFAULT_WORKFLOW_SLUG, isLifecycleWorkflow } from '@/lib/workflows';
+import { isLifecycleWorkflow } from '@/lib/workflows';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TriggerBadges } from '@/components/workflow/TriggerBadges';
@@ -193,17 +193,6 @@ export default function WorkflowsPage() {
               </tr>
             </thead>
             <tbody>
-              {/* Built-in default Workflow — viewable as a template, not editable in place. */}
-              <tr
-                className="border-t hover:bg-muted/25 cursor-pointer"
-                onClick={() => router.push(`/app/projects/${projectId}/workflows/lifecycle/builtin/${DEFAULT_WORKFLOW_SLUG}`)}
-              >
-                <td className="p-3 font-medium">{DEFAULT_WORKFLOW_SLUG}</td>
-                <td className="p-3 text-muted-foreground">Issue</td>
-                <td className="p-3"><Badge variant="secondary">Built-in</Badge></td>
-                <td className="p-3 text-muted-foreground">—</td>
-                <td className="p-3" />
-              </tr>
               {lifecycle.map(wf => {
                 const noun = (wf.definition as { noun?: string } | null | undefined)?.noun;
                 return (

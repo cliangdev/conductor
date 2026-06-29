@@ -1,14 +1,11 @@
 'use client'
 
 // COND-18: a read-only diagram of a lifecycle Workflow — statuses as nodes (colored by category),
-// transitions as edges (labelled; review-gated edges dashed). Mirrors WorkflowDiagram's xyflow +
-// dagre approach, but renders the statechart rather than the YAML automation job graph.
+// transitions as edges (labelled; review-gated edges dashed). Builds the statechart graph and hands it
+// to the shared FlowCanvas (same xyflow shell + zoom/fullscreen controls the automation diagram uses).
 
 import { useMemo } from 'react'
 import {
-  ReactFlow,
-  ReactFlowProvider,
-  Background,
   Handle,
   Position,
   MarkerType,
@@ -17,6 +14,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import dagre from 'dagre'
+import { FlowCanvas } from '@/components/workflow/FlowCanvas'
 import { categoryColor, humanizeId } from '@/lib/workflows'
 import type { StatechartStatus, StatechartTransition } from '@/lib/workflowDefinition'
 
@@ -120,27 +118,7 @@ export function StatechartDiagram({
     )
   }
 
-  return (
-    <ReactFlowProvider>
-      <div className="relative h-full w-full">
-        <div className="absolute inset-0 overflow-hidden rounded-md">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            fitView
-            fitViewOptions={{ padding: 0.3 }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            elementsSelectable={false}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="#e5e7eb" gap={16} />
-          </ReactFlow>
-        </div>
-      </div>
-    </ReactFlowProvider>
-  )
+  return <FlowCanvas nodes={nodes} edges={edges} nodeTypes={nodeTypes} />
 }
 
 export default StatechartDiagram

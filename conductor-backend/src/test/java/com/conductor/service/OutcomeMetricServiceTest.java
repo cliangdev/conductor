@@ -14,10 +14,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import java.io.InputStream;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 class OutcomeMetricServiceTest {
@@ -37,10 +39,25 @@ class OutcomeMetricServiceTest {
         workItemRepository = Mockito.mock(WorkItemRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
         versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
-        WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository, mapper);
+        // Resolution is DB-only: back the resolver with the seeded ENGINEERING snapshot (which opts out of
+        // outcome metrics). Tests for other workflows stub their own snapshot.
+        when(versionRepository.findLatestPublished(any(), eq("ENGINEERING")))
+                .thenReturn(Optional.of(engineeringSnapshot()));
+        WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository);
         service = new OutcomeMetricService(workItemRepository, projectSecurityService, resolver, mapper);
         when(workItemRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+    }
+
+    private WorkflowDefinitionVersion engineeringSnapshot() {
+        try (InputStream in = getClass().getResourceAsStream("/schema/examples/engineering.workflow.json")) {
+            WorkflowDefinitionVersion v = new WorkflowDefinitionVersion();
+            v.setVersion(1);
+            v.setDefinition(mapper.readTree(in));
+            return v;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private WorkItem issue(String workflow) {

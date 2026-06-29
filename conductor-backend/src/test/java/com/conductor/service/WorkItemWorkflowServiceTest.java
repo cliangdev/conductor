@@ -5,6 +5,7 @@ import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
+import com.conductor.entity.WorkflowDefinitionVersion;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.generated.model.AvailableTransition;
@@ -20,21 +21,23 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import java.io.InputStream;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Exercises the Workflow seam with the REAL resolver + built-in ENGINEERING statechart (resolver backed by a
- * mock version repo → no published snapshots → built-in). This is where the byte-for-byte no-regression
- * behavior (AC-P0-1.1) plus the COND-18 generalizations (String statuses/types, system transitions, the
- * role-scoped Review gate) are verified end to end through the engine.
+ * Exercises the Workflow seam with the REAL resolver + ENGINEERING statechart (resolver backed by a mock
+ * version repo stubbed to return the seeded ENGINEERING published snapshot). This is where the byte-for-byte
+ * no-regression behavior (AC-P0-1.1) plus the COND-18 generalizations (String statuses/types, system
+ * transitions, the role-scoped Review gate) are verified end to end through the engine.
  */
 class WorkItemWorkflowServiceTest {
 
@@ -52,11 +55,28 @@ class WorkItemWorkflowServiceTest {
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
         projectMemberRepository = Mockito.mock(ProjectMemberRepository.class);
         reviewRepository = Mockito.mock(ReviewRepository.class);
-        // No published snapshots → resolver falls back to the built-in ENGINEERING classpath definition.
-        WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(
-                Mockito.mock(WorkflowDefinitionVersionRepository.class), new ObjectMapper());
+        // Resolution is DB-only: back the resolver with a mock version repo returning the seeded ENGINEERING
+        // published snapshot (v1) for both latest and version-pinned lookups.
+        WorkflowDefinitionVersionRepository versionRepository =
+                Mockito.mock(WorkflowDefinitionVersionRepository.class);
+        WorkflowDefinitionVersion snapshot = engineeringSnapshot();
+        when(versionRepository.findLatestPublished(any(), eq("ENGINEERING"))).thenReturn(Optional.of(snapshot));
+        when(versionRepository.findByProjectSlugAndVersion(any(), eq("ENGINEERING"), eq(1)))
+                .thenReturn(Optional.of(snapshot));
+        WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository);
         service = new WorkItemWorkflowService(workItemRepository, projectSecurityService, projectMemberRepository,
                 reviewRepository, resolver);
+    }
+
+    private WorkflowDefinitionVersion engineeringSnapshot() {
+        try (InputStream in = getClass().getResourceAsStream("/schema/examples/engineering.workflow.json")) {
+            WorkflowDefinitionVersion v = new WorkflowDefinitionVersion();
+            v.setVersion(1);
+            v.setDefinition(new ObjectMapper().readTree(in));
+            return v;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private WorkItem issueAt(String status) {
