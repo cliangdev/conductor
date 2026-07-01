@@ -8,6 +8,7 @@ vi.mock('../mcp/api.js', () => ({
   apiGet: vi.fn(),
   apiPatch: vi.fn(),
   apiDelete: vi.fn(),
+  isClientError: (err: unknown) => err instanceof Error && /API error 4\d\d\b/.test(err.message),
 }))
 
 vi.mock('../mcp/queue.js', () => ({

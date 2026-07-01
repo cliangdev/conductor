@@ -1618,9 +1618,17 @@ components:
     CreateWorkItemRequest:
       type: object
       required:
+        - workflow
         - type
         - title
       properties:
+        workflow:
+          type: string
+          description: >-
+            Required — the lifecycle Workflow definition id (slug, e.g. ENGINEERING) that governs this Work
+            Item. The canonical v2 surface never silently defaults it; discover options via
+            `GET /projects/{projectId}/workflows?lifecycle=true`. (The legacy v1 `/issues` create keeps an
+            ENGINEERING default for back-compat.)
         type:
           type: string
           description: >-
@@ -1631,12 +1639,6 @@ components:
           maxLength: 255
         description:
           type: string
-        workflow:
-          type: string
-          description: >-
-            Optional Workflow definition id (slug, e.g. ENGINEERING) this Work Item runs
-            on. When omitted, defaults to the project's Engineering Workflow. `type` is
-            validated against the chosen Workflow's allowed types.
 
     PatchWorkItemRequest:
       type: object

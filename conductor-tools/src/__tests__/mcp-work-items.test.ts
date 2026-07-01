@@ -6,6 +6,7 @@ vi.mock('../mcp/api.js', () => ({
   apiPost: vi.fn(),
   apiPatch: vi.fn(),
   apiDelete: vi.fn(),
+  isClientError: (err: unknown) => err instanceof Error && /API error 4\d\d\b/.test(err.message),
 }))
 vi.mock('../mcp/queue.js', () => ({
   queueChange: vi.fn(() => 1),
@@ -17,6 +18,7 @@ vi.mock('../mcp/files.js', () => ({
 }))
 
 import { apiGet, apiPost, apiPatch } from '../mcp/api.js'
+import { queueChange } from '../mcp/queue.js'
 import {
   createIssue,
   updateIssue,
@@ -51,6 +53,16 @@ describe('canonical work_item MCP tools target v2', () => {
       { type: 'PRD', title: 'T', description: undefined, workflow: 'ENGINEERING' },
       config
     )
+  })
+
+  it('create_work_item surfaces a permanent 4xx instead of queuing a phantom item', async () => {
+    ;(apiPost as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("API error 400: Type 'BAD' is not allowed by workflow ENGINEERING")
+    )
+    const result = await createWorkItem({ type: 'BAD', title: 'T', workflow: 'ENGINEERING' }, config)
+    expect(result.error).toContain('Work Item not created')
+    expect(result.issueId).toBeUndefined()
+    expect(queueChange).not.toHaveBeenCalled()
   })
 
   it('update_work_item PATCHes the v2 item', async () => {

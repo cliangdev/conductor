@@ -1,4 +1,4 @@
-package com.conductor.controller;
+package com.conductor.legacy;
 
 import com.conductor.entity.User;
 import com.conductor.generated.api.ReviewsApi;

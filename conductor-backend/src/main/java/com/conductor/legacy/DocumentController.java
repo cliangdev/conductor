@@ -1,4 +1,4 @@
-package com.conductor.controller;
+package com.conductor.legacy;
 
 import com.conductor.generated.api.DocumentsApi;
 import com.conductor.generated.model.CreateDocumentRequest;

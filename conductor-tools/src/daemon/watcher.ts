@@ -27,7 +27,7 @@ export function rotateDaemonLogIfNeeded(): void {
 }
 
 export interface QueueEntry {
-  method: 'POST' | 'PUT' | 'DELETE'
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   path: string
   body?: Record<string, unknown>
   timestamp: string
@@ -272,7 +272,9 @@ export async function syncIssueMd(filePath: string, getConfig: () => Config): Pr
     console.log(`Synced issue.md: ${filePath}`)
   } catch (err) {
     console.error(`Issue sync failed, queuing: ${filePath} — ${(err as Error).message}`)
-    queueChange({ method: 'PUT', path: apiPath, body: patchBody })
+    // Queue with the SAME verb the endpoint accepts (PATCH) — the resource is PATCH-only, so a queued PUT
+    // replays as a 500 and jams the queue on every retry.
+    queueChange({ method: 'PATCH', path: apiPath, body: patchBody })
   }
 }
 

@@ -2,6 +2,7 @@ package com.conductor.v2.controller;
 
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
+import com.conductor.exception.BusinessException;
 import com.conductor.generated.v2.api.WorkItemsApi;
 import com.conductor.generated.v2.model.AvailableTransition;
 import com.conductor.generated.v2.model.AvailableTransitionsResponse;
@@ -52,6 +53,14 @@ public class WorkItemController implements WorkItemsApi {
     @Transactional
     public ResponseEntity<WorkItemResponse> createWorkItem(String projectId, CreateWorkItemRequest request) {
         User caller = currentUser();
+        // Canonical surface: never silently default the Workflow. Callers must name the lifecycle Workflow that
+        // governs the item (discover via GET .../workflows?lifecycle=true). The legacy v1 /issues create keeps
+        // its ENGINEERING default for back-compat.
+        if (request.getWorkflow() == null || request.getWorkflow().isBlank()) {
+            throw new BusinessException(
+                    "workflow is required — name the lifecycle Workflow slug (e.g. ENGINEERING). "
+                            + "Discover options via GET /api/v1/projects/{projectId}/workflows?lifecycle=true");
+        }
         WorkItem created = workItemService.createWorkItem(
                 projectId, request.getType(), request.getTitle(), request.getDescription(),
                 request.getWorkflow(), caller);

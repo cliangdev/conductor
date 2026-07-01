@@ -47,11 +47,13 @@ no silent ENGINEERING default — and `list_workflows` returns each Workflow fla
 
 - ~~Migrate the **sub-resource** endpoints under `/issues/{issueId}/…` to the `work-items` path.~~ Done —
   full v2 sub-resource parity shipped (#239); first-party MCP + frontend clients cut over.
-- ~~Move the v1 issue controllers into `com.conductor.legacy` behind a `legacy` Swagger group.~~ Done —
-  `IssueController` + `IssueTasksController` now live in `com.conductor.legacy`; `OpenApiGroupsConfig` carves
-  them into a `legacy` Swagger group and excludes that package from the canonical `external` group. The
-  package-scoped `ApiPathConfig` rule keeps them served at the same `/api/v1/.../issues` paths, so the
-  deprecated `*_issue` MCP shims keep working. Removal is now a delete-package op.
+- ~~Move the v1 issue controllers into `com.conductor.legacy` behind a `legacy` Swagger group.~~ Done — the
+  issue **core** controllers (`IssueController`, `IssueTasksController`) **and every issue-scoped sub-resource
+  controller** (`Document`, `Comment`, `Reviewer`, `Review`, `Asset`, `StepRun`, `OutcomeMetric`) now live in
+  `com.conductor.legacy`; `OpenApiGroupsConfig` carves them into a `legacy` Swagger group and excludes that
+  package from the canonical `external` group (so the external group no longer lists any `/issues` path). The
+  package-scoped `ApiPathConfig` rule keeps them served at the same `/api/v1/.../issues` paths, so the deprecated
+  `*_issue` MCP shims keep working. Removal is now a delete-package op.
 - **Still pending — extract the paths/schemas from `openapi.yaml`**: the `/issues` paths + `Issue*` schemas
   remain in `openapi.yaml` (they must stay generatable while the controllers exist). Splitting them into a
   dedicated `openapi-legacy.yaml` (a 4th generator execution) rides with the **Phase E delete**, since at that

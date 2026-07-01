@@ -1,6 +1,6 @@
 import * as path from 'path'
 import { Config } from '../config.js'
-import { apiGet, apiPost, apiPatch } from '../api.js'
+import { apiGet, apiPost, apiPatch, isClientError } from '../api.js'
 import { writeIssueFile, readIssueFile, resolveLocalPath } from '../files.js'
 import { queueChange } from '../queue.js'
 
@@ -81,7 +81,12 @@ async function createWorkItemImpl(
   try {
     backendResult = await apiPost<IssueResponse>(collectionPath, body, config)
     issueId = backendResult.id
-  } catch {
+  } catch (err) {
+    // A 4xx (bad type, unknown workflow, forbidden) is permanent — surface it instead of queuing a retry that
+    // would never succeed and writing a phantom local_… item.
+    if (isClientError(err)) {
+      return { error: `Work Item not created: ${err instanceof Error ? err.message : String(err)}` }
+    }
     issueId = `local_${Date.now()}`
     const size = queueChange({
       method: 'POST',
