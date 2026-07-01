@@ -32,6 +32,7 @@ import {
 } from './tools/workflows.js'
 import { listIntegrationTools } from './tools/integrations.js'
 import { listAgents } from './tools/agents.js'
+import { listSkills, registerSkill } from './tools/skills.js'
 
 const TOOLS = [
   // --- Canonical Work Item tools (v2 /work-items surface) ---
@@ -272,6 +273,24 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'list_skills',
+    description: 'List the Claude Code skills a lifecycle Workflow may bind from a `skill` transition step: shipped built-ins (builtIn=true) plus skills this project has registered. Call before binding a skill in a statechart to confirm it is registered — Publish rejects an unregistered skill.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'register_skill',
+    description: 'Register a project-scoped skill id so a lifecycle Workflow can bind it from a transition step and publish without a backend redeploy. Idempotent on the skill id. Use for a new domain (e.g. marketing:seo-report) whose skill is not a shipped built-in.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        skillId: { type: 'string', description: 'Bindable skill id to register (e.g. marketing:seo-report)' },
+        label: { type: 'string', description: 'Human-readable label (optional)' },
+        description: { type: 'string', description: 'What the skill does (optional)' },
+      },
+      required: ['skillId'],
+    },
+  },
+  {
     name: 'create_workflow',
     description: 'Create a new workflow definition in DRAFT state. Use this to save a designed workflow. Returns workflowId. Always call get_workflow after to verify the workflow was stored correctly.',
     inputSchema: {
@@ -488,6 +507,21 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'list_agents': {
           return successResponse(await listAgents({}, config))
+        }
+        case 'list_skills': {
+          return successResponse(await listSkills({}, config))
+        }
+        case 'register_skill': {
+          return successResponse(
+            await registerSkill(
+              {
+                skillId: params['skillId'] as string,
+                label: params['label'] as string | undefined,
+                description: params['description'] as string | undefined,
+              },
+              config
+            )
+          )
         }
         case 'create_workflow': {
           return successResponse(

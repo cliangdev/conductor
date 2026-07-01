@@ -26,7 +26,9 @@ Before discovery, determine which type fits the user's request:
 If ambiguous, ask:
 > "Is this an automation that runs on a schedule or webhook (e.g. weekly SEO report, deploy pipeline), or are you defining how your team's work items move through stages (e.g. Draft → In Review → Approved)?"
 
-The rest of this skill focuses on **YAML automation** workflows, which is the more common case. For statechart lifecycle design, follow the COND-18 schema in the project docs.
+**Then branch:**
+- **Statechart lifecycle** → go to the [Statechart Lifecycle Authoring](#statechart-lifecycle-authoring) section below.
+- **YAML automation** (the more common case) → continue with Step 1.
 
 ---
 
@@ -196,6 +198,70 @@ When the workflow is PUBLISHED, summarize:
 
 ---
 
+## Statechart Lifecycle Authoring
+
+Use this path when the user is defining **how a kind of Work Item moves through stages** — a new *domain lifecycle*
+like the engineering PRD→Implement→Fix loop, but for marketing, design, docs, or any team. The same generic
+Work Item tools (`create_work_item`, `get_available_transitions`, `transition_work_item`) then drive items
+through whatever statechart you author here — nothing domain-specific is hardcoded.
+
+### L1 — Discover
+
+Run in parallel before designing:
+```
+1. list_workflows({kind: "LIFECYCLE"})  → existing lifecycles: area/noun/types/statuses conventions to mirror
+2. list_skills                           → skills a transition step can bind (built-ins + already-registered)
+3. list_agents                           → named agents, if a step will reference one
+```
+
+### L2 — Design the statechart
+
+Capture, using AskUserQuestion for structured choices:
+- **area** — the nav grouping / domain slug, uppercase (e.g. `MARKETING`). One lifecycle per area renders flat.
+- **noun** — the singular display noun for an item (e.g. `Campaign`, `Brief`).
+- **types** — 1+ Work Item types this lifecycle allows (e.g. `["SEO_AUDIT", "CONTENT_BRIEF"]`). `create_work_item`
+  validates `type` against this list.
+- **statuses** — each `{id, label, category, initial?, terminal?}`. Exactly **one** `initial: true`; at least
+  **one** `terminal: true`. `category` ∈ `open | in_progress | terminal`.
+- **transitions** — each `{from, to, label}`, plus optionally:
+  - `requiresReview: true` (+ `reviewOutcomes`, `reviewerRole`) for a human gate (max 3 gated transitions),
+  - `steps: [{kind: "skill", mode: "BLOCKING", skill: "<id>"}]` to run a Claude Code skill on that transition
+    (the engineering analogue: `conductor:implement` on `READY_FOR_DEVELOPMENT → IN_PROGRESS`).
+
+Every non-terminal status must be able to reach a terminal one (no dead-ends); ≤5 transitions out of any status.
+
+### L3 — Register any custom skills the design binds
+
+If a transition binds a skill that `list_skills` did **not** show (a new domain skill like `marketing:seo-report`),
+register it first so Publish won't reject it:
+```
+register_skill({skillId: "marketing:seo-report", label: "SEO report", description: "..."})
+```
+Built-in `conductor:*` skills are always bindable — do not re-register them. (Skills whose behavior you author
+live as Claude Code skills/commands the user installs; `register_skill` just makes the id bindable.)
+
+### L4 — Create → verify → publish
+
+```
+create_workflow({name, area, definition})   // definition = the statechart JSON (NOT yaml)
+get_workflow(workflowId)                     // observability close — confirm stored correctly
+publish_workflow(workflowId)                 // DRAFT → PUBLISHED
+```
+- `definition` is the statechart object: `{schemaVersion:1, id, area, noun, default_view, types, statuses, transitions, ...}`.
+- On `publish_workflow` errors (e.g. "step binds unknown skill", "dead-end status", "exactly one status must be
+  initial"), explain in plain language, fix via `update_workflow`, and retry. **Never create a second workflow.**
+
+### L5 — Report
+
+> **Created the '[name]' lifecycle (area: [AREA])**
+> - Work Item types: [types]
+> - Stages: [status labels] (initial → … → terminal)
+> - Automated transitions: [any skill-bound edges]
+> Create an item with `create_work_item({workflow: "[slug]", type: "[type]", title})` and advance it with
+> `get_available_transitions` → `transition_work_item`.
+
+---
+
 ## Agent Invariants
 
 These rules apply regardless of the user's request. Never deviate from them.
@@ -206,3 +272,5 @@ These rules apply regardless of the user's request. Never deviate from them.
 4. **DRAFT is the safe buffer** — only call `publish_workflow` when the design is fully confirmed.
 5. **Fix publish errors in place** — call `update_workflow` and retry; never call `create_workflow` a second time for the same workflow.
 6. **Do not invent connector IDs** — only use `connectorId` values returned by `list_integration_tools`.
+7. **Register a custom skill before binding it** — for a statechart `skill` step whose id is not a built-in or
+   already registered (`list_skills`), call `register_skill` first, or Publish will reject the definition.

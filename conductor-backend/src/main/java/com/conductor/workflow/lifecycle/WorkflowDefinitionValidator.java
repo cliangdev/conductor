@@ -60,7 +60,7 @@ public class WorkflowDefinitionValidator {
         }
     }
 
-    public WorkflowValidationResult validate(JsonNode definition) {
+    public WorkflowValidationResult validate(String projectId, JsonNode definition) {
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
 
@@ -79,14 +79,15 @@ public class WorkflowDefinitionValidator {
             return new WorkflowValidationResult(errors, warnings);
         }
 
-        // 2) Semantic — the x-semantic-rules, over the parsed Statechart.
+        // 2) Semantic — the x-semantic-rules, over the parsed Statechart. Skill-exists is project-scoped
+        // (built-in registry + the project's registered skills).
         Statechart sc = Statechart.parse(definition);
-        validateSemantics(sc, errors);
+        validateSemantics(projectId, sc, errors);
 
         return new WorkflowValidationResult(errors, warnings);
     }
 
-    private void validateSemantics(Statechart sc, List<String> errors) {
+    private void validateSemantics(String projectId, Statechart sc, List<String> errors) {
         Set<String> statusIds = new HashSet<>();
         for (StatechartStatus s : sc.statuses()) {
             statusIds.add(s.id());
@@ -131,7 +132,7 @@ public class WorkflowDefinitionValidator {
         // Every skill Step references a registered skill id.
         for (StatechartTransition t : sc.transitions()) {
             for (StatechartStep step : t.steps()) {
-                if (step.isSkill() && !skillRegistry.isRegistered(step.skill())) {
+                if (step.isSkill() && !skillRegistry.isRegistered(projectId, step.skill())) {
                     errors.add("step binds unknown skill '" + step.skill() + "' on transition "
                             + t.from() + " -> " + t.to());
                 }

@@ -659,3 +659,43 @@ Claude can design and create workflows for you based on a plain-language descrip
 For guidelines on adding or updating the MCP tools that power this skill, see [`docs/mcp-tool-guidelines.md`](mcp-tool-guidelines.md).
 
 For data sources without a built-in connector, add the credentials as [workflow secrets](#outputs-and-interpolation) and Claude will use `${{ secrets.KEY }}` interpolation in `http` steps instead.
+
+## Lifecycle workflows (statecharts)
+
+Everything above describes **automation** workflows (triggers + jobs + steps). Conductor also has a second,
+orthogonal workflow kind: a **lifecycle** workflow — a statechart that governs how a **Work Item** moves through
+named stages, with optional review gates and skill-driven transitions. The built-in `ENGINEERING` lifecycle
+(PRD → In Review → Ready → In Progress → Code Review → Done) is what the `conductor:prd` / `conductor:implement`
+/ `conductor:fix` skills drive. The two kinds are distinguished by a server-derived `kind` (`AUTOMATION` vs
+`LIFECYCLE`) and never inferred from payload shape.
+
+A lifecycle is **data, not code** — you author one for any domain (marketing, design, docs) the same way, without
+a backend change:
+
+1. **Author it** — run `/conductor:workflow` and choose the lifecycle path (or ask to "define how our marketing
+   work moves through stages"). Claude discovers your conventions (`list_workflows`, `list_skills`, `list_agents`),
+   designs the statechart (area, noun, Work Item types, statuses, transitions, review gates, skill steps), then
+   `create_workflow({definition})` → `get_workflow` → `publish_workflow`.
+2. **Drive Work Items through it** — the *same* generic tools work for every lifecycle: `create_work_item({workflow,
+   type, title})` binds an item to your lifecycle (the `workflow` slug is **required** — discover it via
+   `list_workflows({kind:"LIFECYCLE"})`), and `get_available_transitions` → `transition_work_item` walk it. No
+   per-domain tools.
+
+### Binding a skill to a transition (custom skills)
+
+A transition can run a Claude Code skill (`steps: [{kind: "skill", skill: "<id>"}]`) — the analogue of
+`conductor:implement` on the engineering `Start work` edge. Publish **rejects a skill the project hasn't
+registered**, so for a new domain skill (e.g. `marketing:seo-report`) register it first:
+
+- `list_skills` — shows what's bindable: shipped built-ins (`conductor:*`) plus your project's registered skills.
+- `register_skill({skillId, label?, description?})` — registers a project-scoped skill id so a lifecycle can bind
+  it and publish, **with no backend redeploy**. Idempotent; built-ins need no registration.
+
+Registering a skill only makes the id *bindable* — the skill's behavior lives in the Claude Code skill/command the
+user installs. Only ADMIN/CREATOR can register skills or publish workflows.
+
+> **Not yet generic** (tracked in #240 §3): event-driven auto-transitions are limited to the `pr_merged` system
+> trigger, auto-asset recording beyond a generic type is engineering-shaped, and step `kind` is a fixed enum
+> (`skill`/`http`/`notify`/`set_field`/`create_sub_items`). A user-authored lifecycle built on **manual, skill,
+> and review** transitions is fully supported today; connector-driven event automation for non-engineering
+> lifecycles is a follow-up.
