@@ -73,9 +73,10 @@ class ProjectSkillsE2ETest extends AbstractE2ETest {
 
         String publishUrl = url("/api/v1/projects/" + projectId + "/workflows/" + workflowId + "/publish");
 
-        // --- Publish is rejected: the bound skill is not registered. ---
+        // --- Publish is rejected: the bound skill is not registered. (Assert the numeric 422 rather than the
+        //     HttpStatus enum — Spring 6.2 renamed the constant UNPROCESSABLE_ENTITY → UNPROCESSABLE_CONTENT.) ---
         var reject = rest.exchange(publishUrl, HttpMethod.POST, new HttpEntity<>(authHeaders), Map.class);
-        assertThat(reject.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(reject.getStatusCode().value()).isEqualTo(422);
         assertThat(reject.getBody().toString()).contains("marketing:seo-report");
 
         // --- Register the custom skill (201, builtIn=false). ---
