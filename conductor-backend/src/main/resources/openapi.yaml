@@ -3826,8 +3826,14 @@ paths:
             schema:
               $ref: "#/components/schemas/RegisterSkillRequest"
       responses:
+        "200":
+          description: Existing skill registration updated (idempotent re-register)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillDto"
         "201":
-          description: Skill registered
+          description: New skill registered
           content:
             application/json:
               schema:

@@ -1,5 +1,6 @@
 package com.conductor.workflow.lifecycle;
 
+import com.conductor.entity.ProjectSkill;
 import com.conductor.repository.ProjectSkillRepository;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -7,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -125,8 +127,9 @@ class WorkflowDefinitionValidatorTest {
     @Test
     void projectRegisteredSkillAccepted() throws Exception {
         // A skill the project has registered (not a built-in) is bindable — no redeploy needed.
-        when(projectSkillRepository.existsByProjectIdAndSkillId(PROJECT_ID, "marketing:seo-report"))
-                .thenReturn(true);
+        ProjectSkill registered = new ProjectSkill();
+        registered.setSkillId("marketing:seo-report");
+        when(projectSkillRepository.findAllByProjectId(PROJECT_ID)).thenReturn(List.of(registered));
         String def = MINI.replace(
                 "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\"}",
                 "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\","

@@ -129,10 +129,18 @@ public class WorkflowDefinitionValidator {
             errors.add(gated + " review-gated transitions, exceeds the cap of " + MAX_REVIEW_GATED_TRANSITIONS);
         }
 
-        // Every skill Step references a registered skill id.
+        // Every skill Step references a bindable skill id. Load the project's bindable set once (a single
+        // query), lazily — statecharts with no skill steps issue no query at all.
+        Set<String> bindableSkills = null;
         for (StatechartTransition t : sc.transitions()) {
             for (StatechartStep step : t.steps()) {
-                if (step.isSkill() && !skillRegistry.isRegistered(projectId, step.skill())) {
+                if (!step.isSkill()) {
+                    continue;
+                }
+                if (bindableSkills == null) {
+                    bindableSkills = skillRegistry.bindableSkillIds(projectId);
+                }
+                if (!bindableSkills.contains(step.skill())) {
                     errors.add("step binds unknown skill '" + step.skill() + "' on transition "
                             + t.from() + " -> " + t.to());
                 }

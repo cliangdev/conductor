@@ -88,6 +88,13 @@ class ProjectSkillsE2ETest extends AbstractE2ETest {
         assertThat(registerResp.getBody().get("id")).isEqualTo("marketing:seo-report");
         assertThat(registerResp.getBody().get("builtIn")).isEqualTo(false);
 
+        // --- Re-registering the same id is an idempotent update → 200, not 201. ---
+        var reRegisterResp = rest.exchange(skillsUrl, HttpMethod.POST,
+                new HttpEntity<>(Map.of("id", "marketing:seo-report", "label", "SEO report v2"), authHeaders),
+                Map.class);
+        assertThat(reRegisterResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(reRegisterResp.getBody().get("label")).isEqualTo("SEO report v2");
+
         // --- It now appears in the list. ---
         var afterResp = rest.exchange(skillsUrl, HttpMethod.GET, new HttpEntity<>(authHeaders), List.class);
         @SuppressWarnings("unchecked")

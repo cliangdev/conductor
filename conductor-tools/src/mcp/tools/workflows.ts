@@ -19,13 +19,17 @@ export async function listWorkflows(
   params: { kind?: 'LIFECYCLE' | 'AUTOMATION' },
   config: Config
 ): Promise<unknown[]> {
+  // Push the kind filter server-side (the endpoint exposes ?lifecycle) instead of fetching all + filtering here.
+  const query = new URLSearchParams()
+  if (params.kind === 'LIFECYCLE') query.set('lifecycle', 'true')
+  else if (params.kind === 'AUTOMATION') query.set('lifecycle', 'false')
+  const qs = query.toString()
   const raw = await apiGet<Record<string, unknown>[]>(
-    `/api/v1/projects/${config.projectId}/workflows`,
+    `/api/v1/projects/${config.projectId}/workflows${qs ? `?${qs}` : ''}`,
     config
   )
   const list = Array.isArray(raw) ? raw : []
-  const filtered = params.kind ? list.filter((w) => w['kind'] === params.kind) : list
-  return filtered.map((w) => {
+  return list.map((w) => {
     const def = (w['definition'] as Record<string, unknown> | undefined) ?? undefined
     return {
       slug: w['slug'],

@@ -34,8 +34,10 @@ public class SkillController implements SkillsApi {
 
     @Override
     public ResponseEntity<SkillDto> registerSkill(String projectId, RegisterSkillRequest registerSkillRequest) {
-        SkillDto dto = projectSkillService.registerSkill(projectId, registerSkillRequest, currentUserId());
-        return ResponseEntity.status(HttpStatus.CREATED).body(dto);
+        ProjectSkillService.SkillRegistration result =
+                projectSkillService.registerSkill(projectId, registerSkillRequest, currentUserId());
+        // 201 when a new project skill was created; 200 when an existing registration was updated (idempotent).
+        return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK).body(result.skill());
     }
 
     private String currentUserId() {

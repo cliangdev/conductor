@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Project-scoped skill registry (#240 §3). Lets a user/authoring agent register bindable Claude Code skill
@@ -60,9 +61,13 @@ public class ProjectSkillService {
         return result;
     }
 
+    /** The outcome of {@link #registerSkill}: the skill plus whether a new row was created (201) vs updated (200). */
+    public record SkillRegistration(SkillDto skill, boolean created) {
+    }
+
     /** Register (or update) a project-scoped bindable skill. Idempotent on the skill id. */
     @Transactional
-    public SkillDto registerSkill(String projectId, RegisterSkillRequest request, String callerId) {
+    public SkillRegistration registerSkill(String projectId, RegisterSkillRequest request, String callerId) {
         if (!projectSecurityService.isAdminOrCreator(projectId, callerId)) {
             throw new ForbiddenException("Only ADMIN or CREATOR can register skills");
         }
@@ -74,15 +79,16 @@ public class ProjectSkillService {
             throw new UnprocessableEntityException("'" + skillId + "' is a built-in skill and is already bindable");
         }
 
-        ProjectSkill skill = projectSkillRepository.findByProjectIdAndSkillId(projectId, skillId)
-                .orElseGet(() -> {
-                    Project project = projectRepository.findById(projectId)
-                            .orElseThrow(() -> new EntityNotFoundException("Project not found"));
-                    ProjectSkill created = new ProjectSkill();
-                    created.setProject(project);
-                    created.setSkillId(skillId);
-                    return created;
-                });
+        Optional<ProjectSkill> existing = projectSkillRepository.findByProjectIdAndSkillId(projectId, skillId);
+        boolean created = existing.isEmpty();
+        ProjectSkill skill = existing.orElseGet(() -> {
+            Project project = projectRepository.findById(projectId)
+                    .orElseThrow(() -> new EntityNotFoundException("Project not found"));
+            ProjectSkill fresh = new ProjectSkill();
+            fresh.setProject(project);
+            fresh.setSkillId(skillId);
+            return fresh;
+        });
         skill.setLabel(request.getLabel());
         skill.setDescription(request.getDescription());
         ProjectSkill saved = projectSkillRepository.save(skill);
@@ -90,7 +96,7 @@ public class ProjectSkillService {
         SkillDto dto = new SkillDto(saved.getSkillId(), false);
         dto.setLabel(saved.getLabel());
         dto.setDescription(saved.getDescription());
-        return dto;
+        return new SkillRegistration(dto, created);
     }
 
     private void verifyMembership(String projectId, String userId) {

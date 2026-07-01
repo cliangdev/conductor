@@ -64,14 +64,16 @@ describe('workflow-aware MCP tools', () => {
     ])
   })
 
-  it('list_workflows filters by kind', async () => {
+  it('list_workflows pushes the kind filter server-side via ?lifecycle', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: 'wf-1', slug: 'ENGINEERING', kind: 'LIFECYCLE', definition: { types: [], statuses: [] } },
       { id: 'wf-2', name: 'SEO report', kind: 'AUTOMATION' },
     ])
-    const result = (await listWorkflows({ kind: 'AUTOMATION' }, config)) as Array<Record<string, unknown>>
-    expect(result).toHaveLength(1)
-    expect(result[0].kind).toBe('AUTOMATION')
+    await listWorkflows({ kind: 'AUTOMATION' }, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows?lifecycle=false', config)
+
+    ;(apiGet as ReturnType<typeof vi.fn>).mockClear()
+    await listWorkflows({ kind: 'LIFECYCLE' }, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows?lifecycle=true', config)
   })
 
   it('get_available_transitions GETs the v2 work-item projection', async () => {

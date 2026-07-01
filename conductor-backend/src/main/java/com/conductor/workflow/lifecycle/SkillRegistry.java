@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -41,7 +41,7 @@ public class SkillRegistry {
 
     public SkillRegistry(ObjectMapper objectMapper, ProjectSkillRepository projectSkillRepository) {
         this.builtInSkills = load(objectMapper);
-        this.builtInSkillIds = new LinkedHashSet<>(builtInSkills.stream().map(BuiltInSkill::id).toList());
+        this.builtInSkillIds = Set.copyOf(builtInSkills.stream().map(BuiltInSkill::id).toList());
         this.projectSkillRepository = projectSkillRepository;
     }
 
@@ -69,12 +69,14 @@ public class SkillRegistry {
     }
 
     /**
-     * True if {@code skillId} is bindable in {@code projectId} — either a shipped built-in or a skill the
-     * project has registered.
+     * All skill ids bindable in {@code projectId} — the shipped built-ins plus the project's registered skills.
+     * Resolved in a single {@code findAllByProjectId} query; a validator loop over skill steps should fetch this
+     * once and check membership in memory rather than probing per step.
      */
-    public boolean isRegistered(String projectId, String skillId) {
-        return builtInSkillIds.contains(skillId)
-                || projectSkillRepository.existsByProjectIdAndSkillId(projectId, skillId);
+    public Set<String> bindableSkillIds(String projectId) {
+        Set<String> ids = new HashSet<>(builtInSkillIds);
+        projectSkillRepository.findAllByProjectId(projectId).forEach(ps -> ids.add(ps.getSkillId()));
+        return ids;
     }
 
     /** True if {@code skillId} is a shipped built-in (project-agnostic). */
@@ -82,6 +84,7 @@ public class SkillRegistry {
         return builtInSkillIds.contains(skillId);
     }
 
+    /** Immutable set of shipped built-in skill ids. */
     public Set<String> builtInSkillIds() {
         return builtInSkillIds;
     }
