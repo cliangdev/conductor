@@ -84,10 +84,10 @@ describe('canonical work_item MCP tools target v2', () => {
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/w1', config)
   })
 
-  it('list_work_item_comments stays on the v1 comments sub-resource', async () => {
+  it('list_work_item_comments targets the v2 comments sub-resource', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
     await listWorkItemComments({ issueId: 'w1' }, config)
-    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/issues/w1/comments', config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/w1/comments', config)
   })
 })
 

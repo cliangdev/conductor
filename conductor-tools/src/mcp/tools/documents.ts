@@ -18,7 +18,7 @@ export async function deleteDocument(
   deleteDocumentFile(config, params.issueId, params.filename)
 
   await apiDelete(
-    `/api/v1/projects/${config.projectId}/issues/${params.issueId}/documents/${params.documentId}`,
+    `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/documents/${params.documentId}`,
     config
   )
 
@@ -55,7 +55,7 @@ export async function scaffoldDocument(
   let documentId: string
   try {
     const result = await apiPost<DocumentResponse>(
-      `/api/v1/projects/${config.projectId}/issues/${params.issueId}/documents`,
+      `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/documents`,
       { filename: params.filename, contentType: 'text/markdown' },
       config
     )
@@ -63,7 +63,7 @@ export async function scaffoldDocument(
   } catch (err) {
     queueChange({
       method: 'PUT',
-      path: `/api/v1/projects/${config.projectId}/issues/${params.issueId}/documents/${encodeURIComponent(params.filename)}`,
+      path: `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/documents/${encodeURIComponent(params.filename)}`,
       body: { content: '', contentType: 'text/markdown' },
       timestamp: new Date().toISOString(),
     })

@@ -298,7 +298,7 @@ export async function getIssue(
 // --- Canonical v2 `work_item` handlers (hit /api/v2/.../work-items) ---
 
 export async function createWorkItem(
-  params: { type: string; title: string; description?: string; workflow?: string },
+  params: { type: string; title: string; description?: string; workflow: string },
   config: Config
 ): Promise<Record<string, unknown>> {
   return createWorkItemImpl(params, config, V2)

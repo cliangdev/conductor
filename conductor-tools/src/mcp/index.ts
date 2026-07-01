@@ -37,16 +37,16 @@ const TOOLS = [
   // --- Canonical Work Item tools (v2 /work-items surface) ---
   {
     name: 'create_work_item',
-    description: 'Create a new Work Item in the project. Canonical tool (targets the v2 work-items API).',
+    description: 'Create a new Work Item in the project (targets the v2 work-items API). Discover-then-create: call list_workflows({kind:"LIFECYCLE"}) first, pick the Workflow whose vocabulary fits (its area + allowed types), then pass that Workflow slug explicitly — do not assume ENGINEERING.',
     inputSchema: {
       type: 'object',
       properties: {
-        type: { type: 'string', description: 'Work Item type, validated against the Workflow (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
+        workflow: { type: 'string', description: 'Lifecycle Workflow slug that governs this Work Item (required). Discover with list_workflows({kind:"LIFECYCLE"}).' },
+        type: { type: 'string', description: 'Work Item type, validated against the chosen Workflow\'s allowed types (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
         title: { type: 'string', description: 'Work Item title' },
         description: { type: 'string', description: 'Work Item description (optional)' },
-        workflow: { type: 'string', description: 'Workflow slug to run on (optional; defaults to ENGINEERING). Use list_workflows to discover.' },
       },
-      required: ['type', 'title'],
+      required: ['workflow', 'type', 'title'],
     },
   },
   {
@@ -216,8 +216,13 @@ const TOOLS = [
   },
   {
     name: 'list_workflows',
-    description: 'List the project\'s Workflows (slug, name, area, display noun, allowed types). Discovery entry point: resolve a natural-language workflow name to its slug before creating a Work Item.',
-    inputSchema: { type: 'object', properties: {} },
+    description: 'List the project\'s Workflows, each flattened to {slug, name, area, noun, kind, state, version, workflowId, types, statuses}. Discovery entry point: filter by kind=LIFECYCLE and match the user\'s intent to a Workflow (its area + allowed types) to pick the slug for create_work_item; kind=AUTOMATION lists YAML run-automations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['LIFECYCLE', 'AUTOMATION'], description: 'Filter by Workflow kind (optional). LIFECYCLE = statechart governing Work Items; AUTOMATION = YAML run-automation.' },
+      },
+    },
   },
   {
     name: 'get_available_transitions',
@@ -452,12 +457,19 @@ export async function runMcpServer(): Promise<void> {
           return successResponse(result)
         }
         case 'create_work_item': {
+          const workflow = params['workflow'] as string | undefined
+          if (!workflow) {
+            return errorResponse(
+              'create_work_item requires an explicit `workflow` slug. Call list_workflows({kind:"LIFECYCLE"}) ' +
+                'and pass the slug of the Workflow that governs this Work Item.'
+            )
+          }
           const result = await createWorkItem(
             {
+              workflow,
               type: params['type'] as string,
               title: params['title'] as string,
               description: params['description'] as string | undefined,
-              workflow: params['workflow'] as string | undefined,
             },
             config
           )
@@ -467,7 +479,12 @@ export async function runMcpServer(): Promise<void> {
           return successResponse(await listIntegrationTools({}, config))
         }
         case 'list_workflows': {
-          return successResponse(await listWorkflows({}, config))
+          return successResponse(
+            await listWorkflows(
+              { kind: params['kind'] as 'LIFECYCLE' | 'AUTOMATION' | undefined },
+              config
+            )
+          )
         }
         case 'list_agents': {
           return successResponse(await listAgents({}, config))

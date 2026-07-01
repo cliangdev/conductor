@@ -23,19 +23,10 @@ interface CommentResponse {
   replies: CommentReply[]
 }
 
-export async function listIssueComments(
-  params: { issueId: string; resolved?: boolean },
+async function listCommentsAt(
+  path: string,
   config: Config
 ): Promise<unknown[]> {
-  const query = new URLSearchParams()
-  if (params.resolved !== undefined) {
-    query.set('resolved', String(params.resolved))
-  }
-
-  const qs = query.toString()
-  // v1 sub-resource until v2 mirror lands (comments are not yet exposed under /api/v2/work-items).
-  const path = `/api/v1/projects/${config.projectId}/issues/${params.issueId}/comments${qs ? `?${qs}` : ''}`
-
   try {
     const result = await apiGet<CommentResponse[]>(path, config)
     return result ?? []
@@ -48,6 +39,29 @@ export async function listIssueComments(
   }
 }
 
-// Canonical `list_work_item_comments` handler. Comments remain a v1 sub-resource until a
-// v2 mirror lands, so this is a thin alias over listIssueComments (same /api/v1 endpoint).
-export const listWorkItemComments = listIssueComments
+function commentsQuery(resolved?: boolean): string {
+  const query = new URLSearchParams()
+  if (resolved !== undefined) {
+    query.set('resolved', String(resolved))
+  }
+  const qs = query.toString()
+  return qs ? `?${qs}` : ''
+}
+
+// Canonical `list_work_item_comments` handler — v2 work-items sub-resource.
+export async function listWorkItemComments(
+  params: { issueId: string; resolved?: boolean },
+  config: Config
+): Promise<unknown[]> {
+  const path = `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/comments${commentsQuery(params.resolved)}`
+  return listCommentsAt(path, config)
+}
+
+// Deprecated `list_issue_comments` handler — legacy v1 issues sub-resource (kept as a shim).
+export async function listIssueComments(
+  params: { issueId: string; resolved?: boolean },
+  config: Config
+): Promise<unknown[]> {
+  const path = `/api/v1/projects/${config.projectId}/issues/${params.issueId}/comments${commentsQuery(params.resolved)}`
+  return listCommentsAt(path, config)
+}

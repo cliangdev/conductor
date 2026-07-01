@@ -33,10 +33,21 @@ are removed only once:
   or the `*_issue` MCP tools against the v1 issue core paths.
 - All first-party clients (frontend, CLI, MCP) cut over to `/api/v2 work-items`.
 
+## MCP client cutover (CLI 0.5.0)
+
+All canonical MCP tools now target `/api/v2 work-items`, including the sub-resource handlers that previously
+still hit v1: `transition_work_item`, `get_available_transitions`, `record_asset`, `report_step_run`,
+`list_work_item_comments`, and `scaffold_document`/`delete_document`. The `*_issue` tools (and
+`list_issue_comments`) remain as **deprecated shims** on the v1 surface until old-CLI/`*_issue` telemetry → 0.
+`create_work_item` now **requires an explicit `workflow` slug** (discover via `list_workflows({kind:"LIFECYCLE"})`) —
+no silent ENGINEERING default — and `list_workflows` returns each Workflow flattened to
+`{slug,name,area,noun,kind,state,version,workflowId,types,statuses}`.
+
 ## Phase 2b (tracked follow-up)
 
-- Migrate the **sub-resource** endpoints under `/issues/{issueId}/…` (documents, comments, reviewers,
-  reviews, assets, step-runs, metrics) to the `work-items` path.
+- ~~Migrate the **sub-resource** endpoints under `/issues/{issueId}/…` to the `work-items` path.~~ Done —
+  full v2 sub-resource parity shipped (#239); first-party MCP + frontend clients cut over.
 - **Physically extract** the legacy issue paths/schemas out of `openapi.yaml` into a dedicated
-  legacy spec, leaving `openapi-v2.yaml` as the canonical external contract.
+  legacy spec (`openapi-legacy.yaml`), leaving the canonical external contract clean, and move the v1 issue
+  controllers into `com.conductor.legacy` behind a `legacy` Swagger group.
 - Rename the MCP `*_issue` tools and the CLI `issue` commands to their `work-item` equivalents.
