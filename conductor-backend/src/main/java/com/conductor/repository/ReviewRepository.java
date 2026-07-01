@@ -12,11 +12,11 @@ import java.util.Optional;
 @Repository
 public interface ReviewRepository extends JpaRepository<Review, String> {
 
-    Optional<Review> findByWorkItemIdAndReviewerId(String issueId, String reviewerId);
+    Optional<Review> findByWorkItemIdAndReviewerId(String workItemId, String reviewerId);
 
-    List<Review> findAllByWorkItemId(String issueId);
+    List<Review> findAllByWorkItemId(String workItemId);
 
-    boolean existsByWorkItemIdAndVerdict(String issueId, String verdict);
+    boolean existsByWorkItemIdAndVerdict(String workItemId, String verdict);
 
     /**
      * Whether the Work Item has a review with the given verdict from a project member holding {@code role}
@@ -32,13 +32,13 @@ public interface ReviewRepository extends JpaRepository<Review, String> {
             SELECT EXISTS (
                 SELECT 1 FROM reviews r
                 JOIN project_members m ON m.user_id = r.reviewer_id
-                WHERE r.work_item_id = :issueId
+                WHERE r.work_item_id = :workItemId
                   AND r.verdict = :verdict
                   AND m.project_id = :projectId
                   AND (m.role = CAST(:role AS member_role) OR m.role = CAST('ADMIN' AS member_role))
             )
             """, nativeQuery = true)
-    boolean existsApprovedByReviewerRole(@Param("issueId") String issueId,
+    boolean existsApprovedByReviewerRole(@Param("workItemId") String workItemId,
                                          @Param("projectId") String projectId,
                                          @Param("verdict") String verdict,
                                          @Param("role") String role);

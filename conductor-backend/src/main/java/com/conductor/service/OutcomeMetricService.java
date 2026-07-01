@@ -21,7 +21,7 @@ import java.util.List;
 
 /**
  * The append-only Outcome Metric series on a Work Item (COND-18 E6). Observations are stored as JSONB on the
- * issue (the issue_tasks precedent); the metric's name/unit/direction come from the bound Workflow definition.
+ * work item (the work_item_tasks precedent); the metric's name/unit/direction come from the bound Workflow definition.
  * Manual web entry and programmatic MCP entry both land here.
  */
 @Service
@@ -43,40 +43,40 @@ public class OutcomeMetricService {
     }
 
     @Transactional(readOnly = true)
-    public OutcomeMetricView getMetric(String projectId, String issueId, User caller) {
+    public OutcomeMetricView getMetric(String projectId, String workItemId, User caller) {
         verifyMembership(projectId, caller.getId());
-        WorkItem issue = findIssueInProject(projectId, issueId);
-        return buildView(projectId, issue);
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        return buildView(projectId, workItem);
     }
 
     @Transactional
-    public OutcomeMetricView record(String projectId, String issueId,
+    public OutcomeMetricView record(String projectId, String workItemId,
                                     Double value, OffsetDateTime observedAt, String note, User caller) {
         verifyMembership(projectId, caller.getId());
-        WorkItem issue = findIssueInProject(projectId, issueId);
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
-        List<Observation> observations = readObservations(issue);
+        List<Observation> observations = readObservations(workItem);
         observations.add(new Observation(value, observedAt != null ? observedAt : OffsetDateTime.now(), note));
 
-        issue.setOutcomeMetric(objectMapper.valueToTree(observations));
-        workItemRepository.save(issue);
-        return buildView(projectId, issue);
+        workItem.setOutcomeMetric(objectMapper.valueToTree(observations));
+        workItemRepository.save(workItem);
+        return buildView(projectId, workItem);
     }
 
-    private List<Observation> readObservations(WorkItem issue) {
-        JsonNode stored = issue.getOutcomeMetric();
+    private List<Observation> readObservations(WorkItem workItem) {
+        JsonNode stored = workItem.getOutcomeMetric();
         if (stored == null || stored.isNull()) {
             return new ArrayList<>();
         }
         return new ArrayList<>(objectMapper.convertValue(stored, new TypeReference<List<Observation>>() {}));
     }
 
-    private OutcomeMetricView buildView(String projectId, WorkItem issue) {
-        String slug = issue.getWorkflow() != null ? issue.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
-        Statechart statechart = resolver.resolveRequired(projectId, slug, issue.getWorkflowVersion());
+    private OutcomeMetricView buildView(String projectId, WorkItem workItem) {
+        String slug = workItem.getWorkflow() != null ? workItem.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
+        Statechart statechart = resolver.resolveRequired(projectId, slug, workItem.getWorkflowVersion());
         StatechartMetric metric = statechart.metric();
         return new OutcomeMetricView(
-                readObservations(issue),
+                readObservations(workItem),
                 metric != null ? metric.name() : null,
                 metric != null ? metric.unit() : null,
                 metric != null ? metric.direction() : null);
@@ -84,13 +84,13 @@ public class OutcomeMetricService {
 
     private void verifyMembership(String projectId, String userId) {
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
-            throw new EntityNotFoundException("Issue not found");
+            throw new EntityNotFoundException("Work Item not found");
         }
     }
 
-    private WorkItem findIssueInProject(String projectId, String issueId) {
-        return workItemRepository.findById(issueId)
+    private WorkItem findWorkItemInProject(String projectId, String workItemId) {
+        return workItemRepository.findById(workItemId)
                 .filter(i -> i.getProject() != null && projectId.equals(i.getProject().getId()))
-                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
     }
 }

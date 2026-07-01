@@ -64,7 +64,7 @@ public class CommentService {
     }
 
     @Transactional
-    public Comment createComment(String projectId, String issueId, String documentId, String content,
+    public Comment createComment(String projectId, String workItemId, String documentId, String content,
                                  Integer lineNumber, User caller) {
         if (lineNumber == null) {
             throw new BusinessException("lineNumber is required");
@@ -72,15 +72,15 @@ public class CommentService {
 
         verifyMembership(projectId, caller.getId());
 
-        WorkItem issue = findIssueInProject(projectId, issueId);
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
-        Document document = documentRepository.findByIdAndWorkItemId(documentId, issueId)
-                .orElseThrow(() -> new EntityNotFoundException("Document not found in issue"));
+        Document document = documentRepository.findByIdAndWorkItemId(documentId, workItemId)
+                .orElseThrow(() -> new EntityNotFoundException("Document not found in Work Item"));
 
         String quotedText = extractLineFromDocument(document, lineNumber);
 
         Comment comment = new Comment();
-        comment.setWorkItem(issue);
+        comment.setWorkItem(workItem);
         comment.setDocument(document);
         comment.setAuthor(caller);
         comment.setContent(content);
@@ -93,10 +93,10 @@ public class CommentService {
         String authorLabel = caller.getName() != null ? caller.getName() : caller.getEmail();
         notificationDispatcher.dispatch(NotificationEvent.of(
                 EventType.COMMENT_ADDED,
-                issue.getProject().getId(),
+                workItem.getProject().getId(),
                 Map.of(
-                        "issueId", issue.getId(),
-                        "issueTitle", issue.getTitle(),
+                        "issueId", workItem.getId(),
+                        "issueTitle", workItem.getTitle(),
                         "commentAuthor", authorLabel,
                         "excerpt", excerpt
                 )));
@@ -119,16 +119,16 @@ public class CommentService {
     }
 
     @Transactional(readOnly = true)
-    public List<CommentWithRepliesView> listComments(String projectId, String issueId, Boolean resolved, User caller) {
+    public List<CommentWithRepliesView> listComments(String projectId, String workItemId, Boolean resolved, User caller) {
         verifyReadAccess(projectId, caller.getId());
 
         List<Comment> comments;
         if (resolved == null) {
-            comments = commentRepository.findAllByWorkItemId(issueId);
+            comments = commentRepository.findAllByWorkItemId(workItemId);
         } else if (resolved) {
-            comments = commentRepository.findAllByWorkItemIdAndResolvedAtIsNotNull(issueId);
+            comments = commentRepository.findAllByWorkItemIdAndResolvedAtIsNotNull(workItemId);
         } else {
-            comments = commentRepository.findAllByWorkItemIdAndResolvedAtIsNull(issueId);
+            comments = commentRepository.findAllByWorkItemIdAndResolvedAtIsNull(workItemId);
         }
 
         return comments.stream()
@@ -156,10 +156,10 @@ public class CommentService {
     }
 
     @Transactional
-    public CommentReplyView addReply(String projectId, String issueId, String commentId, String content, User caller) {
+    public CommentReplyView addReply(String projectId, String workItemId, String commentId, String content, User caller) {
         verifyMembership(projectId, caller.getId());
 
-        Comment comment = findCommentInIssue(issueId, commentId);
+        Comment comment = findCommentInWorkItem(workItemId, commentId);
 
         CommentReply reply = new CommentReply();
         reply.setComment(comment);
@@ -168,15 +168,15 @@ public class CommentService {
 
         commentReplyRepository.save(reply);
 
-        WorkItem issue = comment.getWorkItem();
+        WorkItem workItem = comment.getWorkItem();
         String excerpt = buildExcerpt(content);
         String authorLabel = caller.getName() != null ? caller.getName() : caller.getEmail();
         notificationDispatcher.dispatch(NotificationEvent.of(
                 EventType.COMMENT_REPLY,
-                issue.getProject().getId(),
+                workItem.getProject().getId(),
                 Map.of(
-                        "issueId", issue.getId(),
-                        "issueTitle", issue.getTitle(),
+                        "issueId", workItem.getId(),
+                        "issueTitle", workItem.getTitle(),
                         "commentAuthor", authorLabel,
                         "excerpt", excerpt
                 )));
@@ -185,10 +185,10 @@ public class CommentService {
     }
 
     @Transactional
-    public Comment resolveComment(String projectId, String issueId, String commentId, User caller) {
+    public Comment resolveComment(String projectId, String workItemId, String commentId, User caller) {
         verifyMembership(projectId, caller.getId());
 
-        Comment comment = findCommentInIssue(issueId, commentId);
+        Comment comment = findCommentInWorkItem(workItemId, commentId);
         comment.setResolvedAt(OffsetDateTime.now());
         comment.setResolvedBy(caller);
 
@@ -197,8 +197,8 @@ public class CommentService {
     }
 
     @Transactional
-    public void deleteComment(String projectId, String issueId, String commentId, User caller) {
-        Comment comment = findCommentInIssue(issueId, commentId);
+    public void deleteComment(String projectId, String workItemId, String commentId, User caller) {
+        Comment comment = findCommentInWorkItem(workItemId, commentId);
 
         boolean isAuthor = comment.getAuthor().getId().equals(caller.getId());
         boolean isAdmin = projectSecurityService.isAdminOrCreator(projectId, caller.getId());
@@ -234,19 +234,19 @@ public class CommentService {
         }
     }
 
-    private WorkItem findIssueInProject(String projectId, String issueId) {
-        WorkItem issue = workItemRepository.findById(issueId)
-                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
-        if (!issue.getProject().getId().equals(projectId)) {
-            throw new EntityNotFoundException("Issue not found");
+    private WorkItem findWorkItemInProject(String projectId, String workItemId) {
+        WorkItem workItem = workItemRepository.findById(workItemId)
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+        if (!workItem.getProject().getId().equals(projectId)) {
+            throw new EntityNotFoundException("Work Item not found");
         }
-        return issue;
+        return workItem;
     }
 
-    private Comment findCommentInIssue(String issueId, String commentId) {
+    private Comment findCommentInWorkItem(String workItemId, String commentId) {
         Comment comment = commentRepository.findById(commentId)
                 .orElseThrow(() -> new EntityNotFoundException("Comment not found"));
-        if (!comment.getWorkItem().getId().equals(issueId)) {
+        if (!comment.getWorkItem().getId().equals(workItemId)) {
             throw new EntityNotFoundException("Comment not found");
         }
         return comment;

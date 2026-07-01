@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Exercises the /api/v2 Work Item documents and tasks sub-resources end-to-end against real Postgres.
  * Creates a project + work item via v2, then drives the documents (create/list/get) and tasks (save/get)
- * endpoints, asserting 2xx. Guards the v1→v2 DTO translation (notably {@code issueId}→{@code workItemId})
+ * endpoints, asserting 2xx. Guards the v1→v2 DTO translation (notably {@code workItemId}→{@code workItemId})
  * and that the shared services are wired correctly under the package-based {@code /api/v2} prefix.
  */
 class WorkItemDocumentsV2E2ETest extends AbstractE2ETest {
@@ -71,7 +71,7 @@ class WorkItemDocumentsV2E2ETest extends AbstractE2ETest {
         assertThat(createResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         String docId = (String) createResp.getBody().get("id");
         assertThat(docId).isNotBlank();
-        // v2 surfaces the parent ref as workItemId (not issueId).
+        // v2 surfaces the parent ref as workItemId (not workItemId).
         assertThat(createResp.getBody().get("workItemId")).isEqualTo(workItemId);
         assertThat(createResp.getBody()).doesNotContainKey("issueId");
 

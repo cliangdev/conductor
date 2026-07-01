@@ -47,20 +47,20 @@ public class AssetService {
     }
 
     @Transactional(readOnly = true)
-    public List<Asset> listAssets(String projectId, String issueId, User caller) {
+    public List<Asset> listAssets(String projectId, String workItemId, User caller) {
         verifyMembership(projectId, caller.getId());
-        findIssueInProject(projectId, issueId);
-        return assetRepository.findAllByWorkItemId(issueId);
+        findWorkItemInProject(projectId, workItemId);
+        return assetRepository.findAllByWorkItemId(workItemId);
     }
 
     @Transactional
-    public Asset createAsset(String projectId, String issueId, AssetInput input, User caller) {
+    public Asset createAsset(String projectId, String workItemId, AssetInput input, User caller) {
         verifyMembership(projectId, caller.getId());
-        WorkItem issue = findIssueInProject(projectId, issueId);
-        validateAssetType(projectId, issue, input.type());
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        validateAssetType(projectId, workItem, input.type());
 
         Asset asset = new Asset();
-        asset.setWorkItem(issue);
+        asset.setWorkItem(workItem);
         asset.setType(input.type());
         asset.setLabel(input.label());
         asset.setKind(input.kind());
@@ -69,16 +69,16 @@ public class AssetService {
         assetRepository.save(asset);
 
         notificationDispatcher.dispatch(NotificationEvent.of(EventType.ASSET_ADDED, projectId,
-                Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle(), "assetType", asset.getType())));
+                Map.of("issueId", workItem.getId(), "issueTitle", workItem.getTitle(), "assetType", asset.getType())));
         return asset;
     }
 
     @Transactional
-    public Asset patchAsset(String projectId, String issueId, String assetId,
+    public Asset patchAsset(String projectId, String workItemId, String assetId,
                             AssetPatch patch, User caller) {
         verifyMembership(projectId, caller.getId());
-        findIssueInProject(projectId, issueId);
-        Asset asset = findAssetInIssue(issueId, assetId);
+        findWorkItemInProject(projectId, workItemId);
+        Asset asset = findAssetInWorkItem(workItemId, assetId);
         if (patch.label() != null) {
             asset.setLabel(patch.label());
         }
@@ -93,10 +93,10 @@ public class AssetService {
     }
 
     @Transactional
-    public void deleteAsset(String projectId, String issueId, String assetId, User caller) {
+    public void deleteAsset(String projectId, String workItemId, String assetId, User caller) {
         verifyMembership(projectId, caller.getId());
-        findIssueInProject(projectId, issueId);
-        Asset asset = findAssetInIssue(issueId, assetId);
+        findWorkItemInProject(projectId, workItemId);
+        Asset asset = findAssetInWorkItem(workItemId, assetId);
         assetRepository.delete(asset);
     }
 
@@ -106,25 +106,25 @@ public class AssetService {
      * {@link #recordAsset} so non-GitHub lifecycles can auto-record their own asset types the same way.
      */
     @Transactional
-    public void recordPullRequestAsset(WorkItem issue, String pullRequestUrl) {
-        recordAsset(issue, "github_pr", pullRequestUrl, "Pull Request", "link");
+    public void recordPullRequestAsset(WorkItem workItem, String pullRequestUrl) {
+        recordAsset(workItem, "github_pr", pullRequestUrl, "Pull Request", "link");
     }
 
     /**
      * System path: record an arbitrary produced Asset on a Work Item (no caller/membership check). Idempotent
-     * on {@code (issue, type, ref)}. Domain-agnostic — the type is passed in, not hardcoded — so any lifecycle
+     * on {@code (workItem, type, ref)}. Domain-agnostic — the type is passed in, not hardcoded — so any lifecycle
      * (marketing, docs, …) can auto-record its outputs, not just GitHub PRs.
      */
     @Transactional
-    public void recordAsset(WorkItem issue, String type, String ref, String label, String kind) {
+    public void recordAsset(WorkItem workItem, String type, String ref, String label, String kind) {
         if (ref == null || ref.isBlank()) {
             return;
         }
-        if (assetRepository.existsByWorkItemIdAndTypeAndRef(issue.getId(), type, ref)) {
+        if (assetRepository.existsByWorkItemIdAndTypeAndRef(workItem.getId(), type, ref)) {
             return;
         }
         Asset asset = new Asset();
-        asset.setWorkItem(issue);
+        asset.setWorkItem(workItem);
         asset.setType(type);
         asset.setLabel(label);
         asset.setKind(kind);
@@ -133,9 +133,9 @@ public class AssetService {
         assetRepository.save(asset);
     }
 
-    private void validateAssetType(String projectId, WorkItem issue, String type) {
-        String slug = issue.getWorkflow() != null ? issue.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
-        Statechart statechart = resolver.resolveRequired(projectId, slug, issue.getWorkflowVersion());
+    private void validateAssetType(String projectId, WorkItem workItem, String type) {
+        String slug = workItem.getWorkflow() != null ? workItem.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
+        Statechart statechart = resolver.resolveRequired(projectId, slug, workItem.getWorkflowVersion());
         List<String> allowed = statechart.assetTypes();
         if (!allowed.isEmpty() && !allowed.contains(type)) {
             throw new BusinessException("Asset type '" + type + "' is not allowed by workflow " + slug);
@@ -144,18 +144,18 @@ public class AssetService {
 
     private void verifyMembership(String projectId, String userId) {
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
-            throw new EntityNotFoundException("Issue not found");
+            throw new EntityNotFoundException("Work Item not found");
         }
     }
 
-    private WorkItem findIssueInProject(String projectId, String issueId) {
-        return workItemRepository.findById(issueId)
+    private WorkItem findWorkItemInProject(String projectId, String workItemId) {
+        return workItemRepository.findById(workItemId)
                 .filter(i -> i.getProject() != null && projectId.equals(i.getProject().getId()))
-                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
     }
 
-    private Asset findAssetInIssue(String issueId, String assetId) {
-        return assetRepository.findByIdAndWorkItemId(assetId, issueId)
-                .orElseThrow(() -> new EntityNotFoundException("Asset not found in issue"));
+    private Asset findAssetInWorkItem(String workItemId, String assetId) {
+        return assetRepository.findByIdAndWorkItemId(assetId, workItemId)
+                .orElseThrow(() -> new EntityNotFoundException("Asset not found in Work Item"));
     }
 }

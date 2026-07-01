@@ -338,7 +338,7 @@ class WorkItemServiceTest {
 
         assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
                 .isInstanceOf(ForbiddenException.class)
-                .hasMessageContaining("REVIEWER role cannot change issue status");
+                .hasMessageContaining("REVIEWER role cannot change Work Item status");
     }
 
     @Test

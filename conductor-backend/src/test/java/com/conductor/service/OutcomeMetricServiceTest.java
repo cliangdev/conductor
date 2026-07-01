@@ -59,14 +59,14 @@ class OutcomeMetricServiceTest {
         }
     }
 
-    private WorkItem issue(String workflow) {
-        WorkItem issue = new WorkItem();
-        issue.setId(ISSUE_ID);
+    private WorkItem workItem(String workflow) {
+        WorkItem workItem = new WorkItem();
+        workItem.setId(ISSUE_ID);
         Project project = new Project();
         project.setId(PROJECT_ID);
-        issue.setProject(project);
-        issue.setWorkflow(workflow);
-        return issue;
+        workItem.setProject(project);
+        workItem.setWorkflow(workflow);
+        return workItem;
     }
 
     private User caller() {
@@ -77,8 +77,8 @@ class OutcomeMetricServiceTest {
 
     @Test
     void recordsAndAccumulatesObservations() {
-        WorkItem issue = issue("ENGINEERING");
-        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        WorkItem workItem = workItem("ENGINEERING");
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
 
         service.record(PROJECT_ID, ISSUE_ID, 10.0, null, null, caller());
         OutcomeMetricView response =
@@ -108,7 +108,7 @@ class OutcomeMetricServiceTest {
         snapshot.setVersion(1);
         snapshot.setDefinition(mapper.readTree(def));
         when(versionRepository.findLatestPublished(PROJECT_ID, "GROWTH")).thenReturn(Optional.of(snapshot));
-        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue("GROWTH")));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem("GROWTH")));
 
         OutcomeMetricView response =
                 service.record(PROJECT_ID, ISSUE_ID, 42.0, null, null, caller());

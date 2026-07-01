@@ -78,16 +78,16 @@ class WorkItemWorkflowServiceTest {
         }
     }
 
-    private WorkItem issueAt(String status) {
-        WorkItem issue = new WorkItem();
-        issue.setId("issue-1");
+    private WorkItem workItemAt(String status) {
+        WorkItem workItem = new WorkItem();
+        workItem.setId("issue-1");
         Project project = new Project();
         project.setId(PROJECT_ID);
-        issue.setProject(project);
-        issue.setCurrentStatus(status);
-        issue.setWorkflow("ENGINEERING");
-        issue.setWorkflowVersion(1);
-        return issue;
+        workItem.setProject(project);
+        workItem.setCurrentStatus(status);
+        workItem.setWorkflow("ENGINEERING");
+        workItem.setWorkflowVersion(1);
+        return workItem;
     }
 
     private User caller() {
@@ -100,31 +100,31 @@ class WorkItemWorkflowServiceTest {
 
     @Test
     void allowsTransitionOnTheEngineeringEdge() {
-        assertThatCode(() -> service.validateTransition(PROJECT_ID, issueAt("DRAFT"), "IN_REVIEW"))
+        assertThatCode(() -> service.validateTransition(PROJECT_ID, workItemAt("DRAFT"), "IN_REVIEW"))
                 .doesNotThrowAnyException();
         // the IN_REVIEW -> DRAFT back-edge
-        assertThatCode(() -> service.validateTransition(PROJECT_ID, issueAt("IN_REVIEW"), "DRAFT"))
+        assertThatCode(() -> service.validateTransition(PROJECT_ID, workItemAt("IN_REVIEW"), "DRAFT"))
                 .doesNotThrowAnyException();
     }
 
     @Test
     void rejectsIllegalTransitionWithTheExactLegacyMessage() {
         assertThatThrownBy(() ->
-                service.validateTransition(PROJECT_ID, issueAt("DRAFT"), "READY_FOR_DEVELOPMENT"))
+                service.validateTransition(PROJECT_ID, workItemAt("DRAFT"), "READY_FOR_DEVELOPMENT"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT");
     }
 
     @Test
     void rejectsUnknownStatusWithWorkflowScopedMessage() {
-        assertThatThrownBy(() -> service.validateTransition(PROJECT_ID, issueAt("DRAFT"), "BOGUS"))
+        assertThatThrownBy(() -> service.validateTransition(PROJECT_ID, workItemAt("DRAFT"), "BOGUS"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Unknown status 'BOGUS' for workflow ENGINEERING");
     }
 
     @Test
     void defaultsToEngineeringWhenUnbound() {
-        WorkItem unbound = issueAt("DRAFT");
+        WorkItem unbound = workItemAt("DRAFT");
         unbound.setWorkflow(null);
         unbound.setWorkflowVersion(null);
         assertThatCode(() -> service.validateTransition(PROJECT_ID, unbound, "IN_REVIEW"))
@@ -168,14 +168,14 @@ class WorkItemWorkflowServiceTest {
 
     @Test
     void applySystemTransitionAdvancesOnPrMergedAndBypassesReviewGate() {
-        WorkItem issue = issueAt("CODE_REVIEW");
+        WorkItem workItem = workItemAt("CODE_REVIEW");
         // No approved review stubbed: the system trigger is the authority, so the gate must NOT apply.
         Optional<StatechartTransition> applied = service.applySystemTransition(
-                PROJECT_ID, issue, WorkItemWorkflowService.TRIGGER_PR_MERGED);
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_PR_MERGED);
 
         assertThat(applied).isPresent();
         assertThat(applied.get().to()).isEqualTo("DONE");
-        assertThat(issue.getCurrentStatus()).isEqualTo("DONE");
+        assertThat(workItem.getCurrentStatus()).isEqualTo("DONE");
         // gate bypassed → no review lookups at all
         verify(reviewRepository, never()).existsApprovedByReviewerRole(any(), any(), any(), any());
         verify(reviewRepository, never()).existsByWorkItemIdAndVerdict(any(), any());
@@ -183,12 +183,12 @@ class WorkItemWorkflowServiceTest {
 
     @Test
     void applySystemTransitionReturnsEmptyWhenNoTriggeredEdge() {
-        WorkItem issue = issueAt("DRAFT"); // DRAFT has no pr_merged edge
+        WorkItem workItem = workItemAt("DRAFT"); // DRAFT has no pr_merged edge
         Optional<StatechartTransition> applied = service.applySystemTransition(
-                PROJECT_ID, issue, WorkItemWorkflowService.TRIGGER_PR_MERGED);
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_PR_MERGED);
 
         assertThat(applied).isEmpty();
-        assertThat(issue.getCurrentStatus()).isEqualTo("DRAFT");
+        assertThat(workItem.getCurrentStatus()).isEqualTo("DRAFT");
     }
 
     // --- availableTransitions (doer projection) ---
@@ -196,7 +196,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void availableTransitionsReturnsEdgesForNonReviewer() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("DRAFT")));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("DRAFT")));
         ProjectMember member = new ProjectMember();
         member.setRole(MemberRole.CREATOR);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
@@ -216,7 +216,7 @@ class WorkItemWorkflowServiceTest {
     void reviewGatedMergeIsBlockedWithoutReviewerApproval() {
         // Default false: no APPROVED review from a REVIEWER (or ADMIN) exists.
         assertThatThrownBy(() ->
-                service.validateTransition(PROJECT_ID, issueAt("CODE_REVIEW"), "DONE"))
+                service.validateTransition(PROJECT_ID, workItemAt("CODE_REVIEW"), "DONE"))
                 .isInstanceOf(UnprocessableEntityException.class)
                 .hasMessageContaining("requires an approved review");
 
@@ -232,7 +232,7 @@ class WorkItemWorkflowServiceTest {
                 "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(true);
 
         assertThatCode(() ->
-                service.validateTransition(PROJECT_ID, issueAt("CODE_REVIEW"), "DONE"))
+                service.validateTransition(PROJECT_ID, workItemAt("CODE_REVIEW"), "DONE"))
                 .doesNotThrowAnyException();
     }
 
@@ -244,7 +244,7 @@ class WorkItemWorkflowServiceTest {
                 "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(false);
 
         assertThatThrownBy(() ->
-                service.validateTransition(PROJECT_ID, issueAt("CODE_REVIEW"), "DONE"))
+                service.validateTransition(PROJECT_ID, workItemAt("CODE_REVIEW"), "DONE"))
                 .isInstanceOf(UnprocessableEntityException.class)
                 .hasMessageContaining("requires an approved review");
     }
@@ -252,7 +252,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void availableTransitionsHidesGatedMergeUntilApproved() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("CODE_REVIEW")));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("CODE_REVIEW")));
         ProjectMember member = new ProjectMember();
         member.setRole(MemberRole.CREATOR);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
@@ -273,7 +273,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void availableTransitionsIsEmptyForReviewer() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("DRAFT")));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("DRAFT")));
         ProjectMember member = new ProjectMember();
         member.setRole(MemberRole.REVIEWER);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));

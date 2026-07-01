@@ -86,21 +86,21 @@ public class WorkItemService {
                 ? workflowSlug : WorkItemWorkflowService.DEFAULT_WORKFLOW;
         workItemWorkflowService.validateType(projectId, workflow, type);
 
-        WorkItem issue = new WorkItem();
-        issue.setProject(project);
-        issue.setType(type);
-        issue.setTitle(title);
-        issue.setDescription(description);
-        issue.setCreatedBy(caller);
-        issue.setWorkflow(workflow);
-        issue.setWorkflowVersion(workItemWorkflowService.boundVersion(projectId, workflow));
-        issue.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
+        WorkItem workItem = new WorkItem();
+        workItem.setProject(project);
+        workItem.setType(type);
+        workItem.setTitle(title);
+        workItem.setDescription(description);
+        workItem.setCreatedBy(caller);
+        workItem.setWorkflow(workflow);
+        workItem.setWorkflowVersion(workItemWorkflowService.boundVersion(projectId, workflow));
+        workItem.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
 
         Integer nextSeq = workItemRepository.findMaxSequenceNumberByProjectId(projectId) + 1;
-        issue.setSequenceNumber(nextSeq);
+        workItem.setSequenceNumber(nextSeq);
 
-        workItemRepository.save(issue);
-        return issue;
+        workItemRepository.save(workItem);
+        return workItem;
     }
 
     /**
@@ -113,59 +113,59 @@ public class WorkItemService {
     public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
                                   String status, String assigneeId, User caller) {
         verifyMembership(projectId, caller.getId());
-        WorkItem issue = findIssueInProject(projectId, workItemId);
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         if (title != null) {
-            issue.setTitle(title);
+            workItem.setTitle(title);
         }
         if (description != null) {
-            issue.setDescription(description);
+            workItem.setDescription(description);
         }
         if (assigneeId != null) {
             if (assigneeId.isBlank()) {
-                issue.setAssignee(null);
+                workItem.setAssignee(null);
             } else {
                 User assignee = userRepository.findById(assigneeId)
                         .orElseThrow(() -> new BusinessException("Assignee user not found"));
                 if (!projectSecurityService.isProjectMember(projectId, assigneeId)) {
                     throw new BusinessException("Assignee must be a project member");
                 }
-                issue.setAssignee(assignee);
+                workItem.setAssignee(assignee);
             }
         }
-        String previousStatus = issue.getCurrentStatus();
+        String previousStatus = workItem.getCurrentStatus();
         boolean statusChanged = false;
         if (status != null) {
             verifyCallerCanChangeStatus(projectId, caller.getId());
-            workItemWorkflowService.validateTransition(projectId, issue, status);
-            issue.setCurrentStatus(status);
+            workItemWorkflowService.validateTransition(projectId, workItem, status);
+            workItem.setCurrentStatus(status);
             statusChanged = true;
         }
 
-        workItemRepository.save(issue);
+        workItemRepository.save(workItem);
 
         if (statusChanged) {
-            // PR link (if any) lives in github_pr Assets now, not on the issue; surfaced on the merge event.
-            dispatchStatusChanged(projectId, issue, previousStatus, issue.getCurrentStatus(), null);
+            // PR link (if any) lives in github_pr Assets now, not on the Work Item; surfaced on the merge event.
+            dispatchStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), null);
         }
 
-        return issue;
+        return workItem;
     }
 
     /**
-     * Read a single Work Item entity in a project, applying the same membership/read-access check the v1
-     * {@code getIssue} uses. Used by the v2 controller, which maps the entity to its v2 response (so it can
-     * surface the bound {@code workflow}).
+     * Read a single Work Item entity in a project, applying the standard membership/read-access check.
+     * Used by the v2 controller, which maps the entity to its v2 response (so it can surface the bound
+     * {@code workflow}).
      */
     @Transactional(readOnly = true)
     public WorkItem getWorkItemEntity(String projectId, String workItemId, User caller) {
         verifyReadAccess(projectId, caller.getId());
-        return findIssueInProject(projectId, workItemId);
+        return findWorkItemInProject(projectId, workItemId);
     }
 
     /**
-     * List Work Item entities in a project with the same optional type/status/workflow filters as v1
-     * {@code listIssues}. Used by the v2 controller.
+     * List Work Item entities in a project with the standard optional type/status/workflow filters.
+     * Used by the v2 controller.
      */
     @Transactional(readOnly = true)
     public List<WorkItem> listWorkItemEntities(String projectId, String type, String status, String workflow,
@@ -231,40 +231,40 @@ public class WorkItemService {
      *
      * <p><b>Transition policy:</b> the merge advances the Work Item through the Workflow edge declared with
      * {@code trigger: pr_merged} from its current status (for ENGINEERING that is {@code CODE_REVIEW → DONE}).
-     * If the bound Workflow declares no such edge from the current status (e.g. the issue is already terminal,
+     * If the bound Workflow declares no such edge from the current status (e.g. the Work Item is already terminal,
      * or skipped the review status), the PR is recorded as an Asset and the status is left unchanged. This is
      * the statechart-driven generalization of the former "force DONE from any state".
      *
      * @param projectId      the project the connection belongs to (cross-project guard already applied by caller)
-     * @param projectKey     the issue's project key (from the PR body "closes conductor/KEY-N")
-     * @param sequenceNumber the issue sequence number
+     * @param projectKey     the Work Item's project key (from the PR body "closes conductor/KEY-N")
+     * @param sequenceNumber the Work Item sequence number
      * @param pullRequestUrl the merged PR's html_url (may be null/blank → not stored)
      */
     @Transactional
     public void completeFromPullRequest(String projectId, String projectKey, int sequenceNumber,
                                         String pullRequestUrl) {
-        WorkItem issue = workItemRepository.findByProjectKeyAndSequenceNumber(projectKey, sequenceNumber)
+        WorkItem workItem = workItemRepository.findByProjectKeyAndSequenceNumber(projectKey, sequenceNumber)
                 .orElseThrow(() -> new EntityNotFoundException(
-                        "No issue found for " + projectKey + "-" + sequenceNumber));
-        if (!issue.getProject().getId().equals(projectId)) {
+                        "No Work Item found for " + projectKey + "-" + sequenceNumber));
+        if (!workItem.getProject().getId().equals(projectId)) {
             throw new EntityNotFoundException(
                     projectKey + "-" + sequenceNumber + " does not belong to project " + projectId);
         }
 
-        String previousStatus = issue.getCurrentStatus();
+        String previousStatus = workItem.getCurrentStatus();
         Optional<StatechartTransition> applied = workItemWorkflowService.applySystemTransition(
-                projectId, issue, WorkItemWorkflowService.TRIGGER_PR_MERGED);
-        workItemRepository.save(issue);
+                projectId, workItem, WorkItemWorkflowService.TRIGGER_PR_MERGED);
+        workItemRepository.save(workItem);
 
-        // COND-18 E5: record the merged PR as a github_pr Asset. Idempotent on (issue, type, ref).
-        assetService.recordPullRequestAsset(issue, pullRequestUrl);
+        // COND-18 E5: record the merged PR as a github_pr Asset. Idempotent on (workItem, type, ref).
+        assetService.recordPullRequestAsset(workItem, pullRequestUrl);
 
         if (applied.isPresent()) {
-            dispatchStatusChanged(projectId, issue, previousStatus, issue.getCurrentStatus(), pullRequestUrl);
+            dispatchStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), pullRequestUrl);
         } else {
             log.info("PR merge for {}-{}: workflow {} declares no '{}' transition from status {}; "
                             + "recorded PR asset only, status unchanged",
-                    projectKey, sequenceNumber, issue.getWorkflow(),
+                    projectKey, sequenceNumber, workItem.getWorkflow(),
                     WorkItemWorkflowService.TRIGGER_PR_MERGED, previousStatus);
         }
     }
@@ -274,15 +274,15 @@ public class WorkItemService {
      * Workflow's {@code noun} and the target status's display label/category so the notification provider can
      * format it for any Workflow without hardcoded status names.
      */
-    private void dispatchStatusChanged(String projectId, WorkItem issue, String fromStatus, String toStatus,
+    private void dispatchStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,
                                        String prUrl) {
-        Statechart statechart = workItemWorkflowService.resolveFor(projectId, issue);
+        Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
         Map<String, String> meta = new HashMap<>();
-        meta.put("issueId", issue.getId());
-        meta.put("issueTitle", issue.getTitle());
+        meta.put("issueId", workItem.getId());
+        meta.put("issueTitle", workItem.getTitle());
         meta.put("projectId", projectId);
-        if (issue.getWorkflow() != null) {
-            meta.put("workflow", issue.getWorkflow());
+        if (workItem.getWorkflow() != null) {
+            meta.put("workflow", workItem.getWorkflow());
         }
         meta.put("noun", statechart.noun());
         meta.put("fromStatus", fromStatus);
@@ -293,8 +293,8 @@ public class WorkItemService {
                 meta.put("toCategory", s.category());
             }
         });
-        if (issue.getAssignee() != null) {
-            User a = issue.getAssignee();
+        if (workItem.getAssignee() != null) {
+            User a = workItem.getAssignee();
             meta.put("assigneeName", a.getName() != null ? a.getName() : a.getEmail());
         }
         if (prUrl != null && !prUrl.isBlank()) {
@@ -304,20 +304,20 @@ public class WorkItemService {
     }
 
     @Transactional
-    public void saveIssueTasks(String issueId, JsonNode tasks) {
-        WorkItem issue = workItemRepository.findById(issueId)
-                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
-        issue.setWorkItemTasks(tasks);
-        workItemRepository.save(issue);
+    public void saveWorkItemTasks(String workItemId, JsonNode tasks) {
+        WorkItem workItem = workItemRepository.findById(workItemId)
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+        workItem.setWorkItemTasks(tasks);
+        workItemRepository.save(workItem);
     }
 
     @Transactional(readOnly = true)
-    public JsonNode getIssueTasks(String issueId) {
-        WorkItem issue = workItemRepository.findById(issueId)
-                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
-        JsonNode tasks = issue.getWorkItemTasks();
+    public JsonNode getWorkItemTasks(String workItemId) {
+        WorkItem workItem = workItemRepository.findById(workItemId)
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+        JsonNode tasks = workItem.getWorkItemTasks();
         if (tasks == null) {
-            throw new EntityNotFoundException("No tasks found for issue " + issueId);
+            throw new EntityNotFoundException("No tasks found for Work Item " + workItemId);
         }
         return tasks;
     }
@@ -340,23 +340,23 @@ public class WorkItemService {
         projectMemberRepository.findByProjectIdAndUserId(projectId, callerId)
                 .ifPresent(member -> {
                     if (member.getRole() == MemberRole.REVIEWER) {
-                        throw new ForbiddenException("REVIEWER role cannot change issue status");
+                        throw new ForbiddenException("REVIEWER role cannot change Work Item status");
                     }
                 });
     }
 
     @Transactional
-    public void deleteIssue(String projectId, String issueId) {
-        WorkItem issue = findIssueInProject(projectId, issueId);
-        workItemRepository.delete(issue);
+    public void deleteWorkItem(String projectId, String workItemId) {
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        workItemRepository.delete(workItem);
     }
 
-    private WorkItem findIssueInProject(String projectId, String issueId) {
-        WorkItem issue = workItemRepository.findById(issueId)
-                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
-        if (!issue.getProject().getId().equals(projectId)) {
-            throw new EntityNotFoundException("Issue not found");
+    private WorkItem findWorkItemInProject(String projectId, String workItemId) {
+        WorkItem workItem = workItemRepository.findById(workItemId)
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+        if (!workItem.getProject().getId().equals(projectId)) {
+            throw new EntityNotFoundException("Work Item not found");
         }
-        return issue;
+        return workItem;
     }
 }

@@ -77,7 +77,7 @@ class CommentServiceTest {
     private User author;
     private User otherUser;
     private Project project;
-    private WorkItem issue;
+    private WorkItem workItem;
     private Document document;
     private Comment comment;
 
@@ -100,19 +100,19 @@ class CommentServiceTest {
         project.setCreatedAt(OffsetDateTime.now());
         project.setUpdatedAt(OffsetDateTime.now());
 
-        issue = new WorkItem();
-        issue.setId("issue-1");
-        issue.setProject(project);
-        issue.setType("PRD");
-        issue.setTitle("Test Issue");
-        issue.setCurrentStatus("DRAFT");
-        issue.setCreatedBy(author);
-        issue.setCreatedAt(OffsetDateTime.now());
-        issue.setUpdatedAt(OffsetDateTime.now());
+        workItem = new WorkItem();
+        workItem.setId("issue-1");
+        workItem.setProject(project);
+        workItem.setType("PRD");
+        workItem.setTitle("Test Issue");
+        workItem.setCurrentStatus("DRAFT");
+        workItem.setCreatedBy(author);
+        workItem.setCreatedAt(OffsetDateTime.now());
+        workItem.setUpdatedAt(OffsetDateTime.now());
 
         document = new Document();
         document.setId("doc-1");
-        document.setWorkItem(issue);
+        document.setWorkItem(workItem);
         document.setFilename("spec.md");
         document.setContentType("text/markdown");
         document.setStoragePath("proj-1/issues/issue-1/doc-1/spec.md");
@@ -121,7 +121,7 @@ class CommentServiceTest {
 
         comment = new Comment();
         comment.setId("comment-1");
-        comment.setWorkItem(issue);
+        comment.setWorkItem(workItem);
         comment.setDocument(document);
         comment.setAuthor(author);
         comment.setContent("This needs work");
@@ -136,7 +136,7 @@ class CommentServiceTest {
     @Test
     void createCommentWithLineNumberSucceeds() {
         String docContent = "line one\nline two\nline three";
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(storageService.download(document.getStoragePath()))
                 .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
@@ -158,7 +158,7 @@ class CommentServiceTest {
     @Test
     void createCommentPersistsQuotedTextFromDocumentLine() {
         String docContent = "# Introduction\nThis is the summary\nMore details here";
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(storageService.download(document.getStoragePath()))
                 .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
@@ -180,7 +180,7 @@ class CommentServiceTest {
     @Test
     void createCommentQuotedTextFirstLine() {
         String docContent = "First line\nSecond line";
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(storageService.download(document.getStoragePath()))
                 .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
@@ -202,7 +202,7 @@ class CommentServiceTest {
     @Test
     void createCommentQuotedTextOutOfBoundsReturnsEmpty() {
         String docContent = "Only one line";
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(storageService.download(document.getStoragePath()))
                 .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));
@@ -224,7 +224,7 @@ class CommentServiceTest {
     @Test
     void createCommentDocumentWithNoStoragePathReturnsEmptyQuotedText() {
         document.setStoragePath(null);
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(commentRepository.save(any(Comment.class))).thenAnswer(inv -> {
             Comment c = inv.getArgument(0);
@@ -354,7 +354,7 @@ class CommentServiceTest {
     void listCommentsResolvedTrueReturnsOnlyResolvedComments() {
         Comment resolvedComment = new Comment();
         resolvedComment.setId("comment-resolved");
-        resolvedComment.setWorkItem(issue);
+        resolvedComment.setWorkItem(workItem);
         resolvedComment.setDocument(document);
         resolvedComment.setAuthor(author);
         resolvedComment.setContent("Resolved comment");
@@ -480,7 +480,7 @@ class CommentServiceTest {
     void createCommentDispatchesCommentAddedEventWithExcerpt() {
         String longContent = "x".repeat(150);
         String docContent = "line one\nline two";
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issue));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItem));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
         when(storageService.download(document.getStoragePath()))
                 .thenReturn(docContent.getBytes(StandardCharsets.UTF_8));

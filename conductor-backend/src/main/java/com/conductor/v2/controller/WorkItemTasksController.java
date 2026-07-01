@@ -46,7 +46,7 @@ public class WorkItemTasksController implements WorkItemTasksApi {
         User caller = currentUser();
         verifyMembership(projectId, caller.getId());
         JsonNode tasksNode = objectMapper.valueToTree(requestBody);
-        workItemService.saveIssueTasks(workItemId, tasksNode);
+        workItemService.saveWorkItemTasks(workItemId, tasksNode);
         SaveWorkItemTasks200Response response = new SaveWorkItemTasks200Response().message("saved");
         return ResponseEntity.ok(response);
     }
@@ -55,7 +55,7 @@ public class WorkItemTasksController implements WorkItemTasksApi {
     public ResponseEntity<Map<String, Object>> getWorkItemTasks(String projectId, String workItemId) {
         User caller = currentUser();
         verifyMembership(projectId, caller.getId());
-        JsonNode tasksNode = workItemService.getIssueTasks(workItemId);
+        JsonNode tasksNode = workItemService.getWorkItemTasks(workItemId);
         @SuppressWarnings("unchecked")
         Map<String, Object> result = objectMapper.convertValue(tasksNode, Map.class);
         return ResponseEntity.ok(result);

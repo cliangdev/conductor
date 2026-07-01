@@ -111,7 +111,7 @@ public class WorkItemController implements WorkItemsApi {
 
     @Override
     public ResponseEntity<Void> deleteWorkItem(String projectId, String workItemId) {
-        workItemService.deleteIssue(projectId, workItemId);
+        workItemService.deleteWorkItem(projectId, workItemId);
         return ResponseEntity.noContent().build();
     }
 

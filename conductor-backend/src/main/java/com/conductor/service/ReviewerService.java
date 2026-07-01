@@ -44,7 +44,7 @@ public class ReviewerService {
     }
 
     @Transactional
-    public WorkItemReviewer assignReviewer(String projectId, String issueId, String targetUserId, User caller) {
+    public WorkItemReviewer assignReviewer(String projectId, String workItemId, String targetUserId, User caller) {
         verifyCallerCanManageReviewers(projectId, caller.getId());
 
         ProjectMember targetMember = projectMemberRepository.findByProjectIdAndUserId(projectId, targetUserId)
@@ -54,12 +54,12 @@ public class ReviewerService {
             throw new BusinessException("Only REVIEWER role members can be assigned");
         }
 
-        if (workItemReviewerRepository.findByWorkItemIdAndUserId(issueId, targetUserId).isPresent()) {
+        if (workItemReviewerRepository.findByWorkItemIdAndUserId(workItemId, targetUserId).isPresent()) {
             throw new ConflictException("Already assigned");
         }
 
         WorkItemReviewer reviewer = new WorkItemReviewer();
-        reviewer.setWorkItemId(issueId);
+        reviewer.setWorkItemId(workItemId);
         reviewer.setUserId(targetUserId);
         reviewer.setAssignedBy(caller.getId());
         workItemReviewerRepository.save(reviewer);
@@ -69,28 +69,28 @@ public class ReviewerService {
                 .orElse(targetUserId);
         notificationDispatcher.dispatch(NotificationEvent.of(
                 EventType.REVIEWER_ASSIGNED, projectId,
-                Map.of("issueId", issueId, "issueTitle", issueId, "reviewerId", targetUserId, "reviewerName", reviewerName)));
+                Map.of("issueId", workItemId, "issueTitle", workItemId, "reviewerId", targetUserId, "reviewerName", reviewerName)));
 
         return reviewer;
     }
 
     @Transactional
-    public void unassignReviewer(String projectId, String issueId, String targetUserId, User caller) {
+    public void unassignReviewer(String projectId, String workItemId, String targetUserId, User caller) {
         verifyCallerCanManageReviewers(projectId, caller.getId());
 
-        workItemReviewerRepository.findByWorkItemIdAndUserId(issueId, targetUserId)
+        workItemReviewerRepository.findByWorkItemIdAndUserId(workItemId, targetUserId)
                 .orElseThrow(() -> new EntityNotFoundException("Reviewer assignment not found"));
 
-        workItemReviewerRepository.deleteByWorkItemIdAndUserId(issueId, targetUserId);
+        workItemReviewerRepository.deleteByWorkItemIdAndUserId(workItemId, targetUserId);
     }
 
     @Transactional(readOnly = true)
-    public List<ReviewerView> listReviewers(String projectId, String issueId, User caller) {
+    public List<ReviewerView> listReviewers(String projectId, String workItemId, User caller) {
         if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, caller.getId())) {
-            throw new EntityNotFoundException("Issue not found");
+            throw new EntityNotFoundException("Work Item not found");
         }
 
-        return workItemReviewerRepository.findAllByWorkItemId(issueId).stream()
+        return workItemReviewerRepository.findAllByWorkItemId(workItemId).stream()
                 .map(this::toReviewerView)
                 .toList();
     }
