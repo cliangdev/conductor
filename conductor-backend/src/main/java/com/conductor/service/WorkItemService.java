@@ -307,7 +307,7 @@ public class WorkItemService {
     public void saveIssueTasks(String issueId, JsonNode tasks) {
         WorkItem issue = workItemRepository.findById(issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
-        issue.setIssueTasks(tasks);
+        issue.setWorkItemTasks(tasks);
         workItemRepository.save(issue);
     }
 
@@ -315,7 +315,7 @@ public class WorkItemService {
     public JsonNode getIssueTasks(String issueId) {
         WorkItem issue = workItemRepository.findById(issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
-        JsonNode tasks = issue.getIssueTasks();
+        JsonNode tasks = issue.getWorkItemTasks();
         if (tasks == null) {
             throw new EntityNotFoundException("No tasks found for issue " + issueId);
         }
