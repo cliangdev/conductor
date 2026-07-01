@@ -41,7 +41,7 @@ export function CommentThread({
   commentApiBasePath,
 }: Props) {
   const basePath =
-    commentApiBasePath ?? `/api/v1/projects/${projectId}/issues/${issueId}/comments`
+    commentApiBasePath ?? `/api/v2/projects/${projectId}/work-items/${issueId}/comments`
   const [showResolved, setShowResolved] = useState(false)
   const [showReplyForm, setShowReplyForm] = useState(false)
 

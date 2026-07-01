@@ -16,7 +16,7 @@ vi.mock('@/contexts/AuthContext', () => ({
 
 vi.mock('@/lib/api', () => ({
   apiGet: (url: string) => {
-    if (url.includes('/issues?workflow=')) {
+    if (url.includes('/work-items?workflow=')) {
       return Promise.resolve([
         {
           id: 'uuid-1',

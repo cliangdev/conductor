@@ -2,6 +2,7 @@ package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
 import com.conductor.entity.User;
+import com.conductor.legacy.IssueController;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.generated.model.IssueResponse;

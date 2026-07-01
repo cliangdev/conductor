@@ -61,7 +61,7 @@ export function TaskProgressPanel({ issueId, projectId }: TaskProgressPanelProps
     if (!accessToken) return
 
     apiGet<TasksData>(
-      `/api/v1/projects/${projectId}/issues/${issueId}/tasks`,
+      `/api/v2/projects/${projectId}/work-items/${issueId}/tasks`,
       accessToken
     )
       .then((data) => {

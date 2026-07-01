@@ -85,7 +85,7 @@ describe('TaskProgressPanel', () => {
 
     await waitFor(() => {
       expect(mockApiGet).toHaveBeenCalledWith(
-        '/api/v1/projects/proj-99/issues/issue-42/tasks',
+        '/api/v2/projects/proj-99/work-items/issue-42/tasks',
         'test-token'
       )
     })

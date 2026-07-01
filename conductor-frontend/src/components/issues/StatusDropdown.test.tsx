@@ -55,7 +55,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
 
     await waitFor(() =>
       expect(apiGet).toHaveBeenCalledWith(
-        '/api/v1/projects/proj-1/issues/issue-1/available-transitions',
+        '/api/v2/projects/proj-1/work-items/issue-1/available-transitions',
         'tok'
       )
     )
