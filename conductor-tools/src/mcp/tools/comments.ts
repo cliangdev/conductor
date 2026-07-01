@@ -56,12 +56,3 @@ export async function listWorkItemComments(
   const path = `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/comments${commentsQuery(params.resolved)}`
   return listCommentsAt(path, config)
 }
-
-// Deprecated `list_issue_comments` handler — legacy v1 issues sub-resource (kept as a shim).
-export async function listIssueComments(
-  params: { issueId: string; resolved?: boolean },
-  config: Config
-): Promise<unknown[]> {
-  const path = `/api/v1/projects/${config.projectId}/issues/${params.issueId}/comments${commentsQuery(params.resolved)}`
-  return listCommentsAt(path, config)
-}

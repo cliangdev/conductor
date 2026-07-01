@@ -16,7 +16,7 @@ vi.mock('../mcp/queue.js', () => ({
 }))
 
 import { scaffoldDocument } from '../mcp/tools/documents.js'
-import { createIssue, getIssue } from '../mcp/tools/issues.js'
+import { createWorkItem, getWorkItem } from '../mcp/tools/issues.js'
 import { apiPost, apiGet } from '../mcp/api.js'
 import type { Config } from '../mcp/config.js'
 
@@ -84,7 +84,7 @@ describe('scaffoldDocument absolutePath', () => {
   })
 })
 
-describe('createIssue absolutePath', () => {
+describe('createWorkItem absolutePath', () => {
   it('returns absolute issue directory path', async () => {
     mockedApiPost.mockResolvedValueOnce({
       id: 'iss_xyz',
@@ -94,8 +94,8 @@ describe('createIssue absolutePath', () => {
       status: 'DRAFT',
     })
 
-    const result = await createIssue(
-      { type: 'PRD', title: 'Test PRD' },
+    const result = await createWorkItem(
+      { type: 'PRD', title: 'Test PRD', workflow: 'ENGINEERING' },
       baseConfig
     )
 
@@ -106,7 +106,7 @@ describe('createIssue absolutePath', () => {
   })
 })
 
-describe('getIssue absolutePath', () => {
+describe('getWorkItem absolutePath', () => {
   const issueId = 'iss_local'
 
   it('returns absolutePath for a local issue', async () => {
@@ -114,7 +114,7 @@ describe('getIssue absolutePath', () => {
     fs.mkdirSync(issueDir, { recursive: true })
     fs.writeFileSync(path.join(issueDir, 'issue.md'), '---\nid: iss_local\n---\n', 'utf8')
 
-    const result = await getIssue({ issueId }, baseConfig)
+    const result = await getWorkItem({ issueId }, baseConfig)
 
     expect(result['source']).toBe('local')
     expect(result['absolutePath']).toBe(issueDir + path.sep)
@@ -130,7 +130,7 @@ describe('getIssue absolutePath', () => {
       status: 'DRAFT',
     })
 
-    const result = await getIssue({ issueId }, baseConfig)
+    const result = await getWorkItem({ issueId }, baseConfig)
 
     expect(result['absolutePath']).toBe(
       path.join(tmpRoot, '.conductor', 'issues', issueId) + path.sep

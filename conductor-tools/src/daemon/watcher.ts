@@ -190,7 +190,7 @@ export async function syncFile(filePath: string, getConfig: () => Config): Promi
     console.warn(`Skipping ${filePath}: not under any known project — run conductor init here.`)
     return
   }
-  const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
+  const apiPath = `/api/v2/projects/${projectId}/work-items/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
   const body = { content, contentType: 'text/markdown' }
 
   try {
@@ -215,7 +215,7 @@ export async function deleteFile(filePath: string, getConfig: () => Config): Pro
     console.warn(`Skipping delete of ${filePath}: not under any known project.`)
     return
   }
-  const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
+  const apiPath = `/api/v2/projects/${projectId}/work-items/${parsed.issueId}/documents/${encodeURIComponent(parsed.filename)}`
 
   try {
     await callApi('DELETE', apiPath, undefined, getConfig)
@@ -264,7 +264,7 @@ export async function syncIssueMd(filePath: string, getConfig: () => Config): Pr
     console.warn(`Skipping issue.md ${filePath}: not under any known project — run conductor init here.`)
     return
   }
-  const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}`
+  const apiPath = `/api/v2/projects/${projectId}/work-items/${parsed.issueId}`
 
   try {
     await callApi('PATCH', apiPath, patchBody, getConfig)
@@ -297,7 +297,7 @@ export async function syncTasksJson(filePath: string, getConfig: () => Config): 
     console.warn(`Skipping tasks.json ${filePath}: not under any known project — run conductor init here.`)
     return
   }
-  const apiPath = `/api/v1/projects/${projectId}/issues/${parsed.issueId}/tasks`
+  const apiPath = `/api/v2/projects/${projectId}/work-items/${parsed.issueId}/tasks`
 
   try {
     await callApi('PUT', apiPath, tasks, getConfig)

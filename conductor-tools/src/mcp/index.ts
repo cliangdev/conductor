@@ -4,11 +4,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { getConfig, resolveProject } from './config.js'
 import {
-  createIssue,
-  updateIssue,
-  setIssueStatus,
-  listIssues,
-  getIssue,
   createWorkItem,
   updateWorkItem,
   setWorkItemStatus,
@@ -16,7 +11,7 @@ import {
   getWorkItem,
 } from './tools/issues.js'
 import { deleteDocument, scaffoldDocument } from './tools/documents.js'
-import { listIssueComments, listWorkItemComments } from './tools/comments.js'
+import { listWorkItemComments } from './tools/comments.js'
 import {
   listWorkflows,
   getAvailableTransitions,
@@ -113,68 +108,6 @@ const TOOLS = [
       required: ['issueId'],
     },
   },
-  // --- Legacy issue tools (DEPRECATED — v1 /issues surface) ---
-  {
-    name: 'create_issue',
-    description: '(DEPRECATED — use create_work_item) Create a new issue (Work Item) in the project',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        type: { type: 'string', description: 'Work Item type, validated against the Workflow (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
-        title: { type: 'string', description: 'Issue title' },
-        description: { type: 'string', description: 'Issue description (optional)' },
-        workflow: { type: 'string', description: 'Workflow slug to run on (optional; defaults to ENGINEERING). Use list_workflows to discover.' },
-      },
-      required: ['type', 'title'],
-    },
-  },
-  {
-    name: 'update_issue',
-    description: '(DEPRECATED — use update_work_item) Update an existing issue',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue ID' },
-        title: { type: 'string', description: 'New title (optional)' },
-        description: { type: 'string', description: 'New description (optional)' },
-      },
-      required: ['issueId'],
-    },
-  },
-  {
-    name: 'set_issue_status',
-    description: '(DEPRECATED — use set_work_item_status) Update the status of an issue',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue ID' },
-        status: { type: 'string', description: 'New status' },
-      },
-      required: ['issueId', 'status'],
-    },
-  },
-  {
-    name: 'list_issues',
-    description: '(DEPRECATED — use list_work_items) List issues in the project',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        type: { type: 'string', description: 'Filter by type (optional)' },
-        status: { type: 'string', description: 'Filter by status (optional)' },
-      },
-    },
-  },
-  {
-    name: 'get_issue',
-    description: '(DEPRECATED — use get_work_item) Get a single issue by ID',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue ID' },
-      },
-      required: ['issueId'],
-    },
-  },
   {
     name: 'scaffold_document',
     description: 'Create an empty document file locally and register it with the backend. Returns absolutePath (use this with the Write tool — Write requires absolute paths) and localPath (relative, for display).',
@@ -198,21 +131,6 @@ const TOOLS = [
         filename: { type: 'string', description: 'Document filename for local deletion' },
       },
       required: ['issueId', 'documentId', 'filename'],
-    },
-  },
-  {
-    name: 'list_issue_comments',
-    description: '(DEPRECATED — use list_work_item_comments) List comments on an issue, optionally filtered by resolved status',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueId: { type: 'string', description: 'Issue ID' },
-        resolved: {
-          type: 'boolean',
-          description: 'Filter by resolved status. true = resolved only, false = unresolved only, omit = all comments',
-        },
-      },
-      required: ['issueId'],
     },
   },
   {
@@ -463,18 +381,6 @@ export async function runMcpServer(): Promise<void> {
 
     try {
       switch (name) {
-        case 'create_issue': {
-          const result = await createIssue(
-            {
-              type: params['type'] as string,
-              title: params['title'] as string,
-              description: params['description'] as string | undefined,
-              workflow: params['workflow'] as string | undefined,
-            },
-            config
-          )
-          return successResponse(result)
-        }
         case 'create_work_item': {
           const workflow = params['workflow'] as string | undefined
           if (!workflow) {
@@ -633,44 +539,6 @@ export async function runMcpServer(): Promise<void> {
             )
           )
         }
-        case 'update_issue': {
-          const result = await updateIssue(
-            {
-              issueId: params['issueId'] as string,
-              title: params['title'] as string | undefined,
-              description: params['description'] as string | undefined,
-            },
-            config
-          )
-          return successResponse(result)
-        }
-        case 'set_issue_status': {
-          const result = await setIssueStatus(
-            {
-              issueId: params['issueId'] as string,
-              status: params['status'] as string,
-            },
-            config
-          )
-          return successResponse(result)
-        }
-        case 'list_issues': {
-          const result = await listIssues(
-            {
-              type: params['type'] as string | undefined,
-              status: params['status'] as string | undefined,
-            },
-            config
-          )
-          return successResponse(result)
-        }
-        case 'get_issue': {
-          const result = await getIssue(
-            { issueId: params['issueId'] as string },
-            config
-          )
-          return successResponse(result)
-        }
         case 'scaffold_document': {
           const result = await scaffoldDocument(
             {
@@ -687,16 +555,6 @@ export async function runMcpServer(): Promise<void> {
               issueId: params['issueId'] as string,
               documentId: params['documentId'] as string,
               filename: params['filename'] as string,
-            },
-            config
-          )
-          return successResponse(result)
-        }
-        case 'list_issue_comments': {
-          const result = await listIssueComments(
-            {
-              issueId: params['issueId'] as string,
-              resolved: params['resolved'] as boolean | undefined,
             },
             config
           )
