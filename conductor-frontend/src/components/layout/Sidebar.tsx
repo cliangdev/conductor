@@ -138,7 +138,7 @@ function WorkspaceSwitcher({
 
   function selectWorkspace(workspace: Project) {
     setActiveProject(workspace)
-    router.push(`/app/projects/${workspace.id}/issues`)
+    router.push(`/app/projects/${workspace.id}/engineering/issues`)
     onNavigate?.()
   }
 

@@ -1,7 +1,7 @@
 'use client'
 
-// COND-22: the generic Work Item detail view, extracted from the legacy /issues/[issueId] page so it can
-// be rendered under the workflow-scoped /work/[slug]/[displayId] route. It is keyed by the Work Item UUID
+// COND-22: the generic Work Item detail view, rendered under the workflow-scoped
+// /{area}/{nouns}/{displayId} route. It is keyed by the Work Item UUID
 // (all sub-resource fetches use the canonical /api/v2/.../work-items/{workItemId}/... endpoints); the
 // bound Workflow slug arrives as a prop (no more useParams/DEFAULT_WORKFLOW_SLUG fallback).
 

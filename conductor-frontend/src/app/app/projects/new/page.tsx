@@ -59,7 +59,7 @@ export default function NewWorkspacePage() {
 
       addProject(project)
       setActiveProject(project)
-      router.push(`/app/projects/${project.id}/issues`)
+      router.push(`/app/projects/${project.id}/engineering/issues`)
     } catch {
       setServerError('Failed to create workspace. Please try again.')
     } finally {
