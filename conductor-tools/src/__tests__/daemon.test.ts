@@ -471,8 +471,11 @@ describe('syncTasksJson', () => {
   })
 
   it('calls PUT with parsed JSON to the correct tasks API path', async () => {
-    const tasks = [{ id: 'task_1', title: 'Write tests', done: false }]
-    mockFs.readFileSync.mockReturnValue(JSON.stringify(tasks))
+    const tasks = { tasks: [{ id: 'T1.1', title: 'Write tests', status: 'PENDING' }] }
+    // First read is tasks.json; the post-PUT dequeue then reads the (empty) sync queue.
+    mockFs.readFileSync
+      .mockReturnValueOnce(JSON.stringify(tasks))
+      .mockReturnValueOnce('[]')
 
     const mockFetch = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', mockFetch)
@@ -494,7 +497,7 @@ describe('syncTasksJson', () => {
   })
 
   it('queues change when PUT fails', async () => {
-    const tasks = [{ id: 'task_1', title: 'Write tests', done: false }]
+    const tasks = { tasks: [{ id: 'T1.1', title: 'Write tests', status: 'PENDING' }] }
     mockFs.readFileSync
       .mockReturnValueOnce(JSON.stringify(tasks))
       .mockReturnValueOnce('[]')
