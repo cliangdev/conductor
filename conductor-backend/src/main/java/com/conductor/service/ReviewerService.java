@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.WorkItemReviewer;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.ProjectMember;
@@ -11,6 +12,7 @@ import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkItemReviewerRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.view.ReviewerView;
@@ -25,6 +27,7 @@ import java.util.Map;
 public class ReviewerService {
 
     private final WorkItemReviewerRepository workItemReviewerRepository;
+    private final WorkItemRepository workItemRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectSecurityService projectSecurityService;
     private final UserRepository userRepository;
@@ -32,11 +35,13 @@ public class ReviewerService {
 
     public ReviewerService(
             WorkItemReviewerRepository workItemReviewerRepository,
+            WorkItemRepository workItemRepository,
             ProjectMemberRepository projectMemberRepository,
             ProjectSecurityService projectSecurityService,
             UserRepository userRepository,
             NotificationDispatcher notificationDispatcher) {
         this.workItemReviewerRepository = workItemReviewerRepository;
+        this.workItemRepository = workItemRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.projectSecurityService = projectSecurityService;
         this.userRepository = userRepository;
@@ -67,9 +72,11 @@ public class ReviewerService {
         String reviewerName = userRepository.findById(targetUserId)
                 .map(u -> u.getName() != null ? u.getName() : u.getEmail())
                 .orElse(targetUserId);
+        WorkItem workItem = workItemRepository.findById(workItemId).orElse(null);
+        String workItemTitle = workItem != null ? workItem.getTitle() : workItemId;
         notificationDispatcher.dispatch(NotificationEvent.of(
                 EventType.REVIEWER_ASSIGNED, projectId,
-                Map.of("workItemId", workItemId, "workItemTitle", workItemId, "reviewerId", targetUserId, "reviewerName", reviewerName)));
+                Map.of("workItemId", workItemId, "workItemTitle", workItemTitle, "reviewerId", targetUserId, "reviewerName", reviewerName)));
 
         return reviewer;
     }
