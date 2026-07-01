@@ -7,10 +7,6 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.conductor.generated.model.CreateIssueRequest;
-import com.conductor.generated.model.IssueAssignee;
-import com.conductor.generated.model.IssueResponse;
-import com.conductor.generated.model.PatchIssueRequest;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
@@ -72,17 +68,9 @@ public class WorkItemService {
         this.assetService = assetService;
     }
 
-    @Transactional
-    public IssueResponse createIssue(String projectId, CreateIssueRequest request, User caller) {
-        WorkItem issue = createWorkItem(projectId, request.getType(), request.getTitle(),
-                request.getDescription(), request.getWorkflow(), caller);
-        return toIssueResponse(issue);
-    }
-
     /**
-     * Canonical create-Work-Item business logic, returning the persisted entity. The v1 {@link #createIssue}
-     * DTO method and the v2 controller both call this — the logic lives here exactly once. Takes plain
-     * fields so the service stays decoupled from any specific generated request DTO version.
+     * Canonical create-Work-Item business logic, returning the persisted entity. The v2 controller maps the
+     * entity to its response DTO. Takes plain fields so the service stays decoupled from any generated DTO.
      */
     @Transactional
     public WorkItem createWorkItem(String projectId, String type, String title, String description,
@@ -115,52 +103,11 @@ public class WorkItemService {
         return issue;
     }
 
-    @Transactional(readOnly = true)
-    public List<IssueResponse> listIssues(String projectId, String type, String status, String workflow,
-                                          User caller) {
-        verifyReadAccess(projectId, caller.getId());
-
-        String typeFilter = (type != null && !type.isBlank()) ? type : null;
-        String statusFilter = (status != null && !status.isBlank()) ? status : null;
-        String workflowFilter = (workflow != null && !workflow.isBlank()) ? workflow : null;
-
-        List<WorkItem> issues = workItemRepository.findByProjectFiltered(
-                projectId, typeFilter, statusFilter, workflowFilter);
-
-        List<String> issueIds = issues.stream().map(WorkItem::getId).toList();
-        Map<String, Long> unresolvedCounts = new HashMap<>();
-        if (!issueIds.isEmpty()) {
-            commentRepository.countUnresolvedByWorkItemIds(issueIds).forEach(row ->
-                unresolvedCounts.put((String) row[0], (Long) row[1]));
-        }
-
-        return issues.stream()
-                .map(issue -> toIssueResponse(issue)
-                        .unresolvedCommentCount(unresolvedCounts.getOrDefault(issue.getId(), 0L).intValue()))
-                .toList();
-    }
-
-    @Transactional(readOnly = true)
-    public IssueResponse getIssue(String projectId, String issueId, User caller) {
-        verifyReadAccess(projectId, caller.getId());
-        WorkItem issue = findIssueInProject(projectId, issueId);
-        long count = commentRepository.countUnresolvedByWorkItemId(issue.getId());
-        return toIssueResponse(issue).unresolvedCommentCount((int) count);
-    }
-
-    @Transactional
-    public IssueResponse patchIssue(String projectId, String issueId, PatchIssueRequest request, User caller) {
-        WorkItem issue = patchWorkItem(projectId, issueId, request.getTitle(), request.getDescription(),
-                request.getStatus(), request.getAssigneeId(), caller);
-        long count = commentRepository.countUnresolvedByWorkItemId(issue.getId());
-        return toIssueResponse(issue).unresolvedCommentCount((int) count);
-    }
-
     /**
-     * Canonical patch-Work-Item business logic, returning the persisted entity. Shared by the v1
-     * {@link #patchIssue} DTO method and the v2 controller. Each nullable field follows the v1 PATCH
-     * semantics: {@code null} means "field absent — leave unchanged"; for {@code assigneeId} a blank
-     * string unassigns. Takes plain fields so the service stays decoupled from any generated DTO version.
+     * Canonical patch-Work-Item business logic, returning the persisted entity. The v2 controller maps the
+     * entity to its response DTO. Each nullable field follows PATCH semantics: {@code null} means "field
+     * absent — leave unchanged"; for {@code assigneeId} a blank string unassigns. Takes plain fields so the
+     * service stays decoupled from any generated DTO version.
      */
     @Transactional
     public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
@@ -411,27 +358,5 @@ public class WorkItemService {
             throw new EntityNotFoundException("Issue not found");
         }
         return issue;
-    }
-
-    private IssueResponse toIssueResponse(WorkItem issue) {
-        String displayId = issue.getProject().getKey() + "-" + issue.getSequenceNumber();
-        IssueAssignee assignee = null;
-        if (issue.getAssignee() != null) {
-            User a = issue.getAssignee();
-            assignee = new IssueAssignee(a.getId(), a.getName()).avatarUrl(a.getAvatarUrl());
-        }
-        return new IssueResponse(
-                issue.getId(),
-                issue.getProject().getId(),
-                issue.getType(),
-                issue.getTitle(),
-                issue.getCurrentStatus(),
-                issue.getCreatedBy().getId(),
-                issue.getCreatedAt(),
-                issue.getUpdatedAt(),
-                issue.getSequenceNumber(),
-                displayId)
-                .description(issue.getDescription())
-                .assignee(assignee);
     }
 }

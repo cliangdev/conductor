@@ -8,7 +8,6 @@ import com.conductor.entity.ProjectMember;
 import com.conductor.entity.Review;
 import com.conductor.entity.User;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.generated.model.ReviewResponse;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -123,7 +122,7 @@ class ReviewServiceTest {
             return r;
         });
 
-        ReviewResponse response = reviewService.submitReview(
+        Review response = reviewService.submitReview(
                 PROJECT_ID, ISSUE_ID, "APPROVED", "Looks good", reviewerUser);
 
         ArgumentCaptor<Review> captor = ArgumentCaptor.forClass(Review.class);

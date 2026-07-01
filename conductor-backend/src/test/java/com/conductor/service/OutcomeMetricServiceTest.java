@@ -4,10 +4,9 @@ import com.conductor.entity.WorkItem;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinitionVersion;
-import com.conductor.generated.model.OutcomeMetricResponse;
-import com.conductor.generated.model.RecordMetricObservationRequest;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
+import com.conductor.service.view.OutcomeMetricView;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,14 +80,14 @@ class OutcomeMetricServiceTest {
         WorkItem issue = issue("ENGINEERING");
         when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
 
-        service.record(PROJECT_ID, ISSUE_ID, new RecordMetricObservationRequest().value(10.0), caller());
-        OutcomeMetricResponse response =
-                service.record(PROJECT_ID, ISSUE_ID, new RecordMetricObservationRequest().value(12.5), caller());
+        service.record(PROJECT_ID, ISSUE_ID, 10.0, null, null, caller());
+        OutcomeMetricView response =
+                service.record(PROJECT_ID, ISSUE_ID, 12.5, null, null, caller());
 
-        assertThat(response.getObservations()).hasSize(2);
-        assertThat(response.getObservations()).extracting(o -> o.getValue()).containsExactly(10.0, 12.5);
+        assertThat(response.observations()).hasSize(2);
+        assertThat(response.observations()).extracting(o -> o.value()).containsExactly(10.0, 12.5);
         // ENGINEERING opts out of metrics -> no metadata.
-        assertThat(response.getName()).isNull();
+        assertThat(response.name()).isNull();
     }
 
     @Test
@@ -111,12 +110,12 @@ class OutcomeMetricServiceTest {
         when(versionRepository.findLatestPublished(PROJECT_ID, "GROWTH")).thenReturn(Optional.of(snapshot));
         when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue("GROWTH")));
 
-        OutcomeMetricResponse response =
-                service.record(PROJECT_ID, ISSUE_ID, new RecordMetricObservationRequest().value(42.0), caller());
+        OutcomeMetricView response =
+                service.record(PROJECT_ID, ISSUE_ID, 42.0, null, null, caller());
 
-        assertThat(response.getName()).isEqualTo("clicks");
-        assertThat(response.getUnit()).isEqualTo("count");
-        assertThat(response.getDirection()).isEqualTo("higher_better");
-        assertThat(response.getObservations()).hasSize(1);
+        assertThat(response.name()).isEqualTo("clicks");
+        assertThat(response.unit()).isEqualTo("count");
+        assertThat(response.direction()).isEqualTo("higher_better");
+        assertThat(response.observations()).hasSize(1);
     }
 }

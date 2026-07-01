@@ -4,13 +4,10 @@ import com.conductor.entity.Document;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.FileTooLargeException;
 import com.conductor.exception.StorageUploadException;
-import com.conductor.generated.model.CreateDocumentRequest;
-import com.conductor.generated.model.DocumentResponse;
-import com.conductor.generated.model.UpdateDocumentRequest;
-import com.conductor.generated.model.UpsertDocumentByFilenameRequest;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.view.DocumentView;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -49,10 +46,10 @@ public class DocumentService {
     }
 
     @Transactional
-    public DocumentResponse createDocument(String projectId, String issueId, CreateDocumentRequest request) {
+    public DocumentView createDocument(String projectId, String issueId, String filename, String content,
+                                       String contentType) {
         WorkItem issue = findIssueInProject(projectId, issueId);
 
-        String content = request.getContent();
         if (content != null) {
             byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
             if (contentBytes.length > MAX_CONTENT_BYTES) {
@@ -61,73 +58,46 @@ public class DocumentService {
         }
 
         String documentId = UUID.randomUUID().toString();
-        String contentType = request.getContentType() != null ? request.getContentType() : "text/markdown";
-        String gcsPath = buildGcsPath(projectId, issueId, documentId, request.getFilename());
+        String resolvedContentType = contentType != null ? contentType : "text/markdown";
+        String gcsPath = buildGcsPath(projectId, issueId, documentId, filename);
 
         if (content != null) {
-            uploadToGcs(gcsPath, content.getBytes(StandardCharsets.UTF_8), contentType);
+            uploadToGcs(gcsPath, content.getBytes(StandardCharsets.UTF_8), resolvedContentType);
         }
 
         Document document = new Document();
         document.setId(documentId);
         document.setWorkItem(issue);
-        document.setFilename(request.getFilename());
+        document.setFilename(filename);
         document.setContent(content);
-        document.setContentType(contentType);
+        document.setContentType(resolvedContentType);
         document.setStoragePath(gcsPath);
 
         documentRepository.save(document);
-        return toDocumentResponse(document);
+        return toDocumentView(document);
     }
 
     @Transactional(readOnly = true)
-    public List<DocumentResponse> listDocuments(String projectId, String issueId) {
+    public List<DocumentView> listDocuments(String projectId, String issueId) {
         findIssueInProject(projectId, issueId);
         return documentRepository.findByWorkItemId(issueId).stream()
-                .map(this::toDocumentResponse)
+                .map(this::toDocumentView)
                 .toList();
     }
 
     @Transactional(readOnly = true)
-    public DocumentResponse getDocument(String projectId, String issueId, String docId) {
+    public DocumentView getDocument(String projectId, String issueId, String docId) {
         findIssueInProject(projectId, issueId);
         Document document = documentRepository.findByIdAndWorkItemId(docId, issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
-        return toEnrichedDocumentResponse(document);
+        return toEnrichedDocumentView(document);
     }
 
     @Transactional
-    public DocumentResponse updateDocument(String projectId, String issueId, String docId, UpdateDocumentRequest request) {
-        findIssueInProject(projectId, issueId);
-        Document document = documentRepository.findByIdAndWorkItemId(docId, issueId)
-                .orElseThrow(() -> new EntityNotFoundException("Document not found"));
-
-        String newContent = request.getContent();
-        String newContentType = request.getContentType() != null ? request.getContentType() : document.getContentType();
-        String gcsPath = document.getStoragePath();
-
-        if (newContent != null && gcsPath != null) {
-            uploadToGcs(gcsPath, newContent.getBytes(StandardCharsets.UTF_8), newContentType);
-        }
-
-        document.setContent(newContent);
-        if (request.getContentType() != null) {
-            document.setContentType(request.getContentType());
-        }
-
-        if (newContent != null) {
-            markStaleComments(document.getId(), newContent);
-        }
-
-        documentRepository.save(document);
-        return toDocumentResponse(document);
-    }
-
-    @Transactional
-    public boolean upsertDocumentByFilename(String projectId, String issueId, String filename, UpsertDocumentByFilenameRequest request) {
+    public boolean upsertDocumentByFilename(String projectId, String issueId, String filename, String content,
+                                            String requestContentType) {
         WorkItem issue = findIssueInProject(projectId, issueId);
-        String content = request.getContent();
-        String contentType = request.getContentType() != null ? request.getContentType() : "text/markdown";
+        String contentType = requestContentType != null ? requestContentType : "text/markdown";
 
         if (content != null) {
             byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
@@ -168,11 +138,11 @@ public class DocumentService {
     }
 
     @Transactional
-    public DocumentResponse getDocumentByFilename(String projectId, String issueId, String filename) {
+    public DocumentView getDocumentByFilename(String projectId, String issueId, String filename) {
         findIssueInProject(projectId, issueId);
         Document document = documentRepository.findByWorkItemIdAndFilename(issueId, filename)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
-        return toDocumentResponse(document);
+        return toDocumentView(document);
     }
 
     @Transactional
@@ -232,19 +202,21 @@ public class DocumentService {
         return issue;
     }
 
-    private DocumentResponse toDocumentResponse(Document document) {
-        return new DocumentResponse(
+    private DocumentView toDocumentView(Document document) {
+        return new DocumentView(
                 document.getId(),
                 document.getWorkItem().getId(),
                 document.getFilename(),
                 document.getContentType(),
-                document.getCreatedAt())
-                .content(document.getContent())
-                .storagePath(document.getStoragePath())
-                .updatedAt(document.getUpdatedAt());
+                document.getCreatedAt(),
+                document.getContent(),
+                document.getStoragePath(),
+                null,
+                null,
+                document.getUpdatedAt());
     }
 
-    private DocumentResponse toEnrichedDocumentResponse(Document document) {
+    private DocumentView toEnrichedDocumentView(Document document) {
         int expiryMinutes = signedUrlExpiryMinutes;
 
         String storageUrl = null;
@@ -258,16 +230,16 @@ public class DocumentService {
                 ? document.getContent()
                 : null;
 
-        return new DocumentResponse(
+        return new DocumentView(
                 document.getId(),
                 document.getWorkItem().getId(),
                 document.getFilename(),
                 document.getContentType(),
-                document.getCreatedAt())
-                .content(inlineContent)
-                .storagePath(document.getStoragePath())
-                .storageUrl(storageUrl)
-                .storageUrlExpiresAt(storageUrlExpiresAt)
-                .updatedAt(document.getUpdatedAt());
+                document.getCreatedAt(),
+                inlineContent,
+                document.getStoragePath(),
+                storageUrl,
+                storageUrlExpiresAt,
+                document.getUpdatedAt());
     }
 }

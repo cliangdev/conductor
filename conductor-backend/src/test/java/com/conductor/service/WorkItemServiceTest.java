@@ -7,9 +7,6 @@ import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.generated.model.CreateIssueRequest;
-import com.conductor.generated.model.IssueResponse;
-import com.conductor.generated.model.PatchIssueRequest;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
@@ -139,9 +136,7 @@ class WorkItemServiceTest {
             return i;
         });
 
-        CreateIssueRequest request = new CreateIssueRequest("PRD", "My PRD");
-
-        IssueResponse response = workItemService.createIssue("proj-1", request, caller);
+        WorkItem response = workItemService.createWorkItem("proj-1", "PRD", "My PRD", null, null, caller);
 
         ArgumentCaptor<WorkItem> captor = ArgumentCaptor.forClass(WorkItem.class);
         verify(workItemRepository).save(captor.capture());
@@ -151,7 +146,7 @@ class WorkItemServiceTest {
         assertThat(saved.getType()).isEqualTo("PRD");
         assertThat(saved.getTitle()).isEqualTo("My PRD");
         assertThat(saved.getWorkflow()).isEqualTo("ENGINEERING");
-        assertThat(response.getStatus()).isEqualTo("DRAFT");
+        assertThat(response.getCurrentStatus()).isEqualTo("DRAFT");
         // type is validated against the bound Workflow at creation
         verify(workItemWorkflowService).validateType("proj-1", "ENGINEERING", "PRD");
     }
@@ -160,8 +155,7 @@ class WorkItemServiceTest {
     void createIssueThrowsForbiddenForNonMember() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(false);
 
-        assertThatThrownBy(() -> workItemService.createIssue("proj-1",
-                new CreateIssueRequest("PRD", "title"), caller))
+        assertThatThrownBy(() -> workItemService.createWorkItem("proj-1", "PRD", "title", null, null, caller))
                 .isInstanceOf(ForbiddenException.class);
     }
 
@@ -172,7 +166,7 @@ class WorkItemServiceTest {
         when(workItemRepository.findByProjectFiltered("proj-1", "PRD", null, null))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = workItemService.listIssues("proj-1", "PRD", null, null, caller);
+        List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", "PRD", null, null, caller);
 
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getType()).isEqualTo("PRD");
@@ -185,10 +179,10 @@ class WorkItemServiceTest {
         when(workItemRepository.findByProjectFiltered("proj-1", null, "DRAFT", null))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = workItemService.listIssues("proj-1", null, "DRAFT", null, caller);
+        List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", null, "DRAFT", null, caller);
 
         assertThat(results).hasSize(1);
-        assertThat(results.get(0).getStatus()).isEqualTo("DRAFT");
+        assertThat(results.get(0).getCurrentStatus()).isEqualTo("DRAFT");
     }
 
     @Test
@@ -198,7 +192,7 @@ class WorkItemServiceTest {
         when(workItemRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = workItemService.listIssues("proj-1", "PRD", "DRAFT", null, caller);
+        List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", "PRD", "DRAFT", null, caller);
 
         assertThat(results).hasSize(1);
     }
@@ -210,7 +204,7 @@ class WorkItemServiceTest {
         when(workItemRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING"))
                 .thenReturn(List.of(testIssue));
 
-        List<IssueResponse> results = workItemService.listIssues("proj-1", null, null, "ENGINEERING", caller);
+        List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", null, null, "ENGINEERING", caller);
 
         assertThat(results).hasSize(1);
     }
@@ -221,9 +215,9 @@ class WorkItemServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
-        PatchIssueRequest request = new PatchIssueRequest().status("IN_REVIEW");
+        String requestStatus = ("IN_REVIEW");
 
-        workItemService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("IN_REVIEW");
         verify(workItemWorkflowService).validateTransition("proj-1", testIssue, "IN_REVIEW");
@@ -236,9 +230,9 @@ class WorkItemServiceTest {
         doThrow(new BusinessException("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT"))
                 .when(workItemWorkflowService).validateTransition(any(), any(), any());
 
-        PatchIssueRequest request = new PatchIssueRequest().status("READY_FOR_DEVELOPMENT");
+        String requestStatus = ("READY_FOR_DEVELOPMENT");
 
-        assertThatThrownBy(() -> workItemService.patchIssue("proj-1", "issue-1", request, caller))
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT");
     }
@@ -251,9 +245,9 @@ class WorkItemServiceTest {
         doThrow(new BusinessException("Invalid status transition from READY_FOR_DEVELOPMENT to DRAFT"))
                 .when(workItemWorkflowService).validateTransition(any(), any(), any());
 
-        PatchIssueRequest request = new PatchIssueRequest().status("DRAFT");
+        String requestStatus = ("DRAFT");
 
-        assertThatThrownBy(() -> workItemService.patchIssue("proj-1", "issue-1", request, caller))
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid status transition from READY_FOR_DEVELOPMENT to DRAFT");
     }
@@ -265,9 +259,9 @@ class WorkItemServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
-        PatchIssueRequest request = new PatchIssueRequest().status("READY_FOR_DEVELOPMENT");
+        String requestStatus = ("READY_FOR_DEVELOPMENT");
 
-        workItemService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("READY_FOR_DEVELOPMENT");
     }
@@ -283,9 +277,9 @@ class WorkItemServiceTest {
         when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
                 .thenReturn(Optional.of(adminMember));
 
-        PatchIssueRequest request = new PatchIssueRequest().status("IN_REVIEW");
+        String requestStatus = ("IN_REVIEW");
 
-        workItemService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("IN_REVIEW");
     }
@@ -297,9 +291,9 @@ class WorkItemServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
-        PatchIssueRequest request = new PatchIssueRequest().status("CODE_REVIEW");
+        String requestStatus = ("CODE_REVIEW");
 
-        workItemService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
         ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
@@ -320,9 +314,9 @@ class WorkItemServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
-        PatchIssueRequest request = new PatchIssueRequest().status("CODE_REVIEW");
+        String requestStatus = ("CODE_REVIEW");
 
-        workItemService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
         ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
@@ -340,9 +334,9 @@ class WorkItemServiceTest {
         when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
                 .thenReturn(Optional.of(reviewerMember));
 
-        PatchIssueRequest request = new PatchIssueRequest().status("IN_REVIEW");
+        String requestStatus = ("IN_REVIEW");
 
-        assertThatThrownBy(() -> workItemService.patchIssue("proj-1", "issue-1", request, caller))
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("REVIEWER role cannot change issue status");
     }
@@ -361,9 +355,9 @@ class WorkItemServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
-        PatchIssueRequest request = new PatchIssueRequest().status("IN_PROGRESS");
+        String requestStatus = ("IN_PROGRESS");
 
-        workItemService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
         ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
@@ -387,9 +381,9 @@ class WorkItemServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
-        PatchIssueRequest request = new PatchIssueRequest().status("IN_PROGRESS");
+        String requestStatus = ("IN_PROGRESS");
 
-        workItemService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
         ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
@@ -406,9 +400,9 @@ class WorkItemServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(workItemRepository.save(any(WorkItem.class))).thenReturn(testIssue);
 
-        PatchIssueRequest request = new PatchIssueRequest().status("IN_PROGRESS");
+        String requestStatus = ("IN_PROGRESS");
 
-        workItemService.patchIssue("proj-1", "issue-1", request, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
         ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(eventCaptor.capture());

@@ -4,14 +4,13 @@ import com.conductor.entity.Asset;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
-import com.conductor.generated.model.AssetResponse;
-import com.conductor.generated.model.CreateAssetRequest;
-import com.conductor.generated.model.PatchAssetRequest;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.view.AssetInput;
+import com.conductor.service.view.AssetPatch;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import jakarta.persistence.EntityNotFoundException;
@@ -48,49 +47,49 @@ public class AssetService {
     }
 
     @Transactional(readOnly = true)
-    public List<AssetResponse> listAssets(String projectId, String issueId, User caller) {
+    public List<Asset> listAssets(String projectId, String issueId, User caller) {
         verifyMembership(projectId, caller.getId());
         findIssueInProject(projectId, issueId);
-        return assetRepository.findAllByWorkItemId(issueId).stream().map(this::toAssetResponse).toList();
+        return assetRepository.findAllByWorkItemId(issueId);
     }
 
     @Transactional
-    public AssetResponse createAsset(String projectId, String issueId, CreateAssetRequest request, User caller) {
+    public Asset createAsset(String projectId, String issueId, AssetInput input, User caller) {
         verifyMembership(projectId, caller.getId());
         WorkItem issue = findIssueInProject(projectId, issueId);
-        validateAssetType(projectId, issue, request.getType());
+        validateAssetType(projectId, issue, input.type());
 
         Asset asset = new Asset();
         asset.setWorkItem(issue);
-        asset.setType(request.getType());
-        asset.setLabel(request.getLabel());
-        asset.setKind(request.getKind().getValue());
-        asset.setRef(request.getRef());
-        asset.setDone(Boolean.TRUE.equals(request.getDone()));
+        asset.setType(input.type());
+        asset.setLabel(input.label());
+        asset.setKind(input.kind());
+        asset.setRef(input.ref());
+        asset.setDone(Boolean.TRUE.equals(input.done()));
         assetRepository.save(asset);
 
         notificationDispatcher.dispatch(NotificationEvent.of(EventType.ASSET_ADDED, projectId,
                 Map.of("issueId", issue.getId(), "issueTitle", issue.getTitle(), "assetType", asset.getType())));
-        return toAssetResponse(asset);
+        return asset;
     }
 
     @Transactional
-    public AssetResponse patchAsset(String projectId, String issueId, String assetId,
-                                    PatchAssetRequest request, User caller) {
+    public Asset patchAsset(String projectId, String issueId, String assetId,
+                            AssetPatch patch, User caller) {
         verifyMembership(projectId, caller.getId());
         findIssueInProject(projectId, issueId);
         Asset asset = findAssetInIssue(issueId, assetId);
-        if (request.getLabel() != null) {
-            asset.setLabel(request.getLabel());
+        if (patch.label() != null) {
+            asset.setLabel(patch.label());
         }
-        if (request.getRef() != null) {
-            asset.setRef(request.getRef());
+        if (patch.ref() != null) {
+            asset.setRef(patch.ref());
         }
-        if (request.getDone() != null) {
-            asset.setDone(request.getDone());
+        if (patch.done() != null) {
+            asset.setDone(patch.done());
         }
         assetRepository.save(asset);
-        return toAssetResponse(asset);
+        return asset;
     }
 
     @Transactional
@@ -158,19 +157,5 @@ public class AssetService {
     private Asset findAssetInIssue(String issueId, String assetId) {
         return assetRepository.findByIdAndWorkItemId(assetId, issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Asset not found in issue"));
-    }
-
-    private AssetResponse toAssetResponse(Asset asset) {
-        AssetResponse response = new AssetResponse(
-                asset.getId(),
-                asset.getWorkItem().getId(),
-                asset.getType(),
-                AssetResponse.KindEnum.fromValue(asset.getKind()),
-                asset.getRef(),
-                asset.isDone(),
-                asset.getCreatedAt(),
-                asset.getUpdatedAt());
-        response.setLabel(asset.getLabel());
-        return response;
     }
 }

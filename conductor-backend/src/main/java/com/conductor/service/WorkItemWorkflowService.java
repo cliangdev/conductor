@@ -5,8 +5,7 @@ import com.conductor.entity.MemberRole;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.UnprocessableEntityException;
-import com.conductor.generated.model.AvailableTransition;
-import com.conductor.generated.model.AvailableTransitionsResponse;
+import com.conductor.service.view.AvailableTransitionsView;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
@@ -120,7 +119,7 @@ public class WorkItemWorkflowService {
      * computed from the bound Workflow definition. REVIEWERs cannot change status, so they see none.
      */
     @Transactional(readOnly = true)
-    public AvailableTransitionsResponse availableTransitions(String projectId, String issueId, User caller) {
+    public AvailableTransitionsView availableTransitions(String projectId, String issueId, User caller) {
         if (!projectSecurityService.isProjectMember(projectId, caller.getId())) {
             throw new EntityNotFoundException("Issue not found");
         }
@@ -131,23 +130,18 @@ public class WorkItemWorkflowService {
         Statechart statechart = resolveFor(projectId, issue);
         String currentStatus = issue.getCurrentStatus();
 
-        List<AvailableTransition> transitions = new ArrayList<>();
+        List<AvailableTransitionsView.Transition> transitions = new ArrayList<>();
         if (!isReviewer(projectId, caller.getId())) {
             for (StatechartTransition t : statechart.transitionsFrom(currentStatus)) {
                 // Doer projection: a review-gated edge stays hidden until its Review is satisfied.
                 if (t.requiresReview() && !isReviewSatisfied(projectId, issue, t)) {
                     continue;
                 }
-                AvailableTransition at = new AvailableTransition(t.to(), t.label());
-                at.setRequiresReview(t.requiresReview());
-                transitions.add(at);
+                transitions.add(new AvailableTransitionsView.Transition(t.to(), t.label(), t.requiresReview()));
             }
         }
 
-        AvailableTransitionsResponse response =
-                new AvailableTransitionsResponse(statechart.slug(), currentStatus, transitions);
-        response.setNoun(statechart.noun());
-        return response;
+        return new AvailableTransitionsView(statechart.slug(), currentStatus, statechart.noun(), transitions);
     }
 
     /**

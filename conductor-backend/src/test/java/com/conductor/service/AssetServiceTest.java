@@ -6,14 +6,13 @@ import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinitionVersion;
 import com.conductor.exception.BusinessException;
-import com.conductor.generated.model.AssetResponse;
-import com.conductor.generated.model.CreateAssetRequest;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
+import com.conductor.service.view.AssetInput;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -93,13 +92,12 @@ class AssetServiceTest {
     @Test
     void createsAllowedAssetTypeAndDispatchesEvent() {
         when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
-        CreateAssetRequest req = new CreateAssetRequest("github_pr", CreateAssetRequest.KindEnum.LINK, "https://x/pr/1");
-        req.setLabel("PR #1");
+        AssetInput req = new AssetInput("github_pr", "PR #1", "link", "https://x/pr/1", null);
 
-        AssetResponse response = service.createAsset(PROJECT_ID, ISSUE_ID, req, caller());
+        Asset response = service.createAsset(PROJECT_ID, ISSUE_ID, req, caller());
 
         assertThat(response.getType()).isEqualTo("github_pr");
-        assertThat(response.getKind()).isEqualTo(AssetResponse.KindEnum.LINK);
+        assertThat(response.getKind()).isEqualTo("link");
         ArgumentCaptor<NotificationEvent> event = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(event.capture());
         assertThat(event.getValue().getEventType()).isEqualTo(EventType.ASSET_ADDED);
@@ -109,7 +107,7 @@ class AssetServiceTest {
     void rejectsAssetTypeNotAllowedByWorkflow() {
         when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
         // ENGINEERING only allows github_pr.
-        CreateAssetRequest req = new CreateAssetRequest("published_url", CreateAssetRequest.KindEnum.LINK, "https://x");
+        AssetInput req = new AssetInput("published_url", null, "link", "https://x", null);
 
         assertThatThrownBy(() -> service.createAsset(PROJECT_ID, ISSUE_ID, req, caller()))
                 .isInstanceOf(BusinessException.class)

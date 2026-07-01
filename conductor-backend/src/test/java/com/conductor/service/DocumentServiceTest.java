@@ -6,14 +6,11 @@ import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.exception.FileTooLargeException;
 import com.conductor.exception.StorageUploadException;
-import com.conductor.generated.model.CreateDocumentRequest;
-import com.conductor.generated.model.DocumentResponse;
-import com.conductor.generated.model.UpdateDocumentRequest;
-import com.conductor.generated.model.UpsertDocumentByFilenameRequest;
 import com.conductor.entity.Comment;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.view.DocumentView;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -106,9 +103,7 @@ class DocumentServiceTest {
             return d;
         });
 
-        CreateDocumentRequest request = new CreateDocumentRequest("spec.md").content("# Content");
-
-        DocumentResponse response = documentService.createDocument("proj-1", "issue-1", request);
+        DocumentView response = documentService.createDocument("proj-1", "issue-1", "spec.md", "# Content", null);
 
         ArgumentCaptor<Document> captor = ArgumentCaptor.forClass(Document.class);
         verify(documentRepository).save(captor.capture());
@@ -116,7 +111,7 @@ class DocumentServiceTest {
 
         assertThat(saved.getFilename()).isEqualTo("spec.md");
         assertThat(saved.getContent()).isEqualTo("# Content");
-        assertThat(response.getFilename()).isEqualTo("spec.md");
+        assertThat(response.filename()).isEqualTo("spec.md");
     }
 
     @Test
@@ -129,9 +124,7 @@ class DocumentServiceTest {
             return d;
         });
 
-        CreateDocumentRequest request = new CreateDocumentRequest("spec.md").content("# Content");
-
-        DocumentResponse response = documentService.createDocument("proj-1", "issue-1", request);
+        DocumentView response = documentService.createDocument("proj-1", "issue-1", "spec.md", "# Content", null);
 
         ArgumentCaptor<Document> captor = ArgumentCaptor.forClass(Document.class);
         verify(documentRepository).save(captor.capture());
@@ -140,7 +133,7 @@ class DocumentServiceTest {
         assertThat(saved.getStoragePath()).isNotNull();
         assertThat(saved.getStoragePath()).startsWith("proj-1/issues/issue-1/");
         assertThat(saved.getStoragePath()).endsWith("/spec.md");
-        assertThat(response.getStoragePath()).isEqualTo(saved.getStoragePath());
+        assertThat(response.storagePath()).isEqualTo(saved.getStoragePath());
     }
 
     @Test
@@ -153,8 +146,7 @@ class DocumentServiceTest {
             return d;
         });
 
-        CreateDocumentRequest request = new CreateDocumentRequest("spec.md").content("# Content");
-        documentService.createDocument("proj-1", "issue-1", request);
+        documentService.createDocument("proj-1", "issue-1", "spec.md", "# Content", null);
 
         verify(gcpStorageService).upload(anyString(), any(byte[].class), anyString());
         verify(documentRepository).save(any(Document.class));
@@ -166,9 +158,7 @@ class DocumentServiceTest {
         doThrow(new RuntimeException("GCS unavailable"))
                 .when(gcpStorageService).upload(anyString(), any(byte[].class), anyString());
 
-        CreateDocumentRequest request = new CreateDocumentRequest("spec.md").content("# Content");
-
-        assertThatThrownBy(() -> documentService.createDocument("proj-1", "issue-1", request))
+        assertThatThrownBy(() -> documentService.createDocument("proj-1", "issue-1", "spec.md", "# Content", null))
                 .isInstanceOf(StorageUploadException.class)
                 .hasMessage("Storage upload failed — try again");
 
@@ -180,137 +170,15 @@ class DocumentServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
 
         String oversizedContent = "x".repeat(DocumentService.MAX_CONTENT_BYTES + 1);
-        CreateDocumentRequest request = new CreateDocumentRequest("big.md").content(oversizedContent);
 
-        assertThatThrownBy(() -> documentService.createDocument("proj-1", "issue-1", request))
+        assertThatThrownBy(() -> documentService.createDocument("proj-1", "issue-1", "big.md", oversizedContent, null))
                 .isInstanceOf(FileTooLargeException.class);
 
         verify(gcpStorageService, never()).upload(anyString(), any(byte[].class), anyString());
         verify(documentRepository, never()).save(any(Document.class));
     }
 
-    // --- update tests ---
-
-    @Test
-    void putUpdatesDocumentContent() {
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
-        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
-
-        UpdateDocumentRequest request = new UpdateDocumentRequest("# Updated Content");
-
-        DocumentResponse response = documentService.updateDocument("proj-1", "issue-1", "doc-1", request);
-
-        assertThat(testDocument.getContent()).isEqualTo("# Updated Content");
-        verify(documentRepository).save(testDocument);
-    }
-
-    @Test
-    void putUpdatesGcsAndThenDb() {
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
-        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
-
-        UpdateDocumentRequest request = new UpdateDocumentRequest("# Updated Content");
-        documentService.updateDocument("proj-1", "issue-1", "doc-1", request);
-
-        verify(gcpStorageService).upload(eq("proj-1/issues/issue-1/doc-1/spec.md"), any(byte[].class), anyString());
-        verify(documentRepository).save(testDocument);
-    }
-
-    @Test
-    void putWhenGcsUploadThrowsDbRecordUnchanged() {
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
-        doThrow(new RuntimeException("GCS error"))
-                .when(gcpStorageService).upload(anyString(), any(byte[].class), anyString());
-
-        UpdateDocumentRequest request = new UpdateDocumentRequest("# New Content");
-
-        assertThatThrownBy(() -> documentService.updateDocument("proj-1", "issue-1", "doc-1", request))
-                .isInstanceOf(StorageUploadException.class)
-                .hasMessage("Storage upload failed — try again");
-
-        verify(documentRepository, never()).save(any(Document.class));
-        assertThat(testDocument.getContent()).isEqualTo("# Original Content");
-    }
-
-    @Test
-    void putUpdatesContentTypeWhenProvided() {
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
-        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
-
-        UpdateDocumentRequest request = new UpdateDocumentRequest("content").contentType("text/plain");
-
-        documentService.updateDocument("proj-1", "issue-1", "doc-1", request);
-
-        assertThat(testDocument.getContentType()).isEqualTo("text/plain");
-    }
-
-    // --- stale comment tests ---
-
-    @Test
-    void updateDocumentMarksCommentsStaleWhenLineNumberExceedsNewLineCount() {
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
-        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
-
-        Comment staleComment = new Comment();
-        staleComment.setLineNumber(10); // line 10 won't exist in 3-line doc
-        staleComment.setLineStale(false);
-
-        Comment validComment = new Comment();
-        validComment.setLineNumber(2); // line 2 exists in 3-line doc
-        validComment.setLineStale(false);
-
-        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(staleComment, validComment));
-
-        String threeLineContent = "line1\nline2\nline3";
-        documentService.updateDocument("proj-1", "issue-1", "doc-1", new UpdateDocumentRequest(threeLineContent));
-
-        assertThat(staleComment.isLineStale()).isTrue();
-        assertThat(validComment.isLineStale()).isFalse();
-
-        ArgumentCaptor<List<Comment>> captor = ArgumentCaptor.forClass(List.class);
-        verify(commentRepository).saveAll(captor.capture());
-        assertThat(captor.getValue()).containsExactly(staleComment);
-    }
-
-    @Test
-    void updateDocumentDoesNotSaveWhenNoCommentsAreStale() {
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
-        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
-
-        Comment validComment = new Comment();
-        validComment.setLineNumber(1);
-        validComment.setLineStale(false);
-
-        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(validComment));
-
-        documentService.updateDocument("proj-1", "issue-1", "doc-1", new UpdateDocumentRequest("line1\nline2\nline3"));
-
-        verify(commentRepository, never()).saveAll(any());
-        assertThat(validComment.isLineStale()).isFalse();
-    }
-
-    @Test
-    void updateDocumentSkipsAlreadyStaleComments() {
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
-        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
-
-        Comment alreadyStale = new Comment();
-        alreadyStale.setLineNumber(99);
-        alreadyStale.setLineStale(true); // already stale — should not be re-saved
-
-        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(alreadyStale));
-
-        documentService.updateDocument("proj-1", "issue-1", "doc-1", new UpdateDocumentRequest("only one line"));
-
-        verify(commentRepository, never()).saveAll(any());
-    }
+    // --- stale comment tests (exercised through upsert-by-filename, the only content-mutating path) ---
 
     @Test
     void upsertByFilenameMarksCommentsStaleOnUpdate() {
@@ -324,8 +192,7 @@ class DocumentServiceTest {
 
         when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(staleComment));
 
-        documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md",
-                new UpsertDocumentByFilenameRequest("one line only"));
+        documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "one line only", null);
 
         assertThat(staleComment.isLineStale()).isTrue();
         verify(commentRepository).saveAll(any());
@@ -387,10 +254,10 @@ class DocumentServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByWorkItemId("issue-1")).thenReturn(List.of(testDocument));
 
-        List<DocumentResponse> results = documentService.listDocuments("proj-1", "issue-1");
+        List<DocumentView> results = documentService.listDocuments("proj-1", "issue-1");
 
         assertThat(results).hasSize(1);
-        assertThat(results.get(0).getId()).isEqualTo("doc-1");
+        assertThat(results.get(0).id()).isEqualTo("doc-1");
     }
 
     @Test
@@ -401,12 +268,12 @@ class DocumentServiceTest {
                 .thenReturn("https://storage.googleapis.com/signed-url");
 
         OffsetDateTime before = OffsetDateTime.now();
-        DocumentResponse response = documentService.getDocument("proj-1", "issue-1", "doc-1");
+        DocumentView response = documentService.getDocument("proj-1", "issue-1", "doc-1");
         OffsetDateTime after = OffsetDateTime.now();
 
-        assertThat(response.getStorageUrl()).isEqualTo("https://storage.googleapis.com/signed-url");
-        assertThat(response.getStorageUrlExpiresAt()).isNotNull();
-        assertThat(response.getStorageUrlExpiresAt())
+        assertThat(response.storageUrl()).isEqualTo("https://storage.googleapis.com/signed-url");
+        assertThat(response.storageUrlExpiresAt()).isNotNull();
+        assertThat(response.storageUrlExpiresAt())
                 .isAfterOrEqualTo(before.plus(15, ChronoUnit.MINUTES))
                 .isBeforeOrEqualTo(after.plus(15, ChronoUnit.MINUTES));
     }
@@ -419,8 +286,8 @@ class DocumentServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
 
-        DocumentResponse textResponse = documentService.getDocument("proj-1", "issue-1", "doc-1");
-        assertThat(textResponse.getContent()).isEqualTo("# Original Content");
+        DocumentView textResponse = documentService.getDocument("proj-1", "issue-1", "doc-1");
+        assertThat(textResponse.content()).isEqualTo("# Original Content");
 
         // image/png — content should be null
         Document imageDocument = new Document();
@@ -435,8 +302,8 @@ class DocumentServiceTest {
 
         when(documentRepository.findByIdAndWorkItemId("doc-2", "issue-1")).thenReturn(Optional.of(imageDocument));
 
-        DocumentResponse imageResponse = documentService.getDocument("proj-1", "issue-1", "doc-2");
-        assertThat(imageResponse.getContent()).isNull();
+        DocumentView imageResponse = documentService.getDocument("proj-1", "issue-1", "doc-2");
+        assertThat(imageResponse.content()).isNull();
     }
 
     // --- upsert by filename tests ---
@@ -452,9 +319,7 @@ class DocumentServiceTest {
             return d;
         });
 
-        UpsertDocumentByFilenameRequest request = new UpsertDocumentByFilenameRequest("# New Content");
-
-        boolean created = documentService.upsertDocumentByFilename("proj-1", "issue-1", "new.md", request);
+        boolean created = documentService.upsertDocumentByFilename("proj-1", "issue-1", "new.md", "# New Content", null);
 
         assertThat(created).isTrue();
         verify(documentRepository).save(any(Document.class));
@@ -466,9 +331,7 @@ class DocumentServiceTest {
         when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
-        UpsertDocumentByFilenameRequest request = new UpsertDocumentByFilenameRequest("# Updated Content");
-
-        boolean created = documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", request);
+        boolean created = documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "# Updated Content", null);
 
         assertThat(created).isFalse();
         assertThat(testDocument.getContent()).isEqualTo("# Updated Content");
@@ -486,8 +349,7 @@ class DocumentServiceTest {
             return d;
         });
 
-        UpsertDocumentByFilenameRequest request = new UpsertDocumentByFilenameRequest("# Content");
-        documentService.upsertDocumentByFilename("proj-1", "issue-1", "new.md", request);
+        documentService.upsertDocumentByFilename("proj-1", "issue-1", "new.md", "# Content", null);
 
         verify(gcpStorageService).upload(anyString(), any(byte[].class), anyString());
     }
@@ -530,9 +392,9 @@ class DocumentServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByIdAndWorkItemId("doc-3", "issue-1")).thenReturn(Optional.of(legacyDocument));
 
-        DocumentResponse response = documentService.getDocument("proj-1", "issue-1", "doc-3");
+        DocumentView response = documentService.getDocument("proj-1", "issue-1", "doc-3");
 
-        assertThat(response.getStorageUrl()).isNull();
-        assertThat(response.getStorageUrlExpiresAt()).isNull();
+        assertThat(response.storageUrl()).isNull();
+        assertThat(response.storageUrlExpiresAt()).isNull();
     }
 }

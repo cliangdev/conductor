@@ -2,10 +2,9 @@ package com.conductor.service;
 
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.User;
-import com.conductor.generated.model.MetricObservation;
-import com.conductor.generated.model.OutcomeMetricResponse;
-import com.conductor.generated.model.RecordMetricObservationRequest;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.view.OutcomeMetricView;
+import com.conductor.service.view.OutcomeMetricView.Observation;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartMetric;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
@@ -44,49 +43,43 @@ public class OutcomeMetricService {
     }
 
     @Transactional(readOnly = true)
-    public OutcomeMetricResponse getMetric(String projectId, String issueId, User caller) {
+    public OutcomeMetricView getMetric(String projectId, String issueId, User caller) {
         verifyMembership(projectId, caller.getId());
         WorkItem issue = findIssueInProject(projectId, issueId);
-        return buildResponse(projectId, issue);
+        return buildView(projectId, issue);
     }
 
     @Transactional
-    public OutcomeMetricResponse record(String projectId, String issueId,
-                                        RecordMetricObservationRequest request, User caller) {
+    public OutcomeMetricView record(String projectId, String issueId,
+                                    Double value, OffsetDateTime observedAt, String note, User caller) {
         verifyMembership(projectId, caller.getId());
         WorkItem issue = findIssueInProject(projectId, issueId);
 
-        List<MetricObservation> observations = readObservations(issue);
-        MetricObservation observation = new MetricObservation(
-                request.getValue(),
-                request.getObservedAt() != null ? request.getObservedAt() : OffsetDateTime.now());
-        observation.setNote(request.getNote());
-        observations.add(observation);
+        List<Observation> observations = readObservations(issue);
+        observations.add(new Observation(value, observedAt != null ? observedAt : OffsetDateTime.now(), note));
 
         issue.setOutcomeMetric(objectMapper.valueToTree(observations));
         workItemRepository.save(issue);
-        return buildResponse(projectId, issue);
+        return buildView(projectId, issue);
     }
 
-    private List<MetricObservation> readObservations(WorkItem issue) {
+    private List<Observation> readObservations(WorkItem issue) {
         JsonNode stored = issue.getOutcomeMetric();
         if (stored == null || stored.isNull()) {
             return new ArrayList<>();
         }
-        return new ArrayList<>(objectMapper.convertValue(stored, new TypeReference<List<MetricObservation>>() {}));
+        return new ArrayList<>(objectMapper.convertValue(stored, new TypeReference<List<Observation>>() {}));
     }
 
-    private OutcomeMetricResponse buildResponse(String projectId, WorkItem issue) {
-        OutcomeMetricResponse response = new OutcomeMetricResponse(readObservations(issue));
+    private OutcomeMetricView buildView(String projectId, WorkItem issue) {
         String slug = issue.getWorkflow() != null ? issue.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
         Statechart statechart = resolver.resolveRequired(projectId, slug, issue.getWorkflowVersion());
         StatechartMetric metric = statechart.metric();
-        if (metric != null) {
-            response.setName(metric.name());
-            response.setUnit(metric.unit());
-            response.setDirection(metric.direction());
-        }
-        return response;
+        return new OutcomeMetricView(
+                readObservations(issue),
+                metric != null ? metric.name() : null,
+                metric != null ? metric.unit() : null,
+                metric != null ? metric.direction() : null);
     }
 
     private void verifyMembership(String projectId, String userId) {
