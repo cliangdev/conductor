@@ -17,7 +17,8 @@ documented exception — see §5).
    (`…​.model`).
 3. Implement the generated interface in a `@RestController`. Don't edit generated code.
 
-The Maven `openapi-generator-maven-plugin` has two executions (`external`, `internal`) — one per spec.
+The Maven `openapi-generator-maven-plugin` has three executions (`external`, `internal`, `v2`) — one
+per spec (`openapi.yaml`, `openapi-internal.yaml`, `openapi-v2.yaml`).
 
 ---
 
@@ -46,6 +47,11 @@ the internal implementation.
 **Default to external.** Only use the internal surface for machine-to-machine control-plane traffic that
 is never called by a browser/CLI and is authenticated by something other than the app JWT.
 
+**The v2 external surface (`/api/v2`)** is the canonical Work Item API (`openapi-v2.yaml` →
+`com.conductor.generated.v2.*`, controllers in `com.conductor.v2.controller`, Swagger group `v2`). It
+superseded the retired v1 `issues` surface (see §4). New Work Item endpoints go here; the pre-v2 `openapi.yaml`
+external spec now covers only the non-Work-Item surface (projects, members, docs, workflows, agents, etc.).
+
 ---
 
 ## 3. The base prefix is centralized — never hand-write it
@@ -69,7 +75,10 @@ by controller package. Therefore:
 - The version lives in the prefix (`v1`), centralized in `ApiPathConfig` — not in each path.
 - Both surfaces are versioned (`/api/v1`, `/internal/v1`).
 - Make **backward-compatible** changes in place (add optional fields, add endpoints). Only introduce
-  `/api/v2` (a new prefix + predicate) for a genuine breaking change, and run both during migration.
+  a new prefix (a new predicate) for a genuine breaking change, and run both during migration. The
+  `issues` → `work-items` rename did exactly this: `/api/v2` ran alongside a deprecated v1 shim until
+  callers migrated, then the v1 issue surface (paths, schemas, `com.conductor.legacy` controllers) was
+  deleted. Don't reintroduce v1 issue endpoints.
 - The internal surface has no external consumers, so it can be re-versioned by updating all in-repo
   callers (backend `DockerStepExecutor`, `conductor-worker`, `conductor-tools`) in the same PR.
 
@@ -77,9 +86,9 @@ by controller package. Therefore:
 
 ## 5. REST conventions
 
-- **Resource-oriented, plural nouns:** `/projects/{projectId}/issues/{issueId}`. No verbs in paths
-  (`/getIssue` ✗). Express actions with HTTP methods, or a sub-resource for non-CRUD state changes
-  (`POST /issues/{id}/reviews`).
+- **Resource-oriented, plural nouns:** `/projects/{projectId}/work-items/{workItemId}`. No verbs in paths
+  (`/getWorkItem` ✗). Express actions with HTTP methods, or a sub-resource for non-CRUD state changes
+  (`POST /work-items/{id}/reviews`).
 - **HTTP methods:** `GET` (safe, no side effects), `POST` (create / non-idempotent action),
   `PUT`/`PATCH` (full / partial update), `DELETE` (remove). `PATCH` for partial edits is the norm here.
 - **Status codes:** `200` ok, `201` created (set `Location` when useful), `204` no content,

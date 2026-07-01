@@ -54,8 +54,9 @@ Next.js 16 App Router. Auth via `AuthContext` (Firebase JS SDK + app JWT). Proje
 src/
 ├── app/
 │   ├── app/projects/[projectId]/
-│   │   ├── issues/            # Issue list page
-│   │   │   └── [issueId]/     # Issue detail: PRD viewer + comments + review panel
+│   │   ├── [area]/[noun]/     # Work Item list, workflow-scoped (e.g. engineering/issues)
+│   │   │   └── [displayId]/   # Work Item detail: doc viewer + comments + review panel
+│   │   ├── workflows/         # Workflow list + lifecycle (statechart) / automation (YAML) editors
 │   │   └── members/           # Member management
 │   ├── invites/[token]/accept/
 │   └── login/
@@ -80,10 +81,10 @@ src/
 
 ```
 src/
-├── commands/    # CLI commands: issue, doc, start, stop, login, init, status, doctor
+├── commands/    # CLI commands: mcp, start, stop, status, dashboard, login, init, config, doctor
 ├── daemon/      # watcher.ts — chokidar file watcher, 500ms debounce
 ├── lib/         # API client, config loader
-└── mcp/         # MCP server (stdio): issues, documents, workflows, comments, integrations tools
+└── mcp/         # MCP server (stdio): work items, documents, workflows, comments, integrations tools
 ```
 
 Local files at `~/.conductor/{projectId}/issues/**`. Offline queue at `~/.conductor/sync-queue.json`.
@@ -97,8 +98,8 @@ Local files at `~/.conductor/{projectId}/issues/**`. Offline queue at `~/.conduc
 A **`project` is the single top-level "Workspace"** — "Workspace" is the user-facing name; the table/entity/route stay `project(s)` internally. Membership in `project_members` is the *only* access gate (always check via `ProjectSecurityService`). There is intentionally no org/team layer above projects.
 
 `users` → `project_members` (ADMIN/CREATOR/REVIEWER) → `projects`  
-`issues` → `documents` (GCP-backed, signed URLs)  
-`issue_reviewers` → `reviews` (APPROVED/CHANGES_REQUESTED/COMMENTED)  
+`work_items` → `documents` (GCP-backed, signed URLs); status/type are Workflow-defined strings, not enums  
+`work_item_reviewers` → `reviews` (APPROVED/CHANGES_REQUESTED/COMMENTED)  
 `comments` + `comment_replies` (line-level or selection-based anchors)  
 `project_settings` (Discord webhook URL)  
 `invites`, `api_keys`
