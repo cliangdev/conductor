@@ -21,20 +21,20 @@ Determine which Conductor issue to implement.
 **If an explicit argument was provided**, resolve it based on its format:
 
 - **Display ID** (matches `/^[A-Z]+-\d+$/`, e.g. `COND-42`):
-  - Call `list_issues` and find the issue where `displayId === argument`
+  - Call `list_work_items` and find the issue where `displayId === argument`
   - Store both `issueId` (UUID) and `displayId` (e.g. `COND-42`)
 
 - **Bare number** (matches `/^\d+$/`, e.g. `42`):
-  - Call `list_issues` and find the issue where `sequenceNumber == argument`
+  - Call `list_work_items` and find the issue where `sequenceNumber == argument`
   - Store both `issueId` (UUID) and `displayId`
 
 - **UUID** (fallback, e.g. `cdbc04d1-...`):
   - Use directly as `issueId`
-  - Set `displayId` to the `displayId` field returned from `get_issue`
+  - Set `displayId` to the `displayId` field returned from `get_work_item`
 
 **If no argument was provided**:
 - Check if a Conductor issue was already discussed in the current conversation (issue ID mentioned, PRD content shown, etc.). If yes, use that issue ID.
-- If nothing is inferable, use `list_issues` to fetch recent issues, then use AskUserQuestion:
+- If nothing is inferable, use `list_work_items` to fetch recent issues, then use AskUserQuestion:
   ```json
   {
     "questions": [{
@@ -57,7 +57,7 @@ Load the PRD if not already in context.
 1. **If the PRD content is already present in the conversation** (e.g. user just ran `/conductor:prd`): skip the file read entirely.
 
 2. **If the PRD is not in context**:
-   - Call `get_issue` with the resolved `issueId` — note the returned `absolutePath` (the issue directory on disk); use it for any subsequent `Read` / `Write` / `Edit` calls in this skill (the `Read`, `Write`, and `Edit` tools require absolute paths)
+   - Call `get_work_item` with the resolved `issueId` — note the returned `absolutePath` (the issue directory on disk); use it for any subsequent `Read` / `Write` / `Edit` calls in this skill (the `Read`, `Write`, and `Edit` tools require absolute paths)
    - Read the local file at `{absolutePath}prd.md`
 
 ---
@@ -89,7 +89,7 @@ Use AskUserQuestion with options: **Continue anyway** / **Abort**.
 
 ## Step 3 — Task Breakdown
 
-Check if `{absolutePath}tasks.json` already exists (where `absolutePath` was returned by `get_issue` in Step 2; the Read/Write/Edit tools require absolute paths).
+Check if `{absolutePath}tasks.json` already exists (where `absolutePath` was returned by `get_work_item` in Step 2; the Read/Write/Edit tools require absolute paths).
 
 **If it exists**: use AskUserQuestion:
 ```json
@@ -153,7 +153,7 @@ When uncertain, ask for confirmation before writing.
 
 ### Writing tasks.json
 
-Write the file directly using the Write tool to `{absolutePath}tasks.json` (the absolute issue dir from `get_issue` in Step 2) with this schema:
+Write the file directly using the Write tool to `{absolutePath}tasks.json` (the absolute issue dir from `get_work_item` in Step 2) with this schema:
 
 ```json
 {

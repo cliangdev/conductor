@@ -217,17 +217,22 @@ Present the full PRD and ask via AskUserQuestion:
 
 Call MCP tools in this exact sequence:
 
-1. **Create issue**: `create_issue({type: "PRD", title, description})`
+1. **Resolve the lifecycle Workflow** (discover-then-create — never assume ENGINEERING):
+   `list_workflows({kind: "LIFECYCLE"})`, then pick the Workflow whose allowed `types` include `PRD` (the
+   engineering lifecycle in a default project). Capture its `slug` as `workflow`. If more than one lifecycle
+   Workflow allows `PRD`, use AskUserQuestion to let the user choose which one this PRD belongs to.
+
+2. **Create the Work Item**: `create_work_item({workflow, type: "PRD", title, description})`
    - Receive: `{issueId, displayId, localPath}`
 
-2. **Scaffold document**: `scaffold_document({issueId, filename: "prd.md"})`
+3. **Scaffold document**: `scaffold_document({issueId, filename: "prd.md"})`
    - Receive: `{localPath: ".conductor/issues/{issueId}/prd.md", absolutePath: "/abs/path/to/.conductor/issues/{issueId}/prd.md"}`
 
-3. **Write content**: Use the Write tool with the `absolutePath` from step 2 (Write requires absolute paths) to write the full PRD with YAML frontmatter including the `issueId` from step 1.
+4. **Write content**: Use the Write tool with the `absolutePath` from step 3 (Write requires absolute paths) to write the full PRD with YAML frontmatter including the `issueId` from step 2.
 
-4. **Move to IN_REVIEW** (definition-driven): call `get_available_transitions({issueId})` to confirm `IN_REVIEW` is an available next status from `DRAFT`, then `transition_work_item({issueId, toStatus: "IN_REVIEW"})`, signalling the PRD is ready for team review.
+5. **Move to IN_REVIEW** (definition-driven): call `get_available_transitions({issueId})` to confirm `IN_REVIEW` is an available next status from the Workflow's initial status, then `transition_work_item({issueId, toStatus: "IN_REVIEW"})`, signalling the PRD is ready for team review.
 
-5. **Confirm**: "PRD saved — **{displayId}** is now IN_REVIEW."
+6. **Confirm**: "PRD saved — **{displayId}** is now IN_REVIEW."
 
 Then offer supporting documents via AskUserQuestion:
 > "Would you like to add any supporting documents?"
@@ -241,7 +246,7 @@ Options:
 For each accepted supporting document:
 1. `scaffold_document({issueId, filename: "{doc-filename}"})`
 2. Write the template content (see templates below) using the Write tool with the returned `absolutePath`
-3. **Update the PRD's Supporting Documents section**: Read the saved `prd.md` (use the `absolutePath` returned from step 2 of the main save sequence), replace the placeholder line with a relative link entry (e.g. `- [Architecture](./architecture.md)`), and write it back.
+3. **Update the PRD's Supporting Documents section**: Read the saved `prd.md` (use the `absolutePath` returned from step 3 of the main save sequence), replace the placeholder line with a relative link entry (e.g. `- [Architecture](./architecture.md)`), and write it back.
 
 **UI/UX quality bar for wireframes and HTML mocks:**
 Before writing any UI artifact, recall the design language catalogued in Phase 2a. All wireframes and mocks must:
