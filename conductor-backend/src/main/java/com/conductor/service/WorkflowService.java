@@ -105,6 +105,12 @@ public class WorkflowService {
         def.setYaml(request.getYaml());
         def.setDefinition(toJsonNode(request.getDefinition()));
         def.setEnabled(true);
+        // A lifecycle Workflow is meant to drive a nav area, so surface it in the sidebar by default (mirrors the
+        // seeded ENGINEERING workflow) — otherwise a freshly-authored+published lifecycle silently never appears.
+        // The user can still hide it via PATCH .../workflows/{id}/sidebar. YAML automations stay hidden.
+        if (request.getDefinition() != null) {
+            def.setSidebarEnabled(true);
+        }
         if (request.getYaml() != null && request.getYaml().contains("webhook:")) {
             def.setWebhookToken(java.util.UUID.randomUUID().toString().replace("-", ""));
         }

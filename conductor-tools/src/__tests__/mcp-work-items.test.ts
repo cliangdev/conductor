@@ -6,6 +6,7 @@ vi.mock('../mcp/api.js', () => ({
   apiPost: vi.fn(),
   apiPatch: vi.fn(),
   apiDelete: vi.fn(),
+  isClientError: (err: unknown) => err instanceof Error && /API error 4\d\d\b/.test(err.message),
 }))
 vi.mock('../mcp/queue.js', () => ({
   queueChange: vi.fn(() => 1),
@@ -17,6 +18,7 @@ vi.mock('../mcp/files.js', () => ({
 }))
 
 import { apiGet, apiPost, apiPatch } from '../mcp/api.js'
+import { queueChange } from '../mcp/queue.js'
 import {
   createIssue,
   updateIssue,
@@ -53,6 +55,16 @@ describe('canonical work_item MCP tools target v2', () => {
     )
   })
 
+  it('create_work_item surfaces a permanent 4xx instead of queuing a phantom item', async () => {
+    ;(apiPost as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("API error 400: Type 'BAD' is not allowed by workflow ENGINEERING")
+    )
+    const result = await createWorkItem({ type: 'BAD', title: 'T', workflow: 'ENGINEERING' }, config)
+    expect(result.error).toContain('Work Item not created')
+    expect(result.issueId).toBeUndefined()
+    expect(queueChange).not.toHaveBeenCalled()
+  })
+
   it('update_work_item PATCHes the v2 item', async () => {
     ;(apiPatch as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'w1' })
     await updateWorkItem({ issueId: 'w1', title: 'New' }, config)
@@ -84,10 +96,10 @@ describe('canonical work_item MCP tools target v2', () => {
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/w1', config)
   })
 
-  it('list_work_item_comments stays on the v1 comments sub-resource', async () => {
+  it('list_work_item_comments targets the v2 comments sub-resource', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
     await listWorkItemComments({ issueId: 'w1' }, config)
-    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/issues/w1/comments', config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/w1/comments', config)
   })
 })
 

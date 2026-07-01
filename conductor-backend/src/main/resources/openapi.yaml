@@ -3776,6 +3776,75 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/skills:
+    get:
+      tags: [skills]
+      summary: List bindable skills for a project
+      description: >-
+        Returns the Claude Code skill ids a Workflow definition may bind from a `skill` transition step: the
+        shipped built-ins plus any the project has registered. `builtIn=true` marks a shipped skill. Used by
+        authoring flows to discover (and offer to register) the skills a lifecycle can bind.
+      operationId: listSkills
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Bindable skills
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SkillDto"
+    post:
+      tags: [skills]
+      summary: Register a project-scoped skill
+      description: >-
+        Register a bindable skill id for this project so a Workflow can bind it from a transition step and
+        publish without a backend redeploy. Idempotent on the skill id (re-registering updates label/description).
+      operationId: registerSkill
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterSkillRequest"
+      responses:
+        "200":
+          description: Existing skill registration updated (idempotent re-register)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillDto"
+        "201":
+          description: New skill registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillDto"
+        "422":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/workflows/by-slug/{slug}:
     get:
       tags: [workflows]
@@ -6502,6 +6571,31 @@ components:
         - PUBLISHED
         - DISABLED
 
+    SkillDto:
+      type: object
+      required: [id, builtIn]
+      properties:
+        id:
+          type: string
+          description: Bindable skill id (e.g. conductor:implement or marketing:seo-report).
+        label:
+          type: string
+        description:
+          type: string
+        builtIn:
+          type: boolean
+          description: true = shipped built-in (available to every project); false = registered for this project.
+    RegisterSkillRequest:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          description: Bindable skill id to register (e.g. marketing:seo-report). Idempotent — re-registering updates label/description.
+        label:
+          type: string
+        description:
+          type: string
     WorkflowKind:
       type: string
       description: >-

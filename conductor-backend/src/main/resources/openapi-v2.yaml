@@ -1621,6 +1621,14 @@ components:
         - type
         - title
       properties:
+        workflow:
+          type: string
+          description: >-
+            Required (enforced by the controller, not schema-`required`, so the 400 carries actionable
+            guidance rather than a generic "must not be null"). The lifecycle Workflow definition id (slug,
+            e.g. ENGINEERING) that governs this Work Item — the canonical v2 surface never silently defaults it;
+            discover options via `GET /projects/{projectId}/workflows?lifecycle=true`. (The legacy v1 `/issues`
+            create keeps an ENGINEERING default for back-compat.)
         type:
           type: string
           description: >-
@@ -1631,12 +1639,6 @@ components:
           maxLength: 255
         description:
           type: string
-        workflow:
-          type: string
-          description: >-
-            Optional Workflow definition id (slug, e.g. ENGINEERING) this Work Item runs
-            on. When omitted, defaults to the project's Engineering Workflow. `type` is
-            validated against the chosen Workflow's allowed types.
 
     PatchWorkItemRequest:
       type: object

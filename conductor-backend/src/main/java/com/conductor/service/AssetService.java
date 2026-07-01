@@ -103,22 +103,33 @@ public class AssetService {
 
     /**
      * System path: record a {@code github_pr} Asset when a PR merges (called from
-     * {@code WorkItemService.completeFromPullRequest}). No caller/membership check; idempotent on (issue, type, ref).
+     * {@code WorkItemService.completeFromPullRequest}). Thin engineering-specific wrapper over the generic
+     * {@link #recordAsset} so non-GitHub lifecycles can auto-record their own asset types the same way.
      */
     @Transactional
     public void recordPullRequestAsset(WorkItem issue, String pullRequestUrl) {
-        if (pullRequestUrl == null || pullRequestUrl.isBlank()) {
+        recordAsset(issue, "github_pr", pullRequestUrl, "Pull Request", "link");
+    }
+
+    /**
+     * System path: record an arbitrary produced Asset on a Work Item (no caller/membership check). Idempotent
+     * on {@code (issue, type, ref)}. Domain-agnostic — the type is passed in, not hardcoded — so any lifecycle
+     * (marketing, docs, …) can auto-record its outputs, not just GitHub PRs.
+     */
+    @Transactional
+    public void recordAsset(WorkItem issue, String type, String ref, String label, String kind) {
+        if (ref == null || ref.isBlank()) {
             return;
         }
-        if (assetRepository.existsByWorkItemIdAndTypeAndRef(issue.getId(), "github_pr", pullRequestUrl)) {
+        if (assetRepository.existsByWorkItemIdAndTypeAndRef(issue.getId(), type, ref)) {
             return;
         }
         Asset asset = new Asset();
         asset.setWorkItem(issue);
-        asset.setType("github_pr");
-        asset.setLabel("Pull Request");
-        asset.setKind("link");
-        asset.setRef(pullRequestUrl);
+        asset.setType(type);
+        asset.setLabel(label);
+        asset.setKind(kind);
+        asset.setRef(ref);
         asset.setDone(true);
         assetRepository.save(asset);
     }

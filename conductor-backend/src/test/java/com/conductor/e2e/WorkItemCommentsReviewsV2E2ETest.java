@@ -74,7 +74,7 @@ class WorkItemCommentsReviewsV2E2ETest extends AbstractE2ETest {
         var createResp = rest.exchange(
                 url("/api/v2/projects/" + projectId + "/work-items"),
                 HttpMethod.POST,
-                new HttpEntity<>(Map.of("title", "V2 Sub-resource WI", "type", "PRD"), adminHeaders),
+                new HttpEntity<>(Map.of("title", "V2 Sub-resource WI", "type", "PRD", "workflow", "ENGINEERING"), adminHeaders),
                 Map.class);
         assertThat(createResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         String workItemId = (String) createResp.getBody().get("id");

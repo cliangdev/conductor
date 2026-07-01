@@ -5,6 +5,7 @@ import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.UnprocessableEntityException;
+import com.conductor.repository.ProjectSkillRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.lifecycle.SkillRegistry;
@@ -43,7 +44,8 @@ class WorkflowDefinitionLifecycleServiceTest {
         repository = Mockito.mock(WorkflowDefinitionRepository.class);
         versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
         security = Mockito.mock(ProjectSecurityService.class);
-        WorkflowDefinitionValidator validator = new WorkflowDefinitionValidator(new SkillRegistry(mapper));
+        WorkflowDefinitionValidator validator =
+                new WorkflowDefinitionValidator(new SkillRegistry(mapper, Mockito.mock(ProjectSkillRepository.class)));
         service = new WorkflowDefinitionLifecycleService(repository, versionRepository, security, validator);
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }

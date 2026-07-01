@@ -9,8 +9,41 @@ import { queueChange } from '../queue.js'
  * so the same tools work for any Workflow. Never generate per-workflow tools.
  */
 
-export async function listWorkflows(_params: Record<string, never>, config: Config): Promise<unknown[]> {
-  return apiGet<unknown[]>(`/api/v1/projects/${config.projectId}/workflows`, config)
+/**
+ * Discovery entry point. Returns each Workflow flattened to the vocabulary an agent needs to pick one:
+ * { slug, name, area, noun, kind, state, version, workflowId, types, statuses } — lifting `types`/`statuses`
+ * out of the nested `definition` JSON so the agent never parses a statechart to answer "which Workflow?".
+ * Filter by `kind` (LIFECYCLE = statechart that governs Work Items; AUTOMATION = YAML run-automation).
+ */
+export async function listWorkflows(
+  params: { kind?: 'LIFECYCLE' | 'AUTOMATION' },
+  config: Config
+): Promise<unknown[]> {
+  // Push the kind filter server-side (the endpoint exposes ?lifecycle) instead of fetching all + filtering here.
+  const query = new URLSearchParams()
+  if (params.kind === 'LIFECYCLE') query.set('lifecycle', 'true')
+  else if (params.kind === 'AUTOMATION') query.set('lifecycle', 'false')
+  const qs = query.toString()
+  const raw = await apiGet<Record<string, unknown>[]>(
+    `/api/v1/projects/${config.projectId}/workflows${qs ? `?${qs}` : ''}`,
+    config
+  )
+  const list = Array.isArray(raw) ? raw : []
+  return list.map((w) => {
+    const def = (w['definition'] as Record<string, unknown> | undefined) ?? undefined
+    return {
+      slug: w['slug'],
+      name: w['name'],
+      area: w['area'],
+      noun: w['noun'],
+      kind: w['kind'],
+      state: w['state'],
+      version: w['version'],
+      workflowId: w['id'],
+      types: def?.['types'] ?? [],
+      statuses: def?.['statuses'] ?? [],
+    }
+  })
 }
 
 export async function getAvailableTransitions(
@@ -18,7 +51,7 @@ export async function getAvailableTransitions(
   config: Config
 ): Promise<Record<string, unknown>> {
   return apiGet<Record<string, unknown>>(
-    `/api/v1/projects/${config.projectId}/issues/${params.issueId}/available-transitions`,
+    `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/available-transitions`,
     config
   )
 }
@@ -27,7 +60,7 @@ export async function transitionWorkItem(
   params: { issueId: string; toStatus: string },
   config: Config
 ): Promise<Record<string, unknown>> {
-  const path = `/api/v1/projects/${config.projectId}/issues/${params.issueId}`
+  const path = `/api/v2/projects/${config.projectId}/work-items/${params.issueId}`
   const body = { status: params.toStatus }
   try {
     return await apiPatch<Record<string, unknown>>(path, body, config)
@@ -46,7 +79,7 @@ export async function recordAsset(
   params: { issueId: string; type: string; kind: string; ref: string; label?: string; done?: boolean },
   config: Config
 ): Promise<Record<string, unknown>> {
-  const path = `/api/v1/projects/${config.projectId}/issues/${params.issueId}/assets`
+  const path = `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/assets`
   const body = {
     type: params.type,
     kind: params.kind,
@@ -166,7 +199,7 @@ export async function reportStepRun(
   config: Config
 ): Promise<Record<string, unknown>> {
   const { issueId, ...rest } = params
-  const path = `/api/v1/projects/${config.projectId}/issues/${issueId}/step-runs`
+  const path = `/api/v2/projects/${config.projectId}/work-items/${issueId}/step-runs`
   try {
     return await apiPost<Record<string, unknown>>(path, rest, config)
   } catch (err) {

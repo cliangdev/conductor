@@ -54,7 +54,7 @@ export function ReviewSubmissionForm({
     setError(null)
     try {
       await apiPost(
-        `/api/v1/projects/${projectId}/issues/${issueId}/reviews`,
+        `/api/v2/projects/${projectId}/work-items/${issueId}/reviews`,
         { verdict: selectedVerdict, body: body || undefined },
         token
       )

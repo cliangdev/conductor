@@ -69,7 +69,7 @@ export function StatusDropdown({
     if (userRole === 'REVIEWER' || !token) return
     let cancelled = false
     apiGet<AvailableTransitionsResponse>(
-      `/api/v1/projects/${projectId}/issues/${issueId}/available-transitions`,
+      `/api/v2/projects/${projectId}/work-items/${issueId}/available-transitions`,
       token
     )
       .then((res) => {
@@ -92,7 +92,7 @@ export function StatusDropdown({
     setLoading(true)
     try {
       await apiPatch(
-        `/api/v1/projects/${projectId}/issues/${issueId}`,
+        `/api/v2/projects/${projectId}/work-items/${issueId}`,
         { status: newStatus },
         token
       )

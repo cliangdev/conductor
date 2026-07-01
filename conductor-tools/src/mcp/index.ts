@@ -32,21 +32,22 @@ import {
 } from './tools/workflows.js'
 import { listIntegrationTools } from './tools/integrations.js'
 import { listAgents } from './tools/agents.js'
+import { listSkills, registerSkill } from './tools/skills.js'
 
 const TOOLS = [
   // --- Canonical Work Item tools (v2 /work-items surface) ---
   {
     name: 'create_work_item',
-    description: 'Create a new Work Item in the project. Canonical tool (targets the v2 work-items API).',
+    description: 'Create a new Work Item in the project (targets the v2 work-items API). Discover-then-create: call list_workflows({kind:"LIFECYCLE"}) first, pick the Workflow whose vocabulary fits (its area + allowed types), then pass that Workflow slug explicitly — do not assume ENGINEERING.',
     inputSchema: {
       type: 'object',
       properties: {
-        type: { type: 'string', description: 'Work Item type, validated against the Workflow (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
+        workflow: { type: 'string', description: 'Lifecycle Workflow slug that governs this Work Item (required). Discover with list_workflows({kind:"LIFECYCLE"}).' },
+        type: { type: 'string', description: 'Work Item type, validated against the chosen Workflow\'s allowed types (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
         title: { type: 'string', description: 'Work Item title' },
         description: { type: 'string', description: 'Work Item description (optional)' },
-        workflow: { type: 'string', description: 'Workflow slug to run on (optional; defaults to ENGINEERING). Use list_workflows to discover.' },
       },
-      required: ['type', 'title'],
+      required: ['workflow', 'type', 'title'],
     },
   },
   {
@@ -216,8 +217,13 @@ const TOOLS = [
   },
   {
     name: 'list_workflows',
-    description: 'List the project\'s Workflows (slug, name, area, display noun, allowed types). Discovery entry point: resolve a natural-language workflow name to its slug before creating a Work Item.',
-    inputSchema: { type: 'object', properties: {} },
+    description: 'List the project\'s Workflows, each flattened to {slug, name, area, noun, kind, state, version, workflowId, types, statuses}. Discovery entry point: filter by kind=LIFECYCLE and match the user\'s intent to a Workflow (its area + allowed types) to pick the slug for create_work_item; kind=AUTOMATION lists YAML run-automations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['LIFECYCLE', 'AUTOMATION'], description: 'Filter by Workflow kind (optional). LIFECYCLE = statechart governing Work Items; AUTOMATION = YAML run-automation.' },
+      },
+    },
   },
   {
     name: 'get_available_transitions',
@@ -265,6 +271,24 @@ const TOOLS = [
     name: 'list_agents',
     description: 'List the project\'s named AI Agents (id, slug, provider, model, state). Discovery for workflow authoring: resolve an agent name to its slug before referencing it from a workflow agent step.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'list_skills',
+    description: 'List the Claude Code skills a lifecycle Workflow may bind from a `skill` transition step: shipped built-ins (builtIn=true) plus skills this project has registered. Call before binding a skill in a statechart to confirm it is registered — Publish rejects an unregistered skill.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'register_skill',
+    description: 'Register a project-scoped skill id so a lifecycle Workflow can bind it from a transition step and publish without a backend redeploy. Idempotent on the skill id. Use for a new domain (e.g. marketing:seo-report) whose skill is not a shipped built-in.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        skillId: { type: 'string', description: 'Bindable skill id to register (e.g. marketing:seo-report)' },
+        label: { type: 'string', description: 'Human-readable label (optional)' },
+        description: { type: 'string', description: 'What the skill does (optional)' },
+      },
+      required: ['skillId'],
+    },
   },
   {
     name: 'create_workflow',
@@ -452,12 +476,19 @@ export async function runMcpServer(): Promise<void> {
           return successResponse(result)
         }
         case 'create_work_item': {
+          const workflow = params['workflow'] as string | undefined
+          if (!workflow) {
+            return errorResponse(
+              'create_work_item requires an explicit `workflow` slug. Call list_workflows({kind:"LIFECYCLE"}) ' +
+                'and pass the slug of the Workflow that governs this Work Item.'
+            )
+          }
           const result = await createWorkItem(
             {
+              workflow,
               type: params['type'] as string,
               title: params['title'] as string,
               description: params['description'] as string | undefined,
-              workflow: params['workflow'] as string | undefined,
             },
             config
           )
@@ -467,10 +498,30 @@ export async function runMcpServer(): Promise<void> {
           return successResponse(await listIntegrationTools({}, config))
         }
         case 'list_workflows': {
-          return successResponse(await listWorkflows({}, config))
+          return successResponse(
+            await listWorkflows(
+              { kind: params['kind'] as 'LIFECYCLE' | 'AUTOMATION' | undefined },
+              config
+            )
+          )
         }
         case 'list_agents': {
           return successResponse(await listAgents({}, config))
+        }
+        case 'list_skills': {
+          return successResponse(await listSkills({}, config))
+        }
+        case 'register_skill': {
+          return successResponse(
+            await registerSkill(
+              {
+                skillId: params['skillId'] as string,
+                label: params['label'] as string | undefined,
+                description: params['description'] as string | undefined,
+              },
+              config
+            )
+          )
         }
         case 'create_workflow': {
           return successResponse(

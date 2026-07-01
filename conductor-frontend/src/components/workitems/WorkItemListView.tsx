@@ -133,7 +133,7 @@ function AssigneeCell({
     setSaving(true)
     try {
       await apiPatch(
-        `/api/v1/projects/${projectId}/issues/${issueId}`,
+        `/api/v2/projects/${projectId}/work-items/${issueId}`,
         { assigneeId: member ? member.userId : '' },
         token
       )
@@ -216,13 +216,13 @@ function ReviewerCell({
     try {
       if (assignedIds.has(member.userId)) {
         await apiDelete(
-          `/api/v1/projects/${projectId}/issues/${issueId}/reviewers/${member.userId}`,
+          `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers/${member.userId}`,
           token
         )
         onChanged(reviewers.filter((r) => r.userId !== member.userId))
       } else {
         await apiPost(
-          `/api/v1/projects/${projectId}/issues/${issueId}/reviewers`,
+          `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers`,
           { userId: member.userId },
           token
         )
@@ -378,7 +378,7 @@ export function WorkItemListView({
       try {
         const [issueData, memberData] = await Promise.all([
           // Always workflow-scoped — this page renders exactly one Workflow's Work Items.
-          apiGet<IssueWithReviewers[]>(`/api/v1/projects/${projectId}/issues?workflow=${slug}`, accessToken!),
+          apiGet<IssueWithReviewers[]>(`/api/v2/projects/${projectId}/work-items?workflow=${slug}`, accessToken!),
           // Shared cache: deduplicates the concurrent fetch from PermissionsContext.
           fetchMembersCached(projectId, accessToken!),
         ])
@@ -393,7 +393,7 @@ export function WorkItemListView({
         const reviewerResults = await Promise.allSettled(
           issueData.map((issue) =>
             apiGet<IssueReviewer[]>(
-              `/api/v1/projects/${projectId}/issues/${issue.id}/reviewers`,
+              `/api/v2/projects/${projectId}/work-items/${issue.id}/reviewers`,
               accessToken!
             )
           )

@@ -43,7 +43,7 @@ export function CommentableDocument({
   commentApiBasePath,
 }: Props) {
   const basePath =
-    commentApiBasePath ?? `/api/v1/projects/${projectId}/issues/${issueId}/comments`
+    commentApiBasePath ?? `/api/v2/projects/${projectId}/work-items/${issueId}/comments`
   const [popover, setPopover] = useState<PopoverState | null>(null)
 
   const lines = content.split('\n')

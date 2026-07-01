@@ -44,7 +44,7 @@ class WorkItemAssetsV2E2ETest extends AbstractE2ETest {
 
         // Create a Work Item via v2.
         var createResp = rest.exchange(url("/api/v2/projects/" + projectId + "/work-items"), HttpMethod.POST,
-                new HttpEntity<>(Map.of("title", "V2 Work Item", "type", "PRD"), authHeaders), Map.class);
+                new HttpEntity<>(Map.of("title", "V2 Work Item", "type", "PRD", "workflow", "ENGINEERING"), authHeaders), Map.class);
         assertThat(createResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         String workItemId = (String) createResp.getBody().get("id");
         assertThat(workItemId).isNotBlank();

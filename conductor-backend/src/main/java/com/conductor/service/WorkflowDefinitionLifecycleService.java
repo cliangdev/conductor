@@ -77,7 +77,7 @@ public class WorkflowDefinitionLifecycleService {
         if (hasStatechart) {
             // Slug uniqueness within a project is enforced at create/update (WorkflowService) and by a DB
             // unique index, so publish only needs to validate the definition itself.
-            WorkflowValidationResult result = validator.validate(definition.getDefinition());
+            WorkflowValidationResult result = validator.validate(projectId, definition.getDefinition());
             if (result.hasErrors()) {
                 throw new UnprocessableEntityException(
                         "Workflow definition is invalid: " + String.join("; ", result.getErrors()));

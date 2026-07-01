@@ -466,7 +466,7 @@ describe('installPluginAssets', () => {
     expect(content).toContain('Phase 2')
     expect(content).toContain('Phase 3')
     expect(content).toContain('Phase 4')
-    expect(content).toContain('create_issue')
+    expect(content).toContain('create_work_item')
     expect(content).toContain('scaffold_document')
   })
 })

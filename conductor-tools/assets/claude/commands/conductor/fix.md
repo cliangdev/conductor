@@ -34,11 +34,11 @@ Detect the active Conductor PR branch and verify the working tree is clean befor
 
    Capture `prNumber` (`.number`) and `prUrl` (`.url`).
 
-4. **Resolve issueId**: call `list_issues` and find the issue where `displayId` matches the parsed value. Capture `issueId` (UUID).
+4. **Resolve issueId**: call `list_work_items` and find the issue where `displayId` matches the parsed value. Capture `issueId` (UUID).
    - If no match → halt:
      > Error: no Conductor issue found with displayId `{displayId}`. Verify the project config and retry.
 
-5. **Load issue**: call `get_issue(issueId)` — capture `absolutePath` (the issue directory on disk, used for all subsequent Read/Write/Edit calls) and `status`.
+5. **Load issue**: call `get_work_item(issueId)` — capture `absolutePath` (the issue directory on disk, used for all subsequent Read/Write/Edit calls) and `status`.
 
 6. **Check working tree**: run `git status --porcelain`
    - If output is non-empty, use AskUserQuestion:
@@ -72,24 +72,27 @@ Detect the active Conductor PR branch and verify the working tree is clean befor
 
 ## Step 2 — Issue Status Check
 
-Transition the Conductor issue to `IN_PROGRESS` before investigation begins.
+Move the Work Item back to `IN_PROGRESS` before investigation begins — **driven by the Workflow definition**,
+not a hardcoded graph, so this works for any lifecycle (not only Engineering).
 
 Based on the `status` captured in Step 1:
 
 | Current status | Action |
 |---|---|
-| `CODE_REVIEW` | Call `set_issue_status(issueId, "IN_PROGRESS")` |
 | `IN_PROGRESS` | Already correct — no-op, proceed |
-| Any other status | Warn and ask user |
+| Anything else | Walk back to `IN_PROGRESS` via the definition (below) |
 
-For any other status, use AskUserQuestion:
+To move to `IN_PROGRESS`: call `get_available_transitions({issueId})` and pick the transition whose `toStatus`
+is `IN_PROGRESS` (from `CODE_REVIEW` this is the normal "reopen" edge). Then
+`transition_work_item({issueId, toStatus: "IN_PROGRESS"})`. If `IN_PROGRESS` is **not** among the available
+transitions (unexpected state, or a Workflow with no reopen edge), use AskUserQuestion:
 ```json
 {
   "questions": [{
-    "question": "Issue {displayId} is currently `{status}` — not the expected `CODE_REVIEW`. Continue anyway?",
-    "header": "Unexpected Issue Status",
+    "question": "Work Item {displayId} is `{status}` and has no available transition to IN_PROGRESS. Continue anyway?",
+    "header": "Unexpected Status",
     "options": [
-      {"label": "Continue anyway", "description": "Proceed with the fix session"},
+      {"label": "Continue anyway", "description": "Proceed with the fix session without changing status"},
       {"label": "Abort", "description": "Stop here without changes"}
     ],
     "multiSelect": false
@@ -97,7 +100,7 @@ For any other status, use AskUserQuestion:
 }
 ```
 
-After calling `set_issue_status`, check the response for a `warning` field. If present:
+After calling `transition_work_item`, check the response for a `warning` field. If present:
 > ⚠️ Status update failed (queued): {warning}
 > Run `conductor start` to drain the sync queue, then verify the status in the UI before continuing.
 
@@ -271,10 +274,12 @@ Show the PR URL to the user after a successful push.
 
 ## Step 6 — Issue Status Round-Trip
 
-After the push succeeds, transition the issue back to `CODE_REVIEW`:
+After the push succeeds, move the Work Item back to `CODE_REVIEW` — definition-driven, so confirm the
+transition is available first:
 
 ```
-set_issue_status(issueId, "CODE_REVIEW")
+get_available_transitions({issueId})           // expect CODE_REVIEW among the options from IN_PROGRESS
+transition_work_item({issueId, toStatus: "CODE_REVIEW"})
 ```
 
 Check the response for a `warning` field:

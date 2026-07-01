@@ -2,7 +2,7 @@
 
 // COND-22: the generic Work Item detail view, extracted from the legacy /issues/[issueId] page so it can
 // be rendered under the workflow-scoped /work/[slug]/[displayId] route. It is keyed by the Work Item UUID
-// (all sub-resource fetches stay on the unchanged /api/v1/.../issues/{workItemId}/... endpoints); the
+// (all sub-resource fetches use the canonical /api/v2/.../work-items/{workItemId}/... endpoints); the
 // bound Workflow slug arrives as a prop (no more useParams/DEFAULT_WORKFLOW_SLUG fallback).
 
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -139,7 +139,7 @@ export function WorkItemDetailView({
   const fetchDocuments = useCallback(async () => {
     if (!accessToken) return
     const docs = await apiGet<Document[]>(
-      `/api/v1/projects/${projectId}/issues/${issueId}/documents`,
+      `/api/v2/projects/${projectId}/work-items/${issueId}/documents`,
       accessToken
     )
     setDocuments(docs.filter((d) => d.filename !== 'tasks.json'))
@@ -154,7 +154,7 @@ export function WorkItemDetailView({
     if (!accessToken) return
     try {
       const data = await apiGet<Comment[]>(
-        `/api/v1/projects/${projectId}/issues/${issueId}/comments`,
+        `/api/v2/projects/${projectId}/work-items/${issueId}/comments`,
         accessToken
       )
       setComments(data)
@@ -166,7 +166,7 @@ export function WorkItemDetailView({
   const fetchReviewers = useCallback(async () => {
     if (!accessToken) return
     const data = await apiGet<Reviewer[]>(
-      `/api/v1/projects/${projectId}/issues/${issueId}/reviewers`,
+      `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers`,
       accessToken
     )
     setReviewers(data)
@@ -176,7 +176,7 @@ export function WorkItemDetailView({
     if (!accessToken) return
     try {
       const data = await apiGet<Review[]>(
-        `/api/v1/projects/${projectId}/issues/${issueId}/reviews`,
+        `/api/v2/projects/${projectId}/work-items/${issueId}/reviews`,
         accessToken
       )
       setReviews(data)
@@ -189,7 +189,7 @@ export function WorkItemDetailView({
     if (!accessToken) return
     try {
       const data = await apiGet<WorkItemAsset[]>(
-        `/api/v1/projects/${projectId}/issues/${issueId}/assets`,
+        `/api/v2/projects/${projectId}/work-items/${issueId}/assets`,
         accessToken
       )
       setAssets(data)
@@ -204,9 +204,9 @@ export function WorkItemDetailView({
     async function fetchAll() {
       try {
         const [issueData, reviewerData] = await Promise.all([
-          apiGet<Issue>(`/api/v1/projects/${projectId}/issues/${issueId}`, accessToken!),
+          apiGet<Issue>(`/api/v2/projects/${projectId}/work-items/${issueId}`, accessToken!),
           apiGet<Reviewer[]>(
-            `/api/v1/projects/${projectId}/issues/${issueId}/reviewers`,
+            `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers`,
             accessToken!
           ),
         ])
@@ -274,7 +274,7 @@ export function WorkItemDetailView({
     if (!accessToken) return
     try {
       await apiDelete(
-        `/api/v1/projects/${projectId}/issues/${issueId}/reviewers/${userId}`,
+        `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers/${userId}`,
         accessToken
       )
       await fetchReviewers()
@@ -288,7 +288,7 @@ export function WorkItemDetailView({
     setAssigning(true)
     try {
       await apiPost(
-        `/api/v1/projects/${projectId}/issues/${issueId}/reviewers`,
+        `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers`,
         { userId },
         accessToken
       )
