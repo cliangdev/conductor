@@ -39,6 +39,7 @@ paths:
       operationId: createWorkItem
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - name: projectId
           in: path
@@ -84,6 +85,7 @@ paths:
       operationId: listWorkItems
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - name: projectId
           in: path
@@ -219,6 +221,7 @@ paths:
       operationId: patchWorkItem
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - name: projectId
           in: path
