@@ -146,7 +146,7 @@ public class WorkItemService {
 
         if (statusChanged) {
             // PR link (if any) lives in github_pr Assets now, not on the Work Item; surfaced on the merge event.
-            dispatchStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), null);
+            publishStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), null);
         }
 
         return workItem;
@@ -260,7 +260,7 @@ public class WorkItemService {
         assetService.recordPullRequestAsset(workItem, pullRequestUrl);
 
         if (applied.isPresent()) {
-            dispatchStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), pullRequestUrl);
+            publishStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), pullRequestUrl);
         } else {
             log.info("PR merge for {}-{}: workflow {} declares no '{}' transition from status {}; "
                             + "recorded PR asset only, status unchanged",
@@ -272,10 +272,11 @@ public class WorkItemService {
     /**
      * Fire the single, Workflow-agnostic {@link EventType#WORK_ITEM_STATUS_CHANGED} event, enriched with the
      * Workflow's {@code noun} and the target status's display label/category so the notification provider can
-     * format it for any Workflow without hardcoded status names.
+     * format it for any Workflow without hardcoded status names. Public so the {@code LifecycleTriggerDispatcher}
+     * publishes an identically-enriched event per cascade hop rather than duplicating the enrichment.
      */
-    private void dispatchStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,
-                                       String prUrl) {
+    public void publishStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,
+                                     String prUrl) {
         Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
         Map<String, String> meta = new HashMap<>();
         meta.put("workItemId", workItem.getId());

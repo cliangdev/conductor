@@ -44,9 +44,11 @@ public class WorkflowDefinitionValidator {
 
     private final JsonSchema schema;
     private final SkillRegistry skillRegistry;
+    private final SystemTriggerRegistry systemTriggerRegistry;
 
-    public WorkflowDefinitionValidator(SkillRegistry skillRegistry) {
+    public WorkflowDefinitionValidator(SkillRegistry skillRegistry, SystemTriggerRegistry systemTriggerRegistry) {
         this.skillRegistry = skillRegistry;
+        this.systemTriggerRegistry = systemTriggerRegistry;
         this.schema = loadSchema();
     }
 
@@ -105,7 +107,9 @@ public class WorkflowDefinitionValidator {
             errors.add("at least one status must be terminal");
         }
 
-        // Edge endpoints must reference existing statuses; per-status transition cap.
+        // Edge endpoints must reference existing statuses; per-status transition cap; declared system trigger
+        // must be registered (an open-string schema shape gated here against the SystemTriggerRegistry, so a
+        // new trigger is a data+dispatch change, not a schema enum edit).
         Map<String, Integer> outDegree = new HashMap<>();
         for (StatechartTransition t : sc.transitions()) {
             if (!statusIds.contains(t.from())) {
@@ -113,6 +117,10 @@ public class WorkflowDefinitionValidator {
             }
             if (!statusIds.contains(t.to())) {
                 errors.add("transition references unknown 'to' status: " + t.to());
+            }
+            if (t.trigger() != null && !systemTriggerRegistry.isRegistered(t.trigger())) {
+                errors.add("transition " + t.from() + " -> " + t.to() + " uses unknown system trigger '"
+                        + t.trigger() + "'");
             }
             outDegree.merge(t.from(), 1, Integer::sum);
         }

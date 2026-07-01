@@ -2,6 +2,7 @@ package com.conductor.notification;
 
 import com.conductor.entity.NotificationGroupConfig;
 import com.conductor.repository.NotificationGroupConfigRepository;
+import com.conductor.service.LifecycleTriggerDispatcher;
 import com.conductor.workflow.WorkflowTriggerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,6 +24,10 @@ public class NotificationDispatcher {
     @Autowired
     private WorkflowTriggerService workflowTriggerService;
 
+    @Lazy
+    @Autowired
+    private LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
+
     public NotificationDispatcher(NotificationGroupConfigRepository groupConfigRepository,
                                   DiscordProvider discordProvider) {
         this.groupConfigRepository = groupConfigRepository;
@@ -36,6 +41,12 @@ public class NotificationDispatcher {
             workflowTriggerService.onConductorEvent(event);
         } catch (Exception e) {
             log.warn("Workflow trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
+        }
+
+        try {
+            lifecycleTriggerDispatcher.onConductorEvent(event);
+        } catch (Exception e) {
+            log.warn("Lifecycle trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
         }
     }
 

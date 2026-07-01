@@ -14,6 +14,7 @@ import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.service.view.AvailableTransitionsView;
 import com.conductor.workflow.lifecycle.StatechartTransition;
+import com.conductor.workflow.lifecycle.SystemTriggerRegistry;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,6 +47,7 @@ class WorkItemWorkflowServiceTest {
     private ProjectSecurityService projectSecurityService;
     private ProjectMemberRepository projectMemberRepository;
     private ReviewRepository reviewRepository;
+    private WorkflowDefinitionVersionRepository versionRepository;
     private WorkItemWorkflowService service;
 
     @BeforeEach
@@ -56,15 +58,15 @@ class WorkItemWorkflowServiceTest {
         reviewRepository = Mockito.mock(ReviewRepository.class);
         // Resolution is DB-only: back the resolver with a mock version repo returning the seeded ENGINEERING
         // published snapshot (v1) for both latest and version-pinned lookups.
-        WorkflowDefinitionVersionRepository versionRepository =
-                Mockito.mock(WorkflowDefinitionVersionRepository.class);
+        versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
         WorkflowDefinitionVersion snapshot = engineeringSnapshot();
         when(versionRepository.findLatestPublished(any(), eq("ENGINEERING"))).thenReturn(Optional.of(snapshot));
         when(versionRepository.findByProjectSlugAndVersion(any(), eq("ENGINEERING"), eq(1)))
                 .thenReturn(Optional.of(snapshot));
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository);
+        SystemTriggerRegistry systemTriggerRegistry = new SystemTriggerRegistry(new ObjectMapper());
         service = new WorkItemWorkflowService(workItemRepository, projectSecurityService, projectMemberRepository,
-                reviewRepository, resolver);
+                reviewRepository, resolver, systemTriggerRegistry);
     }
 
     private WorkflowDefinitionVersion engineeringSnapshot() {
@@ -189,6 +191,66 @@ class WorkItemWorkflowServiceTest {
 
         assertThat(applied).isEmpty();
         assertThat(workItem.getCurrentStatus()).isEqualTo("DRAFT");
+    }
+
+    // A custom lifecycle whose REVIEW -> DONE edge is review-gated AND fires on the status_changed trigger,
+    // so we can prove status_changed (unlike pr_merged) HONORS the Review gate.
+    private static final String STATUS_CHANGED_LIFECYCLE = """
+            {
+              "schemaVersion": 1, "id": "LC_TEST", "area": "LC", "version": 1, "state": "PUBLISHED",
+              "noun": "Item", "default_view": "list", "types": ["TASK"],
+              "statuses": [
+                {"id": "OPEN", "category": "open", "initial": true},
+                {"id": "REVIEW", "category": "in_progress"},
+                {"id": "DONE", "category": "terminal", "terminal": true}
+              ],
+              "transitions": [
+                {"from": "OPEN", "to": "REVIEW", "label": "Start"},
+                {"from": "REVIEW", "to": "DONE", "label": "Auto-finish", "trigger": "status_changed",
+                 "requiresReview": true, "reviewerRole": "REVIEWER", "reviewOutcomes": ["APPROVED"]}
+              ]
+            }
+            """;
+
+    private WorkItem lcTestWorkItemAtReview() {
+        WorkflowDefinitionVersion snapshot = new WorkflowDefinitionVersion();
+        snapshot.setVersion(1);
+        try {
+            snapshot.setDefinition(new ObjectMapper().readTree(STATUS_CHANGED_LIFECYCLE));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        when(versionRepository.findLatestPublished(any(), eq("LC_TEST"))).thenReturn(Optional.of(snapshot));
+        when(versionRepository.findByProjectSlugAndVersion(any(), eq("LC_TEST"), eq(1)))
+                .thenReturn(Optional.of(snapshot));
+        WorkItem workItem = workItemAt("REVIEW");
+        workItem.setWorkflow("LC_TEST");
+        return workItem;
+    }
+
+    @Test
+    void statusChangedTriggerHonorsReviewGateAndDoesNotAdvanceWhenUnsatisfied() {
+        WorkItem workItem = lcTestWorkItemAtReview();
+        // No approved REVIEWER review stubbed -> the gate is unsatisfied, so status_changed must NOT advance.
+        Optional<StatechartTransition> applied = service.applySystemTransition(
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_STATUS_CHANGED);
+
+        assertThat(applied).isEmpty();
+        assertThat(workItem.getCurrentStatus()).isEqualTo("REVIEW");
+        verify(reviewRepository).existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER");
+    }
+
+    @Test
+    void statusChangedTriggerAdvancesOnceReviewGateIsSatisfied() {
+        WorkItem workItem = lcTestWorkItemAtReview();
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER"))
+                .thenReturn(true);
+
+        Optional<StatechartTransition> applied = service.applySystemTransition(
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_STATUS_CHANGED);
+
+        assertThat(applied).isPresent();
+        assertThat(workItem.getCurrentStatus()).isEqualTo("DONE");
     }
 
     // --- availableTransitions (doer projection) ---

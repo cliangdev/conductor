@@ -11,6 +11,7 @@ import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
+import com.conductor.workflow.lifecycle.SystemTriggerRegistry;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
@@ -40,22 +41,28 @@ public class WorkItemWorkflowService {
     /** System trigger fired when a linked GitHub pull request merges. */
     public static final String TRIGGER_PR_MERGED = "pr_merged";
 
+    /** System trigger fired on every Work Item status change (the WORK_ITEM_STATUS_CHANGED event). */
+    public static final String TRIGGER_STATUS_CHANGED = "status_changed";
+
     private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
     private final ReviewRepository reviewRepository;
     private final WorkflowDefinitionResolver resolver;
+    private final SystemTriggerRegistry systemTriggerRegistry;
 
     public WorkItemWorkflowService(WorkItemRepository workItemRepository,
                                    ProjectSecurityService projectSecurityService,
                                    ProjectMemberRepository projectMemberRepository,
                                    ReviewRepository reviewRepository,
-                                   WorkflowDefinitionResolver resolver) {
+                                   WorkflowDefinitionResolver resolver,
+                                   SystemTriggerRegistry systemTriggerRegistry) {
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
         this.reviewRepository = reviewRepository;
         this.resolver = resolver;
+        this.systemTriggerRegistry = systemTriggerRegistry;
     }
 
     /** The Workflow's initial status id (e.g. {@code DRAFT}), used to stamp a freshly created Work Item. */
@@ -145,18 +152,29 @@ public class WorkItemWorkflowService {
     }
 
     /**
-     * Apply a system-initiated transition (e.g. a merged GitHub PR): find the Workflow edge out of the
-     * Work Item's current status declared for {@code trigger}, advance {@code current_status} to its target, and
-     * return the applied transition. The Review gate and caller-role checks are intentionally NOT applied —
-     * the external event is the authority. Returns empty when the bound Workflow declares no such edge from
-     * the current status (the caller then records side-effects only, with no status change). Does not persist;
-     * the caller's transaction saves.
+     * Apply a system-initiated transition (e.g. a merged GitHub PR, or an internal status-change event): find
+     * the Workflow edge out of the Work Item's current status declared for {@code trigger}, advance
+     * {@code current_status} to its target, and return the applied transition. Caller-role checks are never
+     * applied (there is no human actor). The Review gate is honored <em>selectively</em> per the
+     * {@link SystemTriggerRegistry}: {@code pr_merged} bypasses it (the merge is the authority), while a trigger
+     * that does not bypass (e.g. {@code status_changed}) leaves a review-gated edge un-fired until its Review is
+     * satisfied. Returns empty when the bound Workflow declares no matching edge, or when a gated edge is not yet
+     * satisfied (the caller then records side-effects only, with no status change). Does not persist; the
+     * caller's transaction saves.
      */
     public Optional<StatechartTransition> applySystemTransition(String projectId, WorkItem workItem, String trigger) {
         Statechart statechart = resolveFor(projectId, workItem);
         Optional<StatechartTransition> transition =
                 statechart.triggeredTransitionFrom(workItem.getCurrentStatus(), trigger);
-        transition.ifPresent(t -> workItem.setCurrentStatus(t.to()));
+        if (transition.isEmpty()) {
+            return Optional.empty();
+        }
+        StatechartTransition t = transition.get();
+        if (!systemTriggerRegistry.bypassesReviewGate(trigger)
+                && t.requiresReview() && !isReviewSatisfied(projectId, workItem, t)) {
+            return Optional.empty();
+        }
+        workItem.setCurrentStatus(t.to());
         return transition;
     }
 

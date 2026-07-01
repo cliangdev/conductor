@@ -9,6 +9,7 @@ import com.conductor.repository.ProjectSkillRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.workflow.lifecycle.SkillRegistry;
+import com.conductor.workflow.lifecycle.SystemTriggerRegistry;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionValidator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,7 +46,7 @@ class WorkflowDefinitionLifecycleServiceTest {
         versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
         security = Mockito.mock(ProjectSecurityService.class);
         WorkflowDefinitionValidator validator =
-                new WorkflowDefinitionValidator(new SkillRegistry(mapper, Mockito.mock(ProjectSkillRepository.class)));
+                new WorkflowDefinitionValidator(new SkillRegistry(mapper, Mockito.mock(ProjectSkillRepository.class)), new SystemTriggerRegistry(mapper));
         service = new WorkflowDefinitionLifecycleService(repository, versionRepository, security, validator);
         when(repository.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }

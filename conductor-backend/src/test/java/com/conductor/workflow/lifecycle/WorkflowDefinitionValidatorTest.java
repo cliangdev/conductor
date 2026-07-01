@@ -22,7 +22,7 @@ class WorkflowDefinitionValidatorTest {
     // No project-registered skills — only the built-in registry is bindable, so the unknown-skill case still fails.
     private final ProjectSkillRepository projectSkillRepository = mock(ProjectSkillRepository.class);
     private final WorkflowDefinitionValidator validator =
-            new WorkflowDefinitionValidator(new SkillRegistry(mapper, projectSkillRepository));
+            new WorkflowDefinitionValidator(new SkillRegistry(mapper, projectSkillRepository), new SystemTriggerRegistry(mapper));
 
     private JsonNode json(String s) throws Exception {
         return mapper.readTree(s);
@@ -122,6 +122,27 @@ class WorkflowDefinitionValidatorTest {
         String bad = MINI.replace("\"to\": \"DONE\"", "\"to\": \"NOWHERE\"");
         WorkflowValidationResult result = validator.validate(PROJECT_ID, json(bad));
         assertThat(result.getErrors()).anyMatch(e -> e.contains("unknown 'to' status: NOWHERE"));
+    }
+
+    @Test
+    void unknownSystemTriggerRejected() throws Exception {
+        // The schema now allows any open-string trigger; the registry gate (Java) rejects unregistered ones.
+        String bad = MINI.replace(
+                "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\"}",
+                "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\", \"trigger\": \"connector_event\"}");
+        WorkflowValidationResult result = validator.validate(PROJECT_ID, json(bad));
+        assertThat(result.getErrors())
+                .anyMatch(e -> e.contains("unknown system trigger 'connector_event'"));
+    }
+
+    @Test
+    void registeredStatusChangedTriggerAccepted() throws Exception {
+        // A non-pr_merged system trigger is now bindable without a schema enum edit.
+        String def = MINI.replace(
+                "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\"}",
+                "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\", \"trigger\": \"status_changed\"}");
+        WorkflowValidationResult result = validator.validate(PROJECT_ID, json(def));
+        assertThat(result.getErrors()).isEmpty();
     }
 
     @Test
