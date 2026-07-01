@@ -101,16 +101,6 @@ public class AssetService {
     }
 
     /**
-     * System path: record a {@code github_pr} Asset when a PR merges (called from
-     * {@code WorkItemService.completeFromPullRequest}). Thin engineering-specific wrapper over the generic
-     * {@link #recordAsset} so non-GitHub lifecycles can auto-record their own asset types the same way.
-     */
-    @Transactional
-    public void recordPullRequestAsset(WorkItem workItem, String pullRequestUrl) {
-        recordAsset(workItem, "github_pr", pullRequestUrl, "Pull Request", "link");
-    }
-
-    /**
      * System path: record an arbitrary produced Asset on a Work Item (no caller/membership check). Idempotent
      * on {@code (workItem, type, ref)}. Domain-agnostic — the type is passed in, not hardcoded — so any lifecycle
      * (marketing, docs, …) can auto-record its outputs, not just GitHub PRs.

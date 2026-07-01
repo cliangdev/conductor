@@ -432,7 +432,7 @@ class WorkItemServiceTest {
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("DONE");
         verify(workItemRepository).save(testIssue);
-        verify(assetService).recordPullRequestAsset(testIssue, "https://github.com/x/y/pull/9");
+        verify(assetService).recordAsset(testIssue, "github_pr", "https://github.com/x/y/pull/9", "Pull Request", "link");
 
         ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(captor.capture());
@@ -474,7 +474,7 @@ class WorkItemServiceTest {
         workItemService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("DONE");
-        verify(assetService).recordPullRequestAsset(testIssue, "https://github.com/x/y/pull/9");
+        verify(assetService).recordAsset(testIssue, "github_pr", "https://github.com/x/y/pull/9", "Pull Request", "link");
         verify(notificationDispatcher, never()).dispatch(any());
     }
 

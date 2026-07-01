@@ -116,21 +116,21 @@ class AssetServiceTest {
     }
 
     @Test
-    void recordPullRequestAssetIsIdempotent() {
+    void recordAssetIsIdempotent() {
         WorkItem workItem = workItem();
         when(assetRepository.existsByWorkItemIdAndTypeAndRef(ISSUE_ID, "github_pr", "https://x/pr/1")).thenReturn(true);
 
-        service.recordPullRequestAsset(workItem, "https://x/pr/1");
+        service.recordAsset(workItem, "github_pr", "https://x/pr/1", "Pull Request", "link");
 
         verify(assetRepository, never()).save(any());
     }
 
     @Test
-    void recordPullRequestAssetCreatesGithubPrAsset() {
+    void recordAssetCreatesGithubPrAsset() {
         WorkItem workItem = workItem();
         when(assetRepository.existsByWorkItemIdAndTypeAndRef(ISSUE_ID, "github_pr", "https://x/pr/1")).thenReturn(false);
 
-        service.recordPullRequestAsset(workItem, "https://x/pr/1");
+        service.recordAsset(workItem, "github_pr", "https://x/pr/1", "Pull Request", "link");
 
         ArgumentCaptor<Asset> saved = ArgumentCaptor.forClass(Asset.class);
         verify(assetRepository).save(saved.capture());
@@ -140,8 +140,8 @@ class AssetServiceTest {
     }
 
     @Test
-    void recordPullRequestAssetIgnoresBlankUrl() {
-        service.recordPullRequestAsset(workItem(), "  ");
+    void recordAssetIgnoresBlankRef() {
+        service.recordAsset(workItem(), "github_pr", "  ", "Pull Request", "link");
         verify(assetRepository, never()).save(any());
     }
 }

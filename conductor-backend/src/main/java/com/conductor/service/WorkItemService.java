@@ -257,7 +257,7 @@ public class WorkItemService {
         workItemRepository.save(workItem);
 
         // COND-18 E5: record the merged PR as a github_pr Asset. Idempotent on (workItem, type, ref).
-        assetService.recordPullRequestAsset(workItem, pullRequestUrl);
+        assetService.recordAsset(workItem, "github_pr", pullRequestUrl, "Pull Request", "link");
 
         if (applied.isPresent()) {
             publishStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), pullRequestUrl);
