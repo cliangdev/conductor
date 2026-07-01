@@ -47,7 +47,7 @@ class WorkItemDocumentsV2E2ETest extends AbstractE2ETest {
         var wiResp = rest.exchange(
                 url("/api/v2/projects/" + projectId + "/work-items"),
                 HttpMethod.POST,
-                new HttpEntity<>(Map.of("title", "Doc v2 Work Item", "type", "PRD"), authHeaders),
+                new HttpEntity<>(Map.of("title", "Doc v2 Work Item", "type", "PRD", "workflow", "ENGINEERING"), authHeaders),
                 Map.class);
         assertThat(wiResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         workItemId = (String) wiResp.getBody().get("id");
