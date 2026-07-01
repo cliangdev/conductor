@@ -88,10 +88,10 @@ public class ReviewService {
         reviewRepository.save(review);
 
         WorkItem workItem = workItemRepository.findById(workItemId).orElse(null);
-        String issueTitle = workItem != null ? workItem.getTitle() : workItemId;
+        String workItemTitle = workItem != null ? workItem.getTitle() : workItemId;
         notificationDispatcher.dispatch(NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, projectId,
-                Map.of("issueId", workItemId, "issueTitle", issueTitle, "verdict", verdict)));
+                Map.of("workItemId", workItemId, "workItemTitle", workItemTitle, "verdict", verdict)));
 
         return review;
     }

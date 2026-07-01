@@ -6,30 +6,30 @@ public enum EventType {
      * status event (the legacy per-status events were collapsed into it so any Workflow's statuses notify
      * uniformly). The notification provider formats it from the enriched metadata.
      *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}, {@code fromStatus}, {@code toStatus}
+     * <p>Required metadata keys: {@code workItemId}, {@code workItemTitle}, {@code fromStatus}, {@code toStatus}
      * <p>Optional metadata keys: {@code workflow}, {@code noun}, {@code toStatusLabel}, {@code toCategory},
      * {@code assigneeName}, {@code prUrl}
      */
-    ISSUE_STATUS_CHANGED("Work Item status changed"),
+    WORK_ITEM_STATUS_CHANGED("Work Item status changed"),
 
     /**
      * A reviewer has been assigned to a PRD.
      *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}, {@code reviewerId}, {@code reviewerName}
+     * <p>Required metadata keys: {@code workItemId}, {@code workItemTitle}, {@code reviewerId}, {@code reviewerName}
      */
     REVIEWER_ASSIGNED("Reviewer assigned to a PRD"),
 
     /**
      * A review verdict has been submitted on a PRD.
      *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}, {@code reviewerName}, {@code verdict}
+     * <p>Required metadata keys: {@code workItemId}, {@code workItemTitle}, {@code reviewerName}, {@code verdict}
      */
     REVIEW_SUBMITTED("Review verdict submitted"),
 
     /**
      * A comment has been added to a PRD.
      *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}, {@code commentAuthor}
+     * <p>Required metadata keys: {@code workItemId}, {@code workItemTitle}, {@code commentAuthor}
      * <p>Optional metadata keys: {@code excerpt}
      */
     COMMENT_ADDED("Comment added to a PRD"),
@@ -37,7 +37,7 @@ public enum EventType {
     /**
      * A reply has been added to a comment on a PRD.
      *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}, {@code commentAuthor}
+     * <p>Required metadata keys: {@code workItemId}, {@code workItemTitle}, {@code commentAuthor}
      * <p>Optional metadata keys: {@code excerpt}
      */
     COMMENT_REPLY("Reply added to a comment"),
@@ -59,7 +59,7 @@ public enum EventType {
     /**
      * A produced-output Asset has been recorded on a Work Item (COND-18).
      *
-     * <p>Required metadata keys: {@code issueId}, {@code issueTitle}, {@code assetType}
+     * <p>Required metadata keys: {@code workItemId}, {@code workItemTitle}, {@code assetType}
      */
     ASSET_ADDED("Asset added to a Work Item");
 

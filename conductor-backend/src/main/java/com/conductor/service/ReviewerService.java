@@ -69,7 +69,7 @@ public class ReviewerService {
                 .orElse(targetUserId);
         notificationDispatcher.dispatch(NotificationEvent.of(
                 EventType.REVIEWER_ASSIGNED, projectId,
-                Map.of("issueId", workItemId, "issueTitle", workItemId, "reviewerId", targetUserId, "reviewerName", reviewerName)));
+                Map.of("workItemId", workItemId, "workItemTitle", workItemId, "reviewerId", targetUserId, "reviewerName", reviewerName)));
 
         return reviewer;
     }

@@ -16,7 +16,7 @@ import { useCan } from '@/contexts/PermissionsContext'
 
 function parseTriggers(yaml: string): string[] {
   const triggers: string[] = []
-  if (yaml.includes('conductor.issue.status_changed')) triggers.push('issue')
+  if (yaml.includes('conductor.work_item.status_changed')) triggers.push('work item')
   if (yaml.includes('webhook:')) triggers.push('webhook')
   if (yaml.includes('workflow_dispatch')) triggers.push('manual')
   return triggers

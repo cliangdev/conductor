@@ -21,7 +21,7 @@ const mockConfig = {
 
 const mockEvent = {
   eventId: 'evt_1',
-  type: 'ISSUE_STATUS_CHANGED',
+  type: 'WORK_ITEM_STATUS_CHANGED',
   workflowRunId: 'run_abc',
   workflowId: 'wf_1',
   workflowName: 'CI Pipeline',

@@ -73,7 +73,7 @@ class WorkItemDocumentsV2E2ETest extends AbstractE2ETest {
         assertThat(docId).isNotBlank();
         // v2 surfaces the parent ref as workItemId (not workItemId).
         assertThat(createResp.getBody().get("workItemId")).isEqualTo(workItemId);
-        assertThat(createResp.getBody()).doesNotContainKey("issueId");
+        assertThat(createResp.getBody()).doesNotContainKey("workItemId");
 
         // List.
         var listResp = rest.exchange(

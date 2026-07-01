@@ -95,8 +95,8 @@ public class CommentService {
                 EventType.COMMENT_ADDED,
                 workItem.getProject().getId(),
                 Map.of(
-                        "issueId", workItem.getId(),
-                        "issueTitle", workItem.getTitle(),
+                        "workItemId", workItem.getId(),
+                        "workItemTitle", workItem.getTitle(),
                         "commentAuthor", authorLabel,
                         "excerpt", excerpt
                 )));
@@ -175,8 +175,8 @@ public class CommentService {
                 EventType.COMMENT_REPLY,
                 workItem.getProject().getId(),
                 Map.of(
-                        "issueId", workItem.getId(),
-                        "issueTitle", workItem.getTitle(),
+                        "workItemId", workItem.getId(),
+                        "workItemTitle", workItem.getTitle(),
                         "commentAuthor", authorLabel,
                         "excerpt", excerpt
                 )));

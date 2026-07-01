@@ -10,7 +10,7 @@ interface TriggerBadgesProps {
 export function TriggerBadges({ yaml }: TriggerBadgesProps) {
   const triggers: Array<{ label: string; nextRun?: string }> = [];
 
-  if (yaml.includes('conductor.issue.status_changed')) triggers.push({ label: 'issue' });
+  if (yaml.includes('conductor.work_item.status_changed')) triggers.push({ label: 'work item' });
   if (yaml.includes('webhook:')) triggers.push({ label: 'webhook' });
   if (yaml.includes('workflow_dispatch')) triggers.push({ label: 'manual' });
 

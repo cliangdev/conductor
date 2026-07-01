@@ -7,7 +7,7 @@ import java.util.Optional;
 public enum ChannelGroup {
 
     ISSUES("Issues", List.of(
-            EventType.ISSUE_STATUS_CHANGED,
+            EventType.WORK_ITEM_STATUS_CHANGED,
             EventType.REVIEWER_ASSIGNED,
             EventType.REVIEW_SUBMITTED,
             EventType.COMMENT_ADDED,

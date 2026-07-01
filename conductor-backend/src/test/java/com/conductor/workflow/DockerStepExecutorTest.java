@@ -92,7 +92,7 @@ class DockerStepExecutorTest {
         Map<String, Object> stepDef = new HashMap<>();
         stepDef.put("uses", "docker://ubuntu:22.04");
         stepDef.put("env", Map.of(
-                "ISSUE_ID", "${{ event.issueId }}",
+                "ISSUE_ID", "${{ event.workItemId }}",
                 "STATIC_VAL", "hello"
         ));
 
@@ -102,7 +102,7 @@ class DockerStepExecutorTest {
         when(workerVmClient.getJobStatus("worker-job-3"))
                 .thenReturn(new WorkerVmClient.WorkerJobStatus("SUCCESS", 0));
 
-        RuntimeContext ctx = new RuntimeContext(Map.of("issueId", "issue-999"), Map.of(), Map.of(), Map.of());
+        RuntimeContext ctx = new RuntimeContext(Map.of("workItemId", "issue-999"), Map.of(), Map.of(), Map.of());
         executor.execute(buildContext(stepDef, ctx));
 
         verify(workerVmClient).submitJob(argThat(req ->

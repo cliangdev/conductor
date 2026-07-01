@@ -498,8 +498,8 @@ class CommentServiceTest {
         verify(notificationDispatcher).dispatch(captor.capture());
         NotificationEvent event = captor.getValue();
         assertThat(event.getEventType()).isEqualTo(EventType.COMMENT_ADDED);
-        assertThat(event.getMetadata().get("issueId")).isEqualTo("issue-1");
-        assertThat(event.getMetadata().get("issueTitle")).isEqualTo("Test Issue");
+        assertThat(event.getMetadata().get("workItemId")).isEqualTo("issue-1");
+        assertThat(event.getMetadata().get("workItemTitle")).isEqualTo("Test Issue");
         assertThat(event.getMetadata().get("commentAuthor")).isEqualTo("Author Name");
         assertThat(event.getMetadata().get("excerpt")).isEqualTo("x".repeat(100) + "...");
     }
@@ -522,8 +522,8 @@ class CommentServiceTest {
         verify(notificationDispatcher).dispatch(captor.capture());
         NotificationEvent event = captor.getValue();
         assertThat(event.getEventType()).isEqualTo(EventType.COMMENT_REPLY);
-        assertThat(event.getMetadata().get("issueId")).isEqualTo("issue-1");
-        assertThat(event.getMetadata().get("issueTitle")).isEqualTo("Test Issue");
+        assertThat(event.getMetadata().get("workItemId")).isEqualTo("issue-1");
+        assertThat(event.getMetadata().get("workItemTitle")).isEqualTo("Test Issue");
         assertThat(event.getMetadata().get("commentAuthor")).isEqualTo("Author Name");
         assertThat(event.getMetadata().get("excerpt")).isEqualTo("Short reply");
     }

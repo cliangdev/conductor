@@ -270,7 +270,7 @@ public class WorkItemService {
     }
 
     /**
-     * Fire the single, Workflow-agnostic {@link EventType#ISSUE_STATUS_CHANGED} event, enriched with the
+     * Fire the single, Workflow-agnostic {@link EventType#WORK_ITEM_STATUS_CHANGED} event, enriched with the
      * Workflow's {@code noun} and the target status's display label/category so the notification provider can
      * format it for any Workflow without hardcoded status names.
      */
@@ -278,8 +278,8 @@ public class WorkItemService {
                                        String prUrl) {
         Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
         Map<String, String> meta = new HashMap<>();
-        meta.put("issueId", workItem.getId());
-        meta.put("issueTitle", workItem.getTitle());
+        meta.put("workItemId", workItem.getId());
+        meta.put("workItemTitle", workItem.getTitle());
         meta.put("projectId", projectId);
         if (workItem.getWorkflow() != null) {
             meta.put("workflow", workItem.getWorkflow());
@@ -300,7 +300,7 @@ public class WorkItemService {
         if (prUrl != null && !prUrl.isBlank()) {
             meta.put("prUrl", prUrl);
         }
-        notificationDispatcher.dispatch(NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, projectId, meta));
+        notificationDispatcher.dispatch(NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, projectId, meta));
     }
 
     @Transactional

@@ -69,7 +69,7 @@ public class AssetService {
         assetRepository.save(asset);
 
         notificationDispatcher.dispatch(NotificationEvent.of(EventType.ASSET_ADDED, projectId,
-                Map.of("issueId", workItem.getId(), "issueTitle", workItem.getTitle(), "assetType", asset.getType())));
+                Map.of("workItemId", workItem.getId(), "workItemTitle", workItem.getTitle(), "assetType", asset.getType())));
         return asset;
     }
 

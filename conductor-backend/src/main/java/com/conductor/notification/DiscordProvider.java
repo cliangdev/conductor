@@ -56,30 +56,30 @@ public class DiscordProvider implements NotificationProvider {
     @Override
     public String format(NotificationEvent event) {
         Map<String, String> meta = event.getMetadata();
-        String issueId = meta.getOrDefault("issueId", "");
-        String issueTitle = meta.getOrDefault("issueTitle", issueId);
+        String workItemId = meta.getOrDefault("workItemId", "");
+        String workItemTitle = meta.getOrDefault("workItemTitle", workItemId);
         String projectId = event.getProjectId();
 
         String title;
         String description;
-        String link = frontendUrl + "/app/projects/" + projectId + "/issues/" + issueId;
+        String link = frontendUrl + "/app/projects/" + projectId + "/issues/" + workItemId;
         int color = COLOR_DEFAULT;
 
         switch (event.getEventType()) {
-            case ISSUE_STATUS_CHANGED -> {
+            case WORK_ITEM_STATUS_CHANGED -> {
                 String noun = meta.getOrDefault("noun", "Work Item");
                 String toStatusLabel = meta.getOrDefault("toStatusLabel", humanize(meta.getOrDefault("toStatus", "")));
                 String assigneeName = meta.getOrDefault("assigneeName", "");
                 title = noun + " moved to " + toStatusLabel;
                 description = (assigneeName != null && !assigneeName.isBlank())
-                        ? "Assigned to " + assigneeName + " \u2014 " + issueTitle
-                        : issueTitle;
+                        ? "Assigned to " + assigneeName + " \u2014 " + workItemTitle
+                        : workItemTitle;
                 color = colorForCategory(meta.get("toCategory"));
             }
             case REVIEWER_ASSIGNED -> {
                 String reviewerName = meta.getOrDefault("reviewerName", meta.getOrDefault("reviewerId", ""));
                 title = "Reviewer Assigned";
-                description = reviewerName + " assigned to review: " + issueTitle;
+                description = reviewerName + " assigned to review: " + workItemTitle;
             }
             case REVIEW_SUBMITTED -> {
                 String verdict = meta.getOrDefault("verdict", "");
@@ -101,20 +101,20 @@ public class DiscordProvider implements NotificationProvider {
                         title = "Review Submitted";
                     }
                 }
-                description = reviewerName.isBlank() ? issueTitle : reviewerName + " on: " + issueTitle;
+                description = reviewerName.isBlank() ? workItemTitle : reviewerName + " on: " + workItemTitle;
             }
             case COMMENT_ADDED -> {
                 String author = meta.getOrDefault("commentAuthor", "");
                 String excerpt = meta.getOrDefault("excerpt", "");
                 title = "Comment Added";
-                description = author + " commented on: " + issueTitle
+                description = author + " commented on: " + workItemTitle
                         + (excerpt.isBlank() ? "" : "\n> " + excerpt);
             }
             case COMMENT_REPLY -> {
                 String author = meta.getOrDefault("commentAuthor", "");
                 String excerpt = meta.getOrDefault("excerpt", "");
                 title = "Comment Reply";
-                description = author + " replied on: " + issueTitle
+                description = author + " replied on: " + workItemTitle
                         + (excerpt.isBlank() ? "" : "\n> " + excerpt);
             }
             case MEMBER_JOINED -> {
@@ -132,7 +132,7 @@ public class DiscordProvider implements NotificationProvider {
             }
             default -> {
                 title = event.getEventType().getDescription();
-                description = issueTitle;
+                description = workItemTitle;
             }
         }
 
@@ -149,7 +149,7 @@ public class DiscordProvider implements NotificationProvider {
         String prUrl = meta.getOrDefault("prUrl", null);
         boolean hasPrUrl = prUrl != null && !prUrl.isBlank();
 
-        if (event.getEventType() == EventType.ISSUE_STATUS_CHANGED && hasPrUrl) {
+        if (event.getEventType() == EventType.WORK_ITEM_STATUS_CHANGED && hasPrUrl) {
             String fields = String.format(
                 ",\"fields\":[{\"name\":\"Pull Request\",\"value\":\"[View PR](%s)\",\"inline\":false}]",
                 escapeJson(prUrl)

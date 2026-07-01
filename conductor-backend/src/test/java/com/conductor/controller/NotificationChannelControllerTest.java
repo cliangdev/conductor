@@ -95,7 +95,7 @@ class NotificationChannelControllerTest {
 
     @Test
     void getNotificationChannelsReturns200WithList() throws Exception {
-        NotificationChannelConfig config = buildConfig(EventType.ISSUE_STATUS_CHANGED);
+        NotificationChannelConfig config = buildConfig(EventType.WORK_ITEM_STATUS_CHANGED);
         when(notificationChannelService.getChannels(eq("proj-1"), any(User.class)))
                 .thenReturn(List.of(config));
 
@@ -103,7 +103,7 @@ class NotificationChannelControllerTest {
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].eventType").value("ISSUE_STATUS_CHANGED"))
+                .andExpect(jsonPath("$[0].eventType").value("WORK_ITEM_STATUS_CHANGED"))
                 .andExpect(jsonPath("$[0].provider").value("DISCORD"))
                 .andExpect(jsonPath("$[0].enabled").value(true));
     }
@@ -126,35 +126,35 @@ class NotificationChannelControllerTest {
 
     @Test
     void upsertNotificationChannelReturns201OnCreate() throws Exception {
-        NotificationChannelConfig config = buildConfig(EventType.ISSUE_STATUS_CHANGED);
+        NotificationChannelConfig config = buildConfig(EventType.WORK_ITEM_STATUS_CHANGED);
         NotificationChannelService.UpsertResult result = new NotificationChannelService.UpsertResult(config, true);
 
-        when(notificationChannelService.upsertChannel(eq("proj-1"), eq("ISSUE_STATUS_CHANGED"), any(), any(User.class)))
+        when(notificationChannelService.upsertChannel(eq("proj-1"), eq("WORK_ITEM_STATUS_CHANGED"), any(), any(User.class)))
                 .thenReturn(result);
 
-        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/channels/ISSUE_STATUS_CHANGED")
+        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/channels/WORK_ITEM_STATUS_CHANGED")
                         .header("Authorization", "Bearer valid-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.eventType").value("ISSUE_STATUS_CHANGED"))
+                .andExpect(jsonPath("$.eventType").value("WORK_ITEM_STATUS_CHANGED"))
                 .andExpect(jsonPath("$.provider").value("DISCORD"));
     }
 
     @Test
     void upsertNotificationChannelReturns200OnUpdate() throws Exception {
-        NotificationChannelConfig config = buildConfig(EventType.ISSUE_STATUS_CHANGED);
+        NotificationChannelConfig config = buildConfig(EventType.WORK_ITEM_STATUS_CHANGED);
         NotificationChannelService.UpsertResult result = new NotificationChannelService.UpsertResult(config, false);
 
-        when(notificationChannelService.upsertChannel(eq("proj-1"), eq("ISSUE_STATUS_CHANGED"), any(), any(User.class)))
+        when(notificationChannelService.upsertChannel(eq("proj-1"), eq("WORK_ITEM_STATUS_CHANGED"), any(), any(User.class)))
                 .thenReturn(result);
 
-        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/channels/ISSUE_STATUS_CHANGED")
+        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/channels/WORK_ITEM_STATUS_CHANGED")
                         .header("Authorization", "Bearer valid-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.eventType").value("ISSUE_STATUS_CHANGED"));
+                .andExpect(jsonPath("$.eventType").value("WORK_ITEM_STATUS_CHANGED"));
     }
 
     @Test
@@ -171,10 +171,10 @@ class NotificationChannelControllerTest {
 
     @Test
     void upsertNotificationChannelReturns400ForBlankWebhookUrl() throws Exception {
-        when(notificationChannelService.upsertChannel(eq("proj-1"), eq("ISSUE_STATUS_CHANGED"), any(), any(User.class)))
+        when(notificationChannelService.upsertChannel(eq("proj-1"), eq("WORK_ITEM_STATUS_CHANGED"), any(), any(User.class)))
                 .thenThrow(new BusinessException("webhookUrl must not be blank"));
 
-        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/channels/ISSUE_STATUS_CHANGED")
+        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/channels/WORK_ITEM_STATUS_CHANGED")
                         .header("Authorization", "Bearer valid-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"  \",\"enabled\":true}"))
@@ -183,10 +183,10 @@ class NotificationChannelControllerTest {
 
     @Test
     void upsertNotificationChannelReturns403ForNonAdmin() throws Exception {
-        when(notificationChannelService.upsertChannel(eq("proj-1"), eq("ISSUE_STATUS_CHANGED"), any(), any(User.class)))
+        when(notificationChannelService.upsertChannel(eq("proj-1"), eq("WORK_ITEM_STATUS_CHANGED"), any(), any(User.class)))
                 .thenThrow(new ForbiddenException("Only ADMIN can manage notification channels"));
 
-        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/channels/ISSUE_STATUS_CHANGED")
+        mockMvc.perform(put("/api/v1/projects/proj-1/notifications/channels/WORK_ITEM_STATUS_CHANGED")
                         .header("Authorization", "Bearer valid-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true}"))
@@ -195,17 +195,17 @@ class NotificationChannelControllerTest {
 
     @Test
     void deleteNotificationChannelReturns204() throws Exception {
-        mockMvc.perform(delete("/api/v1/projects/proj-1/notifications/channels/ISSUE_STATUS_CHANGED")
+        mockMvc.perform(delete("/api/v1/projects/proj-1/notifications/channels/WORK_ITEM_STATUS_CHANGED")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isNoContent());
     }
 
     @Test
     void deleteNotificationChannelReturns404WhenNotFound() throws Exception {
-        doThrow(new EntityNotFoundException("No channel configured for event type ISSUE_STATUS_CHANGED"))
-                .when(notificationChannelService).deleteChannel(eq("proj-1"), eq("ISSUE_STATUS_CHANGED"), any(User.class));
+        doThrow(new EntityNotFoundException("No channel configured for event type WORK_ITEM_STATUS_CHANGED"))
+                .when(notificationChannelService).deleteChannel(eq("proj-1"), eq("WORK_ITEM_STATUS_CHANGED"), any(User.class));
 
-        mockMvc.perform(delete("/api/v1/projects/proj-1/notifications/channels/ISSUE_STATUS_CHANGED")
+        mockMvc.perform(delete("/api/v1/projects/proj-1/notifications/channels/WORK_ITEM_STATUS_CHANGED")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isNotFound());
     }
@@ -213,9 +213,9 @@ class NotificationChannelControllerTest {
     @Test
     void deleteNotificationChannelReturns403ForNonAdmin() throws Exception {
         doThrow(new ForbiddenException("Only ADMIN can manage notification channels"))
-                .when(notificationChannelService).deleteChannel(eq("proj-1"), eq("ISSUE_STATUS_CHANGED"), any(User.class));
+                .when(notificationChannelService).deleteChannel(eq("proj-1"), eq("WORK_ITEM_STATUS_CHANGED"), any(User.class));
 
-        mockMvc.perform(delete("/api/v1/projects/proj-1/notifications/channels/ISSUE_STATUS_CHANGED")
+        mockMvc.perform(delete("/api/v1/projects/proj-1/notifications/channels/WORK_ITEM_STATUS_CHANGED")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isForbidden());
     }
@@ -226,10 +226,10 @@ class NotificationChannelControllerTest {
         testResponse.setSuccess(true);
         testResponse.setMessage("Test notification sent");
 
-        when(notificationChannelService.testChannel(eq("proj-1"), eq("ISSUE_STATUS_CHANGED"), any(User.class)))
+        when(notificationChannelService.testChannel(eq("proj-1"), eq("WORK_ITEM_STATUS_CHANGED"), any(User.class)))
                 .thenReturn(testResponse);
 
-        mockMvc.perform(post("/api/v1/projects/proj-1/notifications/test/ISSUE_STATUS_CHANGED")
+        mockMvc.perform(post("/api/v1/projects/proj-1/notifications/test/WORK_ITEM_STATUS_CHANGED")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
@@ -240,24 +240,24 @@ class NotificationChannelControllerTest {
     void testNotificationChannelReturnsFailureWhenNoChannelConfigured() throws Exception {
         NotificationTestResponse testResponse = new NotificationTestResponse();
         testResponse.setSuccess(false);
-        testResponse.setMessage("No channel configured for event type ISSUE_STATUS_CHANGED");
+        testResponse.setMessage("No channel configured for event type WORK_ITEM_STATUS_CHANGED");
 
-        when(notificationChannelService.testChannel(eq("proj-1"), eq("ISSUE_STATUS_CHANGED"), any(User.class)))
+        when(notificationChannelService.testChannel(eq("proj-1"), eq("WORK_ITEM_STATUS_CHANGED"), any(User.class)))
                 .thenReturn(testResponse);
 
-        mockMvc.perform(post("/api/v1/projects/proj-1/notifications/test/ISSUE_STATUS_CHANGED")
+        mockMvc.perform(post("/api/v1/projects/proj-1/notifications/test/WORK_ITEM_STATUS_CHANGED")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.message").value("No channel configured for event type ISSUE_STATUS_CHANGED"));
+                .andExpect(jsonPath("$.message").value("No channel configured for event type WORK_ITEM_STATUS_CHANGED"));
     }
 
     @Test
     void testNotificationChannelReturns403ForNonAdmin() throws Exception {
-        when(notificationChannelService.testChannel(eq("proj-1"), eq("ISSUE_STATUS_CHANGED"), any(User.class)))
+        when(notificationChannelService.testChannel(eq("proj-1"), eq("WORK_ITEM_STATUS_CHANGED"), any(User.class)))
                 .thenThrow(new ForbiddenException("Only ADMIN can manage notification channels"));
 
-        mockMvc.perform(post("/api/v1/projects/proj-1/notifications/test/ISSUE_STATUS_CHANGED")
+        mockMvc.perform(post("/api/v1/projects/proj-1/notifications/test/WORK_ITEM_STATUS_CHANGED")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isForbidden());
     }
@@ -289,7 +289,7 @@ class NotificationChannelControllerTest {
         mockMvc.perform(put("/api/v1/projects/proj-1/notifications/groups/ISSUES")
                         .header("Authorization", "Bearer valid-token")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true,\"enabledEventTypes\":[\"ISSUE_STATUS_CHANGED\"]}"))
+                        .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true,\"enabledEventTypes\":[\"WORK_ITEM_STATUS_CHANGED\"]}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.channelGroup").value("ISSUES"));
     }
@@ -303,7 +303,7 @@ class NotificationChannelControllerTest {
         mockMvc.perform(put("/api/v1/projects/proj-1/notifications/groups/ISSUES")
                         .header("Authorization", "Bearer valid-token")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true,\"enabledEventTypes\":[\"ISSUE_STATUS_CHANGED\"]}"))
+                        .content("{\"provider\":\"DISCORD\",\"webhookUrl\":\"https://discord.com/api/webhooks/123/abc\",\"enabled\":true,\"enabledEventTypes\":[\"WORK_ITEM_STATUS_CHANGED\"]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channelGroup").value("ISSUES"));
     }
@@ -336,7 +336,7 @@ class NotificationChannelControllerTest {
         config.setProvider(ProviderType.DISCORD);
         config.setWebhookUrl("https://discord.com/api/webhooks/123/abc");
         config.setEnabled(true);
-        config.setEnabledEventTypes(java.util.Set.of("ISSUE_STATUS_CHANGED"));
+        config.setEnabledEventTypes(java.util.Set.of("WORK_ITEM_STATUS_CHANGED"));
         config.setCreatedAt(OffsetDateTime.now());
         config.setUpdatedAt(OffsetDateTime.now());
         return config;

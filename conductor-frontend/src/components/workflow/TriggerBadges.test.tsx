@@ -12,7 +12,7 @@ import { TriggerBadges } from './TriggerBadges';
 
 const ISSUE_YAML = `
 on:
-  conductor.issue.status_changed:
+  conductor.work_item.status_changed:
     statuses: [SUBMITTED]
 `;
 
@@ -45,9 +45,9 @@ describe('TriggerBadges', () => {
     vi.clearAllMocks();
   });
 
-  it('renders issue badge for conductor.issue.status_changed trigger', () => {
+  it('renders work item badge for conductor.work_item.status_changed trigger', () => {
     render(<TriggerBadges yaml={ISSUE_YAML} />);
-    expect(screen.getByText('issue')).toBeInTheDocument();
+    expect(screen.getByText('work item')).toBeInTheDocument();
   });
 
   it('renders webhook badge for webhook trigger', () => {

@@ -12,10 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Canonical v2 Work Item documents sub-resource
- * ({@code /api/v2/projects/{projectId}/work-items/{workItemId}/documents}). Successor to the legacy v1
- * {@code issues/{issueId}/documents} surface (see {@code docs/legacy-v1-deprecation.md}); additive and does
- * not change v1 behavior.
+ * Canonical Work Item documents sub-resource
+ * ({@code /api/v2/projects/{projectId}/work-items/{workItemId}/documents}).
  *
  * <p>All business logic lives in the shared {@link DocumentService}, which returns a {@code DocumentView} with
  * the signed storage URL pre-resolved — so this controller only maps that view to the v2 response DTO and does

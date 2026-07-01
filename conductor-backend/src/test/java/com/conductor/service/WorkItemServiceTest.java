@@ -299,7 +299,7 @@ class WorkItemServiceTest {
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
 
         NotificationEvent event = eventCaptor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.ISSUE_STATUS_CHANGED);
+        assertThat(event.getEventType()).isEqualTo(EventType.WORK_ITEM_STATUS_CHANGED);
         assertThat(event.getMetadata()).containsEntry("fromStatus", "IN_PROGRESS");
         assertThat(event.getMetadata()).containsEntry("toStatus", "CODE_REVIEW");
         assertThat(event.getMetadata()).containsEntry("toStatusLabel", "Code Review");
@@ -363,7 +363,7 @@ class WorkItemServiceTest {
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
 
         NotificationEvent event = eventCaptor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.ISSUE_STATUS_CHANGED);
+        assertThat(event.getEventType()).isEqualTo(EventType.WORK_ITEM_STATUS_CHANGED);
         assertThat(event.getMetadata()).containsEntry("assigneeName", "Alice Smith");
     }
 
@@ -437,7 +437,7 @@ class WorkItemServiceTest {
         ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(captor.capture());
         NotificationEvent event = captor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.ISSUE_STATUS_CHANGED);
+        assertThat(event.getEventType()).isEqualTo(EventType.WORK_ITEM_STATUS_CHANGED);
         assertThat(event.getMetadata()).containsEntry("toStatus", "DONE");
         assertThat(event.getMetadata()).containsEntry("prUrl", "https://github.com/x/y/pull/9");
     }
