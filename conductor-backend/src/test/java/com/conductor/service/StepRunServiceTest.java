@@ -1,19 +1,20 @@
 package com.conductor.service;
 
+import com.conductor.entity.StepRun;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
-import com.conductor.generated.model.CreateStepRunRequest;
-import com.conductor.generated.model.StepRunProduced;
-import com.conductor.generated.model.StepRunResponse;
-import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.StepRunRepository;
+import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.view.StepRunInput;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -29,13 +30,14 @@ class StepRunServiceTest {
     private WorkItemRepository workItemRepository;
     private ProjectSecurityService projectSecurityService;
     private StepRunService service;
+    private final ObjectMapper mapper = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
         stepRunRepository = Mockito.mock(StepRunRepository.class);
         workItemRepository = Mockito.mock(WorkItemRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
-        service = new StepRunService(stepRunRepository, workItemRepository, projectSecurityService, new ObjectMapper());
+        service = new StepRunService(stepRunRepository, workItemRepository, projectSecurityService);
         when(stepRunRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
     }
@@ -56,29 +58,25 @@ class StepRunServiceTest {
     }
 
     @Test
-    void createsStepRunRoundTrippingNestedJson() {
+    void createsStepRunPersistingScalarsAndPassingNestedJsonThrough() {
         when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
-        CreateStepRunRequest request = new CreateStepRunRequest(
-                CreateStepRunRequest.StepKindEnum.SKILL,
-                CreateStepRunRequest.StatusEnum.AWAITING_REVIEW,
-                "Implement the assets table per tasks.json",
-                "czl0909");
-        request.setFromStatus("CODE_REVIEW");
-        request.setToStatus("DONE");
-        request.setSkill("conductor:implement");
-        StepRunProduced produced = new StepRunProduced(StepRunProduced.KindEnum.ASSET, "https://x/pr/1");
-        produced.setAssetType("github_pr");
-        request.setProduced(List.of(produced));
+        // The controller owns the typed↔JSON translation; the service stores/returns the produced[] JSON as-is.
+        JsonNode produced = mapper.valueToTree(List.of(
+                Map.of("kind", "asset", "ref", "https://x/pr/1", "assetType", "github_pr")));
+        StepRunInput input = new StepRunInput(
+                null, "CODE_REVIEW", "DONE", "skill", "conductor:implement", "AWAITING_REVIEW",
+                "Implement the assets table per tasks.json", "czl0909", null, null,
+                produced, null, null);
 
-        StepRunResponse response = service.createStepRun(PROJECT_ID, ISSUE_ID, request, caller());
+        StepRun response = service.createStepRun(PROJECT_ID, ISSUE_ID, input, caller());
 
-        assertThat(response.getIssueId()).isEqualTo(ISSUE_ID);
+        assertThat(response.getWorkItem().getId()).isEqualTo(ISSUE_ID);
         assertThat(response.getStatus()).isEqualTo("AWAITING_REVIEW");
         assertThat(response.getStepKind()).isEqualTo("skill");
         assertThat(response.getSkill()).isEqualTo("conductor:implement");
         assertThat(response.getInputBrief()).contains("assets table");
         assertThat(response.getProduced()).hasSize(1);
-        assertThat(response.getProduced().get(0).getRef()).isEqualTo("https://x/pr/1");
-        assertThat(response.getProduced().get(0).getAssetType()).isEqualTo("github_pr");
+        assertThat(response.getProduced().get(0).get("ref").asText()).isEqualTo("https://x/pr/1");
+        assertThat(response.getProduced().get(0).get("assetType").asText()).isEqualTo("github_pr");
     }
 }

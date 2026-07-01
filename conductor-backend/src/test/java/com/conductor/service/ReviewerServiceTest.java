@@ -9,11 +9,10 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.notification.NotificationDispatcher;
-import com.conductor.generated.model.AssignReviewerResponse;
-import com.conductor.generated.model.ReviewerResponse;
 import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.service.view.ReviewerView;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -103,7 +102,7 @@ class ReviewerServiceTest {
             return r;
         });
 
-        AssignReviewerResponse response = reviewerService.assignReviewer(
+        WorkItemReviewer response = reviewerService.assignReviewer(
                 PROJECT_ID, ISSUE_ID, reviewerUser.getId(), adminUser);
 
         ArgumentCaptor<WorkItemReviewer> captor = ArgumentCaptor.forClass(WorkItemReviewer.class);
@@ -114,7 +113,7 @@ class ReviewerServiceTest {
         assertThat(saved.getUserId()).isEqualTo(reviewerUser.getId());
         assertThat(saved.getAssignedBy()).isEqualTo(adminUser.getId());
 
-        assertThat(response.getIssueId()).isEqualTo(ISSUE_ID);
+        assertThat(response.getWorkItemId()).isEqualTo(ISSUE_ID);
         assertThat(response.getUserId()).isEqualTo(reviewerUser.getId());
     }
 
@@ -189,12 +188,12 @@ class ReviewerServiceTest {
         when(userRepository.findById(reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerUser));
 
-        List<ReviewerResponse> result = reviewerService.listReviewers(PROJECT_ID, ISSUE_ID, adminUser);
+        List<ReviewerView> result = reviewerService.listReviewers(PROJECT_ID, ISSUE_ID, adminUser);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getUserId()).isEqualTo(reviewerUser.getId());
-        assertThat(result.get(0).getEmail()).isEqualTo(reviewerUser.getEmail());
-        assertThat(result.get(0).getReviewVerdict()).isNull();
+        assertThat(result.get(0).userId()).isEqualTo(reviewerUser.getId());
+        assertThat(result.get(0).email()).isEqualTo(reviewerUser.getEmail());
+        assertThat(result.get(0).reviewVerdict()).isNull();
     }
 
     @Test

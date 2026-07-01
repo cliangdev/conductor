@@ -122,4 +122,28 @@ class WorkItemDocumentsV2E2ETest extends AbstractE2ETest {
         assertThat(getResp.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(getResp.getBody().get("tasks")).isNotNull();
     }
+
+    @Test
+    void retiredV1IssuesRouteReturns404() {
+        // The v1 /issues surface was retired; an unmapped path must surface a 404 (NoResourceFoundException
+        // handler), not fall through to the catch-all as a 500.
+        var resp = rest.exchange(
+                url("/api/v1/projects/" + projectId + "/issues"),
+                HttpMethod.GET,
+                new HttpEntity<>(authHeaders),
+                String.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void arrayShapedTasksBodyReturns400() {
+        // A top-level JSON array can't bind to the tasks Map body — a malformed body is a client error
+        // (HttpMessageNotReadableException handler → 400), not a 500.
+        var resp = rest.exchange(
+                url("/api/v2/projects/" + projectId + "/work-items/" + workItemId + "/tasks"),
+                HttpMethod.PUT,
+                new HttpEntity<>(List.of(Map.of("id", "T1", "title", "x", "status", "todo")), authHeaders),
+                String.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
 }

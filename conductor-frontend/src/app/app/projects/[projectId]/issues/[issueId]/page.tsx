@@ -1,8 +1,9 @@
 'use client'
 
-// COND-22: legacy redirect. The Work Item detail view now lives at the workflow-scoped, human-readable
-// /work/{slug}/{displayId} route. External UUID links (e.g. from Discord) still land here; we resolve the
-// Work Item by UUID via the canonical /api/v2 endpoint and replace the URL with its workflow + displayId.
+// COND-22: external UUID deep-link resolver. The Work Item detail view now lives at the workflow-scoped,
+// human-readable /{projectId}/{area}/{noun}/{displayId} route. External UUID links (e.g. from Discord)
+// still land here; we resolve the Work Item by UUID via the canonical /api/v2 endpoint and replace the
+// URL with its area + noun + displayId.
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'

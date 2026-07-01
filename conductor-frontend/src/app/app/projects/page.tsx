@@ -17,7 +17,7 @@ export default function ProjectsPage() {
     if (projects.length === 0) return
 
     const target = activeProject ?? projects[0]
-    router.replace(`/app/projects/${target.id}/issues`)
+    router.replace(`/app/projects/${target.id}/engineering/issues`)
   }, [loading, projects, activeProject])
 
   if (loading) return null

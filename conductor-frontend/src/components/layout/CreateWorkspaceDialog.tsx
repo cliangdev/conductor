@@ -38,7 +38,7 @@ export function CreateWorkspaceDialog({ open, onClose }: CreateWorkspaceDialogPr
       addProject(project)
       setActiveProject(project)
       handleClose()
-      router.push(`/app/projects/${project.id}/issues`)
+      router.push(`/app/projects/${project.id}/engineering/issues`)
     } catch {
       setError('Failed to create workspace.')
     } finally {

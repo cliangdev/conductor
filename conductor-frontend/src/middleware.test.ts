@@ -79,14 +79,14 @@ describe('middleware', () => {
   })
 
   it('honors the next param when redirecting authenticated /login', () => {
-    const req = makeRequest('/login?next=%2Fapp%2Fprojects%2Fabc%2Fissues', {
+    const req = makeRequest('/login?next=%2Fapp%2Fprojects%2Fabc%2Fengineering%2Fissues', {
       access_token: 'valid-token',
     })
     const response = middleware(req)
 
     expect(response.status).toBe(307)
     expect(response.headers.get('location')).toBe(
-      'http://localhost/app/projects/abc/issues',
+      'http://localhost/app/projects/abc/engineering/issues',
     )
   })
 

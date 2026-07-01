@@ -7,14 +7,13 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.generated.model.AssignReviewerResponse;
-import com.conductor.generated.model.ReviewerResponse;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.service.view.ReviewerView;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,7 +44,7 @@ public class ReviewerService {
     }
 
     @Transactional
-    public AssignReviewerResponse assignReviewer(String projectId, String issueId, String targetUserId, User caller) {
+    public WorkItemReviewer assignReviewer(String projectId, String issueId, String targetUserId, User caller) {
         verifyCallerCanManageReviewers(projectId, caller.getId());
 
         ProjectMember targetMember = projectMemberRepository.findByProjectIdAndUserId(projectId, targetUserId)
@@ -72,7 +71,7 @@ public class ReviewerService {
                 EventType.REVIEWER_ASSIGNED, projectId,
                 Map.of("issueId", issueId, "issueTitle", issueId, "reviewerId", targetUserId, "reviewerName", reviewerName)));
 
-        return new AssignReviewerResponse(issueId, targetUserId, reviewer.getAssignedAt());
+        return reviewer;
     }
 
     @Transactional
@@ -86,13 +85,13 @@ public class ReviewerService {
     }
 
     @Transactional(readOnly = true)
-    public List<ReviewerResponse> listReviewers(String projectId, String issueId, User caller) {
+    public List<ReviewerView> listReviewers(String projectId, String issueId, User caller) {
         if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, caller.getId())) {
             throw new EntityNotFoundException("Issue not found");
         }
 
         return workItemReviewerRepository.findAllByWorkItemId(issueId).stream()
-                .map(this::toReviewerResponse)
+                .map(this::toReviewerView)
                 .toList();
     }
 
@@ -102,16 +101,13 @@ public class ReviewerService {
         }
     }
 
-    private ReviewerResponse toReviewerResponse(WorkItemReviewer reviewer) {
-        ReviewerResponse response = new ReviewerResponse(reviewer.getUserId());
-
-        userRepository.findById(reviewer.getUserId()).ifPresent(user -> {
-            response.setName(user.getName());
-            response.setEmail(user.getEmail());
-            response.setAvatarUrl(user.getAvatarUrl());
-        });
-
-        response.setReviewVerdict(null);
-        return response;
+    private ReviewerView toReviewerView(WorkItemReviewer reviewer) {
+        User user = userRepository.findById(reviewer.getUserId()).orElse(null);
+        return new ReviewerView(
+                reviewer.getUserId(),
+                user != null ? user.getName() : null,
+                user != null ? user.getEmail() : null,
+                user != null ? user.getAvatarUrl() : null,
+                null);
     }
 }

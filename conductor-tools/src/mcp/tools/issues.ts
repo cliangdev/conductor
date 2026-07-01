@@ -14,19 +14,13 @@ interface IssueResponse {
 }
 
 /**
- * Core Work Item resource targeting. The legacy `*_issue` tools hit the v1 `issues`
- * surface (deprecated); the canonical `*_work_item` tools hit the v2 `work-items`
- * surface. Body shapes are identical between the two, so the handlers below are
- * shared and only the endpoint differs.
+ * Core Work Item resource targeting. The canonical `*_work_item` tools hit the
+ * v2 `work-items` surface. The endpoint is factored out so the shared handlers
+ * below stay decoupled from the concrete paths.
  */
 interface WorkItemEndpoint {
   collection: (projectId: string) => string
   item: (projectId: string, id: string) => string
-}
-
-const V1: WorkItemEndpoint = {
-  collection: (projectId) => `/api/v1/projects/${projectId}/issues`,
-  item: (projectId, id) => `/api/v1/projects/${projectId}/issues/${id}`,
 }
 
 const V2: WorkItemEndpoint = {
@@ -261,43 +255,6 @@ async function getWorkItemImpl(
     localPath,
     ...(absolutePath ? { absolutePath } : {}),
   }
-}
-
-// --- Legacy v1 `issue` handlers (deprecated — hit /api/v1/.../issues) ---
-
-export async function createIssue(
-  params: { type: string; title: string; description?: string; workflow?: string },
-  config: Config
-): Promise<Record<string, unknown>> {
-  return createWorkItemImpl(params, config, V1)
-}
-
-export async function updateIssue(
-  params: { issueId: string; title?: string; description?: string },
-  config: Config
-): Promise<Record<string, unknown>> {
-  return updateWorkItemImpl(params, config, V1)
-}
-
-export async function setIssueStatus(
-  params: { issueId: string; status: string },
-  config: Config
-): Promise<Record<string, unknown>> {
-  return setWorkItemStatusImpl(params, config, V1)
-}
-
-export async function listIssues(
-  params: { type?: string; status?: string },
-  config: Config
-): Promise<unknown[]> {
-  return listWorkItemsImpl(params, config, V1)
-}
-
-export async function getIssue(
-  params: { issueId: string },
-  config: Config
-): Promise<Record<string, unknown>> {
-  return getWorkItemImpl(params, config, V1)
 }
 
 // --- Canonical v2 `work_item` handlers (hit /api/v2/.../work-items) ---

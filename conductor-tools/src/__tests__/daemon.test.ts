@@ -340,7 +340,7 @@ describe('syncFile', () => {
     await syncFile(filePath, () => mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md',
+      'http://localhost:8080/api/v2/projects/proj_123/work-items/iss_abc/documents/prd.md',
       expect.objectContaining({
         method: 'PUT',
         body: expect.stringContaining('contentType'),
@@ -368,7 +368,7 @@ describe('syncFile', () => {
     await syncFile(filePath, () => mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      'http://localhost:8080/api/v2/projects/proj_123/work-items/iss_abc/documents/spec.md',
       expect.objectContaining({
         method: 'PUT',
         headers: expect.objectContaining({ Authorization: 'Bearer test-key' }),
@@ -399,7 +399,7 @@ describe('syncIssueMd', () => {
     await syncIssueMd(filePath, () => mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc',
+      'http://localhost:8080/api/v2/projects/proj_123/work-items/iss_abc',
       expect.objectContaining({
         method: 'PATCH',
         body: expect.stringContaining('My PRD'),
@@ -471,8 +471,11 @@ describe('syncTasksJson', () => {
   })
 
   it('calls PUT with parsed JSON to the correct tasks API path', async () => {
-    const tasks = [{ id: 'task_1', title: 'Write tests', done: false }]
-    mockFs.readFileSync.mockReturnValue(JSON.stringify(tasks))
+    const tasks = { tasks: [{ id: 'T1.1', title: 'Write tests', status: 'PENDING' }] }
+    // First read is tasks.json; the post-PUT dequeue then reads the (empty) sync queue.
+    mockFs.readFileSync
+      .mockReturnValueOnce(JSON.stringify(tasks))
+      .mockReturnValueOnce('[]')
 
     const mockFetch = vi.fn().mockResolvedValue({ ok: true })
     vi.stubGlobal('fetch', mockFetch)
@@ -482,7 +485,7 @@ describe('syncTasksJson', () => {
     await syncTasksJson(filePath, () => mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/tasks',
+      'http://localhost:8080/api/v2/projects/proj_123/work-items/iss_abc/tasks',
       expect.objectContaining({
         method: 'PUT',
         headers: expect.objectContaining({ Authorization: 'Bearer test-key' }),
@@ -494,7 +497,7 @@ describe('syncTasksJson', () => {
   })
 
   it('queues change when PUT fails', async () => {
-    const tasks = [{ id: 'task_1', title: 'Write tests', done: false }]
+    const tasks = { tasks: [{ id: 'T1.1', title: 'Write tests', status: 'PENDING' }] }
     mockFs.readFileSync
       .mockReturnValueOnce(JSON.stringify(tasks))
       .mockReturnValueOnce('[]')
@@ -588,7 +591,7 @@ describe('deleteFile', () => {
     await deleteFile(filePath, () => mockConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      'http://localhost:8080/api/v2/projects/proj_123/work-items/iss_abc/documents/spec.md',
       expect.objectContaining({ method: 'DELETE' })
     )
     vi.unstubAllGlobals()
@@ -655,7 +658,7 @@ describe('queueChange and replayQueue', () => {
   it('replayQueue replays items and removes successful ones', async () => {
     const pendingEntry = {
       method: 'PUT',
-      path: '/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      path: '/api/v2/projects/proj_123/work-items/iss_abc/documents/spec.md',
       body: { content: 'hello', filename: 'spec.md' },
       timestamp: '2026-01-01T00:00:00Z',
     }
@@ -679,7 +682,7 @@ describe('queueChange and replayQueue', () => {
       path.join(os.homedir(), '.conductor', 'sync-queue.json')
     )
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:8080/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      'http://localhost:8080/api/v2/projects/proj_123/work-items/iss_abc/documents/spec.md',
       expect.objectContaining({ method: 'PUT' })
     )
 
@@ -689,7 +692,7 @@ describe('queueChange and replayQueue', () => {
   it('replayQueue keeps failed items in sync-queue.json', async () => {
     const pendingEntry = {
       method: 'PUT',
-      path: '/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      path: '/api/v2/projects/proj_123/work-items/iss_abc/documents/spec.md',
       body: { content: 'hello', filename: 'spec.md' },
       timestamp: '2026-01-01T00:00:00Z',
     }
@@ -741,7 +744,7 @@ describe('queueChange and replayQueue', () => {
   it('queueChange collapses duplicate entries for the same path', async () => {
     const existing = [{
       method: 'PUT',
-      path: '/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md',
+      path: '/api/v2/projects/proj_123/work-items/iss_abc/documents/prd.md',
       body: { content: 'old' },
       timestamp: '2026-01-01T00:00:00Z',
       attempts: 0,
@@ -753,7 +756,7 @@ describe('queueChange and replayQueue', () => {
     const { queueChange } = await import('../daemon/watcher.js')
     queueChange({
       method: 'PUT',
-      path: '/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md',
+      path: '/api/v2/projects/proj_123/work-items/iss_abc/documents/prd.md',
       body: { content: 'new' },
     })
 
@@ -765,15 +768,15 @@ describe('queueChange and replayQueue', () => {
 
   it('dequeueChange removes pending entries for a synced path', async () => {
     const queue = [
-      { method: 'PUT', path: '/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md', body: {}, timestamp: 't' },
-      { method: 'PUT', path: '/api/v1/projects/proj_123/issues/iss_xyz/documents/prd.md', body: {}, timestamp: 't' },
+      { method: 'PUT', path: '/api/v2/projects/proj_123/work-items/iss_abc/documents/prd.md', body: {}, timestamp: 't' },
+      { method: 'PUT', path: '/api/v2/projects/proj_123/work-items/iss_xyz/documents/prd.md', body: {}, timestamp: 't' },
     ]
     mockFs.readFileSync.mockReturnValue(JSON.stringify(queue))
     mockFs.mkdirSync.mockReturnValue(undefined)
     mockFs.writeFileSync.mockReturnValue(undefined)
 
     const { dequeueChange } = await import('../daemon/watcher.js')
-    dequeueChange('/api/v1/projects/proj_123/issues/iss_abc/documents/prd.md')
+    dequeueChange('/api/v2/projects/proj_123/work-items/iss_abc/documents/prd.md')
 
     const written = JSON.parse(mockFs.writeFileSync.mock.calls[0][1] as string)
     expect(written).toHaveLength(1)
@@ -781,7 +784,7 @@ describe('queueChange and replayQueue', () => {
   })
 
   it('successful syncFile dequeues a previously-queued entry for that path', async () => {
-    const apiPath = '/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md'
+    const apiPath = '/api/v2/projects/proj_123/work-items/iss_abc/documents/spec.md'
     // file read, then queue read inside dequeueChange
     mockFs.readFileSync
       .mockReturnValueOnce('# content')
@@ -806,7 +809,7 @@ describe('queueChange and replayQueue', () => {
   it('replayQueue abandons an entry after MAX_REPLAY_ATTEMPTS', async () => {
     const deadEntry = {
       method: 'PUT',
-      path: '/api/v1/projects/proj_123/issues/local_999/documents/prd.md',
+      path: '/api/v2/projects/proj_123/work-items/local_999/documents/prd.md',
       body: { content: 'x' },
       timestamp: '2026-01-01T00:00:00Z',
       attempts: 4, // one below the cap
@@ -836,7 +839,7 @@ describe('queueChange and replayQueue', () => {
   it('replayQueue bumps attempts on a recoverable failure instead of abandoning', async () => {
     const entry = {
       method: 'PUT',
-      path: '/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      path: '/api/v2/projects/proj_123/work-items/iss_abc/documents/spec.md',
       body: { content: 'x' },
       timestamp: '2026-01-01T00:00:00Z',
       attempts: 0,
@@ -865,14 +868,14 @@ describe('queueChange and replayQueue', () => {
   it('replayQueue preserves entries appended during the drain (race-safe merge)', async () => {
     const original = {
       method: 'PUT',
-      path: '/api/v1/projects/proj_123/issues/iss_abc/documents/spec.md',
+      path: '/api/v2/projects/proj_123/work-items/iss_abc/documents/spec.md',
       body: { content: 'x' },
       timestamp: '2026-01-01T00:00:00Z',
       attempts: 0,
     }
     const appendedDuringDrain = {
       method: 'PUT',
-      path: '/api/v1/projects/proj_123/issues/iss_new/documents/prd.md',
+      path: '/api/v2/projects/proj_123/work-items/iss_new/documents/prd.md',
       body: { content: 'y' },
       timestamp: '2026-01-02T00:00:00Z',
       attempts: 0,
@@ -1029,7 +1032,7 @@ describe('syncFile multi-project routing', () => {
     await syncFile(filePath, () => multiProjectConfig)
 
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('/projects/proj_b/issues/iss_xyz/documents/prd.md'),
+      expect.stringContaining('/projects/proj_b/work-items/iss_xyz/documents/prd.md'),
       expect.objectContaining({ method: 'PUT' })
     )
 

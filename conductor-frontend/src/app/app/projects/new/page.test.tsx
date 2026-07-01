@@ -83,7 +83,7 @@ describe('NewWorkspacePage', () => {
 
     expect(mockAddProject).toHaveBeenCalledWith(created)
     expect(mockSetActiveProject).toHaveBeenCalledWith(created)
-    expect(mockRouter.push).toHaveBeenCalledWith('/app/projects/proj-1/issues')
+    expect(mockRouter.push).toHaveBeenCalledWith('/app/projects/proj-1/engineering/issues')
   })
 
   it('shows server error message when API call fails', async () => {

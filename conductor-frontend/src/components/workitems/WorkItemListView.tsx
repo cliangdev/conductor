@@ -2,8 +2,8 @@
 
 // COND-22: the generic Work Item list view, scoped to one Workflow slug. This is the migrated Issues
 // list — title, status filter, and type filter all derive from the bound Workflow's view metadata, and
-// the Work Items are fetched scoped to the slug (GET /issues?workflow=<slug>). The legacy /issues route
-// redirects here at /work/ENGINEERING.
+// the Work Items are fetched scoped to the slug (GET /issues?workflow=<slug>). It is mounted at the
+// canonical /{projectId}/{area}/{noun} route (e.g. /engineering/issues).
 
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'

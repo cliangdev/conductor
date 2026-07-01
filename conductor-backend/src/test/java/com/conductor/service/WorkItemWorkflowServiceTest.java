@@ -8,12 +8,11 @@ import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinitionVersion;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.UnprocessableEntityException;
-import com.conductor.generated.model.AvailableTransition;
-import com.conductor.generated.model.AvailableTransitionsResponse;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
+import com.conductor.service.view.AvailableTransitionsView;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -202,12 +201,12 @@ class WorkItemWorkflowServiceTest {
         member.setRole(MemberRole.CREATOR);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
 
-        AvailableTransitionsResponse response = service.availableTransitions(PROJECT_ID, "issue-1", caller());
+        AvailableTransitionsView response = service.availableTransitions(PROJECT_ID, "issue-1", caller());
 
-        assertThat(response.getWorkflow()).isEqualTo("ENGINEERING");
-        assertThat(response.getCurrentStatus()).isEqualTo("DRAFT");
-        assertThat(response.getNoun()).isEqualTo("Issue");
-        assertThat(response.getTransitions()).extracting(AvailableTransition::getToStatus)
+        assertThat(response.workflow()).isEqualTo("ENGINEERING");
+        assertThat(response.currentStatus()).isEqualTo("DRAFT");
+        assertThat(response.noun()).isEqualTo("Issue");
+        assertThat(response.transitions()).extracting(AvailableTransitionsView.Transition::toStatus)
                 .containsExactlyInAnyOrder("IN_REVIEW", "CLOSED");
     }
 
@@ -261,14 +260,14 @@ class WorkItemWorkflowServiceTest {
         // No approval: the gated DONE edge is hidden; only CLOSED shows.
         when(reviewRepository.existsApprovedByReviewerRole(
                 "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(false);
-        assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).getTransitions())
-                .extracting(AvailableTransition::getToStatus).containsExactly("CLOSED");
+        assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).transitions())
+                .extracting(AvailableTransitionsView.Transition::toStatus).containsExactly("CLOSED");
 
         // Reviewer-approved: DONE appears.
         when(reviewRepository.existsApprovedByReviewerRole(
                 "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(true);
-        assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).getTransitions())
-                .extracting(AvailableTransition::getToStatus).containsExactlyInAnyOrder("DONE", "CLOSED");
+        assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).transitions())
+                .extracting(AvailableTransitionsView.Transition::toStatus).containsExactlyInAnyOrder("DONE", "CLOSED");
     }
 
     @Test
@@ -279,8 +278,8 @@ class WorkItemWorkflowServiceTest {
         member.setRole(MemberRole.REVIEWER);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
 
-        AvailableTransitionsResponse response = service.availableTransitions(PROJECT_ID, "issue-1", caller());
+        AvailableTransitionsView response = service.availableTransitions(PROJECT_ID, "issue-1", caller());
 
-        assertThat(response.getTransitions()).isEmpty();
+        assertThat(response.transitions()).isEmpty();
     }
 }

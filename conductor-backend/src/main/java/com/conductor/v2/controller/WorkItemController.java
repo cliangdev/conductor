@@ -12,6 +12,7 @@ import com.conductor.generated.v2.model.WorkItemAssignee;
 import com.conductor.generated.v2.model.WorkItemResponse;
 import com.conductor.service.WorkItemService;
 import com.conductor.service.WorkItemWorkflowService;
+import com.conductor.service.view.AvailableTransitionsView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -118,9 +119,9 @@ public class WorkItemController implements WorkItemsApi {
     public ResponseEntity<AvailableTransitionsResponse> getWorkItemAvailableTransitions(String projectId,
                                                                                         String workItemId) {
         User caller = currentUser();
-        com.conductor.generated.model.AvailableTransitionsResponse v1 =
+        AvailableTransitionsView view =
                 workItemWorkflowService.availableTransitions(projectId, workItemId, caller);
-        return ResponseEntity.ok(toV2Transitions(v1));
+        return ResponseEntity.ok(toV2Transitions(view));
     }
 
     /** Map a {@link WorkItem} entity to the v2 response, surfacing the bound Workflow slug (absent in v1). */
@@ -148,19 +149,18 @@ public class WorkItemController implements WorkItemsApi {
                 .assignee(assignee);
     }
 
-    /** Translate the v1 doer-projection transitions DTO into its v2 model copy (identical shape). */
-    private static AvailableTransitionsResponse toV2Transitions(
-            com.conductor.generated.model.AvailableTransitionsResponse v1) {
-        List<AvailableTransition> transitions = v1.getTransitions().stream()
+    /** Map the doer-projection transitions view into its v2 response DTO (identical shape). */
+    private static AvailableTransitionsResponse toV2Transitions(AvailableTransitionsView view) {
+        List<AvailableTransition> transitions = view.transitions().stream()
                 .map(t -> {
-                    AvailableTransition at = new AvailableTransition(t.getToStatus(), t.getLabel());
-                    at.setRequiresReview(t.getRequiresReview());
+                    AvailableTransition at = new AvailableTransition(t.toStatus(), t.label());
+                    at.setRequiresReview(t.requiresReview());
                     return at;
                 })
                 .toList();
         AvailableTransitionsResponse response =
-                new AvailableTransitionsResponse(v1.getWorkflow(), v1.getCurrentStatus(), transitions);
-        response.setNoun(v1.getNoun());
+                new AvailableTransitionsResponse(view.workflow(), view.currentStatus(), transitions);
+        response.setNoun(view.noun());
         return response;
     }
 

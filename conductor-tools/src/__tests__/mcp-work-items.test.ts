@@ -20,18 +20,13 @@ vi.mock('../mcp/files.js', () => ({
 import { apiGet, apiPost, apiPatch } from '../mcp/api.js'
 import { queueChange } from '../mcp/queue.js'
 import {
-  createIssue,
-  updateIssue,
-  setIssueStatus,
-  listIssues,
-  getIssue,
   createWorkItem,
   updateWorkItem,
   setWorkItemStatus,
   listWorkItems,
   getWorkItem,
 } from '../mcp/tools/issues.js'
-import { listIssueComments, listWorkItemComments } from '../mcp/tools/comments.js'
+import { listWorkItemComments } from '../mcp/tools/comments.js'
 
 const config: Config = {
   apiKey: 'k',
@@ -100,49 +95,5 @@ describe('canonical work_item MCP tools target v2', () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
     await listWorkItemComments({ issueId: 'w1' }, config)
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/w1/comments', config)
-  })
-})
-
-describe('legacy issue MCP tools stay on v1', () => {
-  beforeEach(() => vi.clearAllMocks())
-
-  it('create_issue POSTs to the v1 issues collection', async () => {
-    ;(apiPost as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'i1', displayId: 'C-1', status: 'DRAFT' })
-    await createIssue({ type: 'PRD', title: 'T' }, config)
-    expect(apiPost).toHaveBeenCalledWith(
-      '/api/v1/projects/proj-1/issues',
-      { type: 'PRD', title: 'T', description: undefined, workflow: undefined },
-      config
-    )
-  })
-
-  it('update_issue PATCHes the v1 item', async () => {
-    ;(apiPatch as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'i1' })
-    await updateIssue({ issueId: 'i1', title: 'New' }, config)
-    expect(apiPatch).toHaveBeenCalledWith('/api/v1/projects/proj-1/issues/i1', { title: 'New' }, config)
-  })
-
-  it('set_issue_status PATCHes the v1 item status', async () => {
-    ;(apiPatch as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'i1' })
-    await setIssueStatus({ issueId: 'i1', status: 'DONE' }, config)
-    expect(apiPatch).toHaveBeenCalledWith('/api/v1/projects/proj-1/issues/i1', { status: 'DONE' }, config)
-  })
-
-  it('list_issues GETs the v1 collection', async () => {
-    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
-    await listIssues({ type: 'PRD' }, config)
-    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/issues?type=PRD', config)
-  })
-
-  it('get_issue GETs the v1 item when no local file exists', async () => {
-    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'i1' })
-    await getIssue({ issueId: 'i1' }, config)
-    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/issues/i1', config)
-  })
-
-  it('list_issue_comments stays on v1', async () => {
-    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
-    await listIssueComments({ issueId: 'i1' }, config)
-    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/issues/i1/comments', config)
   })
 })

@@ -16,8 +16,6 @@ import { registerDashboard } from './commands/dashboard.js'
 import { registerStatus } from './commands/status.js'
 import { registerLint } from './commands/lint.js'
 
-const DEPRECATED_MSG = 'The issue and doc commands have been removed. Use Claude Code with the Conductor MCP server instead.'
-
 const program = new Command()
 
 program
@@ -36,23 +34,5 @@ registerConfig(program)
 registerDashboard(program)
 registerStatus(program)
 registerLint(program)
-
-program
-  .command('issue', { hidden: true })
-  .allowUnknownOption()
-  .allowExcessArguments()
-  .action(() => {
-    console.log(DEPRECATED_MSG)
-    process.exit(1)
-  })
-
-program
-  .command('doc', { hidden: true })
-  .allowUnknownOption()
-  .allowExcessArguments()
-  .action(() => {
-    console.log(DEPRECATED_MSG)
-    process.exit(1)
-  })
 
 program.parse()

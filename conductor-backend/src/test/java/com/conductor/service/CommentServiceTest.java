@@ -10,11 +10,6 @@ import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.generated.model.AddCommentReplyRequest;
-import com.conductor.generated.model.CommentReplyResponse;
-import com.conductor.generated.model.CommentResponse;
-import com.conductor.generated.model.CommentWithRepliesResponse;
-import com.conductor.generated.model.CreateCommentRequest;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
@@ -23,6 +18,8 @@ import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
+import com.conductor.service.view.CommentReplyView;
+import com.conductor.service.view.CommentWithRepliesView;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -151,13 +148,11 @@ class CommentServiceTest {
             return c;
         });
 
-        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Looks good", 2);
-
-        CommentResponse response = commentService.createComment("proj-1", "issue-1", request, author);
+        Comment response = commentService.createComment("proj-1", "issue-1", "doc-1", "Looks good", 2, author);
 
         assertThat(response.getLineNumber()).isEqualTo(2);
         assertThat(response.getContent()).isEqualTo("Looks good");
-        assertThat(response.getAuthorId()).isEqualTo("user-1");
+        assertThat(response.getAuthor().getId()).isEqualTo("user-1");
     }
 
     @Test
@@ -175,9 +170,7 @@ class CommentServiceTest {
             return c;
         });
 
-        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Needs clarification", 2);
-
-        commentService.createComment("proj-1", "issue-1", request, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Needs clarification", 2, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -199,9 +192,7 @@ class CommentServiceTest {
             return c;
         });
 
-        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Comment on first line", 1);
-
-        commentService.createComment("proj-1", "issue-1", request, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on first line", 1, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -223,9 +214,7 @@ class CommentServiceTest {
             return c;
         });
 
-        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Comment on line 99", 99);
-
-        commentService.createComment("proj-1", "issue-1", request, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on line 99", 99, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -245,9 +234,7 @@ class CommentServiceTest {
             return c;
         });
 
-        CreateCommentRequest request = new CreateCommentRequest("doc-1", "Comment", 1);
-
-        commentService.createComment("proj-1", "issue-1", request, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment", 1, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -256,12 +243,8 @@ class CommentServiceTest {
 
     @Test
     void createCommentMissingLineNumberThrowsBusinessException() {
-        CreateCommentRequest request = new CreateCommentRequest();
-        request.setDocumentId("doc-1");
-        request.setContent("Missing lineNumber");
-        // lineNumber is null
-
-        assertThatThrownBy(() -> commentService.createComment("proj-1", "issue-1", request, author))
+        assertThatThrownBy(() -> commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Missing lineNumber", null, author))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("lineNumber");
     }
@@ -280,13 +263,13 @@ class CommentServiceTest {
 
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of(reply));
 
-        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", null, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
 
         assertThat(results).hasSize(1);
-        assertThat(results.get(0).getId()).isEqualTo("comment-1");
-        assertThat(results.get(0).getReplies()).hasSize(1);
-        assertThat(results.get(0).getReplies().get(0).getId()).isEqualTo("reply-1");
-        assertThat(results.get(0).getReplies().get(0).getContent()).isEqualTo("Agreed");
+        assertThat(results.get(0).id()).isEqualTo("comment-1");
+        assertThat(results.get(0).replies()).hasSize(1);
+        assertThat(results.get(0).replies().get(0).id()).isEqualTo("reply-1");
+        assertThat(results.get(0).replies().get(0).content()).isEqualTo("Agreed");
     }
 
     @Test
@@ -300,13 +283,12 @@ class CommentServiceTest {
             return r;
         });
 
-        AddCommentReplyRequest request = new AddCommentReplyRequest("Great point!");
-        CommentReplyResponse response = commentService.addReply("proj-1", "issue-1", "comment-1", request, author);
+        CommentReplyView response = commentService.addReply("proj-1", "issue-1", "comment-1", "Great point!", author);
 
-        assertThat(response.getId()).isEqualTo("new-reply-id");
-        assertThat(response.getContent()).isEqualTo("Great point!");
-        assertThat(response.getCommentId()).isEqualTo("comment-1");
-        assertThat(response.getAuthorId()).isEqualTo("user-1");
+        assertThat(response.id()).isEqualTo("new-reply-id");
+        assertThat(response.content()).isEqualTo("Great point!");
+        assertThat(response.commentId()).isEqualTo("comment-1");
+        assertThat(response.authorId()).isEqualTo("user-1");
 
         ArgumentCaptor<CommentReply> captor = ArgumentCaptor.forClass(CommentReply.class);
         verify(commentReplyRepository).save(captor.capture());
@@ -319,7 +301,7 @@ class CommentServiceTest {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
         when(commentRepository.save(any(Comment.class))).thenReturn(comment);
 
-        CommentResponse response = commentService.resolveComment("proj-1", "issue-1", "comment-1", author);
+        Comment response = commentService.resolveComment("proj-1", "issue-1", "comment-1", author);
 
         assertThat(comment.getResolvedAt()).isNotNull();
         assertThat(comment.getResolvedBy()).isEqualTo(author);
@@ -362,7 +344,7 @@ class CommentServiceTest {
         when(commentRepository.findAllByWorkItemId("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 
-        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", null, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
 
         verify(commentRepository).findAllByWorkItemId("issue-1");
         assertThat(results).hasSize(1);
@@ -386,11 +368,11 @@ class CommentServiceTest {
                 .thenReturn(List.of(resolvedComment));
         when(commentReplyRepository.findAllByCommentId("comment-resolved")).thenReturn(List.of());
 
-        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", true, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", true, author);
 
         verify(commentRepository).findAllByWorkItemIdAndResolvedAtIsNotNull("issue-1");
         assertThat(results).hasSize(1);
-        assertThat(results.get(0).getResolvedAt()).isNotNull();
+        assertThat(results.get(0).resolvedAt()).isNotNull();
     }
 
     @Test
@@ -399,11 +381,11 @@ class CommentServiceTest {
         when(commentRepository.findAllByWorkItemIdAndResolvedAtIsNull("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 
-        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", false, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", false, author);
 
         verify(commentRepository).findAllByWorkItemIdAndResolvedAtIsNull("issue-1");
         assertThat(results).hasSize(1);
-        assertThat(results.get(0).getResolvedAt()).isNull();
+        assertThat(results.get(0).resolvedAt()).isNull();
     }
 
     @Test
@@ -416,14 +398,14 @@ class CommentServiceTest {
         when(commentRepository.findAllByWorkItemId("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentId("comment-1")).thenReturn(List.of());
 
-        List<CommentWithRepliesResponse> results = commentService.listComments("proj-1", "issue-1", null, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
 
         assertThat(results).hasSize(1);
-        CommentWithRepliesResponse response = results.get(0);
-        assertThat(response.getLineNumber()).isEqualTo(7);
-        assertThat(response.getQuotedText()).isEqualTo("The quoted line text");
-        assertThat(response.getLineStale()).isTrue();
-        assertThat(response.getDocumentName()).isEqualTo("spec.md");
+        CommentWithRepliesView response = results.get(0);
+        assertThat(response.lineNumber()).isEqualTo(7);
+        assertThat(response.quotedText()).isEqualTo("The quoted line text");
+        assertThat(response.lineStale()).isTrue();
+        assertThat(response.documentName()).isEqualTo("spec.md");
     }
 
     // --- extractLineFromDocument unit tests (package-private helper) ---
@@ -510,8 +492,7 @@ class CommentServiceTest {
             return c;
         });
 
-        CreateCommentRequest request = new CreateCommentRequest("doc-1", longContent, 1);
-        commentService.createComment("proj-1", "issue-1", request, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", longContent, 1, author);
 
         ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(captor.capture());
@@ -535,8 +516,7 @@ class CommentServiceTest {
             return r;
         });
 
-        AddCommentReplyRequest request = new AddCommentReplyRequest(shortContent);
-        commentService.addReply("proj-1", "issue-1", "comment-1", request, author);
+        commentService.addReply("proj-1", "issue-1", "comment-1", shortContent, author);
 
         ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(captor.capture());

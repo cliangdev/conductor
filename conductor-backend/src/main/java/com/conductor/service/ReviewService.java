@@ -7,8 +7,6 @@ import com.conductor.entity.Review;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.generated.model.ReviewResponse;
-import com.conductor.generated.model.ReviewWithUserResponse;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
@@ -17,6 +15,7 @@ import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.service.view.ReviewWithUser;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -54,7 +53,7 @@ public class ReviewService {
     }
 
     @Transactional
-    public ReviewResponse submitReview(String projectId, String issueId, String verdict, String body, User currentUser) {
+    public Review submitReview(String projectId, String issueId, String verdict, String body, User currentUser) {
         if (!VALID_VERDICTS.contains(verdict)) {
             throw new BusinessException("Invalid verdict. Must be one of: APPROVED, CHANGES_REQUESTED, COMMENTED");
         }
@@ -94,35 +93,28 @@ public class ReviewService {
                 EventType.REVIEW_SUBMITTED, projectId,
                 Map.of("issueId", issueId, "issueTitle", issueTitle, "verdict", verdict)));
 
-        return toReviewResponse(review);
+        return review;
     }
 
     @Transactional(readOnly = true)
-    public List<ReviewWithUserResponse> listReviews(String projectId, String issueId, User currentUser) {
+    public List<ReviewWithUser> listReviews(String projectId, String issueId, User currentUser) {
         if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, currentUser.getId())) {
             throw new EntityNotFoundException("Project not found");
         }
 
         return reviewRepository.findAllByWorkItemId(issueId).stream()
-                .map(this::toReviewWithUserResponse)
+                .map(this::toReviewWithUser)
                 .toList();
     }
 
-    private ReviewResponse toReviewResponse(Review review) {
-        ReviewResponse response = new ReviewResponse(review.getId(), review.getReviewerId(), review.getVerdict(), review.getSubmittedAt());
-        response.setBody(review.getBody());
-        return response;
-    }
-
-    private ReviewWithUserResponse toReviewWithUserResponse(Review review) {
-        ReviewWithUserResponse response = new ReviewWithUserResponse(review.getReviewerId(), review.getVerdict(), review.getSubmittedAt());
-        response.setBody(review.getBody());
-
-        userRepository.findById(review.getReviewerId()).ifPresent(user -> {
-            response.setName(user.getName());
-            response.setAvatarUrl(user.getAvatarUrl());
-        });
-
-        return response;
+    private ReviewWithUser toReviewWithUser(Review review) {
+        User user = userRepository.findById(review.getReviewerId()).orElse(null);
+        return new ReviewWithUser(
+                review.getReviewerId(),
+                review.getVerdict(),
+                review.getSubmittedAt(),
+                review.getBody(),
+                user != null ? user.getName() : null,
+                user != null ? user.getAvatarUrl() : null);
     }
 }

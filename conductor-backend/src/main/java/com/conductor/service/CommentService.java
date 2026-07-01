@@ -9,11 +9,6 @@ import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.generated.model.AddCommentReplyRequest;
-import com.conductor.generated.model.CommentReplyResponse;
-import com.conductor.generated.model.CommentResponse;
-import com.conductor.generated.model.CommentWithRepliesResponse;
-import com.conductor.generated.model.CreateCommentRequest;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.notification.NotificationEvent;
@@ -23,6 +18,8 @@ import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
+import com.conductor.service.view.CommentReplyView;
+import com.conductor.service.view.CommentWithRepliesView;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -67,8 +64,9 @@ public class CommentService {
     }
 
     @Transactional
-    public CommentResponse createComment(String projectId, String issueId, CreateCommentRequest request, User caller) {
-        if (request.getLineNumber() == null) {
+    public Comment createComment(String projectId, String issueId, String documentId, String content,
+                                 Integer lineNumber, User caller) {
+        if (lineNumber == null) {
             throw new BusinessException("lineNumber is required");
         }
 
@@ -76,22 +74,22 @@ public class CommentService {
 
         WorkItem issue = findIssueInProject(projectId, issueId);
 
-        Document document = documentRepository.findByIdAndWorkItemId(request.getDocumentId(), issueId)
+        Document document = documentRepository.findByIdAndWorkItemId(documentId, issueId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found in issue"));
 
-        String quotedText = extractLineFromDocument(document, request.getLineNumber());
+        String quotedText = extractLineFromDocument(document, lineNumber);
 
         Comment comment = new Comment();
         comment.setWorkItem(issue);
         comment.setDocument(document);
         comment.setAuthor(caller);
-        comment.setContent(request.getContent());
-        comment.setLineNumber(request.getLineNumber());
+        comment.setContent(content);
+        comment.setLineNumber(lineNumber);
         comment.setQuotedText(quotedText);
 
         commentRepository.save(comment);
 
-        String excerpt = buildExcerpt(request.getContent());
+        String excerpt = buildExcerpt(content);
         String authorLabel = caller.getName() != null ? caller.getName() : caller.getEmail();
         notificationDispatcher.dispatch(NotificationEvent.of(
                 EventType.COMMENT_ADDED,
@@ -103,7 +101,7 @@ public class CommentService {
                         "excerpt", excerpt
                 )));
 
-        return toCommentResponse(comment);
+        return comment;
     }
 
     String extractLineFromDocument(Document document, int lineNumber) {
@@ -121,7 +119,7 @@ public class CommentService {
     }
 
     @Transactional(readOnly = true)
-    public List<CommentWithRepliesResponse> listComments(String projectId, String issueId, Boolean resolved, User caller) {
+    public List<CommentWithRepliesView> listComments(String projectId, String issueId, Boolean resolved, User caller) {
         verifyReadAccess(projectId, caller.getId());
 
         List<Comment> comments;
@@ -135,33 +133,30 @@ public class CommentService {
 
         return comments.stream()
                 .map(comment -> {
-                    List<CommentReplyResponse> replies = commentReplyRepository.findAllByCommentId(comment.getId())
+                    List<CommentReplyView> replies = commentReplyRepository.findAllByCommentId(comment.getId())
                             .stream()
-                            .map(this::toCommentReplyResponse)
+                            .map(this::toCommentReplyView)
                             .toList();
 
-                    CommentWithRepliesResponse response = new CommentWithRepliesResponse(
+                    return new CommentWithRepliesView(
                             comment.getId(),
                             comment.getDocument().getId(),
                             comment.getAuthor().getId(),
                             comment.getContent(),
                             comment.getCreatedAt(),
+                            comment.getAuthor().getName(),
+                            comment.getLineNumber(),
+                            comment.getQuotedText(),
+                            comment.isLineStale(),
+                            comment.getDocument().getFilename(),
+                            comment.getResolvedAt(),
                             replies);
-
-                    response.setAuthorName(comment.getAuthor().getName());
-                    response.setLineNumber(comment.getLineNumber());
-                    response.setQuotedText(comment.getQuotedText());
-                    response.setLineStale(comment.isLineStale());
-                    response.setDocumentName(comment.getDocument().getFilename());
-                    response.setResolvedAt(comment.getResolvedAt());
-
-                    return response;
                 })
                 .toList();
     }
 
     @Transactional
-    public CommentReplyResponse addReply(String projectId, String issueId, String commentId, AddCommentReplyRequest request, User caller) {
+    public CommentReplyView addReply(String projectId, String issueId, String commentId, String content, User caller) {
         verifyMembership(projectId, caller.getId());
 
         Comment comment = findCommentInIssue(issueId, commentId);
@@ -169,12 +164,12 @@ public class CommentService {
         CommentReply reply = new CommentReply();
         reply.setComment(comment);
         reply.setAuthor(caller);
-        reply.setContent(request.getContent());
+        reply.setContent(content);
 
         commentReplyRepository.save(reply);
 
         WorkItem issue = comment.getWorkItem();
-        String excerpt = buildExcerpt(request.getContent());
+        String excerpt = buildExcerpt(content);
         String authorLabel = caller.getName() != null ? caller.getName() : caller.getEmail();
         notificationDispatcher.dispatch(NotificationEvent.of(
                 EventType.COMMENT_REPLY,
@@ -186,11 +181,11 @@ public class CommentService {
                         "excerpt", excerpt
                 )));
 
-        return toCommentReplyResponse(reply);
+        return toCommentReplyView(reply);
     }
 
     @Transactional
-    public CommentResponse resolveComment(String projectId, String issueId, String commentId, User caller) {
+    public Comment resolveComment(String projectId, String issueId, String commentId, User caller) {
         verifyMembership(projectId, caller.getId());
 
         Comment comment = findCommentInIssue(issueId, commentId);
@@ -198,7 +193,7 @@ public class CommentService {
         comment.setResolvedBy(caller);
 
         commentRepository.save(comment);
-        return toCommentResponse(comment);
+        return comment;
     }
 
     @Transactional
@@ -257,32 +252,13 @@ public class CommentService {
         return comment;
     }
 
-    private CommentResponse toCommentResponse(Comment comment) {
-        CommentResponse response = new CommentResponse(
-                comment.getId(),
-                comment.getDocument().getId(),
-                comment.getAuthor().getId(),
-                comment.getContent(),
-                comment.getCreatedAt());
-
-        response.setLineNumber(comment.getLineNumber());
-        response.setQuotedText(comment.getQuotedText());
-        response.setLineStale(comment.isLineStale());
-        response.setResolvedAt(comment.getResolvedAt());
-
-        return response;
-    }
-
-    private CommentReplyResponse toCommentReplyResponse(CommentReply reply) {
-        CommentReplyResponse response = new CommentReplyResponse(
+    private CommentReplyView toCommentReplyView(CommentReply reply) {
+        return new CommentReplyView(
                 reply.getId(),
                 reply.getComment().getId(),
                 reply.getAuthor().getId(),
                 reply.getContent(),
-                reply.getCreatedAt());
-
-        response.setAuthorName(reply.getAuthor().getName());
-
-        return response;
+                reply.getCreatedAt(),
+                reply.getAuthor().getName());
     }
 }

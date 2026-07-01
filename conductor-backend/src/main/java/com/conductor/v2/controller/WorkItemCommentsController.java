@@ -1,5 +1,6 @@
 package com.conductor.v2.controller;
 
+import com.conductor.entity.Comment;
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.WorkItemCommentsApi;
 import com.conductor.generated.v2.model.AddCommentReplyRequest;
@@ -8,6 +9,8 @@ import com.conductor.generated.v2.model.CommentResponse;
 import com.conductor.generated.v2.model.CommentWithRepliesResponse;
 import com.conductor.generated.v2.model.CreateCommentRequest;
 import com.conductor.service.CommentService;
+import com.conductor.service.view.CommentReplyView;
+import com.conductor.service.view.CommentWithRepliesView;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
@@ -18,8 +21,9 @@ import java.util.List;
  * Canonical v2 Work Item comments sub-resource
  * ({@code /api/v2/projects/{projectId}/work-items/{workItemId}/comments}). Successor to the legacy v1
  * {@code CommentController}; additive and behavior-preserving. All business logic lives in the shared
- * {@link CommentService} — this controller only translates v2 request/response DTOs to/from the v1 DTOs the
- * service speaks. The service returns DTOs (not entities), so no {@code @Transactional} is needed here.
+ * {@link CommentService} — this controller only maps the service's entity/domain-view return values to the v2
+ * response DTOs. The service assembles those inside its own transaction (and the entity mapping reads only ids
+ * off already-resolved references), so no {@code @Transactional} is needed here.
  *
  * <p>The {@code /api/v2} prefix is applied structurally by {@code ApiPathConfig} for controllers under the
  * {@code com.conductor.v2} package, so this class maps at bare paths via the generated interface.
@@ -37,12 +41,9 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
     public ResponseEntity<CommentResponse> createWorkItemComment(String projectId, String workItemId,
                                                                  CreateCommentRequest request) {
         User caller = currentUser();
-        com.conductor.generated.model.CreateCommentRequest v1Request =
-                new com.conductor.generated.model.CreateCommentRequest(
-                        request.getDocumentId(), request.getContent(), request.getLineNumber());
-        com.conductor.generated.model.CommentResponse response =
-                commentService.createComment(projectId, workItemId, v1Request, caller);
-        return ResponseEntity.status(201).body(toV2(response));
+        Comment comment = commentService.createComment(
+                projectId, workItemId, request.getDocumentId(), request.getContent(), request.getLineNumber(), caller);
+        return ResponseEntity.status(201).body(toV2(comment));
     }
 
     @Override
@@ -50,9 +51,8 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
                                                                                  String workItemId,
                                                                                  Boolean resolved) {
         User caller = currentUser();
-        List<com.conductor.generated.model.CommentWithRepliesResponse> comments =
-                commentService.listComments(projectId, workItemId, resolved, caller);
-        List<CommentWithRepliesResponse> v2 = comments.stream()
+        List<CommentWithRepliesResponse> v2 = commentService.listComments(projectId, workItemId, resolved, caller)
+                .stream()
                 .map(WorkItemCommentsController::toV2WithReplies)
                 .toList();
         return ResponseEntity.ok(v2);
@@ -63,20 +63,16 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
                                                                         String commentId,
                                                                         AddCommentReplyRequest request) {
         User caller = currentUser();
-        com.conductor.generated.model.AddCommentReplyRequest v1Request =
-                new com.conductor.generated.model.AddCommentReplyRequest(request.getContent());
-        com.conductor.generated.model.CommentReplyResponse response =
-                commentService.addReply(projectId, workItemId, commentId, v1Request, caller);
-        return ResponseEntity.status(201).body(toV2Reply(response));
+        CommentReplyView reply = commentService.addReply(projectId, workItemId, commentId, request.getContent(), caller);
+        return ResponseEntity.status(201).body(toV2Reply(reply));
     }
 
     @Override
     public ResponseEntity<CommentResponse> resolveWorkItemComment(String projectId, String workItemId,
                                                                   String commentId) {
         User caller = currentUser();
-        com.conductor.generated.model.CommentResponse response =
-                commentService.resolveComment(projectId, workItemId, commentId, caller);
-        return ResponseEntity.ok(toV2(response));
+        Comment comment = commentService.resolveComment(projectId, workItemId, commentId, caller);
+        return ResponseEntity.ok(toV2(comment));
     }
 
     @Override
@@ -86,34 +82,34 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
         return ResponseEntity.noContent().build();
     }
 
-    private static CommentResponse toV2(com.conductor.generated.model.CommentResponse v1) {
+    private static CommentResponse toV2(Comment comment) {
         return new CommentResponse(
-                v1.getId(), v1.getDocumentId(), v1.getAuthorId(), v1.getContent(), v1.getCreatedAt())
-                .lineNumber(v1.getLineNumber())
-                .quotedText(v1.getQuotedText())
-                .lineStale(v1.getLineStale())
-                .resolvedAt(v1.getResolvedAt());
+                comment.getId(), comment.getDocument().getId(), comment.getAuthor().getId(),
+                comment.getContent(), comment.getCreatedAt())
+                .lineNumber(comment.getLineNumber())
+                .quotedText(comment.getQuotedText())
+                .lineStale(comment.isLineStale())
+                .resolvedAt(comment.getResolvedAt());
     }
 
-    private static CommentWithRepliesResponse toV2WithReplies(
-            com.conductor.generated.model.CommentWithRepliesResponse v1) {
-        List<CommentReplyResponse> replies = v1.getReplies().stream()
+    private static CommentWithRepliesResponse toV2WithReplies(CommentWithRepliesView v) {
+        List<CommentReplyResponse> replies = v.replies().stream()
                 .map(WorkItemCommentsController::toV2Reply)
                 .toList();
         return new CommentWithRepliesResponse(
-                v1.getId(), v1.getDocumentId(), v1.getAuthorId(), v1.getContent(), v1.getCreatedAt(), replies)
-                .authorName(v1.getAuthorName())
-                .lineNumber(v1.getLineNumber())
-                .quotedText(v1.getQuotedText())
-                .lineStale(v1.getLineStale())
-                .documentName(v1.getDocumentName())
-                .resolvedAt(v1.getResolvedAt());
+                v.id(), v.documentId(), v.authorId(), v.content(), v.createdAt(), replies)
+                .authorName(v.authorName())
+                .lineNumber(v.lineNumber())
+                .quotedText(v.quotedText())
+                .lineStale(v.lineStale())
+                .documentName(v.documentName())
+                .resolvedAt(v.resolvedAt());
     }
 
-    private static CommentReplyResponse toV2Reply(com.conductor.generated.model.CommentReplyResponse v1) {
+    private static CommentReplyResponse toV2Reply(CommentReplyView v) {
         return new CommentReplyResponse(
-                v1.getId(), v1.getCommentId(), v1.getAuthorId(), v1.getContent(), v1.getCreatedAt())
-                .authorName(v1.getAuthorName());
+                v.id(), v.commentId(), v.authorId(), v.content(), v.createdAt())
+                .authorName(v.authorName());
     }
 
     private User currentUser() {
