@@ -71,9 +71,9 @@ class WorkItemDocumentsV2E2ETest extends AbstractE2ETest {
         assertThat(createResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         String docId = (String) createResp.getBody().get("id");
         assertThat(docId).isNotBlank();
-        // v2 surfaces the parent ref as workItemId (not workItemId).
+        // v2 surfaces the parent ref as workItemId (not the legacy issueId).
         assertThat(createResp.getBody().get("workItemId")).isEqualTo(workItemId);
-        assertThat(createResp.getBody()).doesNotContainKey("workItemId");
+        assertThat(createResp.getBody()).doesNotContainKey("issueId");
 
         // List.
         var listResp = rest.exchange(
