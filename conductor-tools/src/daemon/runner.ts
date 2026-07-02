@@ -17,8 +17,8 @@ export interface WorkflowTriggerEvent {
   workflowRunId: string
   workflowId: string
   workflowName: string
-  issueId: string
-  issueTitle: string
+  workItemId: string
+  workItemTitle: string
   projectId: string
   trigger: {
     type: string
@@ -117,7 +117,7 @@ export async function runJob(
 
   // Step 4: Build env args
   const conductorEnv: Record<string, string> = {
-    CONDUCTOR_ISSUE_ID: event.issueId,
+    CONDUCTOR_ISSUE_ID: event.workItemId,
     CONDUCTOR_PROJECT_ID: event.projectId,
     CONDUCTOR_WORKFLOW_RUN_ID: event.workflowRunId,
     CONDUCTOR_API_KEY: config.apiKey,

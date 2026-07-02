@@ -8,7 +8,6 @@ import com.conductor.workflow.lifecycle.StatechartTransition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.Optional;
@@ -27,16 +26,25 @@ import java.util.Set;
  * A {@code status_changed} transition itself changes status, which re-fires the event — an unbounded recursion
  * risk on any cyclic statechart. Three defenses, all here:
  * <ol>
- *   <li><b>Internal cascade loop</b> — one event advances the Work Item hop-by-hop in a {@code while} loop
- *       inside this transaction, rather than relying on re-entrant events to chain hops.</li>
- *   <li><b>Visited-status set + hard cap</b> — a repeated status, or exceeding {@link #MAX_CASCADE_HOPS},
- *       stops the cascade deterministically.</li>
+ *   <li><b>Internal cascade loop</b> — one event advances the Work Item hop-by-hop in a {@code for} loop,
+ *       rather than relying on re-entrant events to chain hops.</li>
+ *   <li><b>Visited-status set + hard cap</b> — a repeated status (checked <em>before</em> the hop is
+ *       persisted, so a cyclic edge is a net no-op), or exceeding {@link #MAX_CASCADE_HOPS}, stops the
+ *       cascade deterministically.</li>
  *   <li><b>ThreadLocal re-entrancy guard</b> — each hop re-publishes the event (so notifications + YAML
  *       automations fire per hop), which re-enters this dispatcher; the guard makes that nested call a no-op,
  *       leaving the outer loop the sole advancer.</li>
  * </ol>
  * Idempotency falls out for free: a re-delivered event re-loads the Work Item at its current status, and if it
  * already advanced no transition's {@code from} matches, so it is a clean no-op.
+ *
+ * <p><b>Transactions:</b> this is <em>not</em> {@code @Transactional} — it is only ever invoked from
+ * {@code NotificationDispatcher} during a status change, i.e. already inside the triggering request's
+ * transaction ({@code WorkItemService.patchWorkItem}/{@code completeFromPullRequest}), whose cascade ops it
+ * joins. Deliberately so: were it {@code @Transactional(REQUIRED)}, a cascade exception would be caught by its
+ * own interceptor and mark the <em>shared</em> transaction rollback-only, silently failing the user's status
+ * change at commit. Without a boundary here, {@code NotificationDispatcher}'s catch genuinely isolates a
+ * lifecycle-trigger failure from the triggering request.
  */
 @Service
 public class LifecycleTriggerDispatcher {
@@ -60,7 +68,6 @@ public class LifecycleTriggerDispatcher {
         this.workItemService = workItemService;
     }
 
-    @Transactional
     public void onConductorEvent(NotificationEvent event) {
         if (event.getEventType() != EventType.WORK_ITEM_STATUS_CHANGED) {
             return;
@@ -100,16 +107,19 @@ public class LifecycleTriggerDispatcher {
                 return;
             }
             String toStatus = workItem.getCurrentStatus();
-            workItemRepository.save(workItem);
-            // Re-publish per hop so notifications + YAML automations fire for it. The re-entrancy guard makes
-            // the nested lifecycle evaluation a no-op, so this loop stays the sole advancer.
-            workItemService.publishStatusChanged(projectId, workItem, fromStatus, toStatus, null);
-
+            // Cycle guard BEFORE any side effect: if this hop revisits a status, undo the in-memory advance
+            // (the Work Item is managed in the triggering transaction, so an un-reverted mutation would still
+            // flush at commit) and stop — a cyclic status_changed edge must not persist or publish a hop.
             if (!visited.add(toStatus)) {
+                workItem.setCurrentStatus(fromStatus);
                 log.warn("Lifecycle cascade for Work Item {} halted: revisited status {} (statechart cycle)",
                         workItemId, toStatus);
                 return;
             }
+            workItemRepository.save(workItem);
+            // Re-publish per hop so notifications + YAML automations fire for it. The re-entrancy guard makes
+            // the nested lifecycle evaluation a no-op, so this loop stays the sole advancer.
+            workItemService.publishStatusChanged(projectId, workItem, fromStatus, toStatus, null);
         }
         log.warn("Lifecycle cascade for Work Item {} halted at the hop cap ({})", workItemId, MAX_CASCADE_HOPS);
     }

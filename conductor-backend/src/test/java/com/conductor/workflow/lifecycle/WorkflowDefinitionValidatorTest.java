@@ -146,6 +146,32 @@ class WorkflowDefinitionValidatorTest {
     }
 
     @Test
+    void statusChangedCycleRejected() throws Exception {
+        // A -> B -> A both on status_changed would auto-loop at runtime; reject at publish. (A -> DONE keeps
+        // reachability valid so the cycle check — not a dead-end error — is what fires.)
+        String bad = """
+                {
+                  "schemaVersion": 1, "id": "CYC", "area": "CYC", "version": 1, "state": "DRAFT",
+                  "noun": "Item", "default_view": "list", "types": ["TASK"],
+                  "statuses": [
+                    {"id": "OPEN", "category": "open", "initial": true},
+                    {"id": "AA", "category": "in_progress"},
+                    {"id": "BB", "category": "in_progress"},
+                    {"id": "DONE", "category": "terminal", "terminal": true}
+                  ],
+                  "transitions": [
+                    {"from": "OPEN", "to": "AA", "label": "Start"},
+                    {"from": "AA", "to": "BB", "label": "Fwd", "trigger": "status_changed"},
+                    {"from": "BB", "to": "AA", "label": "Back", "trigger": "status_changed"},
+                    {"from": "AA", "to": "DONE", "label": "Finish"}
+                  ]
+                }
+                """;
+        WorkflowValidationResult result = validator.validate(PROJECT_ID, json(bad));
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("status_changed") && e.contains("auto-loop"));
+    }
+
+    @Test
     void projectRegisteredSkillAccepted() throws Exception {
         // A skill the project has registered (not a built-in) is bindable — no redeploy needed.
         ProjectSkill registered = new ProjectSkill();

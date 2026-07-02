@@ -130,14 +130,16 @@ class LifecycleTriggerDispatcherTest {
     }
 
     @Test
-    void terminatesOnStatechartCycle() {
-        // A -> B -> A -> B -> ... : the visited-set stops the cascade once a status repeats.
+    void terminatesOnStatechartCycleWithoutPersistingTheCyclicHop() {
+        // A -> B -> A -> B -> ... : the visited-set check runs BEFORE persist/publish, so only the acyclic
+        // hop (A->B) is committed; the cyclic hop (B->A) is detected and reverted, not persisted.
         advanceThrough("B", "A", "B", "A", "B", "A");
         dispatcher.onConductorEvent(statusChangedEvent());
 
-        // Hop 1 (A->B) then hop 2 (B->A) revisits A -> stop. Two hops, no infinite loop.
-        verify(workItemRepository, times(2)).save(workItem);
-        verify(workItemService, times(2)).publishStatusChanged(any(), any(), any(), any(), any());
+        verify(workItemRepository, times(1)).save(workItem);
+        verify(workItemService, times(1)).publishStatusChanged(any(), any(), any(), any(), any());
+        // The cyclic advance to A was reverted, so the item rests at the last non-repeating status.
+        assertThat(workItem.getCurrentStatus()).isEqualTo("B");
     }
 
     @Test
