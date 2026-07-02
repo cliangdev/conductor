@@ -41,7 +41,7 @@ UPDATE daemon_events
     OR payload::text LIKE '%"issueId"%'
     OR payload::text LIKE '%"issueTitle"%';
 
--- 4. Automation workflow YAML: the trigger key and any ${{ event.issueId/issueTitle }} interpolation refs.
+-- 4. Automation workflow YAML: the trigger key and any event.issueId / event.issueTitle interpolation refs.
 UPDATE workflow_definitions
    SET yaml = REPLACE(REPLACE(REPLACE(yaml,
            'conductor.issue.status_changed', 'conductor.work_item.status_changed'),
