@@ -63,7 +63,7 @@ class ReviewServiceTest {
     private ProjectMember reviewerMember;
     private ProjectMember creatorMember;
     private WorkItemReviewer issueReviewer;
-    private WorkItem issue;
+    private WorkItem workItem;
 
     @BeforeEach
     void setUp() {
@@ -96,15 +96,15 @@ class ReviewServiceTest {
         issueReviewer.setWorkItemId(ISSUE_ID);
         issueReviewer.setUserId(reviewerUser.getId());
 
-        issue = new WorkItem();
-        issue.setId(ISSUE_ID);
-        issue.setProject(project);
-        issue.setType("PRD");
-        issue.setTitle("Test Issue");
-        issue.setCurrentStatus("IN_REVIEW");
-        issue.setCreatedBy(creatorUser);
-        issue.setCreatedAt(OffsetDateTime.now());
-        issue.setUpdatedAt(OffsetDateTime.now());
+        workItem = new WorkItem();
+        workItem.setId(ISSUE_ID);
+        workItem.setProject(project);
+        workItem.setType("PRD");
+        workItem.setTitle("Test Issue");
+        workItem.setCurrentStatus("IN_REVIEW");
+        workItem.setCreatedBy(creatorUser);
+        workItem.setCreatedAt(OffsetDateTime.now());
+        workItem.setUpdatedAt(OffsetDateTime.now());
     }
 
     @Test
@@ -115,7 +115,7 @@ class ReviewServiceTest {
                 .thenReturn(Optional.of(issueReviewer));
         when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.empty());
-        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
         when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> {
             Review r = inv.getArgument(0);
             if (r.getId() == null) r.setId("review-1");
@@ -153,7 +153,7 @@ class ReviewServiceTest {
                 .thenReturn(Optional.of(issueReviewer));
         when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(existingReview));
-        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
         when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
 
         reviewService.submitReview(PROJECT_ID, ISSUE_ID, "APPROVED", "Updated", reviewerUser);

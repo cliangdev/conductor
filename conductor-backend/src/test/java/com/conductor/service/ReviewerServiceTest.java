@@ -10,6 +10,7 @@ import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.notification.NotificationDispatcher;
 import com.conductor.repository.WorkItemReviewerRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.view.ReviewerView;
@@ -37,6 +38,9 @@ class ReviewerServiceTest {
 
     @Mock
     private WorkItemReviewerRepository workItemReviewerRepository;
+
+    @Mock
+    private WorkItemRepository workItemRepository;
 
     @Mock
     private ProjectMemberRepository projectMemberRepository;

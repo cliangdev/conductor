@@ -76,18 +76,18 @@ on:
   webhook: {}
 ```
 
-#### Issue status change
+#### Work Item status change
 
-Fires when any issue in the project changes status. Use `filters.status` to narrow it to a specific target status.
+Fires when any Work Item in the project changes status. Use `filters.status` to narrow it to a specific target status.
 
 ```yaml
 on:
-  conductor.issue.status_changed:
+  conductor.work_item.status_changed:
     filters:
-      status: "IN_REVIEW"     # only fire when an issue moves to IN_REVIEW
+      status: "IN_REVIEW"     # only fire when a Work Item moves to IN_REVIEW
 ```
 
-Available event fields: `event.toStatus`, `event.fromStatus`, `event.issueId`.
+Available event fields: `event.toStatus`, `event.fromStatus`, `event.workItemId`.
 
 #### Cron schedule
 
@@ -694,8 +694,32 @@ registered**, so for a new domain skill (e.g. `marketing:seo-report`) register i
 Registering a skill only makes the id *bindable* — the skill's behavior lives in the Claude Code skill/command the
 user installs. Only ADMIN/CREATOR can register skills or publish workflows.
 
-> **Not yet generic** (tracked in #240 §3): event-driven auto-transitions are limited to the `pr_merged` system
-> trigger, auto-asset recording beyond a generic type is engineering-shaped, and step `kind` is a fixed enum
-> (`skill`/`http`/`notify`/`set_field`/`create_sub_items`). A user-authored lifecycle built on **manual, skill,
-> and review** transitions is fully supported today; connector-driven event automation for non-engineering
-> lifecycles is a follow-up.
+### System triggers (event-driven auto-transitions)
+
+A transition can declare a `trigger` so a **system event** advances a Work Item automatically, instead of a human
+choosing the move. The trigger id must be one the backend knows how to fire (a *registered system trigger*); Publish
+rejects an unknown trigger with `transition … uses unknown system trigger '…'`. Two ship today:
+
+| Trigger | Fires when | Review gate |
+| --- | --- | --- |
+| `pr_merged` | a linked GitHub pull request merges | **bypassed** — the merge is the authority |
+| `status_changed` | the Work Item's status changes (any move) | **honored** — a review-gated edge only fires once its Review is satisfied |
+
+```yaml
+transitions:
+  - from: IN_REVIEW
+    to: APPROVED
+    label: Auto-approve
+    trigger: status_changed        # fires when the item reaches IN_REVIEW, then advances to APPROVED
+```
+
+`status_changed` transitions **cascade**: one status change fires the next declared edge, hop by hop, until no
+`status_changed` edge matches (a repeated status or a hard hop cap stops any statechart cycle). This lets a lifecycle
+chain automatic stages without a human between them. Adding a *new* system trigger id is a backend change (a registry
+entry in `system-triggers.json` plus the service that fires it), not a schema edit — `connector_event` and other
+connector-driven triggers remain reserved.
+
+> **Still engineering-shaped** (tracked in a #240 follow-up): step `kind` is a fixed enum
+> (`skill`/`http`/`notify`/`set_field`/`create_sub_items`), and the on-disk CLI layout (`~/.conductor/.../issues/`)
+> still uses the legacy folder name. A user-authored lifecycle built on **manual, skill, review, and
+> `status_changed`** transitions is fully supported today.

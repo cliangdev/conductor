@@ -40,7 +40,7 @@ class NotificationDispatcherTest {
         when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
                 .thenReturn(Optional.empty());
 
-        dispatcher.dispatch(eventOf(EventType.ISSUE_STATUS_CHANGED));
+        dispatcher.dispatch(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
 
         verify(discordProvider, never()).format(any());
         verify(discordProvider, never()).send(anyString(), anyString());
@@ -49,11 +49,11 @@ class NotificationDispatcherTest {
     @Test
     void dispatchDoesNothingWhenGroupConfigDisabled() {
         NotificationGroupConfig config = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, false,
-                Set.of("ISSUE_STATUS_CHANGED"));
+                Set.of("WORK_ITEM_STATUS_CHANGED"));
         when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
                 .thenReturn(Optional.of(config));
 
-        dispatcher.dispatch(eventOf(EventType.ISSUE_STATUS_CHANGED));
+        dispatcher.dispatch(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
 
         verify(discordProvider, never()).format(any());
         verify(discordProvider, never()).send(anyString(), anyString());
@@ -66,7 +66,7 @@ class NotificationDispatcherTest {
         when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
                 .thenReturn(Optional.of(config));
 
-        dispatcher.dispatch(eventOf(EventType.ISSUE_STATUS_CHANGED));
+        dispatcher.dispatch(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
 
         verify(discordProvider, never()).format(any());
         verify(discordProvider, never()).send(anyString(), anyString());
@@ -75,11 +75,11 @@ class NotificationDispatcherTest {
     @Test
     void dispatchSendsNotificationWhenGroupEnabledAndEventTypeEnabled() {
         NotificationGroupConfig config = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, true,
-                Set.of("ISSUE_STATUS_CHANGED"));
+                Set.of("WORK_ITEM_STATUS_CHANGED"));
         when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
                 .thenReturn(Optional.of(config));
 
-        NotificationEvent event = eventOf(EventType.ISSUE_STATUS_CHANGED);
+        NotificationEvent event = eventOf(EventType.WORK_ITEM_STATUS_CHANGED);
         String formatted = "{\"embeds\":[{\"title\":\"Test\"}]}";
         when(discordProvider.format(event)).thenReturn(formatted);
 
@@ -120,7 +120,7 @@ class NotificationDispatcherTest {
     }
 
     private NotificationEvent eventOf(EventType type) {
-        return NotificationEvent.of(type, PROJECT_ID, Map.of("issueId", ISSUE_ID));
+        return NotificationEvent.of(type, PROJECT_ID, Map.of("workItemId", ISSUE_ID));
     }
 
     private NotificationGroupConfig groupConfig(ChannelGroup group, String webhookUrl,

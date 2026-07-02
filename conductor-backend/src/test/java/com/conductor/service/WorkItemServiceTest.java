@@ -299,7 +299,7 @@ class WorkItemServiceTest {
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
 
         NotificationEvent event = eventCaptor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.ISSUE_STATUS_CHANGED);
+        assertThat(event.getEventType()).isEqualTo(EventType.WORK_ITEM_STATUS_CHANGED);
         assertThat(event.getMetadata()).containsEntry("fromStatus", "IN_PROGRESS");
         assertThat(event.getMetadata()).containsEntry("toStatus", "CODE_REVIEW");
         assertThat(event.getMetadata()).containsEntry("toStatusLabel", "Code Review");
@@ -338,7 +338,7 @@ class WorkItemServiceTest {
 
         assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
                 .isInstanceOf(ForbiddenException.class)
-                .hasMessageContaining("REVIEWER role cannot change issue status");
+                .hasMessageContaining("REVIEWER role cannot change Work Item status");
     }
 
     @Test
@@ -363,7 +363,7 @@ class WorkItemServiceTest {
         verify(notificationDispatcher).dispatch(eventCaptor.capture());
 
         NotificationEvent event = eventCaptor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.ISSUE_STATUS_CHANGED);
+        assertThat(event.getEventType()).isEqualTo(EventType.WORK_ITEM_STATUS_CHANGED);
         assertThat(event.getMetadata()).containsEntry("assigneeName", "Alice Smith");
     }
 
@@ -432,12 +432,12 @@ class WorkItemServiceTest {
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("DONE");
         verify(workItemRepository).save(testIssue);
-        verify(assetService).recordPullRequestAsset(testIssue, "https://github.com/x/y/pull/9");
+        verify(assetService).recordAsset(testIssue, "github_pr", "https://github.com/x/y/pull/9", "Pull Request", "link");
 
         ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(captor.capture());
         NotificationEvent event = captor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.ISSUE_STATUS_CHANGED);
+        assertThat(event.getEventType()).isEqualTo(EventType.WORK_ITEM_STATUS_CHANGED);
         assertThat(event.getMetadata()).containsEntry("toStatus", "DONE");
         assertThat(event.getMetadata()).containsEntry("prUrl", "https://github.com/x/y/pull/9");
     }
@@ -474,7 +474,7 @@ class WorkItemServiceTest {
         workItemService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("DONE");
-        verify(assetService).recordPullRequestAsset(testIssue, "https://github.com/x/y/pull/9");
+        verify(assetService).recordAsset(testIssue, "github_pr", "https://github.com/x/y/pull/9", "Pull Request", "link");
         verify(notificationDispatcher, never()).dispatch(any());
     }
 

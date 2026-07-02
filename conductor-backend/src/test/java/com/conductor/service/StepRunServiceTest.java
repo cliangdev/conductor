@@ -42,13 +42,13 @@ class StepRunServiceTest {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
     }
 
-    private WorkItem issue() {
-        WorkItem issue = new WorkItem();
-        issue.setId(ISSUE_ID);
+    private WorkItem workItem() {
+        WorkItem workItem = new WorkItem();
+        workItem.setId(ISSUE_ID);
         Project project = new Project();
         project.setId(PROJECT_ID);
-        issue.setProject(project);
-        return issue;
+        workItem.setProject(project);
+        return workItem;
     }
 
     private User caller() {
@@ -59,7 +59,7 @@ class StepRunServiceTest {
 
     @Test
     void createsStepRunPersistingScalarsAndPassingNestedJsonThrough() {
-        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem()));
         // The controller owns the typed↔JSON translation; the service stores/returns the produced[] JSON as-is.
         JsonNode produced = mapper.valueToTree(List.of(
                 Map.of("kind", "asset", "ref", "https://x/pr/1", "assetType", "github_pr")));

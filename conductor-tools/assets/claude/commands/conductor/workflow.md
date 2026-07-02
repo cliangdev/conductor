@@ -47,7 +47,7 @@ Then ask the user (use AskUserQuestion for structured choices where applicable):
 2. **What triggers it?**
    - Weekly/daily/hourly schedule → `on: schedule: cron:`
    - External push (GitHub, Zapier, etc.) → `on: webhook:`
-   - Issue status change → `on: conductor.issue.status_changed:`
+   - Work Item status change → `on: conductor.work_item.status_changed:`
    - Manual run button → `on: workflow_dispatch:`
 3. **What data or actions does it need?** (use `list_integration_tools` output to suggest connected options)
 4. **Where do results go?** Discord webhook, Slack, create a Conductor issue, HTTP POST, etc.

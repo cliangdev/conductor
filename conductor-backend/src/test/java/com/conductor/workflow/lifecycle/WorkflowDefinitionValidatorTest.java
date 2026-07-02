@@ -22,7 +22,7 @@ class WorkflowDefinitionValidatorTest {
     // No project-registered skills — only the built-in registry is bindable, so the unknown-skill case still fails.
     private final ProjectSkillRepository projectSkillRepository = mock(ProjectSkillRepository.class);
     private final WorkflowDefinitionValidator validator =
-            new WorkflowDefinitionValidator(new SkillRegistry(mapper, projectSkillRepository));
+            new WorkflowDefinitionValidator(new SkillRegistry(mapper, projectSkillRepository), new SystemTriggerRegistry(mapper));
 
     private JsonNode json(String s) throws Exception {
         return mapper.readTree(s);
@@ -122,6 +122,53 @@ class WorkflowDefinitionValidatorTest {
         String bad = MINI.replace("\"to\": \"DONE\"", "\"to\": \"NOWHERE\"");
         WorkflowValidationResult result = validator.validate(PROJECT_ID, json(bad));
         assertThat(result.getErrors()).anyMatch(e -> e.contains("unknown 'to' status: NOWHERE"));
+    }
+
+    @Test
+    void unknownSystemTriggerRejected() throws Exception {
+        // The schema now allows any open-string trigger; the registry gate (Java) rejects unregistered ones.
+        String bad = MINI.replace(
+                "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\"}",
+                "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\", \"trigger\": \"connector_event\"}");
+        WorkflowValidationResult result = validator.validate(PROJECT_ID, json(bad));
+        assertThat(result.getErrors())
+                .anyMatch(e -> e.contains("unknown system trigger 'connector_event'"));
+    }
+
+    @Test
+    void registeredStatusChangedTriggerAccepted() throws Exception {
+        // A non-pr_merged system trigger is now bindable without a schema enum edit.
+        String def = MINI.replace(
+                "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\"}",
+                "{\"from\": \"OPEN\", \"to\": \"DONE\", \"label\": \"Finish\", \"trigger\": \"status_changed\"}");
+        WorkflowValidationResult result = validator.validate(PROJECT_ID, json(def));
+        assertThat(result.getErrors()).isEmpty();
+    }
+
+    @Test
+    void statusChangedCycleRejected() throws Exception {
+        // A -> B -> A both on status_changed would auto-loop at runtime; reject at publish. (A -> DONE keeps
+        // reachability valid so the cycle check — not a dead-end error — is what fires.)
+        String bad = """
+                {
+                  "schemaVersion": 1, "id": "CYC", "area": "CYC", "version": 1, "state": "DRAFT",
+                  "noun": "Item", "default_view": "list", "types": ["TASK"],
+                  "statuses": [
+                    {"id": "OPEN", "category": "open", "initial": true},
+                    {"id": "AA", "category": "in_progress"},
+                    {"id": "BB", "category": "in_progress"},
+                    {"id": "DONE", "category": "terminal", "terminal": true}
+                  ],
+                  "transitions": [
+                    {"from": "OPEN", "to": "AA", "label": "Start"},
+                    {"from": "AA", "to": "BB", "label": "Fwd", "trigger": "status_changed"},
+                    {"from": "BB", "to": "AA", "label": "Back", "trigger": "status_changed"},
+                    {"from": "AA", "to": "DONE", "label": "Finish"}
+                  ]
+                }
+                """;
+        WorkflowValidationResult result = validator.validate(PROJECT_ID, json(bad));
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("status_changed") && e.contains("auto-loop"));
     }
 
     @Test

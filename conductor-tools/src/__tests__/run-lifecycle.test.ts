@@ -21,12 +21,12 @@ const mockConfig = {
 
 const mockEvent = {
   eventId: 'evt_1',
-  type: 'ISSUE_STATUS_CHANGED',
+  type: 'WORK_ITEM_STATUS_CHANGED',
   workflowRunId: 'run_abc',
   workflowId: 'wf_1',
   workflowName: 'CI Pipeline',
-  issueId: 'iss_xyz',
-  issueTitle: 'My Issue',
+  workItemId: 'iss_xyz',
+  workItemTitle: 'My Issue',
   projectId: 'proj_123',
   trigger: { type: 'STATUS_CHANGED', fromStatus: 'DRAFT', toStatus: 'IN_PROGRESS' },
   jobs: [],

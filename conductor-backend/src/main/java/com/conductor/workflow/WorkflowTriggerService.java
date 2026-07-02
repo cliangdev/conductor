@@ -59,7 +59,7 @@ public class WorkflowTriggerService {
      */
     @Transactional
     public void onConductorEvent(NotificationEvent event) {
-        if (event.getEventType() != EventType.ISSUE_STATUS_CHANGED) return;
+        if (event.getEventType() != EventType.WORK_ITEM_STATUS_CHANGED) return;
 
         String projectId = event.getProjectId();
         List<WorkflowDefinition> workflows = workflowRepository.findByProjectId(projectId);
@@ -69,7 +69,7 @@ public class WorkflowTriggerService {
             if (!hasConductorIssueTrigger(workflow.getYaml())) continue;
             if (!passesStatusFilter(workflow.getYaml(), event)) continue;
 
-            createRun(workflow, "conductor.issue.status_changed", buildEventPayload(event));
+            createRun(workflow, "conductor.work_item.status_changed", buildEventPayload(event));
         }
     }
 
@@ -210,11 +210,11 @@ public class WorkflowTriggerService {
             daemonPayload.put("trigger", triggerBlock);
             daemonPayload.put("jobs", selfHostedJobs);
 
-            if (eventPayload.containsKey("issueId")) {
-                daemonPayload.put("issueId", eventPayload.get("issueId"));
+            if (eventPayload.containsKey("workItemId")) {
+                daemonPayload.put("workItemId", eventPayload.get("workItemId"));
             }
-            if (eventPayload.containsKey("issueTitle")) {
-                daemonPayload.put("issueTitle", eventPayload.get("issueTitle"));
+            if (eventPayload.containsKey("workItemTitle")) {
+                daemonPayload.put("workItemTitle", eventPayload.get("workItemTitle"));
             }
 
             DaemonEvent event = new DaemonEvent();
@@ -361,7 +361,7 @@ public class WorkflowTriggerService {
     }
 
     private boolean hasConductorIssueTrigger(String yaml) {
-        return yaml != null && yaml.contains("conductor.issue.status_changed");
+        return yaml != null && yaml.contains("conductor.work_item.status_changed");
     }
 
     private boolean passesStatusFilter(String yaml, NotificationEvent event) {
@@ -374,7 +374,7 @@ public class WorkflowTriggerService {
             if (!(onBlock instanceof java.util.Map)) return true;
             @SuppressWarnings("unchecked")
             java.util.Map<String, Object> triggers = (java.util.Map<String, Object>) onBlock;
-            Object triggerConfig = triggers.get("conductor.issue.status_changed");
+            Object triggerConfig = triggers.get("conductor.work_item.status_changed");
             if (!(triggerConfig instanceof java.util.Map)) return true;
             @SuppressWarnings("unchecked")
             java.util.Map<String, Object> config = (java.util.Map<String, Object>) triggerConfig;
@@ -394,7 +394,7 @@ public class WorkflowTriggerService {
 
     private String buildEventPayload(NotificationEvent event) {
         Map<String, Object> payload = new HashMap<>(event.getMetadata());
-        payload.put("type", "conductor.issue.status_changed");
+        payload.put("type", "conductor.work_item.status_changed");
         return toJson(payload);
     }
 

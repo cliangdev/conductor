@@ -42,7 +42,7 @@ export class RunQueue {
             ...stateBefore.activeRuns,
             {
               runId: event.workflowRunId,
-              issueTitle: event.issueTitle,
+              issueTitle: event.workItemTitle,
               jobName: job.id,
               status: 'running',
               startedAt: new Date().toISOString(),

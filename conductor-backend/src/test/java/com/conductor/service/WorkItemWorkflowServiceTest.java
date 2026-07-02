@@ -14,6 +14,7 @@ import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.service.view.AvailableTransitionsView;
 import com.conductor.workflow.lifecycle.StatechartTransition;
+import com.conductor.workflow.lifecycle.SystemTriggerRegistry;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,6 +47,7 @@ class WorkItemWorkflowServiceTest {
     private ProjectSecurityService projectSecurityService;
     private ProjectMemberRepository projectMemberRepository;
     private ReviewRepository reviewRepository;
+    private WorkflowDefinitionVersionRepository versionRepository;
     private WorkItemWorkflowService service;
 
     @BeforeEach
@@ -56,15 +58,15 @@ class WorkItemWorkflowServiceTest {
         reviewRepository = Mockito.mock(ReviewRepository.class);
         // Resolution is DB-only: back the resolver with a mock version repo returning the seeded ENGINEERING
         // published snapshot (v1) for both latest and version-pinned lookups.
-        WorkflowDefinitionVersionRepository versionRepository =
-                Mockito.mock(WorkflowDefinitionVersionRepository.class);
+        versionRepository = Mockito.mock(WorkflowDefinitionVersionRepository.class);
         WorkflowDefinitionVersion snapshot = engineeringSnapshot();
         when(versionRepository.findLatestPublished(any(), eq("ENGINEERING"))).thenReturn(Optional.of(snapshot));
         when(versionRepository.findByProjectSlugAndVersion(any(), eq("ENGINEERING"), eq(1)))
                 .thenReturn(Optional.of(snapshot));
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository);
+        SystemTriggerRegistry systemTriggerRegistry = new SystemTriggerRegistry(new ObjectMapper());
         service = new WorkItemWorkflowService(workItemRepository, projectSecurityService, projectMemberRepository,
-                reviewRepository, resolver);
+                reviewRepository, resolver, systemTriggerRegistry);
     }
 
     private WorkflowDefinitionVersion engineeringSnapshot() {
@@ -78,16 +80,16 @@ class WorkItemWorkflowServiceTest {
         }
     }
 
-    private WorkItem issueAt(String status) {
-        WorkItem issue = new WorkItem();
-        issue.setId("issue-1");
+    private WorkItem workItemAt(String status) {
+        WorkItem workItem = new WorkItem();
+        workItem.setId("issue-1");
         Project project = new Project();
         project.setId(PROJECT_ID);
-        issue.setProject(project);
-        issue.setCurrentStatus(status);
-        issue.setWorkflow("ENGINEERING");
-        issue.setWorkflowVersion(1);
-        return issue;
+        workItem.setProject(project);
+        workItem.setCurrentStatus(status);
+        workItem.setWorkflow("ENGINEERING");
+        workItem.setWorkflowVersion(1);
+        return workItem;
     }
 
     private User caller() {
@@ -100,31 +102,31 @@ class WorkItemWorkflowServiceTest {
 
     @Test
     void allowsTransitionOnTheEngineeringEdge() {
-        assertThatCode(() -> service.validateTransition(PROJECT_ID, issueAt("DRAFT"), "IN_REVIEW"))
+        assertThatCode(() -> service.validateTransition(PROJECT_ID, workItemAt("DRAFT"), "IN_REVIEW"))
                 .doesNotThrowAnyException();
         // the IN_REVIEW -> DRAFT back-edge
-        assertThatCode(() -> service.validateTransition(PROJECT_ID, issueAt("IN_REVIEW"), "DRAFT"))
+        assertThatCode(() -> service.validateTransition(PROJECT_ID, workItemAt("IN_REVIEW"), "DRAFT"))
                 .doesNotThrowAnyException();
     }
 
     @Test
     void rejectsIllegalTransitionWithTheExactLegacyMessage() {
         assertThatThrownBy(() ->
-                service.validateTransition(PROJECT_ID, issueAt("DRAFT"), "READY_FOR_DEVELOPMENT"))
+                service.validateTransition(PROJECT_ID, workItemAt("DRAFT"), "READY_FOR_DEVELOPMENT"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT");
     }
 
     @Test
     void rejectsUnknownStatusWithWorkflowScopedMessage() {
-        assertThatThrownBy(() -> service.validateTransition(PROJECT_ID, issueAt("DRAFT"), "BOGUS"))
+        assertThatThrownBy(() -> service.validateTransition(PROJECT_ID, workItemAt("DRAFT"), "BOGUS"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Unknown status 'BOGUS' for workflow ENGINEERING");
     }
 
     @Test
     void defaultsToEngineeringWhenUnbound() {
-        WorkItem unbound = issueAt("DRAFT");
+        WorkItem unbound = workItemAt("DRAFT");
         unbound.setWorkflow(null);
         unbound.setWorkflowVersion(null);
         assertThatCode(() -> service.validateTransition(PROJECT_ID, unbound, "IN_REVIEW"))
@@ -168,14 +170,14 @@ class WorkItemWorkflowServiceTest {
 
     @Test
     void applySystemTransitionAdvancesOnPrMergedAndBypassesReviewGate() {
-        WorkItem issue = issueAt("CODE_REVIEW");
+        WorkItem workItem = workItemAt("CODE_REVIEW");
         // No approved review stubbed: the system trigger is the authority, so the gate must NOT apply.
         Optional<StatechartTransition> applied = service.applySystemTransition(
-                PROJECT_ID, issue, WorkItemWorkflowService.TRIGGER_PR_MERGED);
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_PR_MERGED);
 
         assertThat(applied).isPresent();
         assertThat(applied.get().to()).isEqualTo("DONE");
-        assertThat(issue.getCurrentStatus()).isEqualTo("DONE");
+        assertThat(workItem.getCurrentStatus()).isEqualTo("DONE");
         // gate bypassed → no review lookups at all
         verify(reviewRepository, never()).existsApprovedByReviewerRole(any(), any(), any(), any());
         verify(reviewRepository, never()).existsByWorkItemIdAndVerdict(any(), any());
@@ -183,12 +185,72 @@ class WorkItemWorkflowServiceTest {
 
     @Test
     void applySystemTransitionReturnsEmptyWhenNoTriggeredEdge() {
-        WorkItem issue = issueAt("DRAFT"); // DRAFT has no pr_merged edge
+        WorkItem workItem = workItemAt("DRAFT"); // DRAFT has no pr_merged edge
         Optional<StatechartTransition> applied = service.applySystemTransition(
-                PROJECT_ID, issue, WorkItemWorkflowService.TRIGGER_PR_MERGED);
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_PR_MERGED);
 
         assertThat(applied).isEmpty();
-        assertThat(issue.getCurrentStatus()).isEqualTo("DRAFT");
+        assertThat(workItem.getCurrentStatus()).isEqualTo("DRAFT");
+    }
+
+    // A custom lifecycle whose REVIEW -> DONE edge is review-gated AND fires on the status_changed trigger,
+    // so we can prove status_changed (unlike pr_merged) HONORS the Review gate.
+    private static final String STATUS_CHANGED_LIFECYCLE = """
+            {
+              "schemaVersion": 1, "id": "LC_TEST", "area": "LC", "version": 1, "state": "PUBLISHED",
+              "noun": "Item", "default_view": "list", "types": ["TASK"],
+              "statuses": [
+                {"id": "OPEN", "category": "open", "initial": true},
+                {"id": "REVIEW", "category": "in_progress"},
+                {"id": "DONE", "category": "terminal", "terminal": true}
+              ],
+              "transitions": [
+                {"from": "OPEN", "to": "REVIEW", "label": "Start"},
+                {"from": "REVIEW", "to": "DONE", "label": "Auto-finish", "trigger": "status_changed",
+                 "requiresReview": true, "reviewerRole": "REVIEWER", "reviewOutcomes": ["APPROVED"]}
+              ]
+            }
+            """;
+
+    private WorkItem lcTestWorkItemAtReview() {
+        WorkflowDefinitionVersion snapshot = new WorkflowDefinitionVersion();
+        snapshot.setVersion(1);
+        try {
+            snapshot.setDefinition(new ObjectMapper().readTree(STATUS_CHANGED_LIFECYCLE));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        when(versionRepository.findLatestPublished(any(), eq("LC_TEST"))).thenReturn(Optional.of(snapshot));
+        when(versionRepository.findByProjectSlugAndVersion(any(), eq("LC_TEST"), eq(1)))
+                .thenReturn(Optional.of(snapshot));
+        WorkItem workItem = workItemAt("REVIEW");
+        workItem.setWorkflow("LC_TEST");
+        return workItem;
+    }
+
+    @Test
+    void statusChangedTriggerHonorsReviewGateAndDoesNotAdvanceWhenUnsatisfied() {
+        WorkItem workItem = lcTestWorkItemAtReview();
+        // No approved REVIEWER review stubbed -> the gate is unsatisfied, so status_changed must NOT advance.
+        Optional<StatechartTransition> applied = service.applySystemTransition(
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_STATUS_CHANGED);
+
+        assertThat(applied).isEmpty();
+        assertThat(workItem.getCurrentStatus()).isEqualTo("REVIEW");
+        verify(reviewRepository).existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER");
+    }
+
+    @Test
+    void statusChangedTriggerAdvancesOnceReviewGateIsSatisfied() {
+        WorkItem workItem = lcTestWorkItemAtReview();
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER"))
+                .thenReturn(true);
+
+        Optional<StatechartTransition> applied = service.applySystemTransition(
+                PROJECT_ID, workItem, WorkItemWorkflowService.TRIGGER_STATUS_CHANGED);
+
+        assertThat(applied).isPresent();
+        assertThat(workItem.getCurrentStatus()).isEqualTo("DONE");
     }
 
     // --- availableTransitions (doer projection) ---
@@ -196,7 +258,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void availableTransitionsReturnsEdgesForNonReviewer() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("DRAFT")));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("DRAFT")));
         ProjectMember member = new ProjectMember();
         member.setRole(MemberRole.CREATOR);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
@@ -216,7 +278,7 @@ class WorkItemWorkflowServiceTest {
     void reviewGatedMergeIsBlockedWithoutReviewerApproval() {
         // Default false: no APPROVED review from a REVIEWER (or ADMIN) exists.
         assertThatThrownBy(() ->
-                service.validateTransition(PROJECT_ID, issueAt("CODE_REVIEW"), "DONE"))
+                service.validateTransition(PROJECT_ID, workItemAt("CODE_REVIEW"), "DONE"))
                 .isInstanceOf(UnprocessableEntityException.class)
                 .hasMessageContaining("requires an approved review");
 
@@ -232,7 +294,7 @@ class WorkItemWorkflowServiceTest {
                 "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(true);
 
         assertThatCode(() ->
-                service.validateTransition(PROJECT_ID, issueAt("CODE_REVIEW"), "DONE"))
+                service.validateTransition(PROJECT_ID, workItemAt("CODE_REVIEW"), "DONE"))
                 .doesNotThrowAnyException();
     }
 
@@ -244,7 +306,7 @@ class WorkItemWorkflowServiceTest {
                 "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(false);
 
         assertThatThrownBy(() ->
-                service.validateTransition(PROJECT_ID, issueAt("CODE_REVIEW"), "DONE"))
+                service.validateTransition(PROJECT_ID, workItemAt("CODE_REVIEW"), "DONE"))
                 .isInstanceOf(UnprocessableEntityException.class)
                 .hasMessageContaining("requires an approved review");
     }
@@ -252,7 +314,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void availableTransitionsHidesGatedMergeUntilApproved() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("CODE_REVIEW")));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("CODE_REVIEW")));
         ProjectMember member = new ProjectMember();
         member.setRole(MemberRole.CREATOR);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
@@ -273,7 +335,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void availableTransitionsIsEmptyForReviewer() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(issueAt("DRAFT")));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("DRAFT")));
         ProjectMember member = new ProjectMember();
         member.setRole(MemberRole.REVIEWER);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));

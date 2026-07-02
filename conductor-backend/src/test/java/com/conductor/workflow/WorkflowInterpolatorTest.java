@@ -9,8 +9,8 @@ class WorkflowInterpolatorTest {
     private final WorkflowInterpolator interpolator = new WorkflowInterpolator();
 
     @Test void interpolatesEventField() {
-        RuntimeContext ctx = new RuntimeContext(Map.of("issueId", "abc"), Map.of(), Map.of(), Map.of());
-        assertEquals("abc", interpolator.interpolate("${{ event.issueId }}", ctx));
+        RuntimeContext ctx = new RuntimeContext(Map.of("workItemId", "abc"), Map.of(), Map.of(), Map.of());
+        assertEquals("abc", interpolator.interpolate("${{ event.workItemId }}", ctx));
     }
 
     @Test void interpolatesSecret() {

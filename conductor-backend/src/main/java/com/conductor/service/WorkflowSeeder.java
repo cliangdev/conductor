@@ -71,6 +71,12 @@ public class WorkflowSeeder {
         versionRepository.save(snapshot);
     }
 
+    // NOTE: this seeder (and the V74 backfill migration) writes workflow_definitions directly, bypassing
+    // WorkflowDefinitionValidator. Since #240 loosened the schema `trigger` field from a closed enum to an open
+    // string (registry-enforced only on the publish path), a typo'd/unregistered trigger in a seeded or
+    // migrated definition would persist silently and simply never fire. The shipped ENGINEERING resource is
+    // trusted + covered by WorkflowDefinitionValidatorTest, but any future seed/import here should stay in sync
+    // with SystemTriggerRegistry.
     private static JsonNode loadEngineeringDefinition(ObjectMapper objectMapper) {
         try (InputStream in = new ClassPathResource(ENGINEERING_RESOURCE).getInputStream()) {
             return objectMapper.readTree(in);

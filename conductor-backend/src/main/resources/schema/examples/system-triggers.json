@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "triggers": [
+    {
+      "id": "pr_merged",
+      "bypassReviewGate": true,
+      "description": "Fired when a linked GitHub pull request merges. The merge is the authority, so this transition bypasses the Review gate."
+    },
+    {
+      "id": "status_changed",
+      "bypassReviewGate": false,
+      "description": "Fired on every Work Item status change (the WORK_ITEM_STATUS_CHANGED event). Lets a lifecycle auto-advance one status to another; honors the Review gate, so a review-gated edge only fires once its Review is satisfied."
+    }
+  ]
+}

@@ -33,19 +33,19 @@ public class StepRunService {
     }
 
     @Transactional(readOnly = true)
-    public List<StepRun> listStepRuns(String projectId, String issueId, User caller) {
+    public List<StepRun> listStepRuns(String projectId, String workItemId, User caller) {
         verifyMembership(projectId, caller.getId());
-        findIssueInProject(projectId, issueId);
-        return stepRunRepository.findAllByWorkItemIdOrderByCreatedAtDesc(issueId);
+        findWorkItemInProject(projectId, workItemId);
+        return stepRunRepository.findAllByWorkItemIdOrderByCreatedAtDesc(workItemId);
     }
 
     @Transactional
-    public StepRun createStepRun(String projectId, String issueId, StepRunInput input, User caller) {
+    public StepRun createStepRun(String projectId, String workItemId, StepRunInput input, User caller) {
         verifyMembership(projectId, caller.getId());
-        WorkItem issue = findIssueInProject(projectId, issueId);
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         StepRun stepRun = new StepRun();
-        stepRun.setWorkItem(issue);
+        stepRun.setWorkItem(workItem);
         stepRun.setWorkflow(input.workflow());
         stepRun.setFromStatus(input.fromStatus());
         stepRun.setToStatus(input.toStatus());
@@ -65,13 +65,13 @@ public class StepRunService {
 
     private void verifyMembership(String projectId, String userId) {
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
-            throw new EntityNotFoundException("Issue not found");
+            throw new EntityNotFoundException("Work Item not found");
         }
     }
 
-    private WorkItem findIssueInProject(String projectId, String issueId) {
-        return workItemRepository.findById(issueId)
+    private WorkItem findWorkItemInProject(String projectId, String workItemId) {
+        return workItemRepository.findById(workItemId)
                 .filter(i -> i.getProject() != null && projectId.equals(i.getProject().getId()))
-                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
     }
 }

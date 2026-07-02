@@ -46,9 +46,9 @@ public class DocumentService {
     }
 
     @Transactional
-    public DocumentView createDocument(String projectId, String issueId, String filename, String content,
+    public DocumentView createDocument(String projectId, String workItemId, String filename, String content,
                                        String contentType) {
-        WorkItem issue = findIssueInProject(projectId, issueId);
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         if (content != null) {
             byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
@@ -59,7 +59,7 @@ public class DocumentService {
 
         String documentId = UUID.randomUUID().toString();
         String resolvedContentType = contentType != null ? contentType : "text/markdown";
-        String gcsPath = buildGcsPath(projectId, issueId, documentId, filename);
+        String gcsPath = buildGcsPath(projectId, workItemId, documentId, filename);
 
         if (content != null) {
             uploadToGcs(gcsPath, content.getBytes(StandardCharsets.UTF_8), resolvedContentType);
@@ -67,7 +67,7 @@ public class DocumentService {
 
         Document document = new Document();
         document.setId(documentId);
-        document.setWorkItem(issue);
+        document.setWorkItem(workItem);
         document.setFilename(filename);
         document.setContent(content);
         document.setContentType(resolvedContentType);
@@ -78,25 +78,25 @@ public class DocumentService {
     }
 
     @Transactional(readOnly = true)
-    public List<DocumentView> listDocuments(String projectId, String issueId) {
-        findIssueInProject(projectId, issueId);
-        return documentRepository.findByWorkItemId(issueId).stream()
+    public List<DocumentView> listDocuments(String projectId, String workItemId) {
+        findWorkItemInProject(projectId, workItemId);
+        return documentRepository.findByWorkItemId(workItemId).stream()
                 .map(this::toDocumentView)
                 .toList();
     }
 
     @Transactional(readOnly = true)
-    public DocumentView getDocument(String projectId, String issueId, String docId) {
-        findIssueInProject(projectId, issueId);
-        Document document = documentRepository.findByIdAndWorkItemId(docId, issueId)
+    public DocumentView getDocument(String projectId, String workItemId, String docId) {
+        findWorkItemInProject(projectId, workItemId);
+        Document document = documentRepository.findByIdAndWorkItemId(docId, workItemId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         return toEnrichedDocumentView(document);
     }
 
     @Transactional
-    public boolean upsertDocumentByFilename(String projectId, String issueId, String filename, String content,
+    public boolean upsertDocumentByFilename(String projectId, String workItemId, String filename, String content,
                                             String requestContentType) {
-        WorkItem issue = findIssueInProject(projectId, issueId);
+        WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         String contentType = requestContentType != null ? requestContentType : "text/markdown";
 
         if (content != null) {
@@ -106,7 +106,7 @@ public class DocumentService {
             }
         }
 
-        return documentRepository.findByWorkItemIdAndFilename(issueId, filename)
+        return documentRepository.findByWorkItemIdAndFilename(workItemId, filename)
                 .map(existing -> {
                     if (existing.getStoragePath() != null) {
                         uploadToGcs(existing.getStoragePath(), content.getBytes(StandardCharsets.UTF_8), contentType);
@@ -121,13 +121,13 @@ public class DocumentService {
                 })
                 .orElseGet(() -> {
                     String documentId = UUID.randomUUID().toString();
-                    String gcsPath = buildGcsPath(projectId, issueId, documentId, filename);
+                    String gcsPath = buildGcsPath(projectId, workItemId, documentId, filename);
                     if (content != null) {
                         uploadToGcs(gcsPath, content.getBytes(StandardCharsets.UTF_8), contentType);
                     }
                     Document document = new Document();
                     document.setId(documentId);
-                    document.setWorkItem(issue);
+                    document.setWorkItem(workItem);
                     document.setFilename(filename);
                     document.setContent(content);
                     document.setContentType(contentType);
@@ -138,17 +138,17 @@ public class DocumentService {
     }
 
     @Transactional
-    public DocumentView getDocumentByFilename(String projectId, String issueId, String filename) {
-        findIssueInProject(projectId, issueId);
-        Document document = documentRepository.findByWorkItemIdAndFilename(issueId, filename)
+    public DocumentView getDocumentByFilename(String projectId, String workItemId, String filename) {
+        findWorkItemInProject(projectId, workItemId);
+        Document document = documentRepository.findByWorkItemIdAndFilename(workItemId, filename)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         return toDocumentView(document);
     }
 
     @Transactional
-    public void deleteDocumentByFilename(String projectId, String issueId, String filename) {
-        findIssueInProject(projectId, issueId);
-        Document document = documentRepository.findByWorkItemIdAndFilename(issueId, filename)
+    public void deleteDocumentByFilename(String projectId, String workItemId, String filename) {
+        findWorkItemInProject(projectId, workItemId);
+        Document document = documentRepository.findByWorkItemIdAndFilename(workItemId, filename)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         String storagePath = document.getStoragePath();
         documentRepository.delete(document);
@@ -158,9 +158,9 @@ public class DocumentService {
     }
 
     @Transactional
-    public void deleteDocument(String projectId, String issueId, String docId) {
-        findIssueInProject(projectId, issueId);
-        Document document = documentRepository.findByIdAndWorkItemId(docId, issueId)
+    public void deleteDocument(String projectId, String workItemId, String docId) {
+        findWorkItemInProject(projectId, workItemId);
+        Document document = documentRepository.findByIdAndWorkItemId(docId, workItemId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         String storagePath = document.getStoragePath();
         documentRepository.delete(document);
@@ -189,17 +189,17 @@ public class DocumentService {
         }
     }
 
-    private String buildGcsPath(String projectId, String issueId, String documentId, String filename) {
-        return projectId + "/issues/" + issueId + "/" + documentId + "/" + filename;
+    private String buildGcsPath(String projectId, String workItemId, String documentId, String filename) {
+        return projectId + "/issues/" + workItemId + "/" + documentId + "/" + filename;
     }
 
-    private WorkItem findIssueInProject(String projectId, String issueId) {
-        WorkItem issue = workItemRepository.findById(issueId)
-                .orElseThrow(() -> new EntityNotFoundException("Issue not found"));
-        if (!issue.getProject().getId().equals(projectId)) {
-            throw new EntityNotFoundException("Issue not found");
+    private WorkItem findWorkItemInProject(String projectId, String workItemId) {
+        WorkItem workItem = workItemRepository.findById(workItemId)
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+        if (!workItem.getProject().getId().equals(projectId)) {
+            throw new EntityNotFoundException("Work Item not found");
         }
-        return issue;
+        return workItem;
     }
 
     private DocumentView toDocumentView(Document document) {

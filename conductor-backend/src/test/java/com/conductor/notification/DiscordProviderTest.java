@@ -48,8 +48,8 @@ class DiscordProviderTest {
     private Map<String, String> statusChangedMeta(String noun, String toStatus, String toStatusLabel,
                                                   String toCategory) {
         Map<String, String> meta = new HashMap<>();
-        meta.put("issueId", ISSUE_ID);
-        meta.put("issueTitle", ISSUE_TITLE);
+        meta.put("workItemId", ISSUE_ID);
+        meta.put("workItemTitle", ISSUE_TITLE);
         meta.put("projectId", PROJECT_ID);
         meta.put("workflow", "ENGINEERING");
         if (noun != null) meta.put("noun", noun);
@@ -60,11 +60,11 @@ class DiscordProviderTest {
         return meta;
     }
 
-    // --- ISSUE_STATUS_CHANGED: the single, Workflow-agnostic status event ---
+    // --- WORK_ITEM_STATUS_CHANGED: the single, Workflow-agnostic status event ---
 
     @Test
     void statusChangedTitleUsesNounAndToStatusLabel() {
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 statusChangedMeta("Issue", "IN_REVIEW", "In Review", "in_progress"));
 
         String result = discordProvider.format(event);
@@ -80,7 +80,7 @@ class DiscordProviderTest {
     @Test
     void statusChangedHumanizesToStatusWhenNoLabel() {
         // No toStatusLabel in metadata → the provider humanizes the UPPER_SNAKE status id.
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 statusChangedMeta("Issue", "CODE_REVIEW", null, "in_progress"));
 
         String result = discordProvider.format(event);
@@ -91,7 +91,7 @@ class DiscordProviderTest {
     @Test
     void statusChangedDefaultsNounToWorkItem() {
         // No noun in metadata → defaults to the generic "Work Item".
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 statusChangedMeta(null, "DONE", "Done", "terminal"));
 
         String result = discordProvider.format(event);
@@ -103,7 +103,7 @@ class DiscordProviderTest {
     void statusChangedWithAssigneeIncludesAssigneeInDescription() {
         Map<String, String> meta = statusChangedMeta("Issue", "IN_PROGRESS", "In Progress", "in_progress");
         meta.put("assigneeName", "Alice");
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID, meta);
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, meta);
 
         String result = discordProvider.format(event);
 
@@ -115,7 +115,7 @@ class DiscordProviderTest {
 
     @Test
     void statusChangedWithoutAssigneeUsesIssueTitle() {
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 statusChangedMeta("Issue", "IN_PROGRESS", "In Progress", "in_progress"));
 
         String result = discordProvider.format(event);
@@ -130,7 +130,7 @@ class DiscordProviderTest {
         String prUrl = "https://github.com/org/repo/pull/42";
         Map<String, String> meta = statusChangedMeta("Issue", "DONE", "Done", "terminal");
         meta.put("prUrl", prUrl);
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID, meta);
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, meta);
 
         String result = discordProvider.format(event);
 
@@ -141,7 +141,7 @@ class DiscordProviderTest {
 
     @Test
     void statusChangedWithoutPrUrlDoesNotContainFields() {
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 statusChangedMeta("Issue", "CODE_REVIEW", "Code Review", "in_progress"));
 
         String result = discordProvider.format(event);
@@ -149,11 +149,11 @@ class DiscordProviderTest {
         assertThat(result).doesNotContain("\"fields\"");
     }
 
-    // --- ISSUE_STATUS_CHANGED color is derived from the target status category (Workflow-agnostic) ---
+    // --- WORK_ITEM_STATUS_CHANGED color is derived from the target status category (Workflow-agnostic) ---
 
     @Test
     void colorForTerminalCategoryIsGreen() {
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 statusChangedMeta("Issue", "DONE", "Done", "terminal"));
 
         String result = discordProvider.format(event);
@@ -163,7 +163,7 @@ class DiscordProviderTest {
 
     @Test
     void colorForInProgressCategoryIsBlue() {
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 statusChangedMeta("Issue", "CODE_REVIEW", "Code Review", "in_progress"));
 
         String result = discordProvider.format(event);
@@ -173,7 +173,7 @@ class DiscordProviderTest {
 
     @Test
     void colorForOpenCategoryIsGrey() {
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 statusChangedMeta("Issue", "DRAFT", "Draft", "open"));
 
         String result = discordProvider.format(event);
@@ -184,7 +184,7 @@ class DiscordProviderTest {
     @Test
     void colorForMissingCategoryIsDefaultBlue() {
         // No toCategory → the provider falls back to its default blue.
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 statusChangedMeta("Issue", "BACKLOG", "Backlog", null));
 
         String result = discordProvider.format(event);
@@ -198,7 +198,7 @@ class DiscordProviderTest {
     void formatReviewerAssignedContainsReviewerName() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.REVIEWER_ASSIGNED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "reviewerName", "Alice"));
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE, "reviewerName", "Alice"));
 
         String result = discordProvider.format(event);
 
@@ -211,7 +211,7 @@ class DiscordProviderTest {
     void formatReviewSubmittedApprovedUsesGreenColorAndTitle() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "APPROVED",
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE, "verdict", "APPROVED",
                         "reviewerName", "Alice"));
 
         String result = discordProvider.format(event);
@@ -226,7 +226,7 @@ class DiscordProviderTest {
     void formatReviewSubmittedChangesRequestedUsesRedColorAndTitle() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "CHANGES_REQUESTED",
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE, "verdict", "CHANGES_REQUESTED",
                         "reviewerName", "Bob"));
 
         String result = discordProvider.format(event);
@@ -241,7 +241,7 @@ class DiscordProviderTest {
     void formatReviewSubmittedCommentedUsesYellowColorAndTitle() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "COMMENTED",
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE, "verdict", "COMMENTED",
                         "reviewerName", "Carol"));
 
         String result = discordProvider.format(event);
@@ -256,7 +256,7 @@ class DiscordProviderTest {
     void formatReviewSubmittedUnknownVerdictUsesDefaultBlueAndTitle() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE));
 
         String result = discordProvider.format(event);
 
@@ -269,7 +269,7 @@ class DiscordProviderTest {
     void formatReviewSubmittedReviewerNameAppearsInDescription() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "APPROVED",
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE, "verdict", "APPROVED",
                         "reviewerName", "Dave"));
 
         String result = discordProvider.format(event);
@@ -281,7 +281,7 @@ class DiscordProviderTest {
     void formatReviewSubmittedNoReviewerNameFallsBackToIssueTitle() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "verdict", "APPROVED"));
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE, "verdict", "APPROVED"));
 
         String result = discordProvider.format(event);
 
@@ -293,7 +293,7 @@ class DiscordProviderTest {
     void formatCommentAddedContainsAuthor() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.COMMENT_ADDED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "commentAuthor", "Bob"));
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE, "commentAuthor", "Bob"));
 
         String result = discordProvider.format(event);
 
@@ -305,7 +305,7 @@ class DiscordProviderTest {
     void formatCommentReplyContainsAuthor() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.COMMENT_REPLY, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "commentAuthor", "Carol"));
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE, "commentAuthor", "Carol"));
 
         String result = discordProvider.format(event);
 
@@ -343,7 +343,7 @@ class DiscordProviderTest {
     @Test
     void formatContainsValidEmbedStructure() {
         NotificationEvent event = NotificationEvent.of(
-                EventType.ISSUE_STATUS_CHANGED, PROJECT_ID,
+                EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 statusChangedMeta("Issue", "IN_REVIEW", "In Review", "in_progress"));
 
         String result = discordProvider.format(event);
@@ -359,8 +359,8 @@ class DiscordProviderTest {
     @Test
     void formatEscapesSpecialCharacters() {
         Map<String, String> meta = statusChangedMeta("Issue", "IN_REVIEW", "In Review", "in_progress");
-        meta.put("issueTitle", "Title with \"quotes\" and\nnewline");
-        NotificationEvent event = NotificationEvent.of(EventType.ISSUE_STATUS_CHANGED, PROJECT_ID, meta);
+        meta.put("workItemTitle", "Title with \"quotes\" and\nnewline");
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, meta);
 
         String result = discordProvider.format(event);
 
@@ -389,7 +389,7 @@ class DiscordProviderTest {
     void formatCommentAddedWithExcerptIncludesExcerptInDescription() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.COMMENT_ADDED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE,
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE,
                         "commentAuthor", "Bob", "excerpt", "This is a selected excerpt"));
 
         String result = discordProvider.format(event);
@@ -403,7 +403,7 @@ class DiscordProviderTest {
     void formatCommentAddedWithoutExcerptRendersWithoutError() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.COMMENT_ADDED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "commentAuthor", "Bob"));
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE, "commentAuthor", "Bob"));
 
         String result = discordProvider.format(event);
 
@@ -416,7 +416,7 @@ class DiscordProviderTest {
     void formatCommentReplyWithExcerptIncludesExcerptInDescription() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.COMMENT_REPLY, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE,
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE,
                         "commentAuthor", "Carol", "excerpt", "Quoted reply text"));
 
         String result = discordProvider.format(event);
@@ -446,7 +446,7 @@ class DiscordProviderTest {
     void colorForReviewSubmittedWithUnknownVerdictIsDefaultBlue() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE));
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE));
 
         String result = discordProvider.format(event);
 
@@ -457,7 +457,7 @@ class DiscordProviderTest {
     void colorForCommentAddedIsDefaultBlue() {
         NotificationEvent event = NotificationEvent.of(
                 EventType.COMMENT_ADDED, PROJECT_ID,
-                Map.of("issueId", ISSUE_ID, "issueTitle", ISSUE_TITLE, "commentAuthor", "Bob"));
+                Map.of("workItemId", ISSUE_ID, "workItemTitle", ISSUE_TITLE, "commentAuthor", "Bob"));
 
         String result = discordProvider.format(event);
 

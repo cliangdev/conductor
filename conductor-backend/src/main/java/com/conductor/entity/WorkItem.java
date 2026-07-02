@@ -61,9 +61,9 @@ public class WorkItem {
     private OffsetDateTime updatedAt;
 
     @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "issue_tasks", columnDefinition = "JSONB")
+    @Column(name = "work_item_tasks", columnDefinition = "JSONB")
     @ColumnTransformer(write = "?::jsonb")
-    private JsonNode issueTasks;
+    private JsonNode workItemTasks;
 
     // --- COND-18 Work Item binding (nullable; legacy/unbound rows default to ENGINEERING) ---
 
@@ -164,6 +164,6 @@ public class WorkItem {
     public JsonNode getOutcomeMetric() { return outcomeMetric; }
     public void setOutcomeMetric(JsonNode outcomeMetric) { this.outcomeMetric = outcomeMetric; }
 
-    public JsonNode getIssueTasks() { return issueTasks; }
-    public void setIssueTasks(JsonNode issueTasks) { this.issueTasks = issueTasks; }
+    public JsonNode getWorkItemTasks() { return workItemTasks; }
+    public void setWorkItemTasks(JsonNode workItemTasks) { this.workItemTasks = workItemTasks; }
 }

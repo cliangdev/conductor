@@ -11,10 +11,10 @@ import java.util.Optional;
 @Repository
 public interface WorkItemReviewerRepository extends JpaRepository<WorkItemReviewer, String> {
 
-    Optional<WorkItemReviewer> findByWorkItemIdAndUserId(String issueId, String userId);
+    Optional<WorkItemReviewer> findByWorkItemIdAndUserId(String workItemId, String userId);
 
-    List<WorkItemReviewer> findAllByWorkItemId(String issueId);
+    List<WorkItemReviewer> findAllByWorkItemId(String workItemId);
 
     @Transactional
-    void deleteByWorkItemIdAndUserId(String issueId, String userId);
+    void deleteByWorkItemIdAndUserId(String workItemId, String userId);
 }

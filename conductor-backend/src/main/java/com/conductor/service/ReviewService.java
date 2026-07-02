@@ -53,7 +53,7 @@ public class ReviewService {
     }
 
     @Transactional
-    public Review submitReview(String projectId, String issueId, String verdict, String body, User currentUser) {
+    public Review submitReview(String projectId, String workItemId, String verdict, String body, User currentUser) {
         if (!VALID_VERDICTS.contains(verdict)) {
             throw new BusinessException("Invalid verdict. Must be one of: APPROVED, CHANGES_REQUESTED, COMMENTED");
         }
@@ -66,17 +66,17 @@ public class ReviewService {
         }
 
         boolean isAssignedReviewer = workItemReviewerRepository
-                .findByWorkItemIdAndUserId(issueId, currentUser.getId())
+                .findByWorkItemIdAndUserId(workItemId, currentUser.getId())
                 .isPresent();
 
         if (!isAssignedReviewer) {
             throw new ForbiddenException("You are not an assigned reviewer");
         }
 
-        Review review = reviewRepository.findByWorkItemIdAndReviewerId(issueId, currentUser.getId())
+        Review review = reviewRepository.findByWorkItemIdAndReviewerId(workItemId, currentUser.getId())
                 .orElseGet(() -> {
                     Review r = new Review();
-                    r.setWorkItemId(issueId);
+                    r.setWorkItemId(workItemId);
                     r.setReviewerId(currentUser.getId());
                     return r;
                 });
@@ -87,22 +87,22 @@ public class ReviewService {
 
         reviewRepository.save(review);
 
-        WorkItem issue = workItemRepository.findById(issueId).orElse(null);
-        String issueTitle = issue != null ? issue.getTitle() : issueId;
+        WorkItem workItem = workItemRepository.findById(workItemId).orElse(null);
+        String workItemTitle = workItem != null ? workItem.getTitle() : workItemId;
         notificationDispatcher.dispatch(NotificationEvent.of(
                 EventType.REVIEW_SUBMITTED, projectId,
-                Map.of("issueId", issueId, "issueTitle", issueTitle, "verdict", verdict)));
+                Map.of("workItemId", workItemId, "workItemTitle", workItemTitle, "verdict", verdict)));
 
         return review;
     }
 
     @Transactional(readOnly = true)
-    public List<ReviewWithUser> listReviews(String projectId, String issueId, User currentUser) {
+    public List<ReviewWithUser> listReviews(String projectId, String workItemId, User currentUser) {
         if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, currentUser.getId())) {
             throw new EntityNotFoundException("Project not found");
         }
 
-        return reviewRepository.findAllByWorkItemId(issueId).stream()
+        return reviewRepository.findAllByWorkItemId(workItemId).stream()
                 .map(this::toReviewWithUser)
                 .toList();
     }

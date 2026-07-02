@@ -72,15 +72,15 @@ class AssetServiceTest {
         }
     }
 
-    private WorkItem issue() {
-        WorkItem issue = new WorkItem();
-        issue.setId(ISSUE_ID);
-        issue.setTitle("T");
+    private WorkItem workItem() {
+        WorkItem workItem = new WorkItem();
+        workItem.setId(ISSUE_ID);
+        workItem.setTitle("T");
         Project project = new Project();
         project.setId(PROJECT_ID);
-        issue.setProject(project);
-        issue.setWorkflow("ENGINEERING");
-        return issue;
+        workItem.setProject(project);
+        workItem.setWorkflow("ENGINEERING");
+        return workItem;
     }
 
     private User caller() {
@@ -91,7 +91,7 @@ class AssetServiceTest {
 
     @Test
     void createsAllowedAssetTypeAndDispatchesEvent() {
-        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem()));
         AssetInput req = new AssetInput("github_pr", "PR #1", "link", "https://x/pr/1", null);
 
         Asset response = service.createAsset(PROJECT_ID, ISSUE_ID, req, caller());
@@ -105,7 +105,7 @@ class AssetServiceTest {
 
     @Test
     void rejectsAssetTypeNotAllowedByWorkflow() {
-        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(issue()));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem()));
         // ENGINEERING only allows github_pr.
         AssetInput req = new AssetInput("published_url", null, "link", "https://x", null);
 
@@ -116,21 +116,21 @@ class AssetServiceTest {
     }
 
     @Test
-    void recordPullRequestAssetIsIdempotent() {
-        WorkItem issue = issue();
+    void recordAssetIsIdempotent() {
+        WorkItem workItem = workItem();
         when(assetRepository.existsByWorkItemIdAndTypeAndRef(ISSUE_ID, "github_pr", "https://x/pr/1")).thenReturn(true);
 
-        service.recordPullRequestAsset(issue, "https://x/pr/1");
+        service.recordAsset(workItem, "github_pr", "https://x/pr/1", "Pull Request", "link");
 
         verify(assetRepository, never()).save(any());
     }
 
     @Test
-    void recordPullRequestAssetCreatesGithubPrAsset() {
-        WorkItem issue = issue();
+    void recordAssetCreatesGithubPrAsset() {
+        WorkItem workItem = workItem();
         when(assetRepository.existsByWorkItemIdAndTypeAndRef(ISSUE_ID, "github_pr", "https://x/pr/1")).thenReturn(false);
 
-        service.recordPullRequestAsset(issue, "https://x/pr/1");
+        service.recordAsset(workItem, "github_pr", "https://x/pr/1", "Pull Request", "link");
 
         ArgumentCaptor<Asset> saved = ArgumentCaptor.forClass(Asset.class);
         verify(assetRepository).save(saved.capture());
@@ -140,8 +140,8 @@ class AssetServiceTest {
     }
 
     @Test
-    void recordPullRequestAssetIgnoresBlankUrl() {
-        service.recordPullRequestAsset(issue(), "  ");
+    void recordAssetIgnoresBlankRef() {
+        service.recordAsset(workItem(), "github_pr", "  ", "Pull Request", "link");
         verify(assetRepository, never()).save(any());
     }
 }

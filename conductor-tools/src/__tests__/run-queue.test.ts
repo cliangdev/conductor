@@ -26,8 +26,8 @@ const mockConfig = {
 function makeEvent(overrides: Partial<{
   workflowRunId: string
   eventId: string
-  issueId: string
-  issueTitle: string
+  workItemId: string
+  workItemTitle: string
   projectId: string
   jobs: Array<{ id: string; runsOn: string }>
 }> = {}) {
@@ -37,8 +37,8 @@ function makeEvent(overrides: Partial<{
     workflowRunId: overrides.workflowRunId ?? 'run_1',
     workflowId: 'wf_1',
     workflowName: 'Test Workflow',
-    issueId: overrides.issueId ?? 'iss_1',
-    issueTitle: overrides.issueTitle ?? 'Test Issue',
+    workItemId: overrides.workItemId ?? 'iss_1',
+    workItemTitle: overrides.workItemTitle ?? 'Test Issue',
     projectId: overrides.projectId ?? 'proj_123',
     trigger: { type: 'status_change', fromStatus: 'DRAFT', toStatus: 'IN_PROGRESS' },
     jobs: overrides.jobs ?? [{ id: 'job_1', runsOn: 'self-hosted' }],
@@ -215,7 +215,7 @@ describe('RunQueue', () => {
       writeCalls.push(JSON.parse(JSON.stringify(state)))
     })
 
-    const event = makeEvent({ workflowRunId: 'run_99', issueTitle: 'My Issue' })
+    const event = makeEvent({ workflowRunId: 'run_99', workItemTitle: 'My Issue' })
 
     await new Promise<void>((resolve) => {
       mockCompleteRun.mockImplementation(async () => {

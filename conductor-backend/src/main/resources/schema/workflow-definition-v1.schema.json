@@ -160,9 +160,9 @@
           "enum": ["ADMIN", "CREATOR", "REVIEWER"]
         },
         "trigger": {
-          "description": "System event that fires this edge automatically. 'pr_merged' advances a Work Item when a linked GitHub pull request merges; the merge is the authority, so this bypasses the Review gate. Omit for a human-driven transition.",
+          "description": "System event that fires this edge automatically. Must reference a registered system trigger (Java-enforced against SystemTriggerRegistry; the open string here just constrains the shape). 'pr_merged' advances a Work Item when a linked GitHub pull request merges and bypasses the Review gate (the merge is the authority); 'status_changed' fires on every status change and honors the Review gate. Omit for a human-driven transition.",
           "type": "string",
-          "enum": ["pr_merged"]
+          "pattern": "^[a-z][a-z0-9_]*$"
         },
         "steps": {
           "description": "Automated actions on this transition. Hard cap: <= 3 per transition (P0-2).",
@@ -277,6 +277,7 @@
     "At most 5 transitions share the same from status.",
     "At most 3 transitions set requiresReview=true.",
     "Every step with kind=skill references a skill id present in the skill registry.",
+    "Every transition.trigger references a system trigger id registered in the SystemTriggerRegistry.",
     "Only a state=PUBLISHED version is bindable by Work Items; DRAFT is editable but not bound.",
     "schemaVersion routes validation; unknown schemaVersion is rejected.",
     "connector_fetch/connector_action step kinds and connector_event triggers are reserved for post-v1 and rejected by the v1 validator."
