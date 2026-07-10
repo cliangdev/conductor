@@ -169,11 +169,12 @@ public class WorkflowJobOrchestrator {
      */
     private boolean runSteps(JobExecutionPlan plan) {
         boolean jobFailed = false;
+        String runsOn = (String) plan.jobDef.get("runs-on");
         for (Map<String, Object> stepDef : plan.executableSteps) {
             if (jobFailed) break;
             RuntimeContext ctx = self.buildStepContext(plan.runId, plan.jobRunId,
                     plan.secrets, plan.upstreamOutputs, plan.loopIteration);
-            StepResult result = runStep(plan.runId, plan.jobRunId, stepDef, ctx, plan.projectId);
+            StepResult result = runStep(plan.runId, plan.jobRunId, stepDef, ctx, plan.projectId, runsOn);
             self.persistStepResult(plan.jobRunId, stepDef, result, plan.projectId);
             if (result.getStatus() == WorkflowStepStatus.FAILED) {
                 jobFailed = true;
@@ -187,7 +188,7 @@ public class WorkflowJobOrchestrator {
      * minutes on external I/O (HTTP timeouts, Docker polling, Kestra polling).
      */
     private StepResult runStep(String runId, String jobRunId, Map<String, Object> stepDef,
-                               RuntimeContext ctx, String projectId) {
+                               RuntimeContext ctx, String projectId, String runsOn) {
         String stepType = resolveStepType(stepDef);
         String ifCond = (String) stepDef.get("if");
         if (ifCond != null) {
@@ -216,17 +217,17 @@ public class WorkflowJobOrchestrator {
         }
 
         // Executors only read non-lazy primitives (IDs). Load once inside a short read-only tx.
-        StepExecutionContext execCtx = self.buildStepExecutionContext(runId, jobRunId, effectiveStepDef, ctx, projectId);
+        StepExecutionContext execCtx = self.buildStepExecutionContext(runId, jobRunId, effectiveStepDef, ctx, projectId, runsOn);
         return backend.execute(execCtx);
     }
 
     @Transactional(readOnly = true)
     public StepExecutionContext buildStepExecutionContext(String runId, String jobRunId,
                                                           Map<String, Object> stepDef,
-                                                          RuntimeContext ctx, String projectId) {
+                                                          RuntimeContext ctx, String projectId, String runsOn) {
         WorkflowRun run = runRepository.findById(runId).orElseThrow();
         WorkflowJobRun jobRun = jobRunRepository.findById(jobRunId).orElseThrow();
-        return new StepExecutionContext(run, jobRun, stepDef, ctx, projectId);
+        return new StepExecutionContext(run, jobRun, stepDef, ctx, projectId, runsOn);
     }
 
     @Transactional(readOnly = true)

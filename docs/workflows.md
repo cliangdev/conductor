@@ -403,7 +403,7 @@ jobs:
 |-------|---------|-------------|
 | `prompt` | — | The instruction given to Claude Code (required). Interpolated — may reference `${{ steps.* }}` / `${{ needs.* }}`. |
 | `inputs` | — | Map of `filename: content` written to `/conductor/inputs/` before Claude Code starts, so the prompt can tell it to read them. Values are interpolated; each must be a scalar (string/number/boolean), not a nested object. |
-| `conductor_mcp` | `false` | When `true`, wires up the Conductor MCP server (`npx @cliangdev/conductor mcp`) so the prompt can call Conductor tools (e.g. `scaffold_document`, `record_asset`). Requires an `allowed_tools` entry for each MCP tool you want it to use. |
+| `conductor_mcp` | `false` | When `true`, wires up the Conductor MCP server (`npx @cliangdev/conductor mcp`) so the prompt can call Conductor tools (e.g. `scaffold_document`, `record_asset`). Requires an `allowed_tools` entry for each MCP tool you want it to use. On `runs-on: cloud-run` this also requires an active project API key (**Settings → API Keys**) — the backend injects it for the container's MCP server; on `self-hosted` the daemon uses its own key. |
 | `allowed_tools` | — | Comma-separated allowlist passed to `--allowedTools` (e.g. `"Read,Glob,mcp__conductor__scaffold_document"`). Omit to use Claude Code's own defaults. |
 | `max_turns` | — | Maximum agent turns (positive integer) before Claude Code stops itself, passed to `--max-turns`. |
 | `timeout_minutes` | `30` | Hard wall-clock timeout for the whole step (integer, 1–120). Enforced inside the container (SIGTERM, then SIGKILL) — the step fails with `CLAUDE_TIMEOUT` if exceeded. |
@@ -432,6 +432,8 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 | `CLAUDE_CONFIG_ERROR` | Bad step configuration (e.g. invalid `inputs`/`output_schema` JSON, or `claude` failed to launch). |
 | `CLAUDE_CREDENTIAL_MISSING` | No provider credential is configured for the project (`runs-on: cloud-run`) — set one under **Settings → Integrations**. |
 | `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` | No subscription OAuth token is configured on the daemon host (`runs-on: self-hosted`) — see [Subscription auth for claude-code steps](#subscription-auth-for-claude-code-steps). |
+| `CLAUDE_LAUNCH_ERROR` | The Cloud Run execution failed to launch, or ended without the container ever reporting a result (e.g. image pull failure, OOM kill). |
+| `PROJECT_API_KEY_MISSING` | `conductor_mcp: true` on `runs-on: cloud-run`, but the project has no active API key (**Settings → API Keys**). |
 
 **Auth & runtime targets** — a `claude-code` step's job `runs-on` determines which Claude credential is used, and there is no fallback between them:
 
