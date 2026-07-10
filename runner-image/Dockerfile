@@ -40,14 +40,19 @@ RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /
     && apt-get install -y docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude CLI
-RUN npm install -g @anthropic-ai/claude-code
+# Install Claude CLI (pinned — bump deliberately, verify against the exit taxonomy in
+# conductor-claude-entrypoint.mjs when upgrading)
+RUN npm install -g @anthropic-ai/claude-code@2.1.206
 
 # Create non-root user
 RUN useradd -m -s /bin/bash runner
+
+# Create workspace/outputs/inputs directories and the self-reporting entrypoint, owned by the
+# runner user. No default ENTRYPOINT/CMD — existing `docker` steps that run this image directly
+# keep working; `claude-code` steps invoke conductor-claude-entrypoint explicitly.
+RUN mkdir -p /conductor/workspace /conductor/outputs /conductor/inputs \
+    && chown -R runner:runner /conductor
+COPY --chmod=755 conductor-claude-entrypoint.mjs /usr/local/bin/conductor-claude-entrypoint
+
 USER runner
-
-# Create workspace and outputs directories
-RUN mkdir -p /conductor/workspace /conductor/outputs
-
 WORKDIR /conductor/workspace
