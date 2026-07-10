@@ -7,9 +7,9 @@ import { acknowledgeEvent, completeJob } from './run-lifecycle.js'
 /**
  * Pointer-only daemon event for the per-job dispatch protocol ("protocol 2").
  * Carries no secrets/env — the daemon fetches the interpolated dispatch
- * payload (env, steps, run token) at pickup. Flattened top-level shape,
- * matching how `workflow.trigger` events are already delivered (see
- * WorkflowTriggerEvent in runner.ts) rather than nested under `payload`.
+ * payload (env, steps, run token) at pickup. The events API delivers
+ * {eventId, type, payload: {...}}; the watcher flattens the payload into
+ * this top-level shape before enqueueing.
  */
 export interface WorkflowJobEvent {
   eventId: string

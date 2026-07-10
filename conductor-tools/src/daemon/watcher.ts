@@ -498,10 +498,13 @@ if (process.argv[1] === __filename) {
 
   startPoller(getConfig, async (events) => {
     for (const event of events) {
+      // The events API delivers {eventId, type, payload: {...}} — the runners consume a flat
+      // shape, so spread the payload and let the envelope's eventId/type win.
+      const flat = { ...event.payload, eventId: event.eventId, type: event.type }
       if (event.type === 'workflow.trigger') {
-        runQueue.enqueue(event as unknown as WorkflowTriggerEvent, getConfig)
+        runQueue.enqueue(flat as unknown as WorkflowTriggerEvent, getConfig)
       } else if (event.type === 'workflow.job') {
-        runQueue.enqueueJob(event as unknown as WorkflowJobEvent, getConfig)
+        runQueue.enqueueJob(flat as unknown as WorkflowJobEvent, getConfig)
       }
     }
   })
