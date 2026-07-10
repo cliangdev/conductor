@@ -8,6 +8,7 @@ import { writeDaemonState, deleteDaemonState } from './state.js'
 import { startPoller } from './poller.js'
 import { RunQueue } from './run-queue.js'
 import type { WorkflowTriggerEvent } from './runner.js'
+import type { WorkflowJobEvent } from './job-runner.js'
 
 const CONDUCTOR_DIR = path.join(os.homedir(), '.conductor')
 export const SYNC_QUEUE_PATH = path.join(CONDUCTOR_DIR, 'sync-queue.json')
@@ -499,6 +500,8 @@ if (process.argv[1] === __filename) {
     for (const event of events) {
       if (event.type === 'workflow.trigger') {
         runQueue.enqueue(event as unknown as WorkflowTriggerEvent, getConfig)
+      } else if (event.type === 'workflow.job') {
+        runQueue.enqueueJob(event as unknown as WorkflowJobEvent, getConfig)
       }
     }
   })

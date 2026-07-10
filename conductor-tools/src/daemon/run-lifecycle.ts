@@ -68,3 +68,37 @@ export async function completeRun(
   await updateRunStatus(event.workflowRunId, status, config)
   await acknowledgeEvent(event.projectId, event.eventId, config)
 }
+
+// ─── completeJob (protocol 2) ──────────────────────────────────────────────────
+
+/**
+ * POST /api/v1/workflow-runs/{runId}/jobs/{jobId}/complete
+ * Finalises a single self-hosted job under the per-job dispatch protocol.
+ * Errors are swallowed and logged — the caller acks the daemon event
+ * regardless, matching completeRun's fire-and-forget shape.
+ */
+export async function completeJob(
+  runId: string,
+  jobId: string,
+  status: 'SUCCESS' | 'FAILED',
+  config: Config,
+  errorReason?: string,
+  exitCode?: number
+): Promise<void> {
+  try {
+    await fetch(`${config.apiUrl}/api/v1/workflow-runs/${runId}/jobs/${jobId}/complete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        status,
+        ...(errorReason !== undefined ? { errorReason } : {}),
+        ...(exitCode !== undefined ? { exitCode } : {}),
+      }),
+    })
+  } catch (err) {
+    console.error('[run-lifecycle] Failed to complete job:', err)
+  }
+}
