@@ -119,6 +119,41 @@ public class WorkflowRunLogBroker {
         }
     }
 
+    /**
+     * Record a worker step's terminal result on the pre-created step run (idempotent; unknown
+     * workerJobId is a no-op — the run may have been cleaned up). exitCode is accepted but not
+     * persisted (no column on {@code workflow_step_runs}); rolling the result up to the job/run is
+     * owned elsewhere (the daemon's job-complete callback for self-hosted, the Cloud Run executor's
+     * poll loop for cloud-run) — not here.
+     */
+    public void recordStepCompleted(String runId, String workerJobId, WorkflowStepStatus status,
+                                    Integer exitCode, String errorReason, Map<String, String> outputs) {
+        List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(runId);
+        for (WorkflowJobRun jobRun : jobRuns) {
+            List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(jobRun.getId());
+            for (WorkflowStepRun step : steps) {
+                if (workerJobId.equals(step.getWorkerJobId())) {
+                    step.setStatus(status);
+                    step.setErrorReason(errorReason);
+                    if (outputs != null) {
+                        try {
+                            step.setOutputJson(objectMapper.writeValueAsString(outputs));
+                        } catch (Exception e) {
+                            log.warn("Failed to serialize outputs for step {}", step.getId(), e);
+                        }
+                    }
+                    if (step.getStartedAt() == null) {
+                        step.setStartedAt(OffsetDateTime.now());
+                    }
+                    step.setCompletedAt(OffsetDateTime.now());
+                    stepRunRepository.save(step);
+                    return;
+                }
+            }
+        }
+        log.warn("recordStepCompleted: no step run found for workerJobId {} in run {}", workerJobId, runId);
+    }
+
     /** Mark a worker job's step failed and roll the failure up to the job and (if needed) the run. */
     public void recordJobFailed(String runId, String workerJobId, String reason) {
         List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(runId);

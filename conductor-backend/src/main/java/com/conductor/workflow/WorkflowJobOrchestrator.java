@@ -442,10 +442,22 @@ public class WorkflowJobOrchestrator {
         engine.checkRunCompletion(run);
     }
 
+    /**
+     * Updates the pre-created row in place when {@code result} carries a workerJobId matching one
+     * (e.g. Cloud Run's executor, Phase 5); falls back to today's insert when no workerJobId is set
+     * (all current step executors) or no matching row is found.
+     */
     private void persistStepRun(WorkflowJobRun jobRun, String stepId, String stepName,
                                 String stepType, StepResult result, String projectId) {
-        WorkflowStepRun stepRun = new WorkflowStepRun();
-        stepRun.setJobRun(jobRun);
+        String workerJobId = result.getWorkerJobId();
+        WorkflowStepRun stepRun = workerJobId != null
+                ? stepRunRepository.findByJobRunIdAndWorkerJobId(jobRun.getId(), workerJobId).orElse(null)
+                : null;
+        if (stepRun == null) {
+            stepRun = new WorkflowStepRun();
+            stepRun.setJobRun(jobRun);
+            stepRun.setWorkerJobId(workerJobId);
+        }
         stepRun.setStepId(stepId);
         stepRun.setStepName(stepName);
         stepRun.setStepType(stepType);
@@ -464,7 +476,9 @@ public class WorkflowJobOrchestrator {
                 log.warn("Failed to serialize step outputs: {}", e.getMessage());
             }
         }
-        stepRun.setStartedAt(OffsetDateTime.now());
+        if (stepRun.getStartedAt() == null) {
+            stepRun.setStartedAt(OffsetDateTime.now());
+        }
         stepRun.setCompletedAt(OffsetDateTime.now());
         stepRunRepository.save(stepRun);
     }

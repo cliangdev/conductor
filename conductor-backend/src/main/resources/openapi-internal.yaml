@@ -82,10 +82,38 @@ paths:
         "401":
           description: Missing or invalid run token
 
+  /workflow-runs/{runId}/steps/{workerJobId}/complete:
+    post:
+      tags: [workflow-internal]
+      summary: Report that a pre-created worker step run has finished
+      operationId: completeWorkflowRunStep
+      security:
+        - runToken: []
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/WorkerJobId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StepCompleteRequest"
+      responses:
+        "200":
+          description: Step result recorded (idempotent; unknown workerJobId is a no-op)
+        "401":
+          description: Missing or invalid run token
+
 components:
   parameters:
     RunId:
       name: runId
+      in: path
+      required: true
+      schema:
+        type: string
+    WorkerJobId:
+      name: workerJobId
       in: path
       required: true
       schema:
@@ -125,3 +153,18 @@ components:
           type: integer
         reason:
           type: string
+    StepCompleteRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+        exitCode:
+          type: integer
+        errorReason:
+          type: string
+          nullable: true
+        outputs:
+          type: object
+          additionalProperties:
+            type: string

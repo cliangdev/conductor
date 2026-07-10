@@ -373,6 +373,101 @@ class WorkflowSelfHostedDispatchE2ETest {
     }
 
     @Test
+    void stepCompleteCallback_validToken_updatesPreCreatedStepRunStatusOutputsAndCompletedAt() {
+        String apiKey = createProjectApiKey();
+        String workflowId = createWorkflow("step-complete-" + System.nanoTime(), soloClaudeCodeYaml());
+        String runId = dispatchWorkflow(workflowId);
+        awaitJobStatus(runId, "solo", "AWAITING_PICKUP");
+
+        Map<String, Object> payload = dispatchPayload(runId, "solo", apiKey);
+        String runToken = (String) payload.get("runToken");
+        String workerJobId = stepWorkerJobId(payload);
+
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("status", "SUCCESS");
+        body.put("exitCode", 0);
+        body.put("errorReason", null);
+        body.put("outputs", Map.of("summary", "the analysis"));
+
+        var completeResp = rest.exchange(
+                url("/internal/v1/workflow-runs/" + runId + "/steps/" + workerJobId + "/complete"),
+                HttpMethod.POST,
+                new HttpEntity<>(body, runTokenHeaders(runToken)),
+                Void.class);
+        assertThat(completeResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        Map<String, Object> stepDto = soloStep(workflowId, runId);
+        assertThat(stepDto.get("status")).isEqualTo("SUCCESS");
+        assertThat((String) stepDto.get("outputJson")).contains("summary");
+        assertThat(stepDto.get("errorReason")).isNull();
+        assertThat(stepDto.get("completedAt")).isNotNull();
+    }
+
+    @Test
+    void stepCompleteCallback_failedStatus_setsErrorReason() {
+        String apiKey = createProjectApiKey();
+        String workflowId = createWorkflow("step-complete-failed-" + System.nanoTime(), soloClaudeCodeYaml());
+        String runId = dispatchWorkflow(workflowId);
+        awaitJobStatus(runId, "solo", "AWAITING_PICKUP");
+
+        Map<String, Object> payload = dispatchPayload(runId, "solo", apiKey);
+        String runToken = (String) payload.get("runToken");
+        String workerJobId = stepWorkerJobId(payload);
+
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("status", "FAILED");
+        body.put("exitCode", 13);
+        body.put("errorReason", "CLAUDE_TIMEOUT");
+
+        var completeResp = rest.exchange(
+                url("/internal/v1/workflow-runs/" + runId + "/steps/" + workerJobId + "/complete"),
+                HttpMethod.POST,
+                new HttpEntity<>(body, runTokenHeaders(runToken)),
+                Void.class);
+        assertThat(completeResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        Map<String, Object> stepDto = soloStep(workflowId, runId);
+        assertThat(stepDto.get("status")).isEqualTo("FAILED");
+        assertThat(stepDto.get("errorReason")).isEqualTo("CLAUDE_TIMEOUT");
+    }
+
+    @Test
+    void stepCompleteCallback_invalidToken_isUnauthorized() {
+        String apiKey = createProjectApiKey();
+        String workflowId = createWorkflow("step-complete-bad-token-" + System.nanoTime(), soloClaudeCodeYaml());
+        String runId = dispatchWorkflow(workflowId);
+        awaitJobStatus(runId, "solo", "AWAITING_PICKUP");
+
+        Map<String, Object> payload = dispatchPayload(runId, "solo", apiKey);
+        String workerJobId = stepWorkerJobId(payload);
+
+        var resp = rest.exchange(
+                url("/internal/v1/workflow-runs/" + runId + "/steps/" + workerJobId + "/complete"),
+                HttpMethod.POST,
+                new HttpEntity<>(Map.of("status", "SUCCESS"), runTokenHeaders("not-a-real-token")),
+                Void.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void stepCompleteCallback_unknownWorkerJobId_isNoOpButReturns200() {
+        String apiKey = createProjectApiKey();
+        String workflowId = createWorkflow("step-complete-unknown-" + System.nanoTime(), soloClaudeCodeYaml());
+        String runId = dispatchWorkflow(workflowId);
+        awaitJobStatus(runId, "solo", "AWAITING_PICKUP");
+
+        Map<String, Object> payload = dispatchPayload(runId, "solo", apiKey);
+        String runToken = (String) payload.get("runToken");
+
+        var resp = rest.exchange(
+                url("/internal/v1/workflow-runs/" + runId + "/steps/does-not-exist/complete"),
+                HttpMethod.POST,
+                new HttpEntity<>(Map.of("status", "SUCCESS"), runTokenHeaders(runToken)),
+                Void.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
     void pickupTimeoutSweep_failsAwaitingPickupJobAndPropagatesToDependent() {
         String yaml = """
                 name: Pickup Timeout
@@ -464,6 +559,52 @@ class WorkflowSelfHostedDispatchE2ETest {
         headers.setBearerAuth(apiKey);
         headers.setContentType(MediaType.APPLICATION_JSON);
         return headers;
+    }
+
+    private HttpHeaders runTokenHeaders(String runToken) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(runToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return headers;
+    }
+
+    private String soloClaudeCodeYaml() {
+        return """
+                name: Solo Claude Code
+                on:
+                  workflow_dispatch: {}
+                jobs:
+                  solo:
+                    runs-on: self-hosted
+                    steps:
+                      - id: seo
+                        uses: claude-code
+                        with:
+                          prompt: hi
+                """;
+    }
+
+    private Map<String, Object> dispatchPayload(String runId, String jobId, String apiKey) {
+        var resp = rest.exchange(
+                url("/api/v1/workflow-runs/" + runId + "/jobs/" + jobId + "/dispatch-payload"),
+                HttpMethod.GET,
+                new HttpEntity<>(apiKeyHeaders(apiKey)),
+                Map.class);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        return resp.getBody();
+    }
+
+    @SuppressWarnings("unchecked")
+    private String stepWorkerJobId(Map<String, Object> dispatchPayload) {
+        List<Map<String, Object>> payloadSteps = (List<Map<String, Object>>) dispatchPayload.get("steps");
+        return (String) payloadSteps.get(0).get("workerJobId");
+    }
+
+    private Map<String, Object> soloStep(String workflowId, String runId) {
+        var solo = jobs(getRunDetail(workflowId, runId)).stream()
+                .filter(j -> "solo".equals(j.get("jobId")))
+                .findFirst().orElseThrow();
+        return steps(solo).get(0);
     }
 
     private Map<String, Object> getRunDetail(String workflowId, String runId) {

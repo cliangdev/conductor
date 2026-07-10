@@ -13,4 +13,6 @@ public interface WorkflowStepRunRepository extends JpaRepository<WorkflowStepRun
     List<WorkflowStepRun> findByJobRunId(String jobRunId);
 
     Optional<WorkflowStepRun> findByJobRunIdAndStepId(String jobRunId, String stepId);
+
+    Optional<WorkflowStepRun> findByJobRunIdAndWorkerJobId(String jobRunId, String workerJobId);
 }
