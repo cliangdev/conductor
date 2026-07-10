@@ -3,6 +3,7 @@ package com.conductor.controller;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowJobRun;
+import com.conductor.entity.WorkflowJobStatus;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.entity.WorkflowSchedule;
@@ -37,6 +38,7 @@ import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.WorkflowDefinitionLifecycleService;
 import com.conductor.service.WorkflowService;
 import com.conductor.service.WorkflowViewService;
+import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.conductor.workflow.lifecycle.Statechart;
@@ -69,6 +71,7 @@ public class WorkflowController implements WorkflowsApi {
 
     private final WorkflowService workflowService;
     private final WorkflowTriggerService workflowTriggerService;
+    private final WorkflowJobOrchestrator workflowJobOrchestrator;
     private final ProjectSecurityService projectSecurityService;
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowRunRepository runRepository;
@@ -82,6 +85,7 @@ public class WorkflowController implements WorkflowsApi {
 
     public WorkflowController(WorkflowService workflowService,
                                WorkflowTriggerService workflowTriggerService,
+                               WorkflowJobOrchestrator workflowJobOrchestrator,
                                ProjectSecurityService projectSecurityService,
                                WorkflowDefinitionRepository workflowRepository,
                                WorkflowRunRepository runRepository,
@@ -94,6 +98,7 @@ public class WorkflowController implements WorkflowsApi {
                                ObjectMapper objectMapper) {
         this.workflowService = workflowService;
         this.workflowTriggerService = workflowTriggerService;
+        this.workflowJobOrchestrator = workflowJobOrchestrator;
         this.projectSecurityService = projectSecurityService;
         this.workflowRepository = workflowRepository;
         this.runRepository = runRepository;
@@ -214,15 +219,36 @@ public class WorkflowController implements WorkflowsApi {
         return ResponseEntity.status(202).body(toRunDto(run));
     }
 
+    /**
+     * Legacy whole-run daemon report (pre-per-job-dispatch protocol). Kept for daemons that haven't
+     * upgraded yet. If the run still has jobs AWAITING_PICKUP (self-hosted jobs dispatched per-job),
+     * closes those out via completeRemoteJob first so dependents unblock/propagate correctly, then
+     * applies the daemon-reported status as authoritative.
+     */
     @Override
     public ResponseEntity<WorkflowRunDto> updateWorkflowRunStatus(String runId, UpdateWorkflowRunStatusRequest request) {
         WorkflowRun run = runRepository.findByIdWithWorkflow(runId)
                 .orElseThrow(() -> new EntityNotFoundException("WorkflowRun not found: " + runId));
         WorkflowRunStatus newStatus = WorkflowRunStatus.valueOf(request.getStatus());
-        run.setStatus(newStatus);
+
         if (newStatus == WorkflowRunStatus.SUCCESS || newStatus == WorkflowRunStatus.FAILED) {
+            WorkflowJobStatus terminalJobStatus = newStatus == WorkflowRunStatus.SUCCESS
+                    ? WorkflowJobStatus.SUCCESS : WorkflowJobStatus.FAILED;
+            List<String> awaitingPickupJobIds = jobRunRepository.findByRunId(runId).stream()
+                    .filter(jr -> jr.getStatus() == WorkflowJobStatus.AWAITING_PICKUP)
+                    .map(WorkflowJobRun::getJobId)
+                    .toList();
+            for (String jobId : awaitingPickupJobIds) {
+                workflowJobOrchestrator.completeRemoteJob(runId, jobId, terminalJobStatus, null);
+            }
+            // Re-fetch: completeRemoteJob (and its checkRunCompletion) may have already updated/saved
+            // this row in its own transaction, so the in-memory `run` above could be stale.
+            run = runRepository.findByIdWithWorkflow(runId)
+                    .orElseThrow(() -> new EntityNotFoundException("WorkflowRun not found: " + runId));
             run.setCompletedAt(java.time.OffsetDateTime.now());
         }
+
+        run.setStatus(newStatus);
         runRepository.save(run);
         return ResponseEntity.ok(toRunDto(run));
     }

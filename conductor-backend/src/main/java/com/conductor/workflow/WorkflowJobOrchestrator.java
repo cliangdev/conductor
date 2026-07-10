@@ -5,6 +5,7 @@ import com.conductor.repository.*;
 import com.conductor.service.LogRedactionService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +32,7 @@ public class WorkflowJobOrchestrator {
     private final LogRedactionService logRedactionService;
     private final Map<String, WorkflowExecutionBackend> backends;
     private final ObjectMapper objectMapper;
+    private final SelfHostedJobDispatcher selfHostedJobDispatcher;
 
     // Self-reference injected lazily so @Transactional helpers are invoked through the Spring proxy
     // even when called from the same class. Required because executeJob() is deliberately NOT
@@ -49,7 +51,8 @@ public class WorkflowJobOrchestrator {
                                    RuntimeContextBuilder contextBuilder,
                                    LogRedactionService logRedactionService,
                                    List<WorkflowExecutionBackend> backends,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   SelfHostedJobDispatcher selfHostedJobDispatcher) {
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
         this.runRepository = runRepository;
@@ -60,6 +63,7 @@ public class WorkflowJobOrchestrator {
         this.contextBuilder = contextBuilder;
         this.logRedactionService = logRedactionService;
         this.objectMapper = objectMapper;
+        this.selfHostedJobDispatcher = selfHostedJobDispatcher;
         Map<String, WorkflowExecutionBackend> backendMap = new HashMap<>();
         for (WorkflowExecutionBackend b : backends) backendMap.put(b.getStepType(), b);
         this.backends = backendMap;
@@ -135,6 +139,13 @@ public class WorkflowJobOrchestrator {
                 propagateSkipToDependents(run, jobId, jobs);
                 return JobExecutionPlan.complete();
             }
+        }
+
+        if ("self-hosted".equals(jobDef.get("runs-on"))) {
+            selfHostedJobDispatcher.dispatch(run, jobId, jobRun, jobDef);
+            jobRun.setStatus(WorkflowJobStatus.AWAITING_PICKUP);
+            jobRunRepository.save(jobRun);
+            return JobExecutionPlan.complete();
         }
 
         @SuppressWarnings("unchecked")
@@ -275,6 +286,62 @@ public class WorkflowJobOrchestrator {
         jobRun.setCompletedAt(OffsetDateTime.now());
         jobRunRepository.save(jobRun);
         enqueueReadyDependents(run, plan.jobId, plan.jobs);
+    }
+
+    /**
+     * Called by the daemon-facing REST endpoints (dispatch-payload/complete) and by the pickup-timeout
+     * sweep to close out a self-hosted job the backend never ran itself. Marks the latest jobRun (and
+     * any of its pre-created, still-non-terminal step runs) terminal, then propagates to dependents the
+     * same way {@link #finalizeJob} does. Idempotent — a no-op if the job is already terminal.
+     */
+    @Transactional
+    public void completeRemoteJob(String runId, String jobId, WorkflowJobStatus terminalStatus, String errorReason) {
+        WorkflowRun run = runRepository.findById(runId)
+                .orElseThrow(() -> new EntityNotFoundException("Run not found: " + runId));
+        List<WorkflowJobRun> existing = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(runId, jobId);
+        if (existing.isEmpty()) {
+            log.warn("completeRemoteJob: no jobRun found for run {} job {}", runId, jobId);
+            return;
+        }
+        WorkflowJobRun jobRun = existing.get(0);
+        if (isTerminalJobStatus(jobRun.getStatus())) {
+            log.info("completeRemoteJob: jobRun {} already terminal ({}), ignoring", jobRun.getId(), jobRun.getStatus());
+            return;
+        }
+
+        WorkflowStepStatus stepStatus = terminalStatus == WorkflowJobStatus.SUCCESS
+                ? WorkflowStepStatus.SUCCESS : WorkflowStepStatus.FAILED;
+        for (WorkflowStepRun stepRun : stepRunRepository.findByJobRunId(jobRun.getId())) {
+            if (stepRun.getStatus() == WorkflowStepStatus.PENDING || stepRun.getStatus() == WorkflowStepStatus.RUNNING) {
+                stepRun.setStatus(stepStatus);
+                stepRun.setCompletedAt(OffsetDateTime.now());
+                if (stepStatus == WorkflowStepStatus.FAILED && errorReason != null) {
+                    stepRun.setErrorReason(errorReason);
+                }
+                stepRunRepository.save(stepRun);
+            }
+        }
+
+        jobRun.setStatus(terminalStatus);
+        jobRun.setCompletedAt(OffsetDateTime.now());
+        jobRunRepository.save(jobRun);
+
+        Map<String, Object> parsedWorkflow = parseYaml(run.getWorkflow().getYaml());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> jobs = parsedWorkflow != null ? (Map<String, Object>) parsedWorkflow.get("jobs") : null;
+        if (jobs != null) {
+            if (terminalStatus == WorkflowJobStatus.FAILED) {
+                propagateFailureToDependents(run, jobId, jobs);
+            } else {
+                enqueueReadyDependents(run, jobId, jobs);
+            }
+        }
+        engine.checkRunCompletion(run);
+    }
+
+    private boolean isTerminalJobStatus(WorkflowJobStatus status) {
+        return status == WorkflowJobStatus.SUCCESS || status == WorkflowJobStatus.FAILED
+                || status == WorkflowJobStatus.SKIPPED || status == WorkflowJobStatus.LOOP_EXHAUSTED;
     }
 
     private WorkflowJobRun findOrCreateLatestJobRun(WorkflowRun run, String jobId) {

@@ -6,5 +6,6 @@ public enum WorkflowJobStatus {
     SUCCESS,
     FAILED,
     SKIPPED,
-    LOOP_EXHAUSTED
+    LOOP_EXHAUSTED,
+    AWAITING_PICKUP
 }
