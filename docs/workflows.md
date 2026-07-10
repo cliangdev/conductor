@@ -17,9 +17,11 @@ Workflows let you automate work that happens around your Conductor project — r
 - [Execution modes](#execution-modes)
   - [Conductor-hosted](#conductor-hosted)
   - [Self-hosted](#self-hosted)
+  - [Cloud Run](#cloud-run)
 - [Self-hosted setup](#self-hosted-setup)
   - [Prerequisites](#prerequisites)
   - [Running the daemon](#running-the-daemon)
+  - [Subscription auth for claude-code steps](#subscription-auth-for-claude-code-steps)
   - [Runner image](#runner-image)
   - [Concurrency and capacity](#concurrency-and-capacity)
   - [Configuration reference](#configuration-reference)
@@ -134,7 +136,7 @@ jobs:
 | Field | Description |
 |-------|-------------|
 | `needs` | Job ID or list of job IDs this job depends on. The job runs only after all listed jobs succeed. |
-| `runs-on` | Execution mode: `conductor` (default) or `self-hosted`. See [Execution modes](#execution-modes). |
+| `runs-on` | Execution mode: `conductor` (default), `self-hosted`, or `cloud-run`. See [Execution modes](#execution-modes). |
 | `if` | Expression evaluated before the job starts. If false, the job is skipped. |
 | `steps` | List of steps to execute in order. |
 | `loop` | Repeat this job up to `max_iterations` times until a condition is met. See [Loops](#loops). |
@@ -228,6 +230,10 @@ echo "42"     > /conductor/outputs/build_id
 Then reference them as `${{ steps.run-tests.outputs.version }}` in later steps.
 
 Docker steps require either `runs-on: conductor` (Conductor-managed infrastructure) or `runs-on: self-hosted` (your own VM). See [Execution modes](#execution-modes).
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `timeout_minutes` | `5` | How long to wait for the container to finish before the step is marked failed (max `120`). |
 
 #### `kestra` — Delegate to a Kestra flow
 
@@ -353,6 +359,84 @@ The step exposes these outputs:
 Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answer just like the `http` step — `body.text` and `body.data` are also available.
 
 The agent must be created first under **Settings → Agents** (persona, model provider, tool bindings) and a provider API key configured for the project. A run that ends in any non-`SUCCEEDED` state fails the step.
+
+#### `claude-code` — Run Claude Code headlessly
+
+Hands a prompt to **Claude Code running headlessly** (`claude -p`) inside the Conductor runner image, optionally with tool access to the Conductor MCP server, and exposes its answer as step outputs. Unlike `agent`, this runs the actual Claude Code CLI — full tool-calling agent loop, not just a single model call — so it can read the input files it's given, use `Read`/`Glob`/MCP tools, and write a Conductor document directly.
+
+```yaml
+jobs:
+  collect:
+    runs-on: conductor
+    steps:
+      - id: gsc
+        uses: integration
+        with: { connector: gsc, operation: search_analytics }
+        outputs: { data: body.data }
+
+  analyze:
+    needs: [collect]
+    runs-on: cloud-run            # or: self-hosted (subscription auth)
+    steps:
+      - id: seo
+        uses: claude-code
+        with:
+          prompt: |
+            Read /conductor/inputs/gsc.json (last week's Search Console data).
+            Analyze trends, then use the Conductor MCP tools to write a
+            document titled "Weekly SEO Report" with findings and 3
+            prioritized recommendations.
+            Return JSON: {"summary": "...", "document_title": "..."}
+          inputs: { gsc.json: "${{ needs.collect.outputs.data }}" }
+          conductor_mcp: true
+          allowed_tools: "Read,Glob,mcp__conductor__scaffold_document,mcp__conductor__record_asset"
+          max_turns: 30
+          timeout_minutes: 20
+          output_schema:
+            type: object
+            required: [summary]
+            properties: { summary: {type: string}, document_title: {type: string} }
+        outputs: { summary: body.summary }
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `prompt` | — | The instruction given to Claude Code (required). Interpolated — may reference `${{ steps.* }}` / `${{ needs.* }}`. |
+| `inputs` | — | Map of `filename: content` written to `/conductor/inputs/` before Claude Code starts, so the prompt can tell it to read them. Values are interpolated; each must be a scalar (string/number/boolean), not a nested object. |
+| `conductor_mcp` | `false` | When `true`, wires up the Conductor MCP server (`npx @cliangdev/conductor mcp`) so the prompt can call Conductor tools (e.g. `scaffold_document`, `record_asset`). Requires an `allowed_tools` entry for each MCP tool you want it to use. |
+| `allowed_tools` | — | Comma-separated allowlist passed to `--allowedTools` (e.g. `"Read,Glob,mcp__conductor__scaffold_document"`). Omit to use Claude Code's own defaults. |
+| `max_turns` | — | Maximum agent turns (positive integer) before Claude Code stops itself, passed to `--max-turns`. |
+| `timeout_minutes` | `30` | Hard wall-clock timeout for the whole step (integer, 1–120). Enforced inside the container (SIGTERM, then SIGKILL) — the step fails with `CLAUDE_TIMEOUT` if exceeded. |
+| `output_schema` | — | JSON Schema requesting a structured JSON answer, passed to `--json-schema`. |
+
+The step exposes these outputs:
+
+| Output | Description |
+|--------|-------------|
+| `text` | Claude Code's final result text (always present). |
+| `data` | The structured JSON answer serialized to a string (present when `output_schema` is set and Claude Code returns matching JSON). |
+| *each structured field* | Every top-level field of the structured JSON is also exposed as its own output key — mirrors the `agent` step's output mapping. |
+| `num_turns` | Number of agent turns used, if reported. |
+| `session_id` | Claude Code session id, if reported. |
+
+Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answer the same way as the `http`/`agent` steps.
+
+**Failure modes** — a `claude-code` step fails with one of these `errorReason` values:
+
+| errorReason | Meaning |
+|-------------|---------|
+| `CLAUDE_AGENT_ERROR` | Claude Code returned a non-timeout, non-auth, non-rate-limit error. |
+| `CLAUDE_AUTH_ERROR` | Authentication failed — expired/invalid OAuth token or API key. |
+| `CLAUDE_RATE_LIMITED` | The account's usage/rate limit was exhausted. |
+| `CLAUDE_TIMEOUT` | The step exceeded `timeout_minutes`. |
+| `CLAUDE_CONFIG_ERROR` | Bad step configuration (e.g. invalid `inputs`/`output_schema` JSON, or `claude` failed to launch). |
+| `CLAUDE_CREDENTIAL_MISSING` | No provider credential is configured for the project (`runs-on: cloud-run`) — set one under **Settings → Integrations**. |
+| `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` | No subscription OAuth token is configured on the daemon host (`runs-on: self-hosted`) — see [Subscription auth for claude-code steps](#subscription-auth-for-claude-code-steps). |
+
+**Auth & runtime targets** — a `claude-code` step's job `runs-on` determines which Claude credential is used, and there is no fallback between them:
+
+- **`runs-on: self-hosted`** uses **subscription auth**: run `claude setup-token` on the daemon host, then `conductor config set-claude-code-oauth-token <token>` to store it in `~/.conductor/config.json`. The token never leaves the machine or transits Conductor's backend — the daemon injects it directly into the container. Billed against the owner's Claude Pro/Max plan, not metered API usage. Per Anthropic's guidance, subscription auth is meant for an individual's own automation, not shared/production use — use `cloud-run` for that.
+- **`runs-on: cloud-run`** uses a **per-project Anthropic API key** — the same provider credential the `agent` step uses (**Settings → Integrations**, resolved at runtime, never in the YAML). Billed as metered API usage.
 
 ---
 
@@ -515,7 +599,7 @@ jobs:
 
 ## Execution modes
 
-Docker steps can run in one of two modes, controlled by the `runs-on` field on the job.
+`runs-on` is a job-level setting with three modes. `docker` and `claude-code` steps are the ones that use it — a self-hosted job dispatches **all** of its steps to your daemon as a unit, so mix step types across jobs (not within one self-hosted job) if you need both a self-hosted `docker`/`claude-code` step and a Conductor-hosted `http`/`kestra`/`integration`/`agent` step in the same pipeline.
 
 ### Conductor-hosted
 
@@ -548,7 +632,40 @@ Docker containers run on a VM you control. Use self-hosted when your workflow ne
 - Run in a region or cloud account you manage
 - Have greater control over the container environment
 
-Self-hosted jobs require a running **conductor-worker** process on your VM. See [Self-hosted setup](#self-hosted-setup) below.
+Self-hosted jobs require a running **conductor daemon** process on your VM. See [Self-hosted setup](#self-hosted-setup) below.
+
+### Cloud Run
+
+```yaml
+jobs:
+  analyze:
+    runs-on: cloud-run
+    steps:
+      - id: seo
+        uses: claude-code
+        with:
+          prompt: Summarize the attached data.
+```
+
+Currently only meaningful for `claude-code` steps. The step runs as a **Google Cloud Run Job execution** on Conductor's GCP project, using a per-project Anthropic API key rather than your own infrastructure. No setup required on your end beyond configuring a `claude` provider credential under **Settings → Integrations** — see "Auth & runtime targets" in the `claude-code` step section above.
+
+**One-time infra setup** (operator-only, not per-project): the backend launches executions against a pre-created Cloud Run Job resource rather than creating one per run — image, retry policy, etc. are pinned on that resource:
+
+```bash
+gcloud run jobs create conductor-claude-code \
+  --image ghcr.io/cliangdev/conductor-runner:3 \
+  --command conductor-claude-entrypoint \
+  --max-retries 0 \
+  --region <region>
+```
+
+The backend needs these env vars to target it:
+
+| Variable | Description |
+|----------|--------------|
+| `GCP_CLOUDRUN_PROJECT_ID` | GCP project id hosting the Cloud Run Job. |
+| `GCP_CLOUDRUN_REGION` | Region the Job resource was created in. |
+| `GCP_CLOUDRUN_CLAUDE_JOB_NAME` | Name of the pre-created Job resource (`conductor-claude-code` above). |
 
 ---
 
@@ -558,7 +675,7 @@ Self-hosted jobs require a running **conductor-worker** process on your VM. See 
 
 - A machine with Docker installed and the Docker daemon running
 - Node.js 20 or later
-- The `conductor` CLI installed and authenticated (`conductor init`)
+- The `conductor` CLI installed and authenticated (`conductor init`), **kept up to date** — the daemon and backend speak a versioned dispatch protocol (currently protocol 2), and an out-of-date CLI won't pick up self-hosted jobs at all until upgraded
 
 ### Running the daemon
 
@@ -568,7 +685,9 @@ Self-hosted workflow execution is handled by the same **conductor daemon** used 
 conductor start
 ```
 
-The daemon polls Conductor for pending self-hosted jobs, pulls the appropriate Docker image, runs the container, streams logs back, and reports the result. No separate worker process or HTTP server is required.
+The daemon receives a per-job dispatch event once a self-hosted job becomes ready to run — i.e. **after** all of its `needs` dependencies finish — not at the start of the whole workflow run. This means a single workflow run can freely mix Conductor-hosted and self-hosted jobs (`needs`/`${{ secrets.* }}` interpolate correctly across the boundary either way): only the self-hosted jobs are handed to your daemon, hosted jobs run on Conductor's infrastructure as usual, and each side waits on the other via normal `needs` ordering. On pickup, the daemon fetches the job's interpolated inputs (env, per-step prompts, a short-lived run token) directly from the backend — nothing secret sits in the dispatch event itself.
+
+For each step in the job, the daemon pulls the appropriate Docker image, runs the container (or, for a `claude-code` step, runs `conductor-claude-entrypoint` inside it), streams logs back, and reports the result. No separate worker process or HTTP server is required.
 
 Verify the daemon is running and check active workflow runs:
 
@@ -578,12 +697,25 @@ conductor dashboard
 
 > **Docker socket access:** The daemon spawns containers via Docker. Make sure the user running `conductor start` has permission to use Docker (i.e. is in the `docker` group, or run with `sudo`).
 
+### Subscription auth for claude-code steps
+
+`claude-code` steps with `runs-on: self-hosted` authenticate as your own Claude Pro/Max subscription rather than a metered API key. One-time setup on the daemon host:
+
+```bash
+claude setup-token
+conductor config set-claude-code-oauth-token <token>
+```
+
+`claude setup-token` (part of the Claude CLI) produces a subscription OAuth token; `conductor config set-claude-code-oauth-token` stores it in `~/.conductor/config.json` on that machine. The token is injected directly into the step's container by the daemon and is never sent to or stored by the Conductor backend. Remove it with `conductor config unset-claude-code-oauth-token`.
+
+If no token is configured, a `claude-code` step dispatched to that daemon fails immediately with `errorReason: CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` rather than silently falling back to any other credential.
+
 ### Runner image
 
-When a `docker` step uses `uses: docker://` (no image name), the worker pulls the default Conductor runner image:
+When a `docker` step uses `uses: docker://` (no image name), or a job runs a `claude-code` step, the daemon pulls the default Conductor runner image:
 
 ```
-ghcr.io/cliangdev/conductor-runner:latest
+ghcr.io/cliangdev/conductor-runner:3
 ```
 
 This image includes:
@@ -594,10 +726,13 @@ This image includes:
 | Python | 3.12 |
 | Docker CLI | latest stable |
 | GitHub CLI (`gh`) | latest stable |
-| Claude CLI | latest stable |
+| Claude CLI | pinned (bumped deliberately per release) |
 | `curl`, `git`, `jq` | latest stable |
+| `conductor-claude-entrypoint` | self-reporting entrypoint used by `claude-code` steps (see below) |
 
-The container runs as a non-root `runner` user. You can specify any other public image in the `uses` field:
+The container runs as a non-root `runner` user and ships with **no default `ENTRYPOINT`/`CMD`** — a plain `docker` step's `run:` script executes as before; a `claude-code` step explicitly invokes `conductor-claude-entrypoint`, which materializes the step's `inputs` under `/conductor/inputs/`, optionally wires up the Conductor MCP server, runs `claude -p` with the step's flags, streams logs, and self-reports the result (outputs + `errorReason`) back to Conductor — the same entrypoint runs unmodified whether the launcher is the self-hosted daemon or a Cloud Run Job execution.
+
+You can specify any other public image in the `uses` field for `docker` steps (this has no effect on `claude-code` steps, which always use the runner image):
 
 ```yaml
 - uses: docker://python:3.12-slim
