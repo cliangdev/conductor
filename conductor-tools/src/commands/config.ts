@@ -18,6 +18,11 @@ function redactApiKey(apiKey: string): string {
   return `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}`
 }
 
+function redactToken(token: string | undefined): string {
+  if (!token) return 'not set'
+  return redactApiKey(token)
+}
+
 export function registerConfig(program: Command): void {
   const config = program
     .command('config')
@@ -53,6 +58,7 @@ Examples:
           projectName: cfg.projectName,
           email: cfg.email,
           apiKey: redactApiKey(cfg.apiKey),
+          claudeCodeOauthToken: redactToken(cfg.claudeCodeOauthToken),
         }
         process.stdout.write(JSON.stringify(output, null, 2) + '\n')
         process.exit(0)
@@ -64,6 +70,7 @@ Examples:
       console.log(`projectName: ${cfg.projectName}`)
       console.log(`email:       ${cfg.email}`)
       console.log(`apiKey:      ${redactApiKey(cfg.apiKey)}`)
+      console.log(`claudeCodeOauthToken: ${redactToken(cfg.claudeCodeOauthToken)}`)
     })
 
   config
@@ -114,5 +121,38 @@ Examples:
       cfg.apiUrl = url
       writeConfig(cfg)
       console.log(`API URL updated to: ${url}`)
+    })
+
+  config
+    .command('set-claude-code-oauth-token <token>')
+    .description('Store a Claude Code subscription token (from `claude setup-token`) for the claude-code workflow step')
+    .addHelpText('after', `
+Examples:
+  conductor config set-claude-code-oauth-token sk-ant-oat01-...`)
+    .action((token: string) => {
+      const cfg = readConfig()
+      if (!cfg) {
+        console.error('No config found — run conductor login first')
+        process.exit(1)
+        return
+      }
+      cfg.claudeCodeOauthToken = token
+      writeConfig(cfg)
+      console.log(`Claude Code OAuth token saved: ${redactToken(token)}`)
+    })
+
+  config
+    .command('unset-claude-code-oauth-token')
+    .description('Remove the stored Claude Code subscription token')
+    .action(() => {
+      const cfg = readConfig()
+      if (!cfg) {
+        console.error('No config found — run conductor login first')
+        process.exit(1)
+        return
+      }
+      delete cfg.claudeCodeOauthToken
+      writeConfig(cfg)
+      console.log('Claude Code OAuth token removed.')
     })
 }

@@ -120,6 +120,7 @@ describe('config', () => {
     it('creates directory and writes config file', async () => {
       mockFs.mkdirSync.mockReturnValue(undefined)
       mockFs.writeFileSync.mockReturnValue(undefined)
+      mockFs.chmodSync.mockReturnValue(undefined)
 
       const { writeConfig } = await import('../lib/config.js')
       writeConfig(validConfig)
@@ -128,8 +129,21 @@ describe('config', () => {
       expect(mockFs.writeFileSync).toHaveBeenCalledWith(
         configPath,
         JSON.stringify(validConfig, null, 2),
-        'utf8'
+        { encoding: 'utf8', mode: 0o600 }
       )
+    })
+
+    it('writes the config file with mode 0600 (owner read/write only)', async () => {
+      mockFs.mkdirSync.mockReturnValue(undefined)
+      mockFs.writeFileSync.mockReturnValue(undefined)
+      mockFs.chmodSync.mockReturnValue(undefined)
+
+      const { writeConfig } = await import('../lib/config.js')
+      writeConfig(validConfig)
+
+      // mode is only honored by the OS on file creation, so chmod is also
+      // called explicitly to cover pre-existing config files.
+      expect(mockFs.chmodSync).toHaveBeenCalledWith(configPath, 0o600)
     })
   })
 

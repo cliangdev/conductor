@@ -6,6 +6,7 @@ const mockRunJob = vi.fn()
 const mockCompleteRun = vi.fn()
 const mockReadDaemonState = vi.fn()
 const mockWriteDaemonState = vi.fn()
+const mockRunWorkflowJob = vi.fn()
 
 vi.mock('../daemon/runner.js', () => ({ runJob: mockRunJob }))
 vi.mock('../daemon/run-lifecycle.js', () => ({ completeRun: mockCompleteRun }))
@@ -13,6 +14,7 @@ vi.mock('../daemon/state.js', () => ({
   readDaemonState: mockReadDaemonState,
   writeDaemonState: mockWriteDaemonState,
 }))
+vi.mock('../daemon/job-runner.js', () => ({ runWorkflowJob: mockRunWorkflowJob }))
 
 const mockConfig = {
   apiKey: 'test-key',
@@ -68,6 +70,7 @@ describe('RunQueue', () => {
     mockCompleteRun.mockResolvedValue(undefined)
     mockReadDaemonState.mockReturnValue(makeBaseState())
     mockWriteDaemonState.mockReturnValue(undefined)
+    mockRunWorkflowJob.mockResolvedValue(undefined)
   })
 
   // ─── T4.3.1: runs a single self-hosted job ─────────────────────────────────
@@ -317,5 +320,109 @@ describe('RunQueue', () => {
     resolveSecond()
     await new Promise<void>((resolve) => setTimeout(resolve, 50))
     expect(mockRunJob).toHaveBeenCalledTimes(3)
+  })
+})
+
+// ─── RunQueue.enqueueJob (protocol 2) ──────────────────────────────────────────
+
+function makeJobEvent(overrides: Partial<{
+  eventId: string
+  workflowRunId: string
+  jobId: string
+  jobRunId: string
+  projectId: string
+  workflowName: string
+}> = {}) {
+  return {
+    eventId: overrides.eventId ?? 'evt_job_1',
+    type: 'workflow.job',
+    protocol: 2 as const,
+    workflowRunId: overrides.workflowRunId ?? 'run_1',
+    jobId: overrides.jobId ?? 'job_a',
+    jobRunId: overrides.jobRunId ?? 'jobrun_1',
+    projectId: overrides.projectId ?? 'proj_123',
+    workflowName: overrides.workflowName ?? 'Weekly SEO Report',
+  }
+}
+
+describe('RunQueue.enqueueJob (protocol 2)', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+    mockRunJob.mockResolvedValue('SUCCESS')
+    mockCompleteRun.mockResolvedValue(undefined)
+    mockReadDaemonState.mockReturnValue(makeBaseState())
+    mockWriteDaemonState.mockReturnValue(undefined)
+    mockRunWorkflowJob.mockResolvedValue(undefined)
+  })
+
+  it('calls runWorkflowJob for a workflow.job event and never the legacy runJob', async () => {
+    const { RunQueue } = await import('../daemon/run-queue.js')
+    const queue = new RunQueue(1)
+    const event = makeJobEvent()
+
+    let resolveDone!: () => void
+    const done = new Promise<void>((resolve) => { resolveDone = resolve })
+    mockRunWorkflowJob.mockImplementation(async () => { resolveDone() })
+
+    queue.enqueueJob(event, () => mockConfig)
+    await done
+
+    expect(mockRunWorkflowJob).toHaveBeenCalledWith(event, mockConfig)
+    expect(mockRunJob).not.toHaveBeenCalled()
+    expect(mockCompleteRun).not.toHaveBeenCalled()
+  })
+
+  it('keys activeRuns entries as runId:jobId and cleans up on completion', async () => {
+    const { RunQueue } = await import('../daemon/run-queue.js')
+    const queue = new RunQueue(1)
+
+    const baseState = makeBaseState()
+    mockReadDaemonState.mockReturnValue(baseState)
+
+    const writeCalls: Array<typeof baseState & { activeRuns: unknown[] }> = []
+    mockWriteDaemonState.mockImplementation((state: typeof baseState & { activeRuns: unknown[] }) => {
+      writeCalls.push(JSON.parse(JSON.stringify(state)))
+    })
+
+    const event = makeJobEvent({ workflowRunId: 'run_99', jobId: 'job_seo' })
+    let resolveDone!: () => void
+    const done = new Promise<void>((resolve) => { resolveDone = resolve })
+    mockRunWorkflowJob.mockImplementation(async () => { resolveDone() })
+
+    queue.enqueueJob(event, () => mockConfig)
+    await done
+    await new Promise<void>((resolve) => setTimeout(resolve, 20))
+
+    const key = 'run_99:job_seo'
+    const addWrite = writeCalls.find((s) =>
+      (s.activeRuns as Array<{ runId: string }>).some((r) => r.runId === key)
+    )
+    expect(addWrite).toBeDefined()
+
+    const removeWrite = writeCalls[writeCalls.length - 1]
+    const stillActive = (removeWrite.activeRuns as Array<{ runId: string }>).find((r) => r.runId === key)
+    expect(stillActive).toBeUndefined()
+  })
+
+  it('trigger and job events can be interleaved and both get processed', async () => {
+    const { RunQueue } = await import('../daemon/run-queue.js')
+    const queue = new RunQueue(2)
+
+    let resolveTrigger!: () => void
+    let resolveJob!: () => void
+    mockRunJob.mockImplementation(async () => { resolveTrigger(); return 'SUCCESS' })
+    mockRunWorkflowJob.mockImplementation(async () => { resolveJob() })
+
+    const triggerDone = new Promise<void>((resolve) => { resolveTrigger = resolve })
+    const jobDone = new Promise<void>((resolve) => { resolveJob = resolve })
+
+    queue.enqueue(makeEvent(), () => mockConfig)
+    queue.enqueueJob(makeJobEvent(), () => mockConfig)
+
+    await Promise.all([triggerDone, jobDone])
+
+    expect(mockRunJob).toHaveBeenCalledTimes(1)
+    expect(mockRunWorkflowJob).toHaveBeenCalledTimes(1)
   })
 })

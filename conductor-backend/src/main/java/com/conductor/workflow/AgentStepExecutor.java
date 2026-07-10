@@ -2,7 +2,6 @@ package com.conductor.workflow;
 
 import com.conductor.agent.run.AgentExecutionService;
 import com.conductor.agent.run.AgentRunResult;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
@@ -133,9 +132,6 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
      */
     private void applyDeclaredOutputs(Map<String, Object> stepDef, String text,
                                       Map<String, Object> structured, Map<String, String> outputs) {
-        Object outputsObj = stepDef.get("outputs");
-        if (!(outputsObj instanceof Map)) return;
-
         ObjectNode body = structured != null
                 ? objectMapper.valueToTree(structured)
                 : objectMapper.createObjectNode();
@@ -143,28 +139,7 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
         if (outputs.containsKey("data")) {
             body.put("data", outputs.get("data"));
         }
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> outputDefs = (Map<String, Object>) outputsObj;
-        for (Map.Entry<String, Object> entry : outputDefs.entrySet()) {
-            if (entry.getValue() == null) continue;
-            String value = extractJsonPath(body, entry.getValue().toString());
-            if (value != null) outputs.put(entry.getKey(), value);
-        }
-    }
-
-    /** Simple dot-notation JSONPath extraction (body.field.subfield) — matches HttpStepExecutor. */
-    private String extractJsonPath(JsonNode root, String path) {
-        if (path == null) return null;
-        String cleanPath = path.startsWith("body.") ? path.substring(5) : path;
-        String[] parts = cleanPath.split("\\.");
-        JsonNode current = root;
-        for (String part : parts) {
-            if (current == null || current.isNull()) return null;
-            current = current.get(part);
-        }
-        if (current == null || current.isNull()) return null;
-        return current.isTextual() ? current.asText() : current.toString();
+        StepOutputMapper.applyDeclaredOutputs(stepDef, body, outputs);
     }
 
     private String tokenSummary(AgentRunResult result) {

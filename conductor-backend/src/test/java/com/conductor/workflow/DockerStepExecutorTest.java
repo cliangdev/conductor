@@ -84,7 +84,7 @@ class DockerStepExecutorTest {
         executor.execute(buildContext(stepDef, ctx));
 
         verify(workerVmClient).submitJob(argThat(req ->
-                "ghcr.io/cliangdev/conductor-runner:2".equals(req.image())));
+                "ghcr.io/cliangdev/conductor-runner:3".equals(req.image())));
     }
 
     @Test
@@ -206,5 +206,83 @@ class DockerStepExecutorTest {
     @Test
     void getStepType_returnsDocker() {
         assertThat(executor.getStepType()).isEqualTo("docker");
+    }
+
+    @Test
+    void execute_defaultTimeoutIsFiveMinutes() {
+        Map<String, Object> stepDef = new HashMap<>();
+        stepDef.put("uses", "docker://ubuntu:22.04");
+
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(workerVmClient.submitJob(any())).thenReturn("worker-job-8");
+        when(workerVmClient.getJobStatus("worker-job-8"))
+                .thenReturn(new WorkerVmClient.WorkerJobStatus("RUNNING", null));
+
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
+        StepResult result = executor.execute(buildContext(stepDef, ctx));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).isEqualTo("Docker job timed out");
+        verify(workerVmClient, times(60)).getJobStatus("worker-job-8");
+    }
+
+    @Test
+    void execute_respectsCustomTimeoutMinutes() {
+        Map<String, Object> stepDef = new HashMap<>();
+        stepDef.put("uses", "docker://ubuntu:22.04");
+        stepDef.put("timeout_minutes", 1);
+
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(workerVmClient.submitJob(any())).thenReturn("worker-job-9");
+        when(workerVmClient.getJobStatus("worker-job-9"))
+                .thenReturn(new WorkerVmClient.WorkerJobStatus("RUNNING", null));
+
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
+        StepResult result = executor.execute(buildContext(stepDef, ctx));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        verify(workerVmClient, times(12)).getJobStatus("worker-job-9");
+    }
+
+    @Test
+    void execute_clampsZeroTimeoutMinutesToOneMinuteFloor() {
+        Map<String, Object> stepDef = new HashMap<>();
+        stepDef.put("uses", "docker://ubuntu:22.04");
+        stepDef.put("timeout_minutes", 0);
+
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(workerVmClient.submitJob(any())).thenReturn("worker-job-11");
+        when(workerVmClient.getJobStatus("worker-job-11"))
+                .thenReturn(new WorkerVmClient.WorkerJobStatus("RUNNING", null));
+
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
+        StepResult result = executor.execute(buildContext(stepDef, ctx));
+
+        // A 0-minute timeout must not yield zero poll iterations (instant timeout) — clamped to 1
+        // minute -> 1*60/5 = 12 polls.
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        verify(workerVmClient, times(12)).getJobStatus("worker-job-11");
+    }
+
+    @Test
+    void execute_capsTimeoutMinutesAt120() {
+        Map<String, Object> stepDef = new HashMap<>();
+        stepDef.put("uses", "docker://ubuntu:22.04");
+        stepDef.put("timeout_minutes", 999);
+
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(workerVmClient.submitJob(any())).thenReturn("worker-job-10");
+        when(workerVmClient.getJobStatus("worker-job-10"))
+                .thenReturn(new WorkerVmClient.WorkerJobStatus("RUNNING", null));
+
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
+        executor.execute(buildContext(stepDef, ctx));
+
+        // 120 minutes cap → 120*60/5 = 1440 polls, not 999*60/5.
+        verify(workerVmClient, times(1440)).getJobStatus("worker-job-10");
     }
 }

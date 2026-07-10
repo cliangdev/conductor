@@ -15,10 +15,11 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
 
     private static final Logger log = LoggerFactory.getLogger(DockerStepExecutor.class);
 
-    private static final String DEFAULT_IMAGE = "ghcr.io/cliangdev/conductor-runner:2";
+    private static final String DEFAULT_IMAGE = RunnerImage.DEFAULT;
     private static final String DOCKER_USES_PREFIX = "docker://";
     private static final int POLL_INTERVAL_SECONDS = 5;
-    private static final int MAX_POLL_ITERATIONS = 60;
+    private static final int DEFAULT_TIMEOUT_MINUTES = 5;
+    private static final int MAX_TIMEOUT_MINUTES = 120;
 
     private final WorkerVmClient workerVmClient;
     private final RunTokenService runTokenService;
@@ -77,14 +78,16 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
 
         log.info("Submitted docker job: workerJobId={}, runId={}, jobId={}, image={}", workerJobId, runId, jobId, image);
 
-        return pollForCompletion(workerJobId, image);
+        int timeoutMinutes = resolveTimeoutMinutes(stepDef);
+        return pollForCompletion(workerJobId, image, timeoutMinutes);
     }
 
-    private StepResult pollForCompletion(String workerJobId, String image) {
+    private StepResult pollForCompletion(String workerJobId, String image, int timeoutMinutes) {
         StringBuilder logBuilder = new StringBuilder();
         logBuilder.append("Running docker image: ").append(image).append("\n");
 
-        for (int i = 0; i < MAX_POLL_ITERATIONS; i++) {
+        int maxPollIterations = (timeoutMinutes * 60) / POLL_INTERVAL_SECONDS;
+        for (int i = 0; i < maxPollIterations; i++) {
             sleepSeconds(POLL_INTERVAL_SECONDS);
 
             WorkerVmClient.WorkerJobStatus status;
@@ -109,8 +112,20 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
             }
         }
 
-        logBuilder.append("Job timed out after ").append(MAX_POLL_ITERATIONS * POLL_INTERVAL_SECONDS).append("s\n");
+        logBuilder.append("Job timed out after ").append(maxPollIterations * POLL_INTERVAL_SECONDS).append("s\n");
         return StepResult.failed(logBuilder.toString(), "Docker job timed out");
+    }
+
+    private int resolveTimeoutMinutes(Map<String, Object> stepDef) {
+        int timeoutMinutes = getIntOrDefault(stepDef, "timeout_minutes", DEFAULT_TIMEOUT_MINUTES);
+        return Math.min(Math.max(timeoutMinutes, 1), MAX_TIMEOUT_MINUTES);
+    }
+
+    private int getIntOrDefault(Map<String, Object> map, String key, int defaultValue) {
+        Object val = map.get(key);
+        if (val instanceof Integer) return (Integer) val;
+        if (val instanceof Number) return ((Number) val).intValue();
+        return defaultValue;
     }
 
     private String resolveImage(Map<String, Object> stepDef) {

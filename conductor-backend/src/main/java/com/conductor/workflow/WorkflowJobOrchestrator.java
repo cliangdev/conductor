@@ -3,8 +3,8 @@ package com.conductor.workflow;
 import com.conductor.entity.*;
 import com.conductor.repository.*;
 import com.conductor.service.LogRedactionService;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +31,8 @@ public class WorkflowJobOrchestrator {
     private final LogRedactionService logRedactionService;
     private final Map<String, WorkflowExecutionBackend> backends;
     private final ObjectMapper objectMapper;
+    private final SelfHostedJobDispatcher selfHostedJobDispatcher;
+    private final UpstreamOutputsResolver upstreamOutputsResolver;
 
     // Self-reference injected lazily so @Transactional helpers are invoked through the Spring proxy
     // even when called from the same class. Required because executeJob() is deliberately NOT
@@ -49,7 +51,9 @@ public class WorkflowJobOrchestrator {
                                    RuntimeContextBuilder contextBuilder,
                                    LogRedactionService logRedactionService,
                                    List<WorkflowExecutionBackend> backends,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   SelfHostedJobDispatcher selfHostedJobDispatcher,
+                                   UpstreamOutputsResolver upstreamOutputsResolver) {
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
         this.runRepository = runRepository;
@@ -60,6 +64,8 @@ public class WorkflowJobOrchestrator {
         this.contextBuilder = contextBuilder;
         this.logRedactionService = logRedactionService;
         this.objectMapper = objectMapper;
+        this.selfHostedJobDispatcher = selfHostedJobDispatcher;
+        this.upstreamOutputsResolver = upstreamOutputsResolver;
         Map<String, WorkflowExecutionBackend> backendMap = new HashMap<>();
         for (WorkflowExecutionBackend b : backends) backendMap.put(b.getStepType(), b);
         this.backends = backendMap;
@@ -113,6 +119,19 @@ public class WorkflowJobOrchestrator {
         @SuppressWarnings("unchecked")
         Map<String, Object> jobDef = (Map<String, Object>) jobs.get(jobId);
 
+        boolean selfHosted = "self-hosted".equals(jobDef.get("runs-on"));
+        if (selfHosted) {
+            // Lock the run row so a duplicate readiness trigger for this job (e.g. two dependents in
+            // a diamond `needs` both becoming ready at once) can't race past the check below and
+            // dispatch the same job to the daemon twice.
+            runRepository.findByIdForUpdate(runId);
+            List<WorkflowJobRun> latestForJob = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(runId, jobId);
+            if (!latestForJob.isEmpty() && latestForJob.get(0).getStatus() == WorkflowJobStatus.AWAITING_PICKUP) {
+                log.info("planJobExecution: job {} (run {}) already AWAITING_PICKUP, skipping duplicate dispatch", jobId, runId);
+                return JobExecutionPlan.complete();
+            }
+        }
+
         WorkflowJobRun jobRun = findOrCreateLatestJobRun(run, jobId);
 
         jobRun.setStatus(WorkflowJobStatus.RUNNING);
@@ -137,6 +156,13 @@ public class WorkflowJobOrchestrator {
             }
         }
 
+        if (selfHosted) {
+            selfHostedJobDispatcher.dispatch(run, jobId, jobRun, jobDef);
+            jobRun.setStatus(WorkflowJobStatus.AWAITING_PICKUP);
+            jobRunRepository.save(jobRun);
+            return JobExecutionPlan.complete();
+        }
+
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> steps = (List<Map<String, Object>>) jobDef.get("steps");
         if (steps == null) steps = List.of();
@@ -158,11 +184,12 @@ public class WorkflowJobOrchestrator {
      */
     private boolean runSteps(JobExecutionPlan plan) {
         boolean jobFailed = false;
+        String runsOn = (String) plan.jobDef.get("runs-on");
         for (Map<String, Object> stepDef : plan.executableSteps) {
             if (jobFailed) break;
             RuntimeContext ctx = self.buildStepContext(plan.runId, plan.jobRunId,
                     plan.secrets, plan.upstreamOutputs, plan.loopIteration);
-            StepResult result = runStep(plan.runId, plan.jobRunId, stepDef, ctx, plan.projectId);
+            StepResult result = runStep(plan.runId, plan.jobRunId, stepDef, ctx, plan.projectId, runsOn);
             self.persistStepResult(plan.jobRunId, stepDef, result, plan.projectId);
             if (result.getStatus() == WorkflowStepStatus.FAILED) {
                 jobFailed = true;
@@ -176,7 +203,7 @@ public class WorkflowJobOrchestrator {
      * minutes on external I/O (HTTP timeouts, Docker polling, Kestra polling).
      */
     private StepResult runStep(String runId, String jobRunId, Map<String, Object> stepDef,
-                               RuntimeContext ctx, String projectId) {
+                               RuntimeContext ctx, String projectId, String runsOn) {
         String stepType = resolveStepType(stepDef);
         String ifCond = (String) stepDef.get("if");
         if (ifCond != null) {
@@ -205,17 +232,17 @@ public class WorkflowJobOrchestrator {
         }
 
         // Executors only read non-lazy primitives (IDs). Load once inside a short read-only tx.
-        StepExecutionContext execCtx = self.buildStepExecutionContext(runId, jobRunId, effectiveStepDef, ctx, projectId);
+        StepExecutionContext execCtx = self.buildStepExecutionContext(runId, jobRunId, effectiveStepDef, ctx, projectId, runsOn);
         return backend.execute(execCtx);
     }
 
     @Transactional(readOnly = true)
     public StepExecutionContext buildStepExecutionContext(String runId, String jobRunId,
                                                           Map<String, Object> stepDef,
-                                                          RuntimeContext ctx, String projectId) {
+                                                          RuntimeContext ctx, String projectId, String runsOn) {
         WorkflowRun run = runRepository.findById(runId).orElseThrow();
         WorkflowJobRun jobRun = jobRunRepository.findById(jobRunId).orElseThrow();
-        return new StepExecutionContext(run, jobRun, stepDef, ctx, projectId);
+        return new StepExecutionContext(run, jobRun, stepDef, ctx, projectId, runsOn);
     }
 
     @Transactional(readOnly = true)
@@ -275,6 +302,67 @@ public class WorkflowJobOrchestrator {
         jobRun.setCompletedAt(OffsetDateTime.now());
         jobRunRepository.save(jobRun);
         enqueueReadyDependents(run, plan.jobId, plan.jobs);
+    }
+
+    /**
+     * Called by the daemon-facing REST endpoints (dispatch-payload/complete) and by the pickup-timeout
+     * sweep to close out a self-hosted job the backend never ran itself. Marks the latest jobRun (and
+     * any of its pre-created, still-non-terminal step runs) terminal, then propagates to dependents the
+     * same way {@link #finalizeJob} does. Idempotent — a no-op if the job is already terminal.
+     */
+    @Transactional
+    public void completeRemoteJob(String runId, String jobId, WorkflowJobStatus terminalStatus, String errorReason) {
+        // Lock the run row so concurrent completion signals (daemon complete, legacy PATCH shim,
+        // pickup-timeout sweep) serialize here instead of racing past the terminal-status guard below.
+        WorkflowRun run = runRepository.findByIdForUpdate(runId)
+                .orElseThrow(() -> new EntityNotFoundException("Run not found: " + runId));
+        List<WorkflowJobRun> existing = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(runId, jobId);
+        if (existing.isEmpty()) {
+            log.warn("completeRemoteJob: no jobRun found for run {} job {}", runId, jobId);
+            return;
+        }
+        WorkflowJobRun jobRun = existing.get(0);
+        if (isTerminalJobStatus(jobRun.getStatus())) {
+            log.info("completeRemoteJob: jobRun {} already terminal ({}), ignoring", jobRun.getId(), jobRun.getStatus());
+            return;
+        }
+
+        WorkflowStepStatus stepStatus = terminalStatus == WorkflowJobStatus.SUCCESS
+                ? WorkflowStepStatus.SUCCESS : WorkflowStepStatus.FAILED;
+        for (WorkflowStepRun stepRun : stepRunRepository.findByJobRunId(jobRun.getId())) {
+            if (stepRun.getStatus() == WorkflowStepStatus.PENDING || stepRun.getStatus() == WorkflowStepStatus.RUNNING) {
+                stepRun.setStatus(stepStatus);
+                stepRun.setCompletedAt(OffsetDateTime.now());
+                if (stepStatus == WorkflowStepStatus.FAILED && errorReason != null) {
+                    stepRun.setErrorReason(errorReason);
+                }
+                stepRunRepository.save(stepRun);
+            }
+        }
+
+        jobRun.setStatus(terminalStatus);
+        jobRun.setCompletedAt(OffsetDateTime.now());
+        jobRunRepository.save(jobRun);
+
+        Map<String, Object> parsedWorkflow = parseYaml(run.getWorkflow().getYaml());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> jobs = parsedWorkflow != null ? (Map<String, Object>) parsedWorkflow.get("jobs") : null;
+        if (jobs != null) {
+            if (terminalStatus == WorkflowJobStatus.FAILED) {
+                propagateFailureToDependents(run, jobId, jobs);
+            } else {
+                enqueueReadyDependents(run, jobId, jobs);
+            }
+        } else {
+            log.warn("completeRemoteJob: could not parse workflow YAML for run {} — dependents of job {} "
+                    + "not propagated; run will rely on the cleanup sweep", runId, jobId);
+        }
+        engine.checkRunCompletion(run);
+    }
+
+    private boolean isTerminalJobStatus(WorkflowJobStatus status) {
+        return status == WorkflowJobStatus.SUCCESS || status == WorkflowJobStatus.FAILED
+                || status == WorkflowJobStatus.SKIPPED || status == WorkflowJobStatus.LOOP_EXHAUSTED;
     }
 
     private WorkflowJobRun findOrCreateLatestJobRun(WorkflowRun run, String jobId) {
@@ -375,10 +463,22 @@ public class WorkflowJobOrchestrator {
         engine.checkRunCompletion(run);
     }
 
+    /**
+     * Updates the pre-created row in place when {@code result} carries a workerJobId matching one
+     * (e.g. Cloud Run's executor, Phase 5); falls back to today's insert when no workerJobId is set
+     * (all current step executors) or no matching row is found.
+     */
     private void persistStepRun(WorkflowJobRun jobRun, String stepId, String stepName,
                                 String stepType, StepResult result, String projectId) {
-        WorkflowStepRun stepRun = new WorkflowStepRun();
-        stepRun.setJobRun(jobRun);
+        String workerJobId = result.getWorkerJobId();
+        WorkflowStepRun stepRun = workerJobId != null
+                ? stepRunRepository.findByJobRunIdAndWorkerJobId(jobRun.getId(), workerJobId).orElse(null)
+                : null;
+        if (stepRun == null) {
+            stepRun = new WorkflowStepRun();
+            stepRun.setJobRun(jobRun);
+            stepRun.setWorkerJobId(workerJobId);
+        }
         stepRun.setStepId(stepId);
         stepRun.setStepName(stepName);
         stepRun.setStepType(stepType);
@@ -397,7 +497,9 @@ public class WorkflowJobOrchestrator {
                 log.warn("Failed to serialize step outputs: {}", e.getMessage());
             }
         }
-        stepRun.setStartedAt(OffsetDateTime.now());
+        if (stepRun.getStartedAt() == null) {
+            stepRun.setStartedAt(OffsetDateTime.now());
+        }
         stepRun.setCompletedAt(OffsetDateTime.now());
         stepRunRepository.save(stepRun);
     }
@@ -473,39 +575,11 @@ public class WorkflowJobOrchestrator {
     private Map<String, Map<String, String>> collectUpstreamOutputs(WorkflowRun run,
                                                                      Map<String, Object> jobs,
                                                                      String currentJobId) {
-        Map<String, Map<String, String>> result = new HashMap<>();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> currentJob = (Map<String, Object>) jobs.get(currentJobId);
-        List<String> needs = getNeedsList(currentJob);
-
-        for (String depJobId : needs) {
-            List<WorkflowJobRun> depJobRuns = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(run.getId(), depJobId);
-            if (depJobRuns.isEmpty()) continue;
-            String depJobRunId = depJobRuns.get(0).getId();
-
-            List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(depJobRunId);
-            Map<String, String> jobOutputs = new HashMap<>();
-            for (WorkflowStepRun step : steps) {
-                if (step.getOutputJson() != null) {
-                    try {
-                        Map<String, String> outputs = objectMapper.readValue(
-                                step.getOutputJson(), new TypeReference<>() {});
-                        jobOutputs.putAll(outputs);
-                    } catch (Exception ignored) {}
-                }
-            }
-            result.put(depJobId, jobOutputs);
-        }
-        return result;
+        return upstreamOutputsResolver.collectUpstreamOutputs(run, jobs, currentJobId);
     }
 
-    @SuppressWarnings("unchecked")
     private List<String> getNeedsList(Map<String, Object> job) {
-        Object needs = job.get("needs");
-        if (needs == null) return List.of();
-        if (needs instanceof List) return (List<String>) needs;
-        if (needs instanceof String) return List.of((String) needs);
-        return List.of();
+        return upstreamOutputsResolver.getNeedsList(job);
     }
 
     private String resolveStepType(Map<String, Object> stepDef) {

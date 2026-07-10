@@ -17,6 +17,10 @@ export interface Config {
   localPath?: string
   maxConcurrentRuns?: number
   projects?: Record<string, ProjectEntry>
+  /** `claude setup-token` output — enables the `claude-code` workflow step to run
+   * under the owner's Pro/Max subscription instead of a metered API key. Never
+   * transits the server; lives only in this local config file. */
+  claudeCodeOauthToken?: string
 }
 
 export const CONFIG_PATH = path.join(os.homedir(), '.conductor', 'config.json')
@@ -47,7 +51,11 @@ export function readConfig(): Config | null {
 export function writeConfig(config: Config): void {
   const dir = path.dirname(CONFIG_PATH)
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8')
+  // mode is only applied by the OS when the file is newly created, so an
+  // existing config.json (e.g. from before this field existed) needs an
+  // explicit chmod too — the file holds an OAuth token and API key.
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { encoding: 'utf8', mode: 0o600 })
+  fs.chmodSync(CONFIG_PATH, 0o600)
 }
 
 export function clearConfig(): void {

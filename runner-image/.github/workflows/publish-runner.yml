@@ -20,6 +20,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Lint entrypoint (syntax + self-test)
+        run: |
+          node --check runner-image/conductor-claude-entrypoint.mjs
+          node runner-image/entrypoint.selftest.mjs
+
       - name: Extract version from tag
         id: version
         run: |

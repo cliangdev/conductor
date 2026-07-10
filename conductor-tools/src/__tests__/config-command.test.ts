@@ -322,3 +322,164 @@ describe('config set-url command', () => {
     exitSpy.mockRestore()
   })
 })
+
+describe('config set-claude-code-oauth-token command', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('stores the token and prints a redacted confirmation', async () => {
+    mockReadConfig.mockReturnValue({ ...mockConfig })
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    const token = 'sk-ant-oat01-abcdef123456'
+    await program.parseAsync(['node', 'conductor', 'config', 'set-claude-code-oauth-token', token])
+
+    expect(mockWriteConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ claudeCodeOauthToken: token })
+    )
+    const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
+    expect(allOutput).not.toContain(token)
+    expect(allOutput).toContain('sk-a...3456')
+
+    consoleSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+
+  it('leaves other config fields unchanged', async () => {
+    const original = { ...mockConfig }
+    mockReadConfig.mockReturnValue(original)
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'set-claude-code-oauth-token', 'token-value'])
+
+    expect(mockWriteConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: mockConfig.apiKey,
+        projectId: mockConfig.projectId,
+      })
+    )
+
+    consoleSpy.mockRestore()
+  })
+
+  it('prints error and exits 1 when no config exists', async () => {
+    mockReadConfig.mockReturnValue(null)
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'set-claude-code-oauth-token', 'token-value'])
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('No config found'))
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(mockWriteConfig).not.toHaveBeenCalled()
+
+    consoleSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+})
+
+describe('config unset-claude-code-oauth-token command', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('removes the token from config', async () => {
+    mockReadConfig.mockReturnValue({ ...mockConfig, claudeCodeOauthToken: 'existing-token' })
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'unset-claude-code-oauth-token'])
+
+    const written = mockWriteConfig.mock.calls[0][0] as Record<string, unknown>
+    expect(written.claudeCodeOauthToken).toBeUndefined()
+    const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
+    expect(allOutput).toContain('removed')
+
+    consoleSpy.mockRestore()
+  })
+
+  it('prints error and exits 1 when no config exists', async () => {
+    mockReadConfig.mockReturnValue(null)
+
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'unset-claude-code-oauth-token'])
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('No config found'))
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(mockWriteConfig).not.toHaveBeenCalled()
+
+    consoleSpy.mockRestore()
+    exitSpy.mockRestore()
+  })
+})
+
+describe('config show includes claudeCodeOauthToken status', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.resetAllMocks()
+  })
+
+  it('shows "not set" when no token is configured', async () => {
+    mockReadConfig.mockReturnValue({ ...mockConfig })
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'show'])
+
+    const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
+    expect(allOutput).toContain('claudeCodeOauthToken: not set')
+
+    consoleSpy.mockRestore()
+  })
+
+  it('shows a redacted token when one is configured', async () => {
+    mockReadConfig.mockReturnValue({ ...mockConfig, claudeCodeOauthToken: 'sk-ant-oat01-abcdef123456' })
+
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    const { registerConfig } = await import('../commands/config.js')
+    const program = makeProgram()
+    registerConfig(program)
+
+    await program.parseAsync(['node', 'conductor', 'config', 'show'])
+
+    const allOutput = consoleSpy.mock.calls.map((c) => c[0]).join('\n')
+    expect(allOutput).toContain('sk-a...3456')
+    expect(allOutput).not.toContain('sk-ant-oat01-abcdef123456')
+
+    consoleSpy.mockRestore()
+  })
+})

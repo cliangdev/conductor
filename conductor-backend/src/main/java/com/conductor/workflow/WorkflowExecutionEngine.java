@@ -115,7 +115,11 @@ public class WorkflowExecutionEngine {
         return true;
     }
 
-    /** On startup: re-enqueue any jobs stuck in RUNNING state */
+    /**
+     * On startup: re-enqueue any jobs stuck in RUNNING state. Deliberately queries RUNNING only —
+     * AWAITING_PICKUP jobs are owned by the daemon, not this engine, and must not be re-enqueued here
+     * (see {@link #cleanupStuckRuns} for their timeout path instead).
+     */
     @Transactional
     public void recoverStuckJobs() {
         List<WorkflowJobRun> stuckJobs = jobRunRepository.findByStatus(WorkflowJobStatus.RUNNING);
@@ -127,7 +131,10 @@ public class WorkflowExecutionEngine {
         }
     }
 
-    /** Daily: mark runs stuck in RUNNING for >24h as FAILED */
+    /**
+     * Daily: mark runs stuck in RUNNING for >24h as FAILED, and fail any self-hosted job still
+     * AWAITING_PICKUP after 24h — the daemon never claimed it (stopped, never upgraded, etc.).
+     */
     @Scheduled(cron = "0 0 2 * * *")
     @Transactional
     public void cleanupStuckRuns() {
@@ -142,10 +149,30 @@ public class WorkflowExecutionEngine {
                 log.info("Marked stuck run {} as FAILED", run.getId());
             }
         }
+
+        List<WorkflowJobRun> stuckAwaitingPickup =
+                jobRunRepository.findByStatusAndStartedAtBefore(WorkflowJobStatus.AWAITING_PICKUP.name(), cutoff);
+        for (WorkflowJobRun jobRun : stuckAwaitingPickup) {
+            log.warn("Job {} for run {} timed out waiting for daemon pickup", jobRun.getJobId(), jobRun.getRun().getId());
+            orchestrator.completeRemoteJob(jobRun.getRun().getId(), jobRun.getJobId(),
+                    WorkflowJobStatus.FAILED, "DAEMON_PICKUP_TIMEOUT");
+        }
     }
 
     @Transactional
     public void enqueueJob(String runId, String jobId) {
+        // Best-effort de-dup: two upstream jobs completing near-simultaneously (the finalizeJob
+        // path and the completeRemoteJob path, e.g. a diamond `needs`) can each try to enqueue the
+        // same dependent. Not bulletproof without a DB unique partial index on (run_id, job_id)
+        // WHERE claimed_at IS NULL — two concurrent callers can still both pass this check before
+        // either inserts — but combined with the run-row lock in WorkflowJobOrchestrator's
+        // planJobExecution/completeRemoteJob it closes the realistic window.
+        if (!queueRepository.findByRunIdAndJobIdAndClaimedAtIsNull(runId, jobId).isEmpty()) {
+            log.info("enqueueJob: unclaimed queue row already exists for run {} job {}, skipping duplicate enqueue",
+                    runId, jobId);
+            return;
+        }
+
         WorkflowRun run = runRepository.findById(runId)
                 .orElseThrow(() -> new IllegalStateException("Run not found: " + runId));
         WorkflowJobQueue entry = new WorkflowJobQueue();

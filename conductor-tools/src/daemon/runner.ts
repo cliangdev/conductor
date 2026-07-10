@@ -46,35 +46,36 @@ async function streamLogChunk(runId: string, chunk: string, config: Config): Pro
 }
 
 /**
- * Spawns a command and returns its exit code. Streams stdout/stderr lines to
- * the log-chunk endpoint if a runId and config are provided.
+ * Spawns a command and returns its exit code. `onLine` receives each raw
+ * stdout/stderr chunk as it arrives; `onSpawnError` fires when the command
+ * itself never launches (e.g. Docker not installed) — distinct from a
+ * nonzero exit — so callers that need to know whether a container actually
+ * ran (job-runner's claude-code self-report bookkeeping) can tell the two
+ * apart. Shared by runner.ts (legacy `workflow.trigger` jobs) and
+ * job-runner.ts (protocol-2 `workflow.job` steps) to avoid duplicating the
+ * spawn/stream/resolve plumbing.
  */
-function spawnAndWait(
+export function spawnAndWait(
   cmd: string,
   args: string[],
   opts?: {
-    runId?: string
-    config?: Config
+    onLine?: (line: string) => void
+    onSpawnError?: (err: Error) => void
   }
 ): Promise<number> {
   return new Promise((resolve) => {
     const proc = spawn(cmd, args)
 
     proc.stdout?.on('data', (data: Buffer) => {
-      const line = data.toString()
-      if (opts?.runId && opts?.config) {
-        void streamLogChunk(opts.runId, line, opts.config)
-      }
+      opts?.onLine?.(data.toString())
     })
 
     proc.stderr?.on('data', (data: Buffer) => {
-      const line = data.toString()
-      if (opts?.runId && opts?.config) {
-        void streamLogChunk(opts.runId, line, opts.config)
-      }
+      opts?.onLine?.(data.toString())
     })
 
-    proc.on('error', () => {
+    proc.on('error', (err) => {
+      opts?.onSpawnError?.(err as Error)
       resolve(1)
     })
 
@@ -82,6 +83,15 @@ function spawnAndWait(
       resolve(code ?? 1)
     })
   })
+}
+
+/** Renders an env map as repeated `-e KEY=VALUE` docker CLI args. */
+export function buildEnvArgs(env: Record<string, string>): string[] {
+  const args: string[] = []
+  for (const [key, value] of Object.entries(env)) {
+    args.push('-e', `${key}=${value}`)
+  }
+  return args
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
@@ -129,16 +139,12 @@ export async function runJob(
     ...(job.env ?? {}),
   }
 
-  const envArgs: string[] = []
-  for (const [key, value] of Object.entries(allEnv)) {
-    envArgs.push('-e', `${key}=${value}`)
-  }
-
   // Step 5: Run container
-  const runArgs = ['run', '--rm', ...envArgs, image]
+  const runArgs = ['run', '--rm', ...buildEnvArgs(allEnv), image]
   const runCode = await spawnAndWait('docker', runArgs, {
-    runId: workflowRunId,
-    config,
+    onLine: (line) => {
+      void streamLogChunk(workflowRunId, line, config)
+    },
   })
 
   // Step 6: Return result

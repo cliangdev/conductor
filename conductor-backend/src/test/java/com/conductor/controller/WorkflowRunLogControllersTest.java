@@ -199,4 +199,47 @@ class WorkflowRunLogControllersTest {
                         .content("{\"jobId\":\"job-1\",\"reason\":\"Container exited with code 1\"}"))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    void stepCompleteCallbackReturns401ForMissingToken() throws Exception {
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/steps/worker-1/complete")
+                        .contentType("application/json")
+                        .content("{\"status\":\"SUCCESS\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void stepCompleteCallbackReturns401ForInvalidToken() throws Exception {
+        when(runTokenService.validateRunToken("bad-token", "run-1")).thenReturn(false);
+
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/steps/worker-1/complete")
+                        .header("Authorization", "Bearer bad-token")
+                        .contentType("application/json")
+                        .content("{\"status\":\"SUCCESS\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void stepCompleteCallbackReturns200ForValidToken_unknownWorkerJobIdIsNoOp() throws Exception {
+        when(runTokenService.validateRunToken("valid-run-token", "run-1")).thenReturn(true);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(Collections.emptyList());
+
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/steps/worker-1/complete")
+                        .header("Authorization", "Bearer valid-run-token")
+                        .contentType("application/json")
+                        .content("{\"status\":\"SUCCESS\",\"exitCode\":0,\"errorReason\":null,\"outputs\":{\"summary\":\"ok\"}}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void stepCompleteCallbackReturns200ForValidToken_failedStatusWithNullErrorReasonAccepted() throws Exception {
+        when(runTokenService.validateRunToken("valid-run-token", "run-1")).thenReturn(true);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(Collections.emptyList());
+
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/steps/worker-1/complete")
+                        .header("Authorization", "Bearer valid-run-token")
+                        .contentType("application/json")
+                        .content("{\"status\":\"FAILED\",\"exitCode\":13,\"errorReason\":null}"))
+                .andExpect(status().isOk());
+    }
 }

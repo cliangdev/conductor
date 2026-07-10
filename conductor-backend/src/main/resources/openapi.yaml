@@ -2917,6 +2917,96 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /workflow-runs/{runId}/jobs/{jobId}/dispatch-payload:
+    get:
+      tags:
+        - daemon
+      summary: Fetch the interpolated dispatch payload for a self-hosted job awaiting pickup
+      description: >
+        Env, per-step prompts/inputs, and the run token are interpolated on read and never persisted —
+        the DaemonEvent that announces this job is a pointer only. Only valid while the job is
+        AWAITING_PICKUP; returns 409 once it has moved on.
+      operationId: getJobDispatchPayload
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Interpolated dispatch payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobDispatchPayloadDto"
+        "401":
+          description: Unauthorized
+        "403":
+          description: API key does not belong to this run's project
+        "404":
+          description: Run or job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Job is not awaiting pickup
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /workflow-runs/{runId}/jobs/{jobId}/complete:
+    post:
+      tags:
+        - daemon
+      summary: Report terminal status for a self-hosted job
+      description: >
+        Idempotent — completing an already-terminal job run is a 200 no-op. Marks the job (and any
+        still-pending pre-created step runs) terminal, then propagates to dependent jobs same as a
+        conductor-hosted job finishing.
+      operationId: completeWorkflowJob
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteWorkflowJobRequest"
+      responses:
+        "200":
+          description: Job marked terminal (or already-terminal no-op)
+        "401":
+          description: Unauthorized
+        "403":
+          description: API key does not belong to this run's project
+        "404":
+          description: Run not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /workflow-runs/{runId}:
     patch:
       tags: [workflows]
@@ -5192,6 +5282,102 @@ components:
           items:
             type: string
           description: List of event IDs to acknowledge
+
+    JobDispatchStepDto:
+      type: object
+      required:
+        - stepIndex
+        - workerJobId
+        - stepName
+        - stepType
+      properties:
+        stepIndex:
+          type: integer
+        workerJobId:
+          type: string
+        stepId:
+          type: string
+          nullable: true
+        stepName:
+          type: string
+        stepType:
+          type: string
+        prompt:
+          type: string
+          description: Interpolated `with.prompt` (claude-code steps)
+        env:
+          type: object
+          additionalProperties:
+            type: string
+        timeoutMinutes:
+          type: integer
+        conductorMcp:
+          type: boolean
+        allowedTools:
+          type: string
+        maxTurns:
+          type: integer
+        inputsJson:
+          type: string
+          description: Interpolated `with.inputs`, serialized to a JSON object string
+        outputSchemaJson:
+          type: string
+          description: Raw `with.output_schema`, serialized to a JSON string
+
+    JobDispatchCallbacksDto:
+      type: object
+      required:
+        - logChunkUrlTemplate
+        - stepCompleteUrlTemplate
+      properties:
+        logChunkUrlTemplate:
+          type: string
+        stepCompleteUrlTemplate:
+          type: string
+          description: Contains a literal `{workerJobId}` placeholder for the daemon to substitute per step
+
+    JobDispatchPayloadDto:
+      type: object
+      required:
+        - jobRunId
+        - protocol
+        - env
+        - steps
+        - runToken
+        - callbacks
+      properties:
+        jobRunId:
+          type: string
+        protocol:
+          type: integer
+        image:
+          type: string
+          nullable: true
+        env:
+          type: object
+          additionalProperties:
+            type: string
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobDispatchStepDto"
+        runToken:
+          type: string
+        callbacks:
+          $ref: "#/components/schemas/JobDispatchCallbacksDto"
+
+    CompleteWorkflowJobRequest:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: Terminal status reported by the daemon — SUCCESS or FAILED
+        errorReason:
+          type: string
+        exitCode:
+          type: integer
 
     WebhookEventSummary:
       type: object

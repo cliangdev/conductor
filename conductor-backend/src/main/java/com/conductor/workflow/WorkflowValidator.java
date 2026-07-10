@@ -12,7 +12,8 @@ import java.util.Queue;
 public class WorkflowValidator {
 
     private static final Set<String> ALLOWED_STEP_TYPES = Set.of("http", "docker", "kestra", "condition");
-    private static final Set<String> VALID_RUNS_ON_SCALARS = Set.of("conductor", "self-hosted");
+    private static final Set<String> VALID_RUNS_ON_SCALARS = Set.of("conductor", "self-hosted", "cloud-run");
+    private static final String CLAUDE_CODE_USES = "claude-code";
     private static final java.util.regex.Pattern CRON_PATTERN =
             java.util.regex.Pattern.compile("^\\S+ \\S+ \\S+ \\S+ \\S+$");
 
@@ -124,6 +125,11 @@ public class WorkflowValidator {
 
                     if (usesVal instanceof String uses && uses.startsWith("docker://")) {
                         // Valid docker uses syntax — treated as docker step type
+                        continue;
+                    }
+
+                    if (usesVal instanceof String uses && CLAUDE_CODE_USES.equals(uses)) {
+                        validateClaudeCodeStep(step, jobId, runsOnVal, errors);
                         continue;
                     }
 
@@ -263,6 +269,73 @@ public class WorkflowValidator {
                 if (need.equals(potentialAncestor)) return true;
                 queue.add(need);
             }
+        }
+        return false;
+    }
+
+    /**
+     * Validates a {@code uses: claude-code} step. Unlike the general step-type checks, this is
+     * scoped to steps that opt in via {@code uses: claude-code} — it does not become a general
+     * {@code uses:} whitelist, so existing {@code agent}/{@code integration} workflows keep
+     * passing unknown {@code uses} values through unchecked.
+     */
+    @SuppressWarnings("unchecked")
+    private void validateClaudeCodeStep(Map<String, Object> step, String jobId, Object runsOnVal, List<String> errors) {
+        if (!isClaudeCodeRunsOn(runsOnVal)) {
+            errors.add("claude-code step in job " + jobId
+                    + " requires runs-on: cloud-run or self-hosted (claude-code does not run on the shared conductor runner)");
+        }
+
+        Object withObj = step.get("with");
+        Map<String, Object> with = withObj instanceof Map ? (Map<String, Object>) withObj : Map.of();
+
+        Object prompt = with.get("prompt");
+        if (prompt == null || prompt.toString().isBlank()) {
+            errors.add("claude-code step missing required field: with.prompt");
+        }
+
+        Object timeoutMinutes = with.get("timeout_minutes");
+        if (timeoutMinutes != null && (!(timeoutMinutes instanceof Number)
+                || ((Number) timeoutMinutes).intValue() < 1 || ((Number) timeoutMinutes).intValue() > 120)) {
+            errors.add("claude-code step with.timeout_minutes must be an integer between 1 and 120");
+        }
+
+        Object maxTurns = with.get("max_turns");
+        if (maxTurns != null && (!(maxTurns instanceof Number) || ((Number) maxTurns).intValue() <= 0)) {
+            errors.add("claude-code step with.max_turns must be a positive integer");
+        }
+
+        Object inputs = with.get("inputs");
+        if (inputs != null) {
+            if (!(inputs instanceof Map)) {
+                errors.add("claude-code step with.inputs must be a map of scalar values");
+            } else {
+                for (Object value : ((Map<String, Object>) inputs).values()) {
+                    if (value instanceof Map || value instanceof List) {
+                        errors.add("claude-code step with.inputs must be a map of scalar values");
+                        break;
+                    }
+                }
+            }
+        }
+
+        Object outputSchema = with.get("output_schema");
+        if (outputSchema != null && !(outputSchema instanceof Map)) {
+            errors.add("claude-code step with.output_schema must be a map");
+        }
+
+        Object conductorMcp = with.get("conductor_mcp");
+        if (conductorMcp != null && !(conductorMcp instanceof Boolean)) {
+            errors.add("claude-code step with.conductor_mcp must be a boolean");
+        }
+    }
+
+    private boolean isClaudeCodeRunsOn(Object runsOnVal) {
+        if (runsOnVal instanceof String s) {
+            return "cloud-run".equals(s) || "self-hosted".equals(s);
+        }
+        if (runsOnVal instanceof List<?> list) {
+            return list.stream().anyMatch(v -> "cloud-run".equals(v) || "self-hosted".equals(v));
         }
         return false;
     }

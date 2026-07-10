@@ -19,6 +19,7 @@ import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.WorkflowDefinitionLifecycleService;
 import com.conductor.service.WorkflowService;
 import com.conductor.service.WorkflowViewService;
+import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -69,6 +70,7 @@ class WorkflowControllerTest {
 
     @MockitoBean private WorkflowService workflowService;
     @MockitoBean private WorkflowTriggerService workflowTriggerService;
+    @MockitoBean private WorkflowJobOrchestrator workflowJobOrchestrator;
     @MockitoBean private ProjectSecurityService projectSecurityService;
     @MockitoBean private WorkflowDefinitionRepository workflowRepository;
     @MockitoBean private WorkflowRunRepository runRepository;
