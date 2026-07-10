@@ -247,6 +247,27 @@ class DockerStepExecutorTest {
     }
 
     @Test
+    void execute_clampsZeroTimeoutMinutesToOneMinuteFloor() {
+        Map<String, Object> stepDef = new HashMap<>();
+        stepDef.put("uses", "docker://ubuntu:22.04");
+        stepDef.put("timeout_minutes", 0);
+
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(workerVmClient.submitJob(any())).thenReturn("worker-job-11");
+        when(workerVmClient.getJobStatus("worker-job-11"))
+                .thenReturn(new WorkerVmClient.WorkerJobStatus("RUNNING", null));
+
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
+        StepResult result = executor.execute(buildContext(stepDef, ctx));
+
+        // A 0-minute timeout must not yield zero poll iterations (instant timeout) — clamped to 1
+        // minute -> 1*60/5 = 12 polls.
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        verify(workerVmClient, times(12)).getJobStatus("worker-job-11");
+    }
+
+    @Test
     void execute_capsTimeoutMinutesAt120() {
         Map<String, Object> stepDef = new HashMap<>();
         stepDef.put("uses", "docker://ubuntu:22.04");

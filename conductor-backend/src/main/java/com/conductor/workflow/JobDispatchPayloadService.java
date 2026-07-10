@@ -14,7 +14,6 @@ import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
@@ -45,6 +44,7 @@ public class JobDispatchPayloadService {
     private final RunTokenService runTokenService;
     private final ProjectSettingsRepository projectSettingsRepository;
     private final ObjectMapper objectMapper;
+    private final UpstreamOutputsResolver upstreamOutputsResolver;
     private final String backendBaseUrl;
 
     public JobDispatchPayloadService(WorkflowRunRepository runRepository,
@@ -55,6 +55,7 @@ public class JobDispatchPayloadService {
                                       RunTokenService runTokenService,
                                       ProjectSettingsRepository projectSettingsRepository,
                                       ObjectMapper objectMapper,
+                                      UpstreamOutputsResolver upstreamOutputsResolver,
                                       @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
@@ -64,6 +65,7 @@ public class JobDispatchPayloadService {
         this.runTokenService = runTokenService;
         this.projectSettingsRepository = projectSettingsRepository;
         this.objectMapper = objectMapper;
+        this.upstreamOutputsResolver = upstreamOutputsResolver;
         this.backendBaseUrl = backendBaseUrl;
     }
 
@@ -203,40 +205,7 @@ public class JobDispatchPayloadService {
     }
 
     private Map<String, Map<String, String>> collectUpstreamOutputs(WorkflowRun run, Map<String, Object> jobs, String currentJobId) {
-        Map<String, Map<String, String>> result = new HashMap<>();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> currentJob = (Map<String, Object>) jobs.get(currentJobId);
-        List<String> needs = getNeedsList(currentJob);
-
-        for (String depJobId : needs) {
-            List<WorkflowJobRun> depJobRuns = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(run.getId(), depJobId);
-            if (depJobRuns.isEmpty()) continue;
-            String depJobRunId = depJobRuns.get(0).getId();
-
-            List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(depJobRunId);
-            Map<String, String> jobOutputs = new HashMap<>();
-            for (WorkflowStepRun step : steps) {
-                if (step.getOutputJson() != null) {
-                    try {
-                        Map<String, String> outputs = objectMapper.readValue(
-                                step.getOutputJson(), new TypeReference<Map<String, String>>() {});
-                        jobOutputs.putAll(outputs);
-                    } catch (Exception ignored) {
-                    }
-                }
-            }
-            result.put(depJobId, jobOutputs);
-        }
-        return result;
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<String> getNeedsList(Map<String, Object> job) {
-        Object needs = job.get("needs");
-        if (needs == null) return List.of();
-        if (needs instanceof List) return (List<String>) needs;
-        if (needs instanceof String) return List.of((String) needs);
-        return List.of();
+        return upstreamOutputsResolver.collectUpstreamOutputs(run, jobs, currentJobId);
     }
 
     private int loadTokenTtlHours(String projectId) {

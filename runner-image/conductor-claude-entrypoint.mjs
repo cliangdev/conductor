@@ -18,7 +18,6 @@ const RUNNER_ROOT = process.env.CONDUCTOR_RUNNER_ROOT || '/conductor';
 const INPUTS_DIR = path.join(RUNNER_ROOT, 'inputs');
 const WORKSPACE_DIR = path.join(RUNNER_ROOT, 'workspace');
 const MCP_CONFIG_PATH = path.join(RUNNER_ROOT, 'mcp-config.json');
-const OUTPUT_SCHEMA_PATH = path.join(RUNNER_ROOT, 'output-schema.json');
 const LOG_FLUSH_INTERVAL_MS = 2000;
 const COMPLETE_POST_RETRIES = 3;
 const LOG_POST_RETRIES = 1;
@@ -182,10 +181,7 @@ function buildClaudeInvocation(env) {
     args.push('--max-turns', env.CONDUCTOR_MAX_TURNS);
   }
   if (env.CONDUCTOR_OUTPUT_SCHEMA_JSON) {
-    writeFileSync(OUTPUT_SCHEMA_PATH, env.CONDUCTOR_OUTPUT_SCHEMA_JSON);
-    // The CLI accepts the schema as an inline JSON string (verified against the installed
-    // CLI); passing the raw string here works whether or not a future version also accepts a
-    // file path.
+    // The CLI accepts the schema as an inline JSON string (verified against the installed CLI).
     args.push('--json-schema', env.CONDUCTOR_OUTPUT_SCHEMA_JSON);
   }
   if (env.CONDUCTOR_MCP_ENABLED === 'true') {

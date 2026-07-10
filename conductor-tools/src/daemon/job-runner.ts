@@ -1,3 +1,7 @@
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import { randomUUID } from 'crypto'
 import type { Config } from '../lib/config.js'
 import { spawnAndWait, buildEnvArgs } from './runner.js'
 import { acknowledgeEvent, completeJob } from './run-lifecycle.js'
@@ -77,6 +81,15 @@ const CLAUDE_EXIT_ERROR_REASONS: Record<number, string> = {
   13: 'CLAUDE_TIMEOUT',
   20: 'CLAUDE_CONFIG_ERROR',
 }
+
+/** Env keys that must never appear in `docker run -e KEY=VALUE` argv — visible to any local user
+ * via `ps`/procfs. These go into a `--env-file` instead (see {@link splitSecretEnv}). */
+const DOCKER_ARGV_SECRET_KEYS = [
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CONDUCTOR_API_KEY',
+  'CONDUCTOR_RUN_TOKEN',
+  'ANTHROPIC_API_KEY',
+]
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -220,6 +233,47 @@ async function fetchDispatchPayload(
   }
 }
 
+/**
+ * Splits a step's container env into secret keys (never argv/procfs, see
+ * {@link DOCKER_ARGV_SECRET_KEYS}) and everything else, which still goes through `-e` args —
+ * `docker run --env-file` can't carry multiline values, and non-secret env is never multiline in
+ * practice (the claude-code prompt, which can be, is a secret-adjacent CONDUCTOR_STEP_PROMPT var
+ * that isn't in the secret list and stays on argv; only the four listed keys are ever redirected).
+ */
+function splitSecretEnv(env: Record<string, string>): {
+  fileEnv: Record<string, string>
+  argEnv: Record<string, string>
+} {
+  const fileEnv: Record<string, string> = {}
+  const argEnv: Record<string, string> = {}
+  for (const [key, value] of Object.entries(env)) {
+    if (!DOCKER_ARGV_SECRET_KEYS.includes(key)) {
+      argEnv[key] = value
+      continue
+    }
+    if (value.includes('\n')) {
+      console.error(
+        `[job-runner] ${key} contains a newline, which docker --env-file cannot carry; ` +
+          'omitting it from the container env'
+      )
+      continue
+    }
+    fileEnv[key] = value
+  }
+  return { fileEnv, argEnv }
+}
+
+/** Writes secret env vars to a mode-0600 temp file for `docker run --env-file`, keeping them out
+ * of process argv. Caller is responsible for deleting the returned path once the container exits. */
+function writeSecretEnvFile(fileEnv: Record<string, string>): string {
+  const filePath = path.join(os.tmpdir(), `conductor-env-${randomUUID()}.env`)
+  const contents = Object.entries(fileEnv)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n')
+  fs.writeFileSync(filePath, contents + '\n', { mode: 0o600 })
+  return filePath
+}
+
 async function postStepComplete(
   stepCompleteUrl: string,
   runToken: string,
@@ -259,10 +313,21 @@ async function runStep(
   }
 
   const env = buildStepEnv(payload, step, event, config, stepCompleteUrl, logChunkUrl)
+  const { fileEnv, argEnv } = splitSecretEnv(env)
+  const envFilePath = Object.keys(fileEnv).length > 0 ? writeSecretEnvFile(fileEnv) : null
   const image = payload.image ?? DEFAULT_RUNNER_IMAGE
   const containerName = `conductor-job-${payload.jobRunId}-${step.stepIndex}`
   const command = isClaudeCode ? ['conductor-claude-entrypoint'] : []
-  const runArgs = ['run', '--rm', '--name', containerName, ...buildEnvArgs(env), image, ...command]
+  const runArgs = [
+    'run',
+    '--rm',
+    '--name',
+    containerName,
+    ...(envFilePath ? ['--env-file', envFilePath] : []),
+    ...buildEnvArgs(argEnv),
+    image,
+    ...command,
+  ]
 
   const secrets = [payload.runToken, config.apiKey, config.claudeCodeOauthToken ?? '']
   const logBatcher = createLogBatcher(logChunkUrl, payload.runToken, secrets)
@@ -278,12 +343,23 @@ async function runStep(
   }, timeoutMs)
 
   let spawnFailed = false
-  const exitCode = await spawnAndWait('docker', runArgs, {
-    onLine: logBatcher.push,
-    onSpawnError: () => {
-      spawnFailed = true
-    },
-  })
+  let exitCode: number
+  try {
+    exitCode = await spawnAndWait('docker', runArgs, {
+      onLine: logBatcher.push,
+      onSpawnError: () => {
+        spawnFailed = true
+      },
+    })
+  } finally {
+    if (envFilePath) {
+      try {
+        fs.unlinkSync(envFilePath)
+      } catch (err) {
+        console.error('[job-runner] Failed to remove secret env file:', err)
+      }
+    }
+  }
 
   clearTimeout(timeoutTimer)
   logBatcher.stop()

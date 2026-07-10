@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
+import * as fs from 'fs'
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -564,5 +565,67 @@ describe('runWorkflowJob', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('writes secrets (OAuth token, run token, MCP API key) to a mode-0600 --env-file instead of -e argv, and cleans it up', async () => {
+    const payload = makeDispatchPayload({
+      runToken: 'run-token-secret',
+      steps: [makeStep({ stepType: 'claude-code', workerJobId: 'jobrun_1:0', conductorMcp: true })],
+    })
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/dispatch-payload')) return Promise.resolve(jsonResponse(200, payload))
+      return Promise.resolve(jsonResponse(200, {}))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+    mockChildProcess.spawn.mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker pull
+
+    const { proc: runProc, close: closeRun } = makeControllableProcess()
+    mockChildProcess.spawn.mockImplementationOnce(() => runProc)
+
+    const runPromise = runWorkflowJob(mockEvent, mockConfig)
+
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+
+    const runArgs = mockChildProcess.spawn.mock.calls[1][1] as string[]
+    const envFileIdx = runArgs.indexOf('--env-file')
+    expect(envFileIdx).toBeGreaterThanOrEqual(0)
+    const envFilePath = runArgs[envFileIdx + 1]
+
+    const argvJoined = runArgs.join(' ')
+    expect(argvJoined).not.toContain('oauth-secret-token')
+    expect(argvJoined).not.toContain('run-token-secret')
+    expect(argvJoined).not.toContain('test-api-key')
+
+    const stat = fs.statSync(envFilePath)
+    expect(stat.mode & 0o777).toBe(0o600)
+    const contents = fs.readFileSync(envFilePath, 'utf8')
+    expect(contents).toContain('CLAUDE_CODE_OAUTH_TOKEN=oauth-secret-token')
+    expect(contents).toContain('CONDUCTOR_RUN_TOKEN=run-token-secret')
+    expect(contents).toContain('CONDUCTOR_API_KEY=test-api-key')
+
+    closeRun(0)
+    await runPromise
+
+    expect(() => fs.statSync(envFilePath)).toThrow()
+  })
+
+  it('still passes non-secret env (e.g. CONDUCTOR_PROJECT_ID) as -e argv, not through the env-file', async () => {
+    const payload = makeDispatchPayload({
+      steps: [makeStep({ stepType: 'claude-code', workerJobId: 'jobrun_1:0' })],
+    })
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/dispatch-payload')) return Promise.resolve(jsonResponse(200, payload))
+      return Promise.resolve(jsonResponse(200, {}))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+    mockChildProcess.spawn
+      .mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker pull
+      .mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker run
+
+    await runWorkflowJob(mockEvent, mockConfig)
+
+    const runArgs = mockChildProcess.spawn.mock.calls[1][1] as string[]
+    expect(runArgs).toContain('-e')
+    expect(runArgs).toContain('CONDUCTOR_PROJECT_ID=proj_123')
   })
 })

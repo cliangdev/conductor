@@ -1,6 +1,8 @@
 package com.conductor.workflow;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.Map;
 
@@ -31,6 +33,36 @@ final class StepOutputMapper {
             if (entry.getValue() == null) continue;
             String value = extractJsonPath(body, entry.getValue().toString());
             if (value != null) outputs.put(entry.getKey(), value);
+        }
+    }
+
+    /**
+     * Builds the extraction tree for a container-reported outputs map. Values that are themselves
+     * JSON objects/arrays (notably the {@code data} structured answer, stored as a JSON string) are
+     * placed as parsed nodes so nested declared paths like {@code body.data.foo.bar} resolve; all
+     * other values stay strings. The stored outputs map itself is not changed.
+     */
+    static JsonNode outputsTree(ObjectMapper mapper, Map<String, String> outputs) {
+        ObjectNode root = mapper.createObjectNode();
+        for (Map.Entry<String, String> entry : outputs.entrySet()) {
+            JsonNode parsed = tryParseJson(mapper, entry.getValue());
+            if (parsed != null && (parsed.isObject() || parsed.isArray())) {
+                root.set(entry.getKey(), parsed);
+            } else {
+                root.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return root;
+    }
+
+    private static JsonNode tryParseJson(ObjectMapper mapper, String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+        try {
+            return mapper.readTree(trimmed);
+        } catch (Exception e) {
+            return null;
         }
     }
 

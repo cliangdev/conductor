@@ -3,7 +3,6 @@ package com.conductor.workflow;
 import com.conductor.entity.*;
 import com.conductor.repository.*;
 import com.conductor.service.LogRedactionService;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
@@ -33,6 +32,7 @@ public class WorkflowJobOrchestrator {
     private final Map<String, WorkflowExecutionBackend> backends;
     private final ObjectMapper objectMapper;
     private final SelfHostedJobDispatcher selfHostedJobDispatcher;
+    private final UpstreamOutputsResolver upstreamOutputsResolver;
 
     // Self-reference injected lazily so @Transactional helpers are invoked through the Spring proxy
     // even when called from the same class. Required because executeJob() is deliberately NOT
@@ -52,7 +52,8 @@ public class WorkflowJobOrchestrator {
                                    LogRedactionService logRedactionService,
                                    List<WorkflowExecutionBackend> backends,
                                    ObjectMapper objectMapper,
-                                   SelfHostedJobDispatcher selfHostedJobDispatcher) {
+                                   SelfHostedJobDispatcher selfHostedJobDispatcher,
+                                   UpstreamOutputsResolver upstreamOutputsResolver) {
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
         this.runRepository = runRepository;
@@ -64,6 +65,7 @@ public class WorkflowJobOrchestrator {
         this.logRedactionService = logRedactionService;
         this.objectMapper = objectMapper;
         this.selfHostedJobDispatcher = selfHostedJobDispatcher;
+        this.upstreamOutputsResolver = upstreamOutputsResolver;
         Map<String, WorkflowExecutionBackend> backendMap = new HashMap<>();
         for (WorkflowExecutionBackend b : backends) backendMap.put(b.getStepType(), b);
         this.backends = backendMap;
@@ -117,6 +119,19 @@ public class WorkflowJobOrchestrator {
         @SuppressWarnings("unchecked")
         Map<String, Object> jobDef = (Map<String, Object>) jobs.get(jobId);
 
+        boolean selfHosted = "self-hosted".equals(jobDef.get("runs-on"));
+        if (selfHosted) {
+            // Lock the run row so a duplicate readiness trigger for this job (e.g. two dependents in
+            // a diamond `needs` both becoming ready at once) can't race past the check below and
+            // dispatch the same job to the daemon twice.
+            runRepository.findByIdForUpdate(runId);
+            List<WorkflowJobRun> latestForJob = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(runId, jobId);
+            if (!latestForJob.isEmpty() && latestForJob.get(0).getStatus() == WorkflowJobStatus.AWAITING_PICKUP) {
+                log.info("planJobExecution: job {} (run {}) already AWAITING_PICKUP, skipping duplicate dispatch", jobId, runId);
+                return JobExecutionPlan.complete();
+            }
+        }
+
         WorkflowJobRun jobRun = findOrCreateLatestJobRun(run, jobId);
 
         jobRun.setStatus(WorkflowJobStatus.RUNNING);
@@ -141,7 +156,7 @@ public class WorkflowJobOrchestrator {
             }
         }
 
-        if ("self-hosted".equals(jobDef.get("runs-on"))) {
+        if (selfHosted) {
             selfHostedJobDispatcher.dispatch(run, jobId, jobRun, jobDef);
             jobRun.setStatus(WorkflowJobStatus.AWAITING_PICKUP);
             jobRunRepository.save(jobRun);
@@ -297,7 +312,9 @@ public class WorkflowJobOrchestrator {
      */
     @Transactional
     public void completeRemoteJob(String runId, String jobId, WorkflowJobStatus terminalStatus, String errorReason) {
-        WorkflowRun run = runRepository.findById(runId)
+        // Lock the run row so concurrent completion signals (daemon complete, legacy PATCH shim,
+        // pickup-timeout sweep) serialize here instead of racing past the terminal-status guard below.
+        WorkflowRun run = runRepository.findByIdForUpdate(runId)
                 .orElseThrow(() -> new EntityNotFoundException("Run not found: " + runId));
         List<WorkflowJobRun> existing = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(runId, jobId);
         if (existing.isEmpty()) {
@@ -336,6 +353,9 @@ public class WorkflowJobOrchestrator {
             } else {
                 enqueueReadyDependents(run, jobId, jobs);
             }
+        } else {
+            log.warn("completeRemoteJob: could not parse workflow YAML for run {} — dependents of job {} "
+                    + "not propagated; run will rely on the cleanup sweep", runId, jobId);
         }
         engine.checkRunCompletion(run);
     }
@@ -555,39 +575,11 @@ public class WorkflowJobOrchestrator {
     private Map<String, Map<String, String>> collectUpstreamOutputs(WorkflowRun run,
                                                                      Map<String, Object> jobs,
                                                                      String currentJobId) {
-        Map<String, Map<String, String>> result = new HashMap<>();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> currentJob = (Map<String, Object>) jobs.get(currentJobId);
-        List<String> needs = getNeedsList(currentJob);
-
-        for (String depJobId : needs) {
-            List<WorkflowJobRun> depJobRuns = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(run.getId(), depJobId);
-            if (depJobRuns.isEmpty()) continue;
-            String depJobRunId = depJobRuns.get(0).getId();
-
-            List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(depJobRunId);
-            Map<String, String> jobOutputs = new HashMap<>();
-            for (WorkflowStepRun step : steps) {
-                if (step.getOutputJson() != null) {
-                    try {
-                        Map<String, String> outputs = objectMapper.readValue(
-                                step.getOutputJson(), new TypeReference<>() {});
-                        jobOutputs.putAll(outputs);
-                    } catch (Exception ignored) {}
-                }
-            }
-            result.put(depJobId, jobOutputs);
-        }
-        return result;
+        return upstreamOutputsResolver.collectUpstreamOutputs(run, jobs, currentJobId);
     }
 
-    @SuppressWarnings("unchecked")
     private List<String> getNeedsList(Map<String, Object> job) {
-        Object needs = job.get("needs");
-        if (needs == null) return List.of();
-        if (needs instanceof List) return (List<String>) needs;
-        if (needs instanceof String) return List.of((String) needs);
-        return List.of();
+        return upstreamOutputsResolver.getNeedsList(job);
     }
 
     private String resolveStepType(Map<String, Object> stepDef) {

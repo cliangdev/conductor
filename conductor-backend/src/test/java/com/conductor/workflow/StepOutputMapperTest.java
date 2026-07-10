@@ -80,4 +80,33 @@ class StepOutputMapperTest {
     void extractJsonPath_returnsNullForNullPath() {
         assertThat(StepOutputMapper.extractJsonPath(objectMapper.createObjectNode(), null)).isNull();
     }
+
+    @Test
+    void outputsTree_parsesJsonValuesSoNestedPathsResolve() {
+        Map<String, String> outputs = new HashMap<>();
+        outputs.put("text", "done");
+        outputs.put("data", "{\"foo\":{\"bar\":\"x\"}}");
+
+        Map<String, Object> stepDef = Map.of("outputs", Map.of("y", "body.data.foo.bar"));
+        StepOutputMapper.applyDeclaredOutputs(stepDef,
+                StepOutputMapper.outputsTree(objectMapper, outputs), outputs);
+
+        assertThat(outputs.get("y")).isEqualTo("x");
+        // stored values stay strings
+        assertThat(outputs.get("data")).isEqualTo("{\"foo\":{\"bar\":\"x\"}}");
+    }
+
+    @Test
+    void outputsTree_keepsNonJsonValuesAsStrings() {
+        Map<String, String> outputs = new HashMap<>();
+        outputs.put("text", "{not json");
+        outputs.put("summary", "plain");
+
+        Map<String, Object> stepDef = Map.of("outputs", Map.of("s", "body.summary", "t", "body.text"));
+        StepOutputMapper.applyDeclaredOutputs(stepDef,
+                StepOutputMapper.outputsTree(objectMapper, outputs), outputs);
+
+        assertThat(outputs.get("s")).isEqualTo("plain");
+        assertThat(outputs.get("t")).isEqualTo("{not json");
+    }
 }

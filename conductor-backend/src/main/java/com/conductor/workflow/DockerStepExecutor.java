@@ -118,7 +118,7 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
 
     private int resolveTimeoutMinutes(Map<String, Object> stepDef) {
         int timeoutMinutes = getIntOrDefault(stepDef, "timeout_minutes", DEFAULT_TIMEOUT_MINUTES);
-        return Math.min(timeoutMinutes, MAX_TIMEOUT_MINUTES);
+        return Math.min(Math.max(timeoutMinutes, 1), MAX_TIMEOUT_MINUTES);
     }
 
     private int getIntOrDefault(Map<String, Object> map, String key, int defaultValue) {

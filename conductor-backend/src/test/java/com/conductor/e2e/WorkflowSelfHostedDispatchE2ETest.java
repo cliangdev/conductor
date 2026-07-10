@@ -7,6 +7,7 @@ import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.workflow.RunTokenService;
 import com.conductor.workflow.WorkflowExecutionEngine;
+import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
@@ -87,6 +88,7 @@ class WorkflowSelfHostedDispatchE2ETest {
     @Autowired DaemonEventRepository daemonEventRepository;
     @Autowired RunTokenService runTokenService;
     @Autowired WorkflowExecutionEngine executionEngine;
+    @Autowired WorkflowJobOrchestrator orchestrator;
     @Autowired ObjectMapper objectMapper;
 
     HttpHeaders authHeaders;
@@ -468,6 +470,28 @@ class WorkflowSelfHostedDispatchE2ETest {
     }
 
     @Test
+    void duplicateReadinessTrigger_forAwaitingPickupSelfHostedJob_doesNotDispatchTwice() {
+        String apiKey = createProjectApiKey();
+        String workflowId = createWorkflow("dup-dispatch-" + System.nanoTime(), soloClaudeCodeYaml());
+        String runId = dispatchWorkflow(workflowId);
+        awaitJobStatus(runId, "solo", "AWAITING_PICKUP");
+
+        assertThat(workflowJobEventCount(apiKey, runId, "solo")).isEqualTo(1);
+
+        // Simulate a second readiness trigger for the same job (e.g. two dependents in a diamond
+        // `needs` both becoming ready at once) racing in after the first dispatch already landed.
+        orchestrator.executeJob(runId, "solo");
+
+        assertThat(workflowJobEventCount(apiKey, runId, "solo")).isEqualTo(1);
+
+        // Still exactly one pre-created step run — a second dispatch would have duplicated it.
+        var soloJob = jobs(getRunDetail(workflowId, runId)).stream()
+                .filter(j -> "solo".equals(j.get("jobId")))
+                .findFirst().orElseThrow();
+        assertThat(steps(soloJob)).hasSize(1);
+    }
+
+    @Test
     void pickupTimeoutSweep_failsAwaitingPickupJobAndPropagatesToDependent() {
         String yaml = """
                 name: Pickup Timeout
@@ -582,6 +606,24 @@ class WorkflowSelfHostedDispatchE2ETest {
                         with:
                           prompt: hi
                 """;
+    }
+
+    @SuppressWarnings("unchecked")
+    private long workflowJobEventCount(String apiKey, String runId, String jobId) {
+        var eventsResp = rest.exchange(
+                url("/api/v1/projects/" + projectId + "/daemon/events"),
+                HttpMethod.GET,
+                new HttpEntity<>(apiKeyHeaders(apiKey)),
+                Map.class);
+        assertThat(eventsResp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        List<Map<String, Object>> events = (List<Map<String, Object>>) eventsResp.getBody().get("events");
+        return events.stream()
+                .filter(e -> "workflow.job".equals(e.get("type")))
+                .filter(e -> {
+                    Map<String, Object> payload = (Map<String, Object>) e.get("payload");
+                    return runId.equals(payload.get("workflowRunId")) && jobId.equals(payload.get("jobId"));
+                })
+                .count();
     }
 
     private Map<String, Object> dispatchPayload(String runId, String jobId, String apiKey) {

@@ -11,7 +11,6 @@ import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -312,8 +311,8 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
             Map<String, String> outputs = row.getOutputJson() != null
                     ? parseOutputs(row.getOutputJson())
                     : new HashMap<>();
-            ObjectNode body = objectMapper.valueToTree(outputs);
-            StepOutputMapper.applyDeclaredOutputs(stepDef, body, outputs);
+            StepOutputMapper.applyDeclaredOutputs(stepDef,
+                    StepOutputMapper.outputsTree(objectMapper, outputs), outputs);
             return StepResult.success(log, outputs).withWorkerJobId(workerJobId);
         }
 

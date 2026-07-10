@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -133,11 +134,21 @@ public class WorkflowRunLogBroker {
             List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(jobRun.getId());
             for (WorkflowStepRun step : steps) {
                 if (workerJobId.equals(step.getWorkerJobId())) {
+                    if (isTerminal(step.getStatus())) {
+                        // A late daemon backstop post (e.g. after the container already self-reported)
+                        // must not flip an already-terminal, container-reported result.
+                        log.info("recordStepCompleted: step {} (workerJobId={}) already terminal ({}), "
+                                + "ignoring late report", step.getId(), workerJobId, step.getStatus());
+                        return;
+                    }
                     step.setStatus(status);
                     step.setErrorReason(errorReason);
-                    if (outputs != null) {
+                    Map<String, String> mappedOutputs = outputs != null && !outputs.isEmpty()
+                            ? applyDeclaredOutputs(runId, jobRun, step, outputs)
+                            : outputs;
+                    if (mappedOutputs != null) {
                         try {
-                            step.setOutputJson(objectMapper.writeValueAsString(outputs));
+                            step.setOutputJson(objectMapper.writeValueAsString(mappedOutputs));
                         } catch (Exception e) {
                             log.warn("Failed to serialize outputs for step {}", step.getId(), e);
                         }
@@ -152,6 +163,78 @@ public class WorkflowRunLogBroker {
             }
         }
         log.warn("recordStepCompleted: no step run found for workerJobId {} in run {}", workerJobId, runId);
+    }
+
+    /**
+     * Applies the step's declared {@code outputs:} dot-path mapping (same as
+     * {@link ClaudeCodeStepExecutor#resultFromRow}) so self-hosted and cloud-run runtimes produce
+     * identical step outputs. Resolves the step's YAML definition by {@code stepId} when the
+     * pre-created row has one, else by the numeric index suffix of {@code workerJobId}
+     * ({@code jobRunId:index}). Falls back to the outputs unmapped (never throws) if the step
+     * definition can't be resolved.
+     */
+    private Map<String, String> applyDeclaredOutputs(String runId, WorkflowJobRun jobRun,
+                                                      WorkflowStepRun step, Map<String, String> outputs) {
+        Optional<WorkflowRun> runOpt = runRepository.findByIdWithWorkflow(runId);
+        if (runOpt.isEmpty()) {
+            log.warn("recordStepCompleted: run {} not found while resolving declared outputs for step {}",
+                    runId, step.getId());
+            return outputs;
+        }
+        Map<String, Object> stepDef = resolveStepDefinition(runOpt.get(), jobRun, step);
+        if (stepDef == null) {
+            log.warn("recordStepCompleted: could not resolve step definition for workerJobId {} in run {}, "
+                    + "persisting outputs unmapped", step.getWorkerJobId(), runId);
+            return outputs;
+        }
+        Map<String, String> mappedOutputs = new HashMap<>(outputs);
+        StepOutputMapper.applyDeclaredOutputs(stepDef,
+                StepOutputMapper.outputsTree(objectMapper, mappedOutputs), mappedOutputs);
+        return mappedOutputs;
+    }
+
+    private Map<String, Object> resolveStepDefinition(WorkflowRun run, WorkflowJobRun jobRun, WorkflowStepRun step) {
+        Map<String, Object> parsedWorkflow = parseYaml(run.getWorkflow().getYaml());
+        if (parsedWorkflow == null) return null;
+        Object jobsObj = parsedWorkflow.get("jobs");
+        if (!(jobsObj instanceof Map)) return null;
+        @SuppressWarnings("unchecked")
+        Map<String, Object> jobs = (Map<String, Object>) jobsObj;
+        Object jobDefObj = jobs.get(jobRun.getJobId());
+        if (!(jobDefObj instanceof Map)) return null;
+        @SuppressWarnings("unchecked")
+        Map<String, Object> jobDef = (Map<String, Object>) jobDefObj;
+        List<Map<String, Object>> steps = WorkflowJobSteps.executableSteps(jobDef);
+
+        String stepId = step.getStepId();
+        if (stepId != null) {
+            return steps.stream().filter(s -> stepId.equals(s.get("id"))).findFirst().orElse(null);
+        }
+
+        Integer index = parseIndexSuffix(step.getWorkerJobId());
+        if (index == null || index < 0 || index >= steps.size()) return null;
+        return steps.get(index);
+    }
+
+    /** Extracts the trailing {@code :N} index from a {@code jobRunId:N} workerJobId. */
+    private Integer parseIndexSuffix(String workerJobId) {
+        if (workerJobId == null) return null;
+        int colonIdx = workerJobId.lastIndexOf(':');
+        if (colonIdx < 0 || colonIdx == workerJobId.length() - 1) return null;
+        try {
+            return Integer.parseInt(workerJobId.substring(colonIdx + 1));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private Map<String, Object> parseYaml(String yaml) {
+        try {
+            return new org.yaml.snakeyaml.Yaml().load(yaml);
+        } catch (Exception e) {
+            log.error("Failed to parse workflow YAML: {}", e.getMessage());
+            return null;
+        }
     }
 
     /** Mark a worker job's step failed and roll the failure up to the job and (if needed) the run. */
@@ -264,6 +347,10 @@ public class WorkflowRunLogBroker {
         return status == WorkflowRunStatus.SUCCESS
                 || status == WorkflowRunStatus.FAILED
                 || status == WorkflowRunStatus.CANCELLED;
+    }
+
+    private boolean isTerminal(WorkflowStepStatus status) {
+        return status == WorkflowStepStatus.SUCCESS || status == WorkflowStepStatus.FAILED;
     }
 
     private boolean isTerminalJobStatus(WorkflowJobStatus status) {

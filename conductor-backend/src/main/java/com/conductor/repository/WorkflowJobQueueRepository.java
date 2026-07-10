@@ -26,4 +26,13 @@ public interface WorkflowJobQueueRepository extends JpaRepository<WorkflowJobQue
     @Modifying
     @Query(value = "UPDATE workflow_job_queue SET claimed_at = NOW() WHERE id IN (:ids)", nativeQuery = true)
     void markAllClaimed(@Param("ids") List<String> ids);
+
+    /**
+     * Used by {@code WorkflowExecutionEngine#enqueueJob} to skip inserting a duplicate row when
+     * one is already queued and unclaimed for this (run, job) — e.g. two upstream jobs completing
+     * near-simultaneously both trying to enqueue the same diamond-`needs` dependent. Best-effort
+     * only: without a DB unique partial index on (run_id, job_id) WHERE claimed_at IS NULL, two
+     * concurrent callers can still both pass this check before either inserts.
+     */
+    List<WorkflowJobQueue> findByRunIdAndJobIdAndClaimedAtIsNull(String runId, String jobId);
 }

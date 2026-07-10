@@ -52,7 +52,8 @@ class WorkflowJobOrchestratorStepPersistenceTest {
                 logRedactionService,
                 List.of(),
                 new ObjectMapper(),
-                mock(SelfHostedJobDispatcher.class));
+                mock(SelfHostedJobDispatcher.class),
+                mock(UpstreamOutputsResolver.class));
 
         jobRun = new WorkflowJobRun();
         jobRun.setId("jobrun-1");

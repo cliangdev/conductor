@@ -161,6 +161,18 @@ public class WorkflowExecutionEngine {
 
     @Transactional
     public void enqueueJob(String runId, String jobId) {
+        // Best-effort de-dup: two upstream jobs completing near-simultaneously (the finalizeJob
+        // path and the completeRemoteJob path, e.g. a diamond `needs`) can each try to enqueue the
+        // same dependent. Not bulletproof without a DB unique partial index on (run_id, job_id)
+        // WHERE claimed_at IS NULL — two concurrent callers can still both pass this check before
+        // either inserts — but combined with the run-row lock in WorkflowJobOrchestrator's
+        // planJobExecution/completeRemoteJob it closes the realistic window.
+        if (!queueRepository.findByRunIdAndJobIdAndClaimedAtIsNull(runId, jobId).isEmpty()) {
+            log.info("enqueueJob: unclaimed queue row already exists for run {} job {}, skipping duplicate enqueue",
+                    runId, jobId);
+            return;
+        }
+
         WorkflowRun run = runRepository.findById(runId)
                 .orElseThrow(() -> new IllegalStateException("Run not found: " + runId));
         WorkflowJobQueue entry = new WorkflowJobQueue();
