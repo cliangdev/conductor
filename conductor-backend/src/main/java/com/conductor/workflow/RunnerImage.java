@@ -18,6 +18,10 @@ package com.conductor.workflow;
  *       is now only a fallback for the (unexpected) case the payload omits an image</li>
  *   <li>the pre-created {@code conductor-claude-code} Cloud Run Job resource's pinned container
  *       image (see the {@code gcloud run jobs create} note in docs/workflows.md)</li>
+ *   <li>{@code runner-image/Dockerfile.claude-runner} — a dedicated, smaller image for
+ *       {@code claude-code} steps only (node-slim, no Python/gh/Docker CLI). Not yet the default
+ *       here; it is consumed today via runtime-target image fields (BYO GCP runtimes) until the
+ *       default-image split for self-hosted dispatch lands</li>
  * </ul>
  */
 public final class RunnerImage {
