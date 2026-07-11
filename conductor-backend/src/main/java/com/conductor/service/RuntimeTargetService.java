@@ -20,7 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -200,7 +200,8 @@ public class RuntimeTargetService {
     // ---- provisioning ----
 
     private void provision(RuntimeTarget target) {
-        Optional<Connection> connectionOpt = connectionService.getById(target.getConnectionId());
+        Optional<Connection> connectionOpt = target.getConnectionId() == null
+                ? Optional.empty() : connectionService.getById(target.getConnectionId());
         if (connectionOpt.isEmpty()) {
             target.setStatus(RuntimeTargetStatus.ERROR);
             target.setErrorMessage("Runtime target's connection no longer exists");
@@ -231,7 +232,7 @@ public class RuntimeTargetService {
                 target.setStatus(RuntimeTargetStatus.ACTIVE);
                 target.setErrorMessage(null);
             }
-        } catch (ForbiddenException | BusinessException | IllegalStateException | HttpClientErrorException e) {
+        } catch (ForbiddenException | BusinessException | IllegalStateException | RestClientException e) {
             log.info("Runtime target {} provisioning failed: {}", target.getId(), e.getMessage());
             target.setStatus(RuntimeTargetStatus.ERROR);
             target.setErrorMessage(e.getMessage());
@@ -259,6 +260,23 @@ public class RuntimeTargetService {
 
     private void evictClients(String connectionId) {
         cloudRunClientFactory.ifPresent(factory -> factory.evict(connectionId));
+    }
+
+    /**
+     * Called by the connection-deletion path BEFORE the {@code connection} row is removed (the FK is
+     * {@code ON DELETE SET NULL}, so afterwards the targets would no longer be findable by connection
+     * id). Referencing targets can never launch again — a named target must not fall back to builtin
+     * operator credentials — so they flip to {@code ERROR} and the cached per-connection Cloud Run
+     * clients are closed.
+     */
+    public void onConnectionDeleted(String connectionId) {
+        for (RuntimeTarget target : repository.findByConnectionId(connectionId)) {
+            target.setStatus(RuntimeTargetStatus.ERROR);
+            target.setErrorMessage(
+                    "The GCP connection backing this target was removed — reconnect Google Cloud and create a new target");
+            repository.save(target);
+        }
+        evictClients(connectionId);
     }
 
     // ---- lookups ----

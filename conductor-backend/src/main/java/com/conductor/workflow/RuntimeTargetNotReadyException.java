@@ -13,4 +13,8 @@ public class RuntimeTargetNotReadyException extends RuntimeException {
     public RuntimeTargetNotReadyException(String runsOn, RuntimeTargetStatus status) {
         super("Runtime target '" + runsOn + "' is not ready (status: " + status + ")");
     }
+
+    public RuntimeTargetNotReadyException(String runsOn, String reason) {
+        super("Runtime target '" + runsOn + "' is not ready: " + reason);
+    }
 }

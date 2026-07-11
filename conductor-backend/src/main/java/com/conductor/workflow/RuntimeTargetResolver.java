@@ -70,6 +70,12 @@ public class RuntimeTargetResolver {
         if (target.getStatus() != RuntimeTargetStatus.ACTIVE) {
             throw new RuntimeTargetNotReadyException(runsOn, target.getStatus());
         }
+        if (target.getConnectionId() == null) {
+            // A named target must never fall back to the builtin operator credentials — a null
+            // connectionId on a CloudRunTarget means exactly that (see CloudRunClientFactory.forTarget),
+            // so an orphaned target (its gcp connection deleted; FK is ON DELETE SET NULL) is unusable.
+            throw new RuntimeTargetNotReadyException(runsOn, "its GCP connection was removed");
+        }
 
         RuntimeTargetService.TargetRuntimeConfig config = runtimeTargetService.configOf(target);
         CloudRunTarget cloudRunTarget = new CloudRunTarget(

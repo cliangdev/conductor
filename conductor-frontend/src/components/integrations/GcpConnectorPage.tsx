@@ -10,6 +10,7 @@ import { listConnections, createConnection, deleteConnection, apiErrorMessage } 
 import type { ConnectionSummary } from '@/lib/api';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { ConnectorIcon } from './ConnectorIcon';
+import { ServiceAccountKeyField } from './ServiceAccountKeyField';
 
 const CONNECTOR_ID = 'gcp';
 
@@ -62,11 +63,6 @@ export default function GcpConnectorPage({ projectId }: { projectId: string }) {
     setKeyError(parsed.valid ? null : (parsed.error ?? 'Invalid key'));
   };
 
-  const handleFileUpload = async (file: File | undefined) => {
-    if (!file) return;
-    handleKeyChange(await file.text());
-  };
-
   async function handleConnect(e: React.FormEvent) {
     e.preventDefault();
     if (!accessToken) return;
@@ -103,29 +99,14 @@ export default function GcpConnectorPage({ projectId }: { projectId: string }) {
 
   const connectForm = (
     <form onSubmit={handleConnect} className="space-y-4">
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="block text-sm font-medium text-foreground">Service Account Key</label>
-          <label className="text-xs font-medium text-primary hover:underline cursor-pointer">
-            Upload .json
-            <input
-              type="file"
-              accept=".json,application/json"
-              className="hidden"
-              onChange={(e) => handleFileUpload(e.target.files?.[0])}
-            />
-          </label>
-        </div>
-        <textarea
-          rows={6}
-          value={keyText}
-          onChange={(e) => handleKeyChange(e.target.value)}
-          placeholder="GCP Console → IAM & Admin → Service Accounts → your SA → Keys → Add Key → JSON"
-          required
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-        {keyError && <p className="mt-1 text-xs text-destructive">{keyError}</p>}
-      </div>
+      <ServiceAccountKeyField
+        label="Service Account Key"
+        hint="GCP Console → IAM & Admin → Service Accounts → your SA → Keys → Add Key → JSON"
+        required
+        value={keyText}
+        error={keyError}
+        onChange={handleKeyChange}
+      />
       {connectError && <p className="text-sm text-destructive">{connectError}</p>}
       <Button type="submit" disabled={connecting || !!keyError || !keyText.trim()}>
         {connecting ? 'Connecting…' : 'Connect'}

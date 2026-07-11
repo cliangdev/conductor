@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { Loader2Icon, PlusIcon } from 'lucide-react'
@@ -106,8 +106,6 @@ export default function RuntimesPage() {
 
   // Poll while any target is still provisioning — create/update/provision are synchronous on the
   // backend, but this keeps the list honest if another admin triggers a change concurrently.
-  const targetsRef = useRef(targets)
-  targetsRef.current = targets
   useEffect(() => {
     const hasProvisioning = targets.some((t) => t.status === 'PROVISIONING')
     if (!hasProvisioning) return

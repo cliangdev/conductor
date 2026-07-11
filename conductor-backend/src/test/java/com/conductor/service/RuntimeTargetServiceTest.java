@@ -372,6 +372,45 @@ class RuntimeTargetServiceTest {
         verify(gcpConnector, never()).ensureJob(any(), any());
     }
 
+    // ---- connection deletion / orphaned targets ----
+
+    @Test
+    void onConnectionDeleted_flipsReferencingTargetsToErrorAndEvictsClients() {
+        stubSaveReturnsArgument();
+        RuntimeTarget target = new RuntimeTarget();
+        target.setId("target-1");
+        target.setProjectId(PROJECT_ID);
+        target.setConnectionId(CONNECTION_ID);
+        target.setStatus(RuntimeTargetStatus.ACTIVE);
+        when(repository.findByConnectionId(CONNECTION_ID)).thenReturn(java.util.List.of(target));
+
+        service.onConnectionDeleted(CONNECTION_ID);
+
+        assertThat(target.getStatus()).isEqualTo(RuntimeTargetStatus.ERROR);
+        assertThat(target.getErrorMessage()).contains("connection backing this target was removed");
+        verify(repository).save(target);
+        verify(cloudRunClientFactory).evict(CONNECTION_ID);
+    }
+
+    @Test
+    void provisionById_orphanedTargetWithNullConnection_setsErrorInsteadOfThrowing() {
+        stubSaveReturnsArgument();
+        RuntimeTarget target = new RuntimeTarget();
+        target.setId("target-1");
+        target.setProjectId(PROJECT_ID);
+        target.setConnectionId(null);
+        target.setStatus(RuntimeTargetStatus.ERROR);
+        target.setConfigJson("{\"gcpProjectId\":\"p\",\"region\":\"r\",\"jobName\":\"j\",\"image\":\"i\"}");
+        when(repository.findById("target-1")).thenReturn(Optional.of(target));
+
+        RuntimeTarget result = service.provisionById(PROJECT_ID, "target-1");
+
+        assertThat(result.getStatus()).isEqualTo(RuntimeTargetStatus.ERROR);
+        assertThat(result.getErrorMessage()).contains("connection no longer exists");
+        verify(connectionService, never()).getById(any());
+        verify(gcpConnector, never()).verifyImage(any(), any());
+    }
+
     // ---- targetNames / findActiveByName ----
 
     @Test

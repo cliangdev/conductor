@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost, createConnection, deleteConnection, apiErrorMessage } from '@/lib/api';
 import type { ConnectionSummary } from '@/lib/api';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
+import { ServiceAccountKeyField } from '@/components/integrations/ServiceAccountKeyField';
 import { usePermissions } from '@/contexts/PermissionsContext';
 import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
@@ -108,33 +109,13 @@ export default function IntegrationsPage() {
     setJsonFieldErrors({});
   };
 
-  // Shared by both the textarea's onChange and the "Upload .json" file input. Validates the key
-  // and — if valid — prefills a sibling USER_INPUT field named `gcpProjectId` from the key's
-  // project_id, but only when that field exists on this connector's spec and is still empty
-  // (data-driven: not hardcoded to the gcp connector specifically).
-  const applyJsonField = (connector: IntegrationListItem, key: string, value: string) => {
+  const applyJsonField = (key: string, value: string) => {
     setFormValues((prev) => ({ ...prev, [key]: value }));
     const parsed = parseServiceAccountKey(value);
     setJsonFieldErrors((prev) => ({
       ...prev,
       [key]: value.trim() && !parsed.valid ? (parsed.error ?? 'Invalid key') : '',
     }));
-    if (parsed.valid && parsed.projectId) {
-      const siblingField = connector.configFields.find(
-        (f) => f.source === 'USER_INPUT' && f.key === 'gcpProjectId'
-      );
-      if (siblingField) {
-        setFormValues((prev) =>
-          prev[siblingField.key] ? prev : { ...prev, [siblingField.key]: parsed.projectId as string }
-        );
-      }
-    }
-  };
-
-  const handleJsonFileUpload = async (connector: IntegrationListItem, key: string, file: File | undefined) => {
-    if (!file) return;
-    const text = await file.text();
-    applyJsonField(connector, key, text);
   };
 
   const handleConnect = async (e: React.FormEvent) => {
@@ -172,6 +153,9 @@ export default function IntegrationsPage() {
         accessToken
       );
       setConnectModal(null);
+      // Don't keep the pasted secret in component state past a successful connect.
+      setFormValues({});
+      setJsonFieldErrors({});
       await loadIntegrations();
     } catch (err: unknown) {
       setConnectError(apiErrorMessage(err, 'Connection failed'));
@@ -401,35 +385,14 @@ export default function IntegrationsPage() {
               .map((field) => (
                 <div key={field.key}>
                   {field.type === 'JSON' ? (
-                    <>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="block text-sm font-medium text-foreground">
-                          {field.label}
-                        </label>
-                        <label className="text-xs font-medium text-primary hover:underline cursor-pointer">
-                          Upload .json
-                          <input
-                            type="file"
-                            accept=".json,application/json"
-                            className="hidden"
-                            onChange={(e) =>
-                              handleJsonFileUpload(connectModal.connector, field.key, e.target.files?.[0])
-                            }
-                          />
-                        </label>
-                      </div>
-                      <textarea
-                        rows={6}
-                        value={formValues[field.key] || ''}
-                        onChange={(e) => applyJsonField(connectModal.connector, field.key, e.target.value)}
-                        placeholder={field.hint || ''}
-                        required={field.required}
-                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                      />
-                      {jsonFieldErrors[field.key] && (
-                        <p className="mt-1 text-xs text-destructive">{jsonFieldErrors[field.key]}</p>
-                      )}
-                    </>
+                    <ServiceAccountKeyField
+                      label={field.label}
+                      hint={field.hint}
+                      required={field.required}
+                      value={formValues[field.key] || ''}
+                      error={jsonFieldErrors[field.key] || null}
+                      onChange={(text) => applyJsonField(field.key, text)}
+                    />
                   ) : field.type === 'SELECT' ? (
                     <>
                       <label className="block text-sm font-medium text-foreground mb-1">

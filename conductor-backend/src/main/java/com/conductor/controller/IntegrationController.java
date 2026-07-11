@@ -42,6 +42,7 @@ import com.conductor.service.ConnectionService;
 import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.OAuthFlowService;
 import com.conductor.service.ProjectSecurityService;
+import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -84,6 +85,7 @@ public class IntegrationController implements IntegrationsApi {
     private final Optional<GcpBillingConnector> gcpBillingConnector;
     /** Present only outside the {@code local} profile (the real {@link GscConnector} is {@code @Profile("!local")}). */
     private final Optional<GscConnector> gscConnector;
+    private final RuntimeTargetService runtimeTargetService;
 
     @Value("${BACKEND_URL:}")
     private String backendUrl;
@@ -97,6 +99,7 @@ public class IntegrationController implements IntegrationsApi {
                                 ProjectSecurityService projectSecurityService,
                                 Optional<GcpBillingConnector> gcpBillingConnector,
                                 Optional<GscConnector> gscConnector,
+                                RuntimeTargetService runtimeTargetService,
                                 ObjectMapper objectMapper) {
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
@@ -107,6 +110,7 @@ public class IntegrationController implements IntegrationsApi {
         this.projectSecurityService = projectSecurityService;
         this.gcpBillingConnector = gcpBillingConnector;
         this.gscConnector = gscConnector;
+        this.runtimeTargetService = runtimeTargetService;
         this.objectMapper = objectMapper;
     }
 
@@ -226,6 +230,9 @@ public class IntegrationController implements IntegrationsApi {
     public ResponseEntity<Void> deleteConnection(String projectId, String connectorId, String connectionId) {
         requireAdminOrCreator(projectId);
         requireConnection(projectId, connectorId, connectionId);
+        // Before the row goes away (runtime_targets.connection_id is ON DELETE SET NULL): flip
+        // referencing runtime targets to ERROR and close their cached Cloud Run clients.
+        runtimeTargetService.onConnectionDeleted(connectionId);
         connectionService.delete(connectionId);
         return ResponseEntity.noContent().build();
     }

@@ -28,10 +28,11 @@ import java.util.UUID;
  * Executes {@code uses: claude-code} workflow steps by launching a Cloud Run Job execution
  * ({@link CloudRunJobLauncher}) against a target resolved by {@link RuntimeTargetResolver}, polling
  * to completion, and reading the result from the {@link WorkflowStepRun} row the container
- * self-reported into via the {@code /internal/v1} step-complete callback (Phase 2). Self-hosted
+ * self-reported into via the {@code /internal/v1} step-complete callback. Self-hosted
  * {@code claude-code} steps never reach this class — {@link WorkflowJobOrchestrator} routes
  * {@code runs-on: self-hosted} jobs to the daemon before entering the step loop; this executor
- * rejects anything the resolver doesn't resolve (today, only {@code runs-on: cloud-run}).
+ * rejects anything the resolver doesn't resolve ({@code runs-on: cloud-run} or a named, ACTIVE
+ * project runtime target).
  *
  * <h2>Credentials</h2>
  * The Anthropic API key comes from the project's {@code claude} {@link ProviderCredentialService}

@@ -67,6 +67,7 @@ class WorkflowIntegrationToolsTest {
     @MockitoBean private ProjectSecurityService projectSecurityService;
     @MockitoBean private Optional<GcpBillingConnector> gcpBillingConnector;
     @MockitoBean private Optional<GscConnector> gscConnector;
+    @MockitoBean private com.conductor.service.RuntimeTargetService runtimeTargetService;
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     @MockitoBean private JwtService jwtService;
     @MockitoBean private UserRepository userRepository;

@@ -29,10 +29,9 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>All three methods resolve their clients via {@link CloudRunClientFactory#forTarget} — the
  * builtin target uses the operator-configured default clients, a customer target
- * ({@code connectionId != null}) gets clients built from that connection's own credentials. Unlike
- * the Phase 0 version, poll/cancel are NOT hardwired to the injected default clients: a customer
- * target's executions live in the customer's own GCP project and are invisible to Conductor's
- * credentials.
+ * ({@code connectionId != null}) gets clients built from that connection's own credentials.
+ * Poll/cancel must go through the factory too, not default clients: a customer target's executions
+ * live in the customer's own GCP project and are invisible to Conductor's credentials.
  *
  * <p>Assumes the Job has exactly one container — {@link RunJobRequest.Overrides.ContainerOverride}
  * is built without a {@code name}, which Cloud Run applies to the job's sole container.

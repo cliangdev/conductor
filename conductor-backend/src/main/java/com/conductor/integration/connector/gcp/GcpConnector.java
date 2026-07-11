@@ -49,7 +49,7 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>Beyond the {@link FetchConnector} SPI (health + a light identity snapshot), this connector
  * exposes provisioning/verification helpers — {@link #verifyImage}, {@link #listRepositories},
- * {@link #ensureJob} — called directly by the runtime-target provisioning service (Phase 2), the same
+ * {@link #ensureJob} — called directly by the runtime-target provisioning service, the same
  * precedent as {@code GcpBillingConnector.listGcpProjects}. These are NOT part of the FetchConnector
  * SPI; the generic tool-spec "operations" in {@code tool-specs/gcp.json} are output-key discovery
  * metadata only, not parameterized calls.

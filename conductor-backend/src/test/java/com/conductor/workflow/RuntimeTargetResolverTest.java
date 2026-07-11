@@ -65,6 +65,19 @@ class RuntimeTargetResolverTest {
     }
 
     @Test
+    void resolve_activeTargetWithNullConnectionThrowsNotReady_neverFallsBackToBuiltinCredentials() {
+        RuntimeTarget target = new RuntimeTarget();
+        target.setName("my-target");
+        target.setStatus(RuntimeTargetStatus.ACTIVE);
+        target.setConnectionId(null); // orphaned: its gcp connection was deleted (FK ON DELETE SET NULL)
+        when(runtimeTargetService.findByProjectIdAndName("proj-1", "my-target")).thenReturn(Optional.of(target));
+
+        assertThatThrownBy(() -> resolver.resolve("proj-1", "my-target"))
+                .isInstanceOf(RuntimeTargetNotReadyException.class)
+                .hasMessageContaining("connection was removed");
+    }
+
+    @Test
     void resolve_provisioningTargetThrowsNotReady() {
         RuntimeTarget target = new RuntimeTarget();
         target.setName("my-target");

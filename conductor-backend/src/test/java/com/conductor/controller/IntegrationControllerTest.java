@@ -22,6 +22,7 @@ import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.JwtService;
 import com.conductor.service.OAuthFlowService;
 import com.conductor.service.ProjectSecurityService;
+import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -71,6 +72,7 @@ class IntegrationControllerTest {
     @MockitoBean private WebhookEventRepository webhookEventRepository;
     @MockitoBean private ProjectSecurityService projectSecurityService;
     @MockitoBean private GcpBillingConnector gcpBillingConnector;
+    @MockitoBean private RuntimeTargetService runtimeTargetService;
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     // Security filter chain collaborators
@@ -291,6 +293,30 @@ class IntegrationControllerTest {
                 .andExpect(status().isBadRequest());
 
         verify(connectionService, never()).storeTokens(any(), any(), any(), any());
+    }
+
+    // ---- deleteConnection ----
+
+    @Test
+    void deleteConnection_flipsReferencingRuntimeTargetsBeforeDeleting() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Connection conn = new Connection();
+        conn.setId("conn-9");
+        conn.setProjectId(PROJECT_ID);
+        conn.setConnectorId(GCP_SA_CONNECTOR_ID);
+        when(connectionService.getById("conn-9", GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(conn));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                                + GCP_SA_CONNECTOR_ID + "/connections/conn-9")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isNoContent());
+
+        // Order matters: targets must be flipped while connection_id is still set (FK is
+        // ON DELETE SET NULL — after the delete they'd no longer be findable by connection id).
+        var inOrder = org.mockito.Mockito.inOrder(runtimeTargetService, connectionService);
+        inOrder.verify(runtimeTargetService).onConnectionDeleted("conn-9");
+        inOrder.verify(connectionService).delete("conn-9");
     }
 
     // ---- ProjectSecurityService gating on a plain read endpoint ----
