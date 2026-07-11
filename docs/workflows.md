@@ -377,7 +377,7 @@ jobs:
 
   analyze:
     needs: [collect]
-    runs-on: cloud-run            # or: self-hosted (subscription auth)
+    runs-on: cloud-run            # or: self-hosted / a runtime target — all subscription auth
     steps:
       - id: seo
         uses: claude-code
@@ -431,18 +431,18 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 | `CLAUDE_RATE_LIMITED` | The account's usage/rate limit was exhausted. |
 | `CLAUDE_TIMEOUT` | The step exceeded `timeout_minutes`. |
 | `CLAUDE_CONFIG_ERROR` | Bad step configuration (e.g. invalid `inputs`/`output_schema` JSON, or `claude` failed to launch). |
-| `CLAUDE_CREDENTIAL_MISSING` | No provider credential is configured for the project (`runs-on: cloud-run`) — set one under **Settings → Integrations**. |
-| `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` | No subscription OAuth token is configured on the daemon host (`runs-on: self-hosted`) — see [Subscription auth for claude-code steps](#subscription-auth-for-claude-code-steps). |
+| `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` | No Claude Code subscription OAuth token is configured for this runtime — self-hosted: the daemon host; cloud-run/runtime targets: the project's Claude Code credential. See "Auth & runtime targets" below. |
 | `CLAUDE_LAUNCH_ERROR` | The Cloud Run execution failed to launch, or ended without the container ever reporting a result (e.g. image pull failure, OOM kill). |
 | `PROJECT_API_KEY_MISSING` | `conductor_mcp: true` on `runs-on: cloud-run`, but the project has no active API key (**Settings → API Keys**). |
 | `RUNTIME_TARGET_NOT_FOUND` | `runs-on` names a [runtime target](#runtime-targets-bring-your-own-cloud-run) that no longer exists in the project. |
 | `RUNTIME_TARGET_NOT_READY` | The named runtime target exists but isn't `ACTIVE` (still `PROVISIONING`, or `ERROR`) — fix it under **Settings → Runtimes** and retry. |
 
-**Auth & runtime targets** — a `claude-code` step's job `runs-on` determines which Claude credential is used, and there is no fallback between them:
+**Auth & runtime targets** — `claude-code` steps are **subscription auth only, on every runtime**. The containerized Claude Code CLI is the subscription runtime; there is no API-key path for this step type:
 
-- **`runs-on: self-hosted`** uses **subscription auth**: run `claude setup-token` on the daemon host, then `conductor config set-claude-code-oauth-token <token>` to store it in `~/.conductor/config.json`. The token never leaves the machine or transits Conductor's backend — the daemon injects it directly into the container. Billed against the owner's Claude Pro/Max plan, not metered API usage. Per Anthropic's guidance, subscription auth is meant for an individual's own automation, not shared/production use — use `cloud-run` for that.
-- **`runs-on: cloud-run`** uses a **per-project Anthropic API key** — the same provider credential the `agent` step uses (**Settings → Integrations**, resolved at runtime, never in the YAML). Billed as metered API usage.
-- **`runs-on: <runtime-target>`** (a named [runtime target](#runtime-targets-bring-your-own-cloud-run)) works exactly like `cloud-run` credential-wise — per-project Anthropic API key, metered — but the container executes as a Cloud Run Job in **your own GCP project**, pulling the image you configured on the target.
+- **`runs-on: self-hosted`**: run `claude setup-token` on the daemon host, then `conductor config set-claude-code-oauth-token <token>` to store it in `~/.conductor/config.json`. The token never leaves the machine or transits Conductor's backend — the daemon injects it directly into the container.
+- **`runs-on: cloud-run`** and **`runs-on: <runtime-target>`**: run `claude setup-token` and paste the result as the project's **Claude Code (subscription)** credential (**Agents → Providers**, KMS-encrypted, write-only — never returned by the API, resolved at runtime, never in the YAML). This is a distinct credential from the `claude` provider the `agent` step uses.
+
+All three are billed against the token owner's Claude Pro/Max plan, not metered API usage. Per Anthropic's guidance, subscription auth is meant for an individual's own automation, not shared/production/metered use — for that, use the **`agent`** step instead (direct API calls against a per-project Anthropic API key), not a containerized `claude-code` step.
 
 ---
 
@@ -653,7 +653,7 @@ jobs:
           prompt: Summarize the attached data.
 ```
 
-Currently only meaningful for `claude-code` steps. The step runs as a **Google Cloud Run Job execution** on Conductor's GCP project, using a per-project Anthropic API key rather than your own infrastructure. No setup required on your end beyond configuring a `claude` provider credential under **Settings → Integrations** — see "Auth & runtime targets" in the `claude-code` step section above.
+Currently only meaningful for `claude-code` steps. The step runs as a **Google Cloud Run Job execution** on Conductor's GCP project rather than your own infrastructure, using subscription auth. No setup required on your end beyond configuring the project's **Claude Code (subscription)** credential under **Agents → Providers** — see "Auth & runtime targets" in the `claude-code` step section above.
 
 **One-time infra setup** (operator-only, not per-project): the backend launches executions against a pre-created Cloud Run Job resource rather than creating one per run — image, retry policy, etc. are pinned on that resource:
 
@@ -700,22 +700,28 @@ Creating (or editing) a target provisions it synchronously: Conductor **verifies
 
 Deleting a target removes only Conductor's record — **the Cloud Run Job in your project is left in place**.
 
-**Choosing an image.** The image must honor the Conductor runner contract (the `conductor-claude-entrypoint` self-reporting entrypoint — see [Runner image](#runner-image)). Two patterns:
+**Choosing an image.** The image must honor the Conductor runner contract (the `conductor-claude-entrypoint` self-reporting entrypoint — see [Runner image](#runner-image)). For claude-code-only targets, prefer the **dedicated claude runner** (`runner-image/Dockerfile.claude-runner`): node-slim + pinned Claude CLI + pre-warmed MCP resolution, with `DISABLE_AUTOUPDATER=1` — it deliberately omits the Python/gh/Docker-CLI tooling that only `docker` steps need, so it's substantially smaller and cold-starts faster. Patterns:
 
-- **Mirror the official image** into your Artifact Registry:
+- **Build the dedicated claude runner** into your Artifact Registry (not yet published to a public registry — built from the repo for now):
+  ```bash
+  docker build --platform linux/amd64 -f runner-image/Dockerfile.claude-runner \
+    -t us-central1-docker.pkg.dev/PROJECT/conductor/claude-runner:1 runner-image/
+  docker push us-central1-docker.pkg.dev/PROJECT/conductor/claude-runner:1
+  ```
+- **Mirror the general-purpose image** into your Artifact Registry (works for claude-code too, just bigger):
   ```bash
   docker pull ghcr.io/cliangdev/conductor-runner:3
   docker tag ghcr.io/cliangdev/conductor-runner:3 us-central1-docker.pkg.dev/PROJECT/conductor/runner:3
   docker push us-central1-docker.pkg.dev/PROJECT/conductor/runner:3
   ```
-- **Derive a custom image** that bakes your methodology in as a Claude Code skill (plus any extra tooling), keeping the task prompt in the workflow YAML thin:
+- **Derive a custom image** that bakes your methodology in as a Claude Code skill (plus any extra tooling), keeping the task prompt in the workflow YAML thin — base it on either runner image:
   ```dockerfile
-  FROM ghcr.io/cliangdev/conductor-runner:3
+  FROM us-central1-docker.pkg.dev/PROJECT/conductor/claude-runner:1
   COPY skills/seo-report/ /home/runner/.claude/skills/seo-report/
   ```
   Build and push it from your own CI. The base image already contains the Claude CLI and the entrypoint — don't override `ENTRYPOINT`/`CMD`, don't switch off the non-root `runner` user, and leave `/conductor/{workspace,inputs,outputs}` alone. A step prompt can then just say *"Use the seo-report skill on the inputs in /conductor/inputs/"* (add `Skill` to `allowed_tools`).
 
-Credential-wise a runtime-target job behaves like `cloud-run`: the per-project Anthropic API key (and project API key for `conductor_mcp: true`) are injected by the backend; compute runs — and is billed — in your GCP project.
+Credential-wise a runtime-target job behaves like `cloud-run`: the project's Claude Code subscription token (and project API key for `conductor_mcp: true`) are injected by the backend; compute runs — and is billed — in your GCP project.
 
 ---
 
@@ -760,6 +766,8 @@ conductor config set-claude-code-oauth-token <token>
 
 If no token is configured, a `claude-code` step dispatched to that daemon fails immediately with `errorReason: CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` rather than silently falling back to any other credential.
 
+`runs-on: cloud-run` and named runtime targets also use subscription auth, but via a separate project-level credential (**Agents → Providers → Claude Code (subscription)**) rather than this daemon-local token — see "Auth & runtime targets" under the `claude-code` step above.
+
 ### Runner image
 
 When a `docker` step uses `uses: docker://` (no image name), or a job runs a `claude-code` step, the daemon pulls the default Conductor runner image:
@@ -779,6 +787,8 @@ This image includes:
 | Claude CLI | pinned (bumped deliberately per release) |
 | `curl`, `git`, `jq` | latest stable |
 | `conductor-claude-entrypoint` | self-reporting entrypoint used by `claude-code` steps (see below) |
+
+A **dedicated claude-code image** also exists (`runner-image/Dockerfile.claude-runner`): node-slim + the same pinned Claude CLI + `conductor-claude-entrypoint`, without the Python/gh/Docker-CLI tooling above. Today it's consumed via a [runtime target](#runtime-targets-bring-your-own-cloud-run)'s image field; making it the default image for self-hosted claude-code dispatch is tracked in #268.
 
 The container runs as a non-root `runner` user and ships with **no default `ENTRYPOINT`/`CMD`** — a plain `docker` step's `run:` script executes as before; a `claude-code` step explicitly invokes `conductor-claude-entrypoint`, which materializes the step's `inputs` under `/conductor/inputs/`, optionally wires up the Conductor MCP server, runs `claude -p` with the step's flags, streams logs, and self-reports the result (outputs + `errorReason`) back to Conductor — the same entrypoint runs unmodified whether the launcher is the self-hosted daemon or a Cloud Run Job execution.
 

@@ -35,8 +35,12 @@ import java.util.UUID;
  * project runtime target).
  *
  * <h2>Credentials</h2>
- * The Anthropic API key comes from the project's {@code claude} {@link ProviderCredentialService}
- * credential (the same BYO-key store the {@code agent} step uses). When {@code conductor_mcp: true},
+ * {@code claude-code} steps are subscription-auth only, on every runtime: the container is the
+ * subscription runtime, and the {@link ProviderCredentialService} credential stored under provider
+ * id {@code claude-code} — a Claude Code OAuth token from {@code claude setup-token}, distinct from
+ * the {@code claude} provider the {@code agent} step's Anthropic API key lives under — is injected
+ * as {@code CLAUDE_CODE_OAUTH_TOKEN}. {@code ANTHROPIC_API_KEY} is never set by this class; API-key
+ * users should use the {@code agent} step instead. When {@code conductor_mcp: true},
  * the container also needs a Conductor project API key for its MCP server — {@link ProjectApiKey}'s
  * {@code key_value} column stores the raw key in plaintext (it's looked up by raw value for API-key
  * auth, see {@code ProjectApiKeyRepository#findByKeyValueWithProject}), so it's recovered directly via
@@ -64,7 +68,8 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
     private static final Logger log = LoggerFactory.getLogger(ClaudeCodeStepExecutor.class);
 
     private static final String STEP_TYPE = "claude-code";
-    private static final String CLAUDE_PROVIDER = "claude";
+    /** Distinct from {@code "claude"}, the {@code agent} step's Anthropic API-key provider. */
+    private static final String CLAUDE_CODE_PROVIDER = "claude-code";
     private static final int DEFAULT_TIMEOUT_MINUTES = 30;
     private static final int MAX_TIMEOUT_MINUTES = 120;
     private static final int POLL_INTERVAL_SECONDS = 10;
@@ -137,9 +142,11 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         }
         String prompt = interpolator.interpolate(promptObj.toString(), ctx);
 
-        Optional<String> apiKey = credentialService.resolveApiKey(projectId, CLAUDE_PROVIDER);
-        if (apiKey.isEmpty()) {
-            return StepResult.failed("", "CLAUDE_CREDENTIAL_MISSING: no Claude API key configured for this project");
+        Optional<String> oauthToken = credentialService.resolveApiKey(projectId, CLAUDE_CODE_PROVIDER);
+        if (oauthToken.isEmpty()) {
+            return StepResult.failed("", "CLAUDE_SUBSCRIPTION_NOT_CONFIGURED: no Claude Code subscription "
+                    + "token configured for this project. Run 'claude setup-token' and store the result as "
+                    + "the project's Claude Code credential under Agents → Providers.");
         }
 
         boolean conductorMcp = getBooleanOrDefault(stepDef, "conductor_mcp", false);
@@ -175,7 +182,7 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         }
 
         Map<String, String> env = buildEnv(stepDef, ctx, prompt, projectId, runId, jobRun, workerJobId,
-                timeoutMinutes, conductorMcp, conductorApiKey, apiKey.get());
+                timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get());
         ContainerTask task = new ContainerTask(image, CONTAINER_COMMAND, env, timeoutMinutes);
 
         logBuilder.append("→ Launching Cloud Run execution (timeout=").append(timeoutMinutes).append("m)\n");
@@ -223,7 +230,7 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
     private Map<String, String> buildEnv(Map<String, Object> stepDef, RuntimeContext ctx, String prompt,
                                           String projectId, String runId, WorkflowJobRun jobRun, String workerJobId,
                                           int timeoutMinutes, boolean conductorMcp, String conductorApiKey,
-                                          String anthropicApiKey) {
+                                          String oauthToken) {
         Map<String, String> env = new LinkedHashMap<>();
         env.put("CONDUCTOR_STEP_PROMPT", prompt);
 
@@ -269,9 +276,8 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         if (conductorMcp) {
             env.put("CONDUCTOR_API_KEY", conductorApiKey);
         }
-        // Cloud Run always uses API-key billing; CLAUDE_CODE_OAUTH_TOKEN is a self-hosted-only concept
-        // and must never be set here (that path never reaches this executor).
-        env.put("ANTHROPIC_API_KEY", anthropicApiKey);
+        // Subscription auth only, on every runtime this executor launches — never ANTHROPIC_API_KEY.
+        env.put("CLAUDE_CODE_OAUTH_TOKEN", oauthToken);
         return env;
     }
 

@@ -80,7 +80,7 @@ class ClaudeCodeStepExecutorTest {
     }
 
     private void stubHappyCredentials() {
-        when(credentialService.resolveApiKey(PROJECT_ID, "claude")).thenReturn(Optional.of("sk-ant-xyz"));
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
         when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
         when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
         when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
@@ -154,19 +154,19 @@ class ClaudeCodeStepExecutorTest {
     }
 
     @Test
-    void execute_missingCredentialReturnsFailed() {
-        when(credentialService.resolveApiKey(PROJECT_ID, "claude")).thenReturn(Optional.empty());
+    void execute_missingCredentialReturnsSubscriptionNotConfigured() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.empty());
 
         StepResult result = executor.execute(context(baseStepDef(), "cloud-run"));
 
         assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
-        assertThat(result.getErrorReason()).contains("CLAUDE_CREDENTIAL_MISSING");
+        assertThat(result.getErrorReason()).contains("CLAUDE_SUBSCRIPTION_NOT_CONFIGURED");
         verifyNoInteractions(launcher, stepRunRepository);
     }
 
     @Test
     void execute_missingProjectApiKeyWithMcpEnabledReturnsFailed() {
-        when(credentialService.resolveApiKey(PROJECT_ID, "claude")).thenReturn(Optional.of("sk-ant-xyz"));
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
         when(projectApiKeyRepository.findByProjectIdAndRevokedAtIsNull(PROJECT_ID)).thenReturn(List.of());
 
         Map<String, Object> stepDef = baseStepDef();
@@ -211,7 +211,7 @@ class ClaudeCodeStepExecutorTest {
                 "conductor-claude-code".equals(target.jobName()) &&
                 target.connectionId() == null
         ), argThat(task ->
-                "sk-ant-xyz".equals(task.env().get("ANTHROPIC_API_KEY")) &&
+                "cc-oauth-xyz".equals(task.env().get("CLAUDE_CODE_OAUTH_TOKEN")) &&
                 "ck_abc123".equals(task.env().get("CONDUCTOR_API_KEY")) &&
                 "Analyze the data".equals(task.env().get("CONDUCTOR_STEP_PROMPT")) &&
                 task.env().get("CONDUCTOR_STEP_COMPLETE_URL")
@@ -223,7 +223,7 @@ class ClaudeCodeStepExecutorTest {
     }
 
     @Test
-    void execute_neverSetsOauthTokenEnvVar() {
+    void execute_neverSetsAnthropicApiKeyEnvVar() {
         stubHappyCredentials();
         when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
         when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
@@ -234,7 +234,8 @@ class ClaudeCodeStepExecutorTest {
         executor.execute(context(baseStepDef(), "cloud-run"));
 
         verify(launcher).startExecution(any(CloudRunTarget.class),
-                argThat(task -> !task.env().containsKey("CLAUDE_CODE_OAUTH_TOKEN")));
+                argThat(task -> !task.env().containsKey("ANTHROPIC_API_KEY")
+                        && task.env().containsKey("CLAUDE_CODE_OAUTH_TOKEN")));
     }
 
     @Test
@@ -328,7 +329,7 @@ class ClaudeCodeStepExecutorTest {
 
     @Test
     void execute_resumesWithoutRelaunchingWhenRowAlreadyTerminal() {
-        when(credentialService.resolveApiKey(PROJECT_ID, "claude")).thenReturn(Optional.of("sk-ant-xyz"));
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
 
         WorkflowStepRun priorRow = new WorkflowStepRun();
         priorRow.setStatus(WorkflowStepStatus.SUCCESS);
@@ -367,7 +368,7 @@ class ClaudeCodeStepExecutorTest {
 
     @Test
     void execute_resumesPollingWithStoredExecutionNameWithoutRelaunching() {
-        when(credentialService.resolveApiKey(PROJECT_ID, "claude")).thenReturn(Optional.of("sk-ant-xyz"));
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
 
         WorkflowStepRun inFlightRow = new WorkflowStepRun();
         inFlightRow.setStatus(WorkflowStepStatus.RUNNING);

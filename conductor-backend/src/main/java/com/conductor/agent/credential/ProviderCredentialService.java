@@ -5,15 +5,29 @@ import com.conductor.exception.BusinessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
- * Owns persistence + crypto for per-(project, provider) BYO API keys. One key per provider per
- * project (unique constraint); {@link #setApiKey} upserts. The decrypted key is handed to a
- * {@link com.conductor.agent.provider.ChatModelProvider} at run time and never persisted in clear.
+ * Owns persistence + crypto for per-(project, provider) BYO credentials. One credential per
+ * provider per project (unique constraint); {@link #setApiKey} upserts. The decrypted value is
+ * never persisted in clear.
+ *
+ * <p>Most providers are {@link com.conductor.agent.provider.ChatModelProvider} ids (e.g.
+ * {@code claude}, {@code gemini}) — the API key is handed to that provider at run time for the
+ * {@code agent} step. {@link #NON_MODEL_PROVIDERS} additionally allows a small set of provider ids
+ * that aren't chat-completion providers and so aren't in {@link ModelProviderRegistry}: today just
+ * {@code claude-code}, the Claude Code subscription OAuth token consumed by {@code claude-code}
+ * workflow steps (see {@code ClaudeCodeStepExecutor}). Keeping it out of the model registry means it
+ * can never be selected as an {@code agent} step's model provider.
  */
 @Service
 public class ProviderCredentialService {
+
+    /** Non-{@link com.conductor.agent.provider.ChatModelProvider} provider ids {@link #setApiKey} also accepts. */
+    public static final Set<String> NON_MODEL_PROVIDERS = Set.of("claude-code");
 
     private final ProviderCredentialRepository repository;
     private final ProviderCredentialCrypto crypto;
@@ -27,12 +41,13 @@ public class ProviderCredentialService {
         this.providerRegistry = providerRegistry;
     }
 
-    /** Create or replace the API key for a project + provider. Returns the persisted credential. */
+    /** Create or replace the credential for a project + provider. Returns the persisted row. */
     @Transactional
     public ProviderCredential setApiKey(String projectId, String provider, String apiKey) {
-        if (providerRegistry.findById(provider).isEmpty()) {
-            throw new BusinessException("Unknown model provider: " + provider
-                    + ". Known providers: " + providerRegistry.providerIds());
+        if (providerRegistry.findById(provider).isEmpty() && !NON_MODEL_PROVIDERS.contains(provider)) {
+            List<String> known = new ArrayList<>(providerRegistry.providerIds());
+            known.addAll(NON_MODEL_PROVIDERS);
+            throw new BusinessException("Unknown provider: " + provider + ". Known providers: " + known);
         }
         ProviderCredential credential = repository.findByProjectIdAndProvider(projectId, provider)
                 .orElseGet(() -> {
