@@ -66,7 +66,13 @@ export function listConnections(
 export function createConnection(
   projectId: string,
   connectorId: string,
-  body: { label?: string; apiKey?: string; configJson?: Record<string, unknown> },
+  body: {
+    label?: string;
+    apiKey?: string;
+    /** SERVICE_ACCOUNT connectors (e.g. gcp) — the SA JSON key. Write-only; never returned. */
+    serviceAccountKey?: string;
+    configJson?: Record<string, unknown>;
+  },
   token: string,
 ): Promise<ConnectionResponse> {
   return apiPost<ConnectionResponse>(
@@ -494,4 +500,88 @@ export function deleteProviderCredential(
   token: string,
 ): Promise<void> {
   return apiDelete(`/api/v1/projects/${projectId}/agents/providers/${provider}/credential`, token)
+}
+
+// ── Runtime targets (BYO GCP Cloud Run for claude-code workflow steps) ─────
+//
+// A named place jobs run (`runs-on: <name>`), backed by a `gcp` connection. Create/update/
+// provision are synchronous on the backend (a couple seconds) — a 2xx response does NOT mean
+// the target is ACTIVE; always read `status`/`errorMessage` off the response body.
+
+export type RuntimeTargetProvider = 'gcp-cloud-run'
+export type RuntimeTargetStatus = 'PROVISIONING' | 'ACTIVE' | 'ERROR'
+
+export interface RuntimeTarget {
+  id: string
+  name: string
+  provider: RuntimeTargetProvider
+  connectionId: string
+  gcpProjectId: string
+  region: string
+  jobName: string
+  image: string
+  status: RuntimeTargetStatus
+  errorMessage?: string | null
+  warnings?: string[] | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateRuntimeTargetBody {
+  name: string
+  provider: RuntimeTargetProvider
+  connectionId: string
+  gcpProjectId: string
+  region: string
+  image: string
+  jobName?: string
+}
+
+/** Only config fields are mutable — name/provider/connectionId are immutable after create. */
+export interface UpdateRuntimeTargetBody {
+  region?: string
+  image?: string
+  jobName?: string
+}
+
+export function listRuntimeTargets(projectId: string, token: string): Promise<RuntimeTarget[]> {
+  return apiGet<RuntimeTarget[]>(`/api/v1/projects/${projectId}/runtime-targets`, token)
+}
+
+export function createRuntimeTarget(
+  projectId: string,
+  body: CreateRuntimeTargetBody,
+  token: string,
+): Promise<RuntimeTarget> {
+  return apiPost<RuntimeTarget>(`/api/v1/projects/${projectId}/runtime-targets`, body, token)
+}
+
+export function updateRuntimeTarget(
+  projectId: string,
+  targetId: string,
+  body: UpdateRuntimeTargetBody,
+  token: string,
+): Promise<RuntimeTarget> {
+  return apiPatch<RuntimeTarget>(
+    `/api/v1/projects/${projectId}/runtime-targets/${targetId}`,
+    body,
+    token,
+  ) as Promise<RuntimeTarget>
+}
+
+export function deleteRuntimeTarget(projectId: string, targetId: string, token: string): Promise<void> {
+  return apiDelete(`/api/v1/projects/${projectId}/runtime-targets/${targetId}`, token)
+}
+
+/** Idempotent — safe to retry after an ERROR status. */
+export function provisionRuntimeTarget(
+  projectId: string,
+  targetId: string,
+  token: string,
+): Promise<RuntimeTarget> {
+  return apiPost<RuntimeTarget>(
+    `/api/v1/projects/${projectId}/runtime-targets/${targetId}/provision`,
+    {},
+    token,
+  )
 }
