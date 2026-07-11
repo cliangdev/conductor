@@ -3,8 +3,6 @@ package com.conductor.workflow;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
-
 /**
  * Local-dev stand-in for {@link CloudRunJobLauncher} — there is no GCP project to launch Cloud Run
  * Jobs against locally. Exists solely so the {@code local} Spring context resolves without a real
@@ -20,17 +18,17 @@ public class LocalNoopCloudRunJobLauncher implements CloudRunJobLauncher {
             "claude-code / cloud-run workflow steps cannot run locally.";
 
     @Override
-    public String startExecution(Map<String, String> env, int timeoutMinutes) {
+    public String startExecution(CloudRunTarget target, ContainerTask task) {
         throw new UnsupportedOperationException(MESSAGE);
     }
 
     @Override
-    public ExecutionState pollExecution(String executionName) {
+    public ExecutionState pollExecution(CloudRunTarget target, String executionName) {
         throw new UnsupportedOperationException(MESSAGE);
     }
 
     @Override
-    public void cancelExecution(String executionName) {
+    public void cancelExecution(CloudRunTarget target, String executionName) {
         throw new UnsupportedOperationException(MESSAGE);
     }
 }

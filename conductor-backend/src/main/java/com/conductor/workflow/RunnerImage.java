@@ -12,7 +12,10 @@ package com.conductor.workflow;
  *   <li>{@code runner-image/DEFAULT_IMAGE} — the published version pointer for the image build</li>
  *   <li>{@code conductor-backend/src/main/java/com/conductor/workflow/DockerStepExecutor.java}
  *       (via this constant)</li>
- *   <li>{@code conductor-tools/src/daemon/job-runner.ts} ({@code DEFAULT_RUNNER_IMAGE})</li>
+ *   <li>{@link JobDispatchPayloadService#buildPayload} (via this constant) — single-sources the image
+ *       a self-hosted daemon receives in its dispatch payload for {@code claude-code} jobs;
+ *       {@code conductor-tools/src/daemon/job-runner.ts}'s own {@code DEFAULT_RUNNER_IMAGE} constant
+ *       is now only a fallback for the (unexpected) case the payload omits an image</li>
  *   <li>the pre-created {@code conductor-claude-code} Cloud Run Job resource's pinned container
  *       image (see the {@code gcloud run jobs create} note in docs/workflows.md)</li>
  * </ul>

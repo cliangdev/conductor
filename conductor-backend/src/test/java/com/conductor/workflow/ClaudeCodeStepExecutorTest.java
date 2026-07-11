@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -38,12 +39,15 @@ class ClaudeCodeStepExecutorTest {
     @Mock private RunTokenService runTokenService;
     @Mock private ProjectSettingsRepository projectSettingsRepository;
 
+    private final RuntimeTargetResolver runtimeTargetResolver =
+            new RuntimeTargetResolver("gcp-proj", "us-central1", "conductor-claude-code");
+
     private ClaudeCodeStepExecutor executor;
 
     @BeforeEach
     void setUp() {
-        executor = new ClaudeCodeStepExecutor(launcher, credentialService, projectApiKeyRepository,
-                stepRunRepository, runTokenService, projectSettingsRepository,
+        executor = new ClaudeCodeStepExecutor(launcher, runtimeTargetResolver, credentialService,
+                projectApiKeyRepository, stepRunRepository, runTokenService, projectSettingsRepository,
                 new WorkflowInterpolator(), new ObjectMapper(), "http://localhost:8080") {
             @Override
             protected void sleepSeconds(int seconds) {
@@ -119,8 +123,8 @@ class ClaudeCodeStepExecutorTest {
     @Test
     void execute_happyPathAppliesDeclaredOutputsAndCarriesWorkerJobId() {
         stubHappyCredentials();
-        when(launcher.startExecution(anyMap(), anyInt())).thenReturn("exec-1");
-        when(launcher.pollExecution("exec-1"))
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
 
         WorkflowStepRun completedRow = new WorkflowStepRun();
@@ -143,28 +147,36 @@ class ClaudeCodeStepExecutorTest {
         assertThat(result.getOutputs().get("summary")).isEqualTo("All good");
         assertThat(result.getOutputs().get("title")).isEqualTo("Weekly Report");
 
-        verify(launcher).startExecution(argThat(env ->
-                "sk-ant-xyz".equals(env.get("ANTHROPIC_API_KEY")) &&
-                "ck_abc123".equals(env.get("CONDUCTOR_API_KEY")) &&
-                "Analyze the data".equals(env.get("CONDUCTOR_STEP_PROMPT")) &&
-                env.get("CONDUCTOR_STEP_COMPLETE_URL")
+        verify(launcher).startExecution(argThat(target ->
+                "gcp-proj".equals(target.gcpProjectId()) &&
+                "us-central1".equals(target.region()) &&
+                "conductor-claude-code".equals(target.jobName()) &&
+                target.connectionId() == null
+        ), argThat(task ->
+                "sk-ant-xyz".equals(task.env().get("ANTHROPIC_API_KEY")) &&
+                "ck_abc123".equals(task.env().get("CONDUCTOR_API_KEY")) &&
+                "Analyze the data".equals(task.env().get("CONDUCTOR_STEP_PROMPT")) &&
+                task.env().get("CONDUCTOR_STEP_COMPLETE_URL")
                         .equals("http://localhost:8080/internal/v1/workflow-runs/run-123/steps/"
-                                + env.get("CONDUCTOR_WORKER_JOB_ID") + "/complete")
-        ), eq(30));
+                                + task.env().get("CONDUCTOR_WORKER_JOB_ID") + "/complete") &&
+                task.timeoutMinutes() == 30 &&
+                RunnerImage.DEFAULT.equals(task.image())
+        ));
     }
 
     @Test
     void execute_neverSetsOauthTokenEnvVar() {
         stubHappyCredentials();
-        when(launcher.startExecution(anyMap(), anyInt())).thenReturn("exec-1");
-        when(launcher.pollExecution("exec-1"))
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
         when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
                 .thenReturn(Optional.empty());
 
         executor.execute(context(baseStepDef(), "cloud-run"));
 
-        verify(launcher).startExecution(argThat(env -> !env.containsKey("CLAUDE_CODE_OAUTH_TOKEN")), anyInt());
+        verify(launcher).startExecution(any(CloudRunTarget.class),
+                argThat(task -> !task.env().containsKey("CLAUDE_CODE_OAUTH_TOKEN")));
     }
 
     @Test
@@ -199,8 +211,8 @@ class ClaudeCodeStepExecutorTest {
 
     private void assertExitCodeMapping(int exitCode, String expectedReason) {
         stubHappyCredentials();
-        when(launcher.startExecution(anyMap(), anyInt())).thenReturn("exec-1");
-        when(launcher.pollExecution("exec-1"))
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.FAILED, Optional.of(exitCode)));
         // Container never got to self-report — no terminal row ever appears.
         when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
@@ -215,9 +227,9 @@ class ClaudeCodeStepExecutorTest {
     @Test
     void execute_containerErrorReasonPreferredOverExitCodeMapping() {
         stubHappyCredentials();
-        when(launcher.startExecution(anyMap(), anyInt())).thenReturn("exec-1");
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
         // Cloud Run itself reports exit code 77 (would map to CLAUDE_LAUNCH_ERROR)...
-        when(launcher.pollExecution("exec-1"))
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.FAILED, Optional.of(77)));
 
         // ...but the container self-reported its own, more specific errorReason first.
@@ -238,8 +250,8 @@ class ClaudeCodeStepExecutorTest {
     @Test
     void execute_timesOutAndCancelsExecution() {
         stubHappyCredentials();
-        when(launcher.startExecution(anyMap(), anyInt())).thenReturn("exec-timeout");
-        when(launcher.pollExecution("exec-timeout"))
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-timeout");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-timeout")))
                 .thenReturn(CloudRunJobLauncher.ExecutionState.running());
         when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
                 .thenReturn(Optional.empty());
@@ -251,9 +263,9 @@ class ClaudeCodeStepExecutorTest {
 
         assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
         assertThat(result.getErrorReason()).isEqualTo("CLAUDE_TIMEOUT");
-        verify(launcher).cancelExecution("exec-timeout");
+        verify(launcher).cancelExecution(any(CloudRunTarget.class), eq("exec-timeout"));
         // 1 minute / 10s poll interval = 6 polls before giving up.
-        verify(launcher, times(6)).pollExecution("exec-timeout");
+        verify(launcher, times(6)).pollExecution(any(CloudRunTarget.class), eq("exec-timeout"));
     }
 
     @Test
@@ -275,6 +287,47 @@ class ClaudeCodeStepExecutorTest {
         assertThat(result.getWorkerJobId()).isEqualTo("worker-existing");
         assertThat(result.getOutputs().get("summary")).isEqualTo("done already");
         verifyNoInteractions(launcher);
+        verify(stepRunRepository, never()).save(any());
+    }
+
+    @Test
+    void execute_persistsExecutionNameOnStepRunAfterLaunch() {
+        stubHappyCredentials();
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-777");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-777")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.empty());
+
+        executor.execute(context(baseStepDef(), "cloud-run"));
+
+        ArgumentCaptor<WorkflowStepRun> captor = ArgumentCaptor.forClass(WorkflowStepRun.class);
+        verify(stepRunRepository, atLeastOnce()).save(captor.capture());
+        assertThat(captor.getAllValues())
+                .anySatisfy(row -> assertThat(row.getExecutionName()).isEqualTo("exec-777"));
+    }
+
+    @Test
+    void execute_resumesPollingWithStoredExecutionNameWithoutRelaunching() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude")).thenReturn(Optional.of("sk-ant-xyz"));
+
+        WorkflowStepRun inFlightRow = new WorkflowStepRun();
+        inFlightRow.setStatus(WorkflowStepStatus.RUNNING);
+        inFlightRow.setWorkerJobId("worker-inflight");
+        inFlightRow.setExecutionName("exec-inflight");
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.of(inFlightRow));
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(JOB_RUN_ID, "worker-inflight"))
+                .thenReturn(Optional.of(inFlightRow));
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-inflight")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+
+        StepResult result = executor.execute(context(baseStepDef(), "cloud-run"));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        assertThat(result.getWorkerJobId()).isEqualTo("worker-inflight");
+        verify(launcher, never()).startExecution(any(), any());
+        verify(launcher).pollExecution(any(CloudRunTarget.class), eq("exec-inflight"));
         verify(stepRunRepository, never()).save(any());
     }
 
