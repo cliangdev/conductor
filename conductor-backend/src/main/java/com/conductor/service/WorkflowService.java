@@ -46,6 +46,7 @@ public class WorkflowService {
     private final WorkflowSecretRepository secretRepository;
     private final WorkflowTriggerService workflowTriggerService;
     private final WorkItemRepository workItemRepository;
+    private final RuntimeTargetService runtimeTargetService;
     private final ObjectMapper objectMapper;
 
     public WorkflowService(WorkflowDefinitionRepository workflowRepository,
@@ -55,6 +56,7 @@ public class WorkflowService {
                            WorkflowSecretRepository secretRepository,
                            @Lazy WorkflowTriggerService workflowTriggerService,
                            WorkItemRepository workItemRepository,
+                           RuntimeTargetService runtimeTargetService,
                            ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.projectRepository = projectRepository;
@@ -63,6 +65,7 @@ public class WorkflowService {
         this.secretRepository = secretRepository;
         this.workflowTriggerService = workflowTriggerService;
         this.workItemRepository = workItemRepository;
+        this.runtimeTargetService = runtimeTargetService;
         this.objectMapper = objectMapper;
     }
 
@@ -92,7 +95,8 @@ public class WorkflowService {
         if (request.getYaml() != null) {
             Set<String> secretKeys = secretRepository.findByProjectId(projectId)
                     .stream().map(s -> s.getKey()).collect(Collectors.toSet());
-            WorkflowValidationResult result = validator.validate(request.getYaml(), secretKeys);
+            WorkflowValidationResult result = validator.validate(request.getYaml(), secretKeys,
+                    runtimeTargetService.targetNames(projectId));
             if (result.hasErrors()) {
                 throw new BusinessException(String.join("; ", result.getErrors()));
             }
@@ -147,7 +151,8 @@ public class WorkflowService {
         if (request.getYaml() != null) {
             Set<String> secretKeys = secretRepository.findByProjectId(projectId)
                     .stream().map(s -> s.getKey()).collect(Collectors.toSet());
-            WorkflowValidationResult result = validator.validate(request.getYaml(), secretKeys);
+            WorkflowValidationResult result = validator.validate(request.getYaml(), secretKeys,
+                    runtimeTargetService.targetNames(projectId));
             if (result.hasErrors()) {
                 throw new BusinessException(String.join("; ", result.getErrors()));
             }
@@ -238,7 +243,7 @@ public class WorkflowService {
     public WorkflowValidationResult validate(String projectId, String yaml) {
         Set<String> secretKeys = secretRepository.findByProjectId(projectId)
                 .stream().map(s -> s.getKey()).collect(Collectors.toSet());
-        return validator.validate(yaml, secretKeys);
+        return validator.validate(yaml, secretKeys, runtimeTargetService.targetNames(projectId));
     }
 
     private WorkflowDefinition findInProject(String projectId, String workflowId) {

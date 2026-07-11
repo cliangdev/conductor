@@ -518,4 +518,115 @@ class WorkflowValidatorExtensionsTest {
         WorkflowValidationResult result = validate(yaml);
         assertThat(result.getErrors()).noneMatch(e -> e.contains("Invalid runs-on value"));
     }
+
+    // --- runtime target runs-on (3-arg validate) ---
+
+    @Test
+    void unknownRunsOnScalar_rejectedWithNewMessage_whenNoTargetsGiven() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  build:
+                    runs-on: my-target
+                    steps:
+                      - type: http
+                        url: http://example.com
+                """;
+        WorkflowValidationResult result = validator.validate(yaml, Set.of(), Set.of());
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("Invalid runs-on value: my-target")
+                && e.contains("not a built-in runner or a project runtime target"));
+    }
+
+    @Test
+    void runtimeTargetName_acceptedAsRunsOnScalar() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  build:
+                    runs-on: my-target
+                    steps:
+                      - type: http
+                        url: http://example.com
+                """;
+        WorkflowValidationResult result = validator.validate(yaml, Set.of(), Set.of("my-target"));
+        assertThat(result.getErrors()).noneMatch(e -> e.contains("Invalid runs-on value"));
+    }
+
+    @Test
+    void runtimeTargetName_acceptedForClaudeCodeStep() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  analyze:
+                    runs-on: my-target
+                    steps:
+                      - id: seo
+                        uses: claude-code
+                        with:
+                          prompt: "hello"
+                """;
+        WorkflowValidationResult result = validator.validate(yaml, Set.of(), Set.of("my-target"));
+        assertThat(result.getErrors()).isEmpty();
+    }
+
+    @Test
+    void unknownRunsOnScalar_stillRejectedEvenWithUnrelatedTargetsPresent() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  analyze:
+                    runs-on: someone-elses-target
+                    steps:
+                      - id: seo
+                        uses: claude-code
+                        with:
+                          prompt: "hello"
+                """;
+        WorkflowValidationResult result = validator.validate(yaml, Set.of(), Set.of("my-target"));
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("Invalid runs-on value: someone-elses-target"));
+    }
+
+    @Test
+    void runsOnList_behaviorUnchanged_evenWithTargetsGiven() {
+        // Lists are string-matched by the orchestrator today and are intentionally NOT validated
+        // against target names in this PR (scalar-only per the design) — no error either way.
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  build:
+                    runs-on: [self-hosted, my-target]
+                    steps:
+                      - type: http
+                        url: http://example.com
+                """;
+        WorkflowValidationResult result = validator.validate(yaml, Set.of(), Set.of());
+        assertThat(result.getErrors()).noneMatch(e -> e.contains("Invalid runs-on value"));
+    }
+
+    @Test
+    void twoArgOverload_unchanged_rejectsUnknownRunsOnScalar() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  build:
+                    runs-on: my-target
+                    steps:
+                      - type: http
+                        url: http://example.com
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("Invalid runs-on value: my-target"));
+    }
 }

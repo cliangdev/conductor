@@ -37,13 +37,15 @@ class WorkflowServiceTest {
     @Mock private WorkflowSecretRepository secretRepository;
     @Mock private WorkflowTriggerService workflowTriggerService;
     @Mock private WorkItemRepository workItemRepository;
+    @Mock private RuntimeTargetService runtimeTargetService;
 
     private WorkflowService service;
 
     @BeforeEach
     void setUp() {
         service = new WorkflowService(workflowRepository, projectRepository, projectSecurityService,
-                validator, secretRepository, workflowTriggerService, workItemRepository, new ObjectMapper());
+                validator, secretRepository, workflowTriggerService, workItemRepository,
+                runtimeTargetService, new ObjectMapper());
     }
 
     @Test

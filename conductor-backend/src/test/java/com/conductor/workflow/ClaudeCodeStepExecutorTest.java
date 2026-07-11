@@ -2,6 +2,8 @@ package com.conductor.workflow;
 
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.entity.ProjectApiKey;
+import com.conductor.entity.RuntimeTarget;
+import com.conductor.entity.RuntimeTargetStatus;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowStepRun;
@@ -9,6 +11,7 @@ import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,14 +41,16 @@ class ClaudeCodeStepExecutorTest {
     @Mock private WorkflowStepRunRepository stepRunRepository;
     @Mock private RunTokenService runTokenService;
     @Mock private ProjectSettingsRepository projectSettingsRepository;
+    @Mock private RuntimeTargetService runtimeTargetService;
 
-    private final RuntimeTargetResolver runtimeTargetResolver =
-            new RuntimeTargetResolver("gcp-proj", "us-central1", "conductor-claude-code");
+    private RuntimeTargetResolver runtimeTargetResolver;
 
     private ClaudeCodeStepExecutor executor;
 
     @BeforeEach
     void setUp() {
+        runtimeTargetResolver = new RuntimeTargetResolver("gcp-proj", "us-central1", "conductor-claude-code",
+                runtimeTargetService);
         executor = new ClaudeCodeStepExecutor(launcher, runtimeTargetResolver, credentialService,
                 projectApiKeyRepository, stepRunRepository, runTokenService, projectSettingsRepository,
                 new WorkflowInterpolator(), new ObjectMapper(), "http://localhost:8080") {
@@ -93,6 +98,59 @@ class ClaudeCodeStepExecutorTest {
         assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
         assertThat(result.getErrorReason()).contains("CLAUDE_INVALID_RUNS_ON");
         verifyNoInteractions(launcher, stepRunRepository, credentialService);
+    }
+
+    @Test
+    void execute_unknownRuntimeTargetReturnsRuntimeTargetNotFound() {
+        when(runtimeTargetService.findByProjectIdAndName(PROJECT_ID, "my-target")).thenReturn(Optional.empty());
+
+        StepResult result = executor.execute(context(baseStepDef(), "my-target"));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).contains("RUNTIME_TARGET_NOT_FOUND");
+        verifyNoInteractions(launcher, stepRunRepository, credentialService);
+    }
+
+    @Test
+    void execute_provisioningRuntimeTargetReturnsRuntimeTargetNotReady() {
+        RuntimeTarget target = new RuntimeTarget();
+        target.setName("my-target");
+        target.setStatus(RuntimeTargetStatus.PROVISIONING);
+        when(runtimeTargetService.findByProjectIdAndName(PROJECT_ID, "my-target")).thenReturn(Optional.of(target));
+
+        StepResult result = executor.execute(context(baseStepDef(), "my-target"));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).contains("RUNTIME_TARGET_NOT_READY");
+        verifyNoInteractions(launcher, stepRunRepository, credentialService);
+    }
+
+    @Test
+    void execute_activeRuntimeTargetLaunchesAgainstResolvedCloudRunTarget() {
+        RuntimeTarget target = new RuntimeTarget();
+        target.setName("my-target");
+        target.setStatus(RuntimeTargetStatus.ACTIVE);
+        target.setConnectionId("conn-1");
+        when(runtimeTargetService.findByProjectIdAndName(PROJECT_ID, "my-target")).thenReturn(Optional.of(target));
+        when(runtimeTargetService.configOf(target)).thenReturn(new RuntimeTargetService.TargetRuntimeConfig(
+                "customer-proj", "us-east1", "conductor-my-target",
+                "us-east1-docker.pkg.dev/customer-proj/repo/image:1", List.of()));
+        stubHappyCredentials();
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.empty());
+
+        StepResult result = executor.execute(context(baseStepDef(), "my-target"));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        verify(launcher).startExecution(argThat(t ->
+                "customer-proj".equals(t.gcpProjectId()) &&
+                "us-east1".equals(t.region()) &&
+                "conductor-my-target".equals(t.jobName()) &&
+                "conn-1".equals(t.connectionId())
+        ), argThat(task -> "us-east1-docker.pkg.dev/customer-proj/repo/image:1".equals(task.image())));
     }
 
     @Test

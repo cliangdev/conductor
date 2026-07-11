@@ -17,7 +17,19 @@ public class WorkflowValidator {
     private static final java.util.regex.Pattern CRON_PATTERN =
             java.util.regex.Pattern.compile("^\\S+ \\S+ \\S+ \\S+ \\S+$");
 
+    /** Delegates with no project runtime targets — existing callers/tests keep today's behavior unchanged. */
     public WorkflowValidationResult validate(String yaml, Set<String> existingSecretKeys) {
+        return validate(yaml, existingSecretKeys, Set.of());
+    }
+
+    /**
+     * @param runtimeTargetNames ALL of the project's runtime target names (any status, not just
+     *                           ACTIVE — see {@code RuntimeTargetService#targetNames}), accepted as
+     *                           {@code runs-on} scalars alongside the builtin conductor/self-hosted/
+     *                           cloud-run values. Readiness (target must be ACTIVE) is enforced at
+     *                           execution time by {@code RuntimeTargetResolver}, not here.
+     */
+    public WorkflowValidationResult validate(String yaml, Set<String> existingSecretKeys, Set<String> runtimeTargetNames) {
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
 
@@ -81,8 +93,9 @@ public class WorkflowValidator {
                 if (runsOnVal instanceof List) {
                     // List of strings — allowed
                 } else if (runsOnVal instanceof String runsOnStr) {
-                    if (!VALID_RUNS_ON_SCALARS.contains(runsOnStr)) {
-                        errors.add("Invalid runs-on value: " + runsOnStr);
+                    if (!VALID_RUNS_ON_SCALARS.contains(runsOnStr) && !runtimeTargetNames.contains(runsOnStr)) {
+                        errors.add("Invalid runs-on value: " + runsOnStr
+                                + " (not a built-in runner or a project runtime target)");
                     }
                 } else {
                     errors.add("Invalid runs-on value: " + runsOnVal);
@@ -129,7 +142,7 @@ public class WorkflowValidator {
                     }
 
                     if (usesVal instanceof String uses && CLAUDE_CODE_USES.equals(uses)) {
-                        validateClaudeCodeStep(step, jobId, runsOnVal, errors);
+                        validateClaudeCodeStep(step, jobId, runsOnVal, runtimeTargetNames, errors);
                         continue;
                     }
 
@@ -280,10 +293,12 @@ public class WorkflowValidator {
      * passing unknown {@code uses} values through unchecked.
      */
     @SuppressWarnings("unchecked")
-    private void validateClaudeCodeStep(Map<String, Object> step, String jobId, Object runsOnVal, List<String> errors) {
-        if (!isClaudeCodeRunsOn(runsOnVal)) {
+    private void validateClaudeCodeStep(Map<String, Object> step, String jobId, Object runsOnVal,
+                                        Set<String> runtimeTargetNames, List<String> errors) {
+        if (!isClaudeCodeRunsOn(runsOnVal, runtimeTargetNames)) {
             errors.add("claude-code step in job " + jobId
-                    + " requires runs-on: cloud-run or self-hosted (claude-code does not run on the shared conductor runner)");
+                    + " requires runs-on: cloud-run or self-hosted, or a project runtime target "
+                    + "(claude-code does not run on the shared conductor runner)");
         }
 
         Object withObj = step.get("with");
@@ -330,12 +345,13 @@ public class WorkflowValidator {
         }
     }
 
-    private boolean isClaudeCodeRunsOn(Object runsOnVal) {
+    private boolean isClaudeCodeRunsOn(Object runsOnVal, Set<String> runtimeTargetNames) {
         if (runsOnVal instanceof String s) {
-            return "cloud-run".equals(s) || "self-hosted".equals(s);
+            return "cloud-run".equals(s) || "self-hosted".equals(s) || runtimeTargetNames.contains(s);
         }
         if (runsOnVal instanceof List<?> list) {
-            return list.stream().anyMatch(v -> "cloud-run".equals(v) || "self-hosted".equals(v));
+            return list.stream().anyMatch(v -> "cloud-run".equals(v) || "self-hosted".equals(v)
+                    || runtimeTargetNames.contains(v));
         }
         return false;
     }

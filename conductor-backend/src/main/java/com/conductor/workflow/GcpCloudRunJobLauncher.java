@@ -27,6 +27,13 @@ import java.util.concurrent.TimeoutException;
  * setup); per-execution overrides here only carry env vars and the timeout, since Cloud Run Job
  * execution overrides cannot change the image.
  *
+ * <p>All three methods resolve their clients via {@link CloudRunClientFactory#forTarget} — the
+ * builtin target uses the operator-configured default clients, a customer target
+ * ({@code connectionId != null}) gets clients built from that connection's own credentials. Unlike
+ * the Phase 0 version, poll/cancel are NOT hardwired to the injected default clients: a customer
+ * target's executions live in the customer's own GCP project and are invisible to Conductor's
+ * credentials.
+ *
  * <p>Assumes the Job has exactly one container — {@link RunJobRequest.Overrides.ContainerOverride}
  * is built without a {@code name}, which Cloud Run applies to the job's sole container.
  */
@@ -36,16 +43,10 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
 
     private static final Logger log = LoggerFactory.getLogger(GcpCloudRunJobLauncher.class);
 
-    private final JobsClient jobsClient;
-    private final ExecutionsClient executionsClient;
-    private final TasksClient tasksClient;
+    private final CloudRunClientFactory clientFactory;
 
-    public GcpCloudRunJobLauncher(JobsClient jobsClient,
-                                   ExecutionsClient executionsClient,
-                                   TasksClient tasksClient) {
-        this.jobsClient = jobsClient;
-        this.executionsClient = executionsClient;
-        this.tasksClient = tasksClient;
+    public GcpCloudRunJobLauncher(CloudRunClientFactory clientFactory) {
+        this.clientFactory = clientFactory;
     }
 
     @Override
@@ -54,7 +55,7 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
                 RunJobRequest.Overrides.ContainerOverride.newBuilder();
         task.env().forEach((k, v) -> containerOverride.addEnv(EnvVar.newBuilder().setName(k).setValue(v)));
 
-        JobsClient client = resolveClient(target);
+        JobsClient jobsClient = clientFactory.forTarget(target).jobs();
         RunJobRequest request = RunJobRequest.newBuilder()
                 .setName(JobName.of(target.gcpProjectId(), target.region(), target.jobName()).toString())
                 .setOverrides(RunJobRequest.Overrides.newBuilder()
@@ -67,7 +68,7 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
             // The RunJob LRO's initial metadata carries the freshly created Execution — waiting for
             // metadata (not the full operation) returns as soon as the execution exists, without
             // blocking for it to finish. We drive our own poll/timeout loop from there.
-            Execution initial = client.runJobAsync(request).getMetadata()
+            Execution initial = jobsClient.runJobAsync(request).getMetadata()
                     .get(30, TimeUnit.SECONDS);
             log.info("Started Cloud Run execution {} for job {}", initial.getName(), target.jobName());
             return initial.getName();
@@ -79,19 +80,20 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
 
     @Override
     public ExecutionState pollExecution(CloudRunTarget target, String executionName) {
+        ExecutionsClient executionsClient = clientFactory.forTarget(target).executions();
         Execution execution = executionsClient.getExecution(executionName);
 
         if (!execution.hasCompletionTime()) {
             return ExecutionState.running();
         }
         if (execution.getCancelledCount() > 0) {
-            return new ExecutionState(Status.CANCELLED, exitCodeFor(executionName));
+            return new ExecutionState(Status.CANCELLED, exitCodeFor(target, executionName));
         }
         if (execution.getFailedCount() > 0) {
-            return new ExecutionState(Status.FAILED, exitCodeFor(executionName));
+            return new ExecutionState(Status.FAILED, exitCodeFor(target, executionName));
         }
         if (execution.getSucceededCount() > 0) {
-            return new ExecutionState(Status.SUCCEEDED, exitCodeFor(executionName));
+            return new ExecutionState(Status.SUCCEEDED, exitCodeFor(target, executionName));
         }
         // Completion time set but no terminal task counts yet — treat as still running rather than
         // guessing; the next poll tick will resolve once counts land.
@@ -101,27 +103,19 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
     @Override
     public void cancelExecution(CloudRunTarget target, String executionName) {
         try {
-            executionsClient.cancelExecutionAsync(ExecutionName.parse(executionName));
+            clientFactory.forTarget(target).executions().cancelExecutionAsync(ExecutionName.parse(executionName));
         } catch (Exception e) {
             log.warn("Failed to cancel Cloud Run execution {}: {}", executionName, e.getMessage());
         }
     }
 
     /**
-     * Resolves the {@link JobsClient} to use for the given target. Only the single injected,
-     * operator-configured client exists today ({@code target.connectionId() == null} always); this is
-     * the seam where a per-connection client cache plugs in for customer-owned Cloud Run projects.
-     */
-    private JobsClient resolveClient(CloudRunTarget target) {
-        return jobsClient;
-    }
-
-    /**
      * Best-effort exit code lookup via the Tasks API (single-task jobs only). Never throws — this
      * is a fallback signal only; the container's own self-reported errorReason is authoritative.
      */
-    private Optional<Integer> exitCodeFor(String executionName) {
+    private Optional<Integer> exitCodeFor(CloudRunTarget target, String executionName) {
         try {
+            TasksClient tasksClient = clientFactory.forTarget(target).tasks();
             for (Task task : tasksClient.listTasks(executionName).iterateAll()) {
                 if (task.hasLastAttemptResult()) {
                     return Optional.of(task.getLastAttemptResult().getExitCode());

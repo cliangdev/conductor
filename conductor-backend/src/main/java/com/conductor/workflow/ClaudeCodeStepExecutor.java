@@ -107,12 +107,18 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
 
     @Override
     public StepResult execute(StepExecutionContext context) {
-        Optional<RuntimeTargetResolver.ResolvedRuntime> resolved =
-                runtimeTargetResolver.resolve(context.getProjectId(), context.getRunsOn());
+        Optional<RuntimeTargetResolver.ResolvedRuntime> resolved;
+        try {
+            resolved = runtimeTargetResolver.resolve(context.getProjectId(), context.getRunsOn());
+        } catch (RuntimeTargetNotFoundException e) {
+            return StepResult.failed("", "RUNTIME_TARGET_NOT_FOUND: " + e.getMessage());
+        } catch (RuntimeTargetNotReadyException e) {
+            return StepResult.failed("", "RUNTIME_TARGET_NOT_READY: " + e.getMessage());
+        }
         if (resolved.isEmpty()) {
             return StepResult.failed("", "CLAUDE_INVALID_RUNS_ON: claude-code steps require the job to "
-                    + "declare 'runs-on: cloud-run' (or 'runs-on: self-hosted', dispatched separately "
-                    + "to the daemon). Got: " + context.getRunsOn());
+                    + "declare 'runs-on: cloud-run' (or a project runtime target, or 'runs-on: self-hosted' "
+                    + "dispatched separately to the daemon). Got: " + context.getRunsOn());
         }
         CloudRunTarget target = resolved.get().target();
         String image = resolved.get().image();
