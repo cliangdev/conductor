@@ -4,6 +4,7 @@ import com.conductor.entity.Connection;
 import com.conductor.entity.ConnectionDataCache;
 import com.conductor.entity.User;
 import com.conductor.entity.WebhookEvent;
+import com.conductor.exception.BusinessException;
 import com.conductor.generated.api.IntegrationsApi;
 import com.conductor.generated.model.BqDatasetsResponse;
 import com.conductor.generated.model.BqDatasetsResponseDatasetsInner;
@@ -193,6 +194,12 @@ public class IntegrationController implements IntegrationsApi {
         String generatedSecret = null;
         if (spec.authType() == AuthType.API_KEY && request != null && request.getApiKey() != null) {
             connectionService.storeTokens(conn, request.getApiKey(), null, null);
+        } else if (spec.authType() == AuthType.SERVICE_ACCOUNT
+                && request != null && request.getServiceAccountKey() != null) {
+            requireValidServiceAccountKey(request.getServiceAccountKey());
+            // The SA JSON key rides the encrypted accessToken slot — same crypto path as API_KEY,
+            // no CredentialService change needed.
+            connectionService.storeTokens(conn, request.getServiceAccountKey(), null, null);
         } else if (spec.authType() == AuthType.WEBHOOK) {
             generatedSecret = randomSecret();
             connectionService.storeWebhookSecret(conn, generatedSecret);
@@ -414,6 +421,19 @@ public class IntegrationController implements IntegrationsApi {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Connection not found in project");
         }
         return conn;
+    }
+
+    /** SERVICE_ACCOUNT connectors (GCP) require a well-formed GCP service-account JSON key. */
+    private void requireValidServiceAccountKey(String key) {
+        Map<String, Object> parsed;
+        try {
+            parsed = objectMapper.readValue(key, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            throw new BusinessException("Invalid service-account key: not valid JSON");
+        }
+        if (!"service_account".equals(parsed.get("type"))) {
+            throw new BusinessException("Invalid service-account key: expected \"type\": \"service_account\"");
+        }
     }
 
     private String randomSecret() {

@@ -1,0 +1,37 @@
+{
+  "description": "Credentials and provisioning for a customer-owned GCP project: Cloud Run job execution and Artifact Registry image verification",
+  "operations": [
+    {
+      "id": "identity",
+      "description": "The GCP project and service-account identity behind this connection",
+      "params": {},
+      "outputShape": {
+        "gcpProjectId": "my-gcp-project",
+        "serviceAccountEmail": "conductor-runner@my-gcp-project.iam.gserviceaccount.com"
+      },
+      "outputKeys": ["gcpProjectId", "serviceAccountEmail"]
+    },
+    {
+      "id": "verify_image",
+      "description": "Check whether a container image exists in this project's Artifact Registry (used when provisioning a runtime target)",
+      "params": {},
+      "outputShape": {
+        "exists": true,
+        "protocolLabelPresent": false,
+        "message": "Image found. Could not verify the dev.conductor.runner.protocol OCI label — the image may not honor the runner contract."
+      },
+      "outputKeys": ["exists", "protocolLabelPresent", "message"]
+    },
+    {
+      "id": "list_repositories",
+      "description": "List Artifact Registry repositories in a GCP project/region",
+      "params": {},
+      "outputShape": {
+        "repositories": [
+          { "name": "conductor-runners", "format": "DOCKER" }
+        ]
+      },
+      "outputKeys": ["repositories"]
+    }
+  ]
+}

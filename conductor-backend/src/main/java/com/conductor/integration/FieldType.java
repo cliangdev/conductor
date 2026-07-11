@@ -7,5 +7,6 @@ public enum FieldType {
     SELECT,
     MULTISELECT,
     BOOLEAN,
-    URL_READONLY   // generated, read-only, copy-to-clipboard (e.g. a webhook URL)
+    URL_READONLY,  // generated, read-only, copy-to-clipboard (e.g. a webhook URL)
+    JSON           // multiline JSON input, rendered as a textarea (e.g. a GCP service-account key)
 }

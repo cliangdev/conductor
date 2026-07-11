@@ -4,7 +4,12 @@ import com.conductor.config.SecurityConfig;
 import com.conductor.entity.Connection;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
+import com.conductor.integration.AuthType;
+import com.conductor.integration.Connector;
+import com.conductor.integration.ConnectorConfigField;
+import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.DecryptedCredentials;
+import com.conductor.integration.FieldType;
 import com.conductor.integration.connector.GcpBillingConnector;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.repository.ConnectionDataCacheRepository;
@@ -17,11 +22,13 @@ import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.JwtService;
 import com.conductor.service.OAuthFlowService;
 import com.conductor.service.ProjectSecurityService;
+import com.fasterxml.jackson.core.type.TypeReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -30,9 +37,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -42,6 +57,7 @@ class IntegrationControllerTest {
 
     private static final String PROJECT_ID = "proj-1";
     private static final String GCP_CONNECTOR_ID = "gcp-billing";
+    private static final String GCP_SA_CONNECTOR_ID = "gcp";
 
     @Autowired
     private MockMvc mockMvc;
@@ -190,6 +206,91 @@ class IntegrationControllerTest {
                         .param("gcpProjectId", "my-gcp-project")
                         .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- createConnection (SERVICE_ACCOUNT) ----
+
+    private Connector gcpConnectorSpecMock() {
+        Connector connector = mock(Connector.class);
+        when(connector.getSpec()).thenReturn(ConnectorSpec.serviceAccount(false, List.of(
+                ConnectorConfigField.userInput("serviceAccountKey", "Service Account Key", "hint",
+                        FieldType.JSON, true))));
+        return connector;
+    }
+
+    @Test
+    void createConnection_serviceAccount_happyPath_storesKeyAndNeverEchoesIt() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Connector gcpConnector = gcpConnectorSpecMock();
+        when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(gcpConnector));
+
+        String saKeyJson = "{\"type\":\"service_account\",\"project_id\":\"p\"}";
+        when(objectMapper.readValue(eq(saKeyJson), any(TypeReference.class)))
+                .thenReturn(Map.of("type", "service_account", "project_id", "p"));
+
+        Connection created = new Connection();
+        created.setId("conn-1");
+        created.setConnectorId(GCP_SA_CONNECTOR_ID);
+        created.setAuthType("SERVICE_ACCOUNT");
+        when(connectionService.create(eq(PROJECT_ID), eq(GCP_SA_CONNECTOR_ID), eq(AuthType.SERVICE_ACCOUNT),
+                isNull(), eq("member-user-id"))).thenReturn(created);
+
+        String requestBody = "{\"serviceAccountKey\":\"" + saKeyJson.replace("\"", "\\\"") + "\"}";
+
+        var result = mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + GCP_SA_CONNECTOR_ID + "/connections")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value("conn-1"))
+                .andExpect(jsonPath("$.authType").value("SERVICE_ACCOUNT"))
+                .andReturn();
+
+        verify(connectionService).storeTokens(eq(created), eq(saKeyJson), isNull(), isNull());
+        assertThat(result.getResponse().getContentAsString()).doesNotContain("project_id", "service_account");
+    }
+
+    @Test
+    void createConnection_serviceAccount_malformedJson_returns400_andNeverStoresTokens() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Connector gcpConnector = gcpConnectorSpecMock();
+        when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(gcpConnector));
+        when(connectionService.create(any(), any(), any(), any(), any())).thenReturn(new Connection());
+        when(objectMapper.readValue(anyString(), any(TypeReference.class)))
+                .thenThrow(new RuntimeException("not valid JSON"));
+
+        String requestBody = "{\"serviceAccountKey\":\"not-json\"}";
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + GCP_SA_CONNECTOR_ID + "/connections")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isBadRequest());
+
+        verify(connectionService, never()).storeTokens(any(), any(), any(), any());
+    }
+
+    @Test
+    void createConnection_serviceAccount_wrongCredentialType_returns400() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Connector gcpConnector = gcpConnectorSpecMock();
+        when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(gcpConnector));
+        when(connectionService.create(any(), any(), any(), any(), any())).thenReturn(new Connection());
+        when(objectMapper.readValue(anyString(), any(TypeReference.class)))
+                .thenReturn(Map.of("type", "authorized_user"));
+
+        String requestBody = "{\"serviceAccountKey\":\"{\\\"type\\\":\\\"authorized_user\\\"}\"}";
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + GCP_SA_CONNECTOR_ID + "/connections")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(requestBody))
+                .andExpect(status().isBadRequest());
+
+        verify(connectionService, never()).storeTokens(any(), any(), any(), any());
     }
 
     // ---- ProjectSecurityService gating on a plain read endpoint ----

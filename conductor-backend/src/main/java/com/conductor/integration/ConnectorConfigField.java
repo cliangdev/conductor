@@ -7,8 +7,12 @@ package com.conductor.integration;
 public record ConnectorConfigField(String key, String label, String hint,
                                    FieldType type, FieldSource source, boolean required) {
 
-    /** Convenience: secret fields are masked in the UI and never returned in read responses. */
-    public boolean secret() { return type == FieldType.SECRET; }
+    /**
+     * Convenience: secret fields are masked in the UI and never returned in read responses.
+     * JSON fields carry credential material too (e.g. a GCP service-account key) and land in the same
+     * encrypted token slot as SECRET fields, so they're treated as secret as well.
+     */
+    public boolean secret() { return type == FieldType.SECRET || type == FieldType.JSON; }
 
     public static ConnectorConfigField userInput(String key, String label, String hint,
                                                  FieldType type, boolean required) {

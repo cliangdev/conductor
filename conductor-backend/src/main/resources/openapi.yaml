@@ -4136,6 +4136,11 @@ components:
         apiKey:
           type: string
           nullable: true
+        serviceAccountKey:
+          type: string
+          nullable: true
+          description: >
+            Service-account JSON key (SERVICE_ACCOUNT connectors). Write-only; never returned.
         configJson:
           type: object
           additionalProperties: true
