@@ -10,7 +10,6 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronsUpDownIcon,
-  ContainerIcon,
   FileTextIcon,
   FolderIcon,
   GitBranchIcon,
@@ -439,13 +438,6 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                       onNavigate={onNavigate}
                     >
                       API Keys
-                    </NavItem>
-                    <NavItem
-                      href={`/app/projects/${currentWorkspace.id}/settings/runtimes`}
-                      icon={<ContainerIcon className="h-4 w-4" />}
-                      onNavigate={onNavigate}
-                    >
-                      Runtimes
                     </NavItem>
                     <NavItem
                       href={`/app/projects/${currentWorkspace.id}/settings/notifications`}

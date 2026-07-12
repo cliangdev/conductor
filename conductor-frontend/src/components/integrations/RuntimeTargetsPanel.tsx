@@ -1,20 +1,14 @@
 'use client'
 
-export const dynamic = 'force-dynamic'
-
 import { useCallback, useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
-import Link from 'next/link'
 import { Loader2Icon, PlusIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
 import { RowActionsMenu } from '@/components/ui/RowActionsMenu'
-import { PageHeader } from '@/components/layout/PageHeader'
+import { useCan } from '@/contexts/PermissionsContext'
 import { useAuth } from '@/contexts/AuthContext'
-import { usePermissions } from '@/contexts/PermissionsContext'
 import {
-  listConnections,
   listRuntimeTargets,
   createRuntimeTarget,
   updateRuntimeTarget,
@@ -50,18 +44,21 @@ interface EditFormState {
   jobName: string
 }
 
-export default function RuntimesPage() {
-  const { projectId } = useParams<{ projectId: string }>()
+export default function RuntimeTargetsPanel({
+  projectId,
+  connections,
+}: {
+  projectId: string
+  connections: ConnectionSummary[]
+}) {
   const { accessToken } = useAuth()
-  const { can } = usePermissions()
-  const canMutate = can('integration.manage')
+  const canMutate = useCan('integration.manage')
 
   const [targets, setTargets] = useState<RuntimeTarget[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  const [gcpConnections, setGcpConnections] = useState<ConnectionSummary[]>([])
-  const activeGcpConnections = gcpConnections.filter((c) => c.status === 'ACTIVE')
+  const activeGcpConnections = connections.filter((c) => c.status === 'ACTIVE')
 
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState<CreateFormState>(EMPTY_CREATE_FORM)
@@ -92,17 +89,9 @@ export default function RuntimesPage() {
     }
   }, [accessToken, projectId])
 
-  const fetchGcpConnections = useCallback(async () => {
-    if (!accessToken || !projectId) return
-    try {
-      setGcpConnections(await listConnections(projectId, 'gcp', accessToken))
-    } catch {
-      setGcpConnections([])
-    }
-  }, [accessToken, projectId])
-
-  useEffect(() => { fetchTargets() }, [fetchTargets])
-  useEffect(() => { fetchGcpConnections() }, [fetchGcpConnections])
+  // Re-runs on mount and whenever the parent's connection list changes — the backend flips
+  // dependent targets to ERROR when their connection is deleted.
+  useEffect(() => { fetchTargets() }, [connections, fetchTargets])
 
   // Poll while any target is still provisioning — create/update/provision are synchronous on the
   // backend, but this keeps the list honest if another admin triggers a change concurrently.
@@ -232,23 +221,26 @@ export default function RuntimesPage() {
   }
 
   const header = (
-    <PageHeader
-      title="Runtimes"
-      description="Named Cloud Run targets — reference them in workflows with runs-on: <name>."
-      actions={
-        canMutate && activeGcpConnections.length > 0 ? (
-          <Button size="sm" onClick={openCreateModal}>
-            <PlusIcon className="h-4 w-4 mr-1.5" />
-            Add runtime
-          </Button>
-        ) : undefined
-      }
-    />
+    <div className="flex items-center justify-between gap-4">
+      <div>
+        <h2 className="text-base font-semibold text-foreground">Runtime targets</h2>
+        <p className="text-sm text-muted-foreground">
+          Named Cloud Run targets — reference them in workflows with{' '}
+          <code className="font-mono text-xs">runs-on: &lt;name&gt;</code>.
+        </p>
+      </div>
+      {canMutate && activeGcpConnections.length > 0 && (
+        <Button size="sm" onClick={openCreateModal}>
+          <PlusIcon className="h-4 w-4 mr-1.5" />
+          Add runtime
+        </Button>
+      )}
+    </div>
   )
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         {header}
         <div className="animate-pulse h-32 bg-muted rounded-lg" />
       </div>
@@ -256,28 +248,19 @@ export default function RuntimesPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {header}
 
       {loadError && <p className="text-sm text-destructive" role="alert">{loadError}</p>}
 
       {!loadError && targets.length === 0 ? (
         activeGcpConnections.length === 0 ? (
-          <div className="bg-card rounded-lg border border-border p-8 text-center">
-            <h2 className="text-base font-semibold text-foreground mb-1">Connect Google Cloud first</h2>
-            <p className="text-sm text-muted-foreground mb-4">
-              Runtime targets provision Cloud Run jobs against a connected GCP service account.
-            </p>
-            <Link
-              href={`/app/projects/${projectId}/integrations`}
-              className="text-sm font-medium text-primary hover:underline"
-            >
-              Go to Integrations →
-            </Link>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            Connect an active Google Cloud service account above to add runtime targets.
+          </p>
         ) : (
           <div className="bg-card rounded-lg border border-border p-8 text-center">
-            <h2 className="text-base font-semibold text-foreground mb-1">No runtime targets yet</h2>
+            <h3 className="text-base font-semibold text-foreground mb-1">No runtime targets yet</h3>
             <p className="text-sm text-muted-foreground mb-4">
               Add a runtime target to run claude-code workflow steps in your own GCP project.
             </p>

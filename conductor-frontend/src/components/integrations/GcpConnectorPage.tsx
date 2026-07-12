@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -11,6 +10,7 @@ import type { ConnectionSummary } from '@/lib/api';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { ConnectorIcon } from './ConnectorIcon';
 import { ServiceAccountKeyField } from './ServiceAccountKeyField';
+import RuntimeTargetsPanel from './RuntimeTargetsPanel';
 
 const CONNECTOR_ID = 'gcp';
 
@@ -129,74 +129,66 @@ export default function GcpConnectorPage({ projectId }: { projectId: string }) {
         <div className="animate-pulse h-32 bg-muted rounded-lg" />
       ) : loadError ? (
         <p className="text-sm text-destructive" role="alert">{loadError}</p>
-      ) : connections.length === 0 ? (
-        canMutate ? (
-          <div className="bg-card rounded-lg border border-border p-8 max-w-md">
-            <h2 className="text-lg font-semibold text-foreground mb-1">Connect Google Cloud</h2>
-            <p className="text-sm text-muted-foreground mb-6">
-              Paste a service account JSON key to let Conductor provision Cloud Run jobs in your project.
-            </p>
-            {connectForm}
-          </div>
-        ) : (
-          <div className="bg-card rounded-lg border border-border p-8 text-center max-w-md">
-            <p className="text-sm text-muted-foreground">Ask a project admin to connect Google Cloud.</p>
-          </div>
-        )
       ) : (
         <div className="space-y-6">
-          <div className="space-y-3">
-            {connections.map((conn) => {
-              const badge = STATUS_BADGE[conn.status];
-              return (
-                <div key={conn.id} className="bg-card rounded-lg border border-border p-4 flex items-center gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm text-foreground truncate">
-                      {conn.label || 'Service account'}
-                    </div>
-                    {conn.fetchedAt && (
-                      <div className="text-xs text-muted-foreground">
-                        Last checked {new Date(conn.fetchedAt).toLocaleString()}
+          {connections.length === 0 ? (
+            canMutate ? (
+              <div className="bg-card rounded-lg border border-border p-8 max-w-md">
+                <h2 className="text-lg font-semibold text-foreground mb-1">Connect Google Cloud</h2>
+                <p className="text-sm text-muted-foreground mb-6">
+                  Paste a service account JSON key to let Conductor provision Cloud Run jobs in your project.
+                </p>
+                {connectForm}
+              </div>
+            ) : (
+              <div className="bg-card rounded-lg border border-border p-8 text-center max-w-md">
+                <p className="text-sm text-muted-foreground">Ask a project admin to connect Google Cloud.</p>
+              </div>
+            )
+          ) : (
+            <>
+              <div className="space-y-3">
+                {connections.map((conn) => {
+                  const badge = STATUS_BADGE[conn.status];
+                  return (
+                    <div key={conn.id} className="bg-card rounded-lg border border-border p-4 flex items-center gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm text-foreground truncate">
+                          {conn.label || 'Service account'}
+                        </div>
+                        {conn.fetchedAt && (
+                          <div className="text-xs text-muted-foreground">
+                            Last checked {new Date(conn.fetchedAt).toLocaleString()}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  <Badge variant={badge.variant}>{badge.label}</Badge>
-                  {canMutate && (
-                    <button
-                      onClick={() => handleDisconnect(conn.id)}
-                      disabled={disconnecting === conn.id}
-                      className="text-xs font-medium text-destructive hover:underline disabled:opacity-50 flex-shrink-0"
-                    >
-                      {disconnecting === conn.id ? 'Removing…' : 'Remove'}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                      <Badge variant={badge.variant}>{badge.label}</Badge>
+                      {canMutate && (
+                        <button
+                          onClick={() => handleDisconnect(conn.id)}
+                          disabled={disconnecting === conn.id}
+                          className="text-xs font-medium text-destructive hover:underline disabled:opacity-50 flex-shrink-0"
+                        >
+                          {disconnecting === conn.id ? 'Removing…' : 'Remove'}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
 
-          {canMutate && (
-            <details className="bg-card rounded-lg border border-border p-4">
-              <summary className="cursor-pointer text-sm font-medium text-foreground">
-                Add another service account
-              </summary>
-              <div className="mt-4 max-w-md">{connectForm}</div>
-            </details>
+              {canMutate && (
+                <details className="bg-card rounded-lg border border-border p-4">
+                  <summary className="cursor-pointer text-sm font-medium text-foreground">
+                    Add another service account
+                  </summary>
+                  <div className="mt-4 max-w-md">{connectForm}</div>
+                </details>
+              )}
+            </>
           )}
 
-          <div className="bg-card rounded-lg border border-border p-4">
-            <p className="text-sm text-foreground font-medium mb-1">Runtime targets</p>
-            <p className="text-sm text-muted-foreground mb-3">
-              Create a named Cloud Run target so workflows can reference it with{' '}
-              <code className="font-mono text-xs">runs-on: &lt;name&gt;</code>.
-            </p>
-            <Link
-              href={`/app/projects/${projectId}/settings/runtimes`}
-              className="text-sm font-medium text-primary hover:underline"
-            >
-              Manage runtime targets →
-            </Link>
-          </div>
+          <RuntimeTargetsPanel projectId={projectId} connections={connections} />
         </div>
       )}
     </div>

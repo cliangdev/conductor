@@ -1,22 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
-vi.mock('next/navigation', () => ({
-  useParams: () => ({ projectId: 'proj-1' }),
-}))
-
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: 'test-token' }),
 }))
 
 vi.mock('@/contexts/PermissionsContext', () => ({
-  usePermissions: () => ({
-    can: (cap: string) => (cap === 'integration.manage' ? mockCanMutate : false),
-  }),
+  useCan: (cap: string) => (cap === 'integration.manage' ? mockCanMutate : false),
 }))
 
 vi.mock('@/lib/api', () => ({
-  listConnections: vi.fn(),
   listRuntimeTargets: vi.fn(),
   createRuntimeTarget: vi.fn(),
   updateRuntimeTarget: vi.fn(),
@@ -50,7 +43,7 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 }))
 
 import * as api from '@/lib/api'
-import RuntimesPage from './page'
+import RuntimeTargetsPanel from './RuntimeTargetsPanel'
 
 let mockCanMutate = true
 
@@ -88,16 +81,15 @@ const errorTarget = {
 const activeConnection = { id: 'conn-1', status: 'ACTIVE' as const, label: 'prod-sa' }
 const needsSetupConnection = { id: 'conn-2', status: 'NEEDS_SETUP' as const, label: 'broken-sa' }
 
-describe('RuntimesPage', () => {
+describe('RuntimeTargetsPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockCanMutate = true
-    vi.mocked(api.listConnections).mockResolvedValue([activeConnection, needsSetupConnection])
   })
 
   it('renders a list with all three statuses', async () => {
     vi.mocked(api.listRuntimeTargets).mockResolvedValue([activeTarget, provisioningTarget, errorTarget])
-    render(<RuntimesPage />)
+    render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
 
     expect(await screen.findByText('active-target')).toBeInTheDocument()
     expect(screen.getByText('provisioning-target')).toBeInTheDocument()
@@ -108,18 +100,16 @@ describe('RuntimesPage', () => {
     expect(screen.getByText(/Image not found in Artifact Registry/)).toBeInTheDocument()
   })
 
-  it('shows a "connect Google Cloud first" empty state when there is no ACTIVE gcp connection', async () => {
+  it('shows connect hint when no ACTIVE connection', async () => {
     vi.mocked(api.listRuntimeTargets).mockResolvedValue([])
-    vi.mocked(api.listConnections).mockResolvedValue([needsSetupConnection])
-    render(<RuntimesPage />)
+    render(<RuntimeTargetsPanel projectId="proj-1" connections={[needsSetupConnection]} />)
 
-    const link = await screen.findByRole('link', { name: /go to integrations/i })
-    expect(link).toHaveAttribute('href', '/app/projects/proj-1/integrations')
+    expect(await screen.findByText(/connect an active google cloud service account above/i)).toBeInTheDocument()
   })
 
   it('shows an "Add runtime" CTA in the empty state when an ACTIVE gcp connection exists', async () => {
     vi.mocked(api.listRuntimeTargets).mockResolvedValue([])
-    render(<RuntimesPage />)
+    render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
 
     expect(await screen.findByText(/no runtime targets yet/i)).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: /add runtime/i }).length).toBeGreaterThan(0)
@@ -128,7 +118,7 @@ describe('RuntimesPage', () => {
   it('create flow lists only ACTIVE gcp connections and posts the right payload shape', async () => {
     vi.mocked(api.listRuntimeTargets).mockResolvedValue([])
     vi.mocked(api.createRuntimeTarget).mockResolvedValue({ ...activeTarget, name: 'my-target' })
-    render(<RuntimesPage />)
+    render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection, needsSetupConnection]} />)
 
     fireEvent.click((await screen.findAllByRole('button', { name: /add runtime/i }))[0])
     const modal = await screen.findByTestId('modal')
@@ -163,7 +153,7 @@ describe('RuntimesPage', () => {
 
   it('blocks submit on an invalid slug without calling the API', async () => {
     vi.mocked(api.listRuntimeTargets).mockResolvedValue([])
-    render(<RuntimesPage />)
+    render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
 
     fireEvent.click((await screen.findAllByRole('button', { name: /add runtime/i }))[0])
     const modal = await screen.findByTestId('modal')
@@ -189,7 +179,7 @@ describe('RuntimesPage', () => {
         detail: 'A runtime target named "my-target" already exists.',
       })
     })
-    render(<RuntimesPage />)
+    render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
 
     fireEvent.click((await screen.findAllByRole('button', { name: /add runtime/i }))[0])
     const modal = await screen.findByTestId('modal')
@@ -206,7 +196,7 @@ describe('RuntimesPage', () => {
   it('delete confirm calls deleteRuntimeTarget', async () => {
     vi.mocked(api.listRuntimeTargets).mockResolvedValue([activeTarget])
     vi.mocked(api.deleteRuntimeTarget).mockResolvedValue(undefined)
-    render(<RuntimesPage />)
+    render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
 
     await screen.findByText('active-target')
     fireEvent.click(screen.getByRole('button', { name: /delete/i }))
@@ -222,10 +212,24 @@ describe('RuntimesPage', () => {
   it('hides mutation controls in read-only mode', async () => {
     mockCanMutate = false
     vi.mocked(api.listRuntimeTargets).mockResolvedValue([activeTarget])
-    render(<RuntimesPage />)
+    render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
 
     await screen.findByText('active-target')
     expect(screen.queryByRole('button', { name: /add runtime/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /more actions/i })).not.toBeInTheDocument()
+  })
+
+  it('re-fetches targets when the connections prop changes', async () => {
+    vi.mocked(api.listRuntimeTargets).mockResolvedValue([activeTarget])
+    const { rerender } = render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+
+    await screen.findByText('active-target')
+    expect(api.listRuntimeTargets).toHaveBeenCalledTimes(1)
+
+    rerender(<RuntimeTargetsPanel projectId="proj-1" connections={[]} />)
+
+    await waitFor(() => {
+      expect(api.listRuntimeTargets).toHaveBeenCalledTimes(2)
+    })
   })
 })

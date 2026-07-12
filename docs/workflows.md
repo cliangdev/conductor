@@ -437,7 +437,7 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 | `CLAUDE_LAUNCH_ERROR` | The Cloud Run execution failed to launch, or ended without the container ever reporting a result (e.g. image pull failure, OOM kill). |
 | `PROJECT_API_KEY_MISSING` | `conductor_mcp: true` on `runs-on: cloud-run`, but the project has no active API key (**Settings → API Keys**). |
 | `RUNTIME_TARGET_NOT_FOUND` | `runs-on` names a [runtime target](#runtime-targets-bring-your-own-cloud-run) that no longer exists in the project. |
-| `RUNTIME_TARGET_NOT_READY` | The named runtime target exists but isn't `ACTIVE` (still `PROVISIONING`, or `ERROR`) — fix it under **Settings → Runtimes** and retry. |
+| `RUNTIME_TARGET_NOT_READY` | The named runtime target exists but isn't `ACTIVE` (still `PROVISIONING`, or `ERROR`) — fix it under **Integrations → Google Cloud** and retry. |
 
 **Auth & runtime targets** — `claude-code` steps are **subscription auth only, on every runtime**. The containerized Claude Code CLI is the subscription runtime; there is no API-key path for this step type:
 
@@ -696,7 +696,7 @@ jobs:
    - `roles/run.developer` — create/update/run the Cloud Run Job
    - `roles/iam.serviceAccountUser` on the Job's runtime service account
    - The *runtime* service account (which the Job executes as) needs `roles/artifactregistry.reader` to pull your image, plus whatever the workload itself uses.
-2. **Create the runtime target** (Settings → Runtimes): name (slug), the gcp connection, GCP project id, region, and the **container image** to pin on the Job (e.g. `us-central1-docker.pkg.dev/PROJECT/conductor/runner:3`). Job name defaults to `conductor-<name>`.
+2. **Create the runtime target** (Integrations → Google Cloud → Runtime targets): name (slug), the gcp connection, GCP project id, region, and the **container image** to pin on the Job (e.g. `us-central1-docker.pkg.dev/PROJECT/conductor/runner:3`). Job name defaults to `conductor-<name>`.
 
 Creating (or editing) a target provisions it synchronously: Conductor **verifies the image exists** in your Artifact Registry, then **creates or updates the Cloud Run Job** in your project (image + `conductor-claude-entrypoint` command pinned on the Job, `--max-retries 0`). The target lands `ACTIVE`, or `ERROR` with the reason on the row (missing image, missing IAM permission, …) — fix and hit *Retry provisioning*. A warning (not an error) is recorded when the image's runner-contract label can't be verified.
 
