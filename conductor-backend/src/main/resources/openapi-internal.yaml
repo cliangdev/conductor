@@ -253,6 +253,7 @@ components:
           type: string
         name:
           type: string
+          pattern: "^[a-z0-9_-]{1,160}$"
           description: "Artifact name, matching the step's declared artifacts[].name ([a-z0-9_-]{1,160})"
         contentType:
           type: string

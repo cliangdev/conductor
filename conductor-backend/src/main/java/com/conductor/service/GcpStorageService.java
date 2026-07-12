@@ -96,6 +96,7 @@ public class GcpStorageService implements StorageService {
         return url.toString();
     }
 
+    @Override
     public String generateSignedUploadUrl(String gcsPath, String contentType, int expiryMinutes) {
         BlobInfo.Builder blobInfoBuilder = BlobInfo.newBuilder(BlobId.of(bucketName, gcsPath));
         boolean hasContentType = contentType != null && !contentType.isBlank();

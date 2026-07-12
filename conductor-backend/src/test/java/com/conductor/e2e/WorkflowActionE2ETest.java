@@ -166,7 +166,7 @@ class WorkflowActionE2ETest {
         String idempotencyKey = "wfstep:" + jobRun.getId() + ":post";
 
         ActionResult replay = actionInvocationService.invoke(
-                conn, "post_message", Map.of("content", "hello from conductor"), idempotencyKey);
+                conn, "post_message", Map.of("content", "hello from conductor"), idempotencyKey, List.of());
 
         assertThat(replay.success()).isTrue();
         assertThat(replay.output()).containsEntry("message_id", "local-1");

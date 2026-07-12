@@ -113,6 +113,9 @@ public class WorkflowInternalCallbackController implements WorkflowInternalApi {
         if (!validateRunToken(runId)) {
             return ResponseEntity.status(401).build();
         }
+        if (!artifactService.belongsToRun(artifactId, runId)) {
+            return ResponseEntity.notFound().build();
+        }
         artifactService.complete(artifactId);
         return ResponseEntity.ok().build();
     }

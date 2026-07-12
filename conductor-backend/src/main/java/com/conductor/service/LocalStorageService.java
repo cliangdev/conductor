@@ -31,8 +31,8 @@ public class LocalStorageService implements StorageService {
 
     @Override
     public void upload(String gcsPath, byte[] content, String contentType) {
+        Path target = resolveWithinStorageRoot(gcsPath);
         try {
-            Path target = storagePath.resolve(gcsPath);
             Files.createDirectories(target.getParent());
             Files.write(target, content);
         } catch (IOException e) {
@@ -42,12 +42,26 @@ public class LocalStorageService implements StorageService {
 
     @Override
     public byte[] download(String gcsPath) {
+        Path target = resolveWithinStorageRoot(gcsPath);
         try {
-            Path target = storagePath.resolve(gcsPath);
             return Files.readAllBytes(target);
         } catch (IOException e) {
             throw new jakarta.persistence.EntityNotFoundException("Local storage object not found: " + gcsPath);
         }
+    }
+
+    /**
+     * Defense in depth against a {@code gcsPath} containing {@code ../} segments: the caller-facing
+     * validation ({@code ArtifactSpec.NAME_PATTERN} et al.) should already reject that, but this is the
+     * last line of defense before touching the filesystem — mirrors {@code LocalFileController}'s guard
+     * on the read side.
+     */
+    private Path resolveWithinStorageRoot(String gcsPath) {
+        Path target = storagePath.resolve(gcsPath).normalize();
+        if (!target.startsWith(storagePath)) {
+            throw new SecurityException("Storage path escapes storage root: " + gcsPath);
+        }
+        return target;
     }
 
     @Override

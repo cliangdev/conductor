@@ -29,6 +29,7 @@ export async function writeDocument(
     config
   )
 
+  // backend PUT is authoritative; local mirror is display-only — deliberately no queueChange
   try {
     resolveLocalPath(config)
     writeDocumentFile(config, params.issueId, params.filename, params.content)

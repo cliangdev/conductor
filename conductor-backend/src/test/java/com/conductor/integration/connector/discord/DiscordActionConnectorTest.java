@@ -10,8 +10,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.ConnectException;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -94,6 +96,32 @@ class DiscordActionConnectorTest {
     }
 
     @Test
+    void postMessage_networkError_sanitizesWebhookUrlOutOfThrownException() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        // RestTemplate's own ResourceAccessException embeds the full request URL in ITS message —
+        // and the webhook URL IS the credential (a secret token in its path).
+        ResourceAccessException resourceAccessException = new ResourceAccessException(
+                "I/O error on POST request for \"https://discord.com/api/webhooks/1/token?wait=true\": Connection refused",
+                new ConnectException("Connection refused"));
+        when(restTemplate.exchange(anyUrl(), eq(HttpMethod.POST), any(), eq(String.class)))
+                .thenThrow(resourceAccessException);
+
+        DiscordActionConnector connector = new DiscordActionConnector(new ObjectMapper(), restTemplate);
+
+        // Still a thrown exception (TRANSIENT per the ActionConnector contract) — but sanitized: no
+        // webhook URL/token in the message, and no cause to unwrap back to the original (unsanitized)
+        // ResourceAccessException via ActionInvocationService.rootMessage's getCause() unwrap.
+        assertThatThrownBy(() -> connector.invoke("post_message", Map.of("content", "hi"), CTX))
+                .isInstanceOf(RuntimeException.class)
+                .satisfies(e -> {
+                    assertThat(e.getMessage()).doesNotContain("token");
+                    assertThat(e.getMessage()).doesNotContain("discord.com/api/webhooks");
+                    assertThat(e.getMessage()).contains("Connection refused");
+                    assertThat(e.getCause()).isNull();
+                });
+    }
+
+    @Test
     void postMessage_malformedEmbedsJson_returnsPermanentErrorWithoutCallingHttp() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         DiscordActionConnector connector = new DiscordActionConnector(new ObjectMapper(), restTemplate);
@@ -112,6 +140,61 @@ class DiscordActionConnectorTest {
         DiscordActionConnector connector = new DiscordActionConnector(new ObjectMapper());
         assertThat(connector.getId()).isEqualTo("discord");
         assertThat(connector.getActions()).extracting("id").containsExactly("post_message");
+    }
+
+    /**
+     * {@code getActions()} has no hand-built override anymore — it's the {@link
+     * com.conductor.integration.ActionConnector} default, derived from {@code discord.json}'s
+     * {@code actions[0].params} keys. This guards that JSON stays the single source of truth.
+     */
+    @Test
+    void getActions_derivedFromToolSpecJson_returnsPostMessageWithJsonsInputKeys() {
+        DiscordActionConnector connector = new DiscordActionConnector(new ObjectMapper());
+
+        assertThat(connector.getActions()).hasSize(1);
+        var action = connector.getActions().get(0);
+        assertThat(action.id()).isEqualTo("post_message");
+        assertThat(action.inputKeys()).containsExactly("content", "username", "embeds_json");
+    }
+
+    @Test
+    void postMessage_httpWebhookUrl_rejectedWithoutCallingHttp() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        DiscordActionConnector connector = new DiscordActionConnector(new ObjectMapper(), restTemplate);
+        ConnectionContext httpCtx = new ConnectionContext(
+                "proj", "discord", "conn", "http://discord.com/api/webhooks/1/token", null, null, Map.of(), null);
+
+        ActionResult result = connector.invoke("post_message", Map.of("content", "hi"), httpCtx);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("https");
+        org.mockito.Mockito.verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void postMessage_nonDiscordHost_rejectedWithoutCallingHttp() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        DiscordActionConnector connector = new DiscordActionConnector(new ObjectMapper(), restTemplate);
+        ConnectionContext evilCtx = new ConnectionContext(
+                "proj", "discord", "conn", "https://evil.com/api/webhooks/1/token", null, null, Map.of(), null);
+
+        ActionResult result = connector.invoke("post_message", Map.of("content", "hi"), evilCtx);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("discord.com");
+        org.mockito.Mockito.verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void postMessage_validDiscordWebhookUrl_isAccepted() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(anyUrl(), eq(HttpMethod.POST), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"id\":\"1\",\"channel_id\":\"2\"}"));
+        DiscordActionConnector connector = new DiscordActionConnector(new ObjectMapper(), restTemplate);
+
+        ActionResult result = connector.invoke("post_message", Map.of("content", "hi"), CTX);
+
+        assertThat(result.success()).isTrue();
     }
 
     private static String anyUrl() {

@@ -1,6 +1,8 @@
 package com.conductor.integration;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
 import java.util.List;
@@ -17,6 +19,7 @@ public interface Connector {
     ConnectorSpec getSpec();
 
     ObjectMapper TOOL_SPEC_MAPPER = new ObjectMapper();
+    Logger TOOL_SPEC_LOG = LoggerFactory.getLogger(Connector.class);
 
     /**
      * Describes this connector as a workflow tool for agent discovery (operations for
@@ -32,6 +35,9 @@ public interface Connector {
             if (is == null) return new IntegrationToolSpec(getMetadata().description(), List.of(), List.of());
             return TOOL_SPEC_MAPPER.readValue(is, IntegrationToolSpec.class);
         } catch (Exception e) {
+            // Malformed tool-spec JSON silently degrading to empty metadata is easy to miss — name the
+            // connector and the parse error so a broken tool-spec.json actually gets noticed.
+            TOOL_SPEC_LOG.warn("Failed to load tool-spec JSON for connector '{}' at {}: {}", id, path, e.getMessage());
             return new IntegrationToolSpec(getMetadata().description(), List.of(), List.of());
         }
     }

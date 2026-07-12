@@ -18,13 +18,18 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -91,7 +96,7 @@ class ActionInvocationServiceTest {
         when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
         when(connector.invoke(eq(ACTION_ID), any(), any())).thenReturn(ActionResult.ok(Map.of("message_id", "m1")));
 
-        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY);
+        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
 
         assertThat(result.success()).isTrue();
         assertThat(result.output()).containsEntry("message_id", "m1");
@@ -114,7 +119,7 @@ class ActionInvocationServiceTest {
         existing.setOutputJson("{\"message_id\":\"m0\"}");
         when(repository.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.of(existing));
 
-        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY);
+        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
 
         assertThat(result.success()).isTrue();
         assertThat(result.output()).containsEntry("message_id", "m0");
@@ -133,7 +138,7 @@ class ActionInvocationServiceTest {
         existing.setErrorMessage("Discord webhook rejected request: 400");
         when(repository.findByIdempotencyKey(IDEMPOTENCY_KEY)).thenReturn(Optional.of(existing));
 
-        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY);
+        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
 
         assertThat(result.success()).isFalse();
         assertThat(result.message()).isEqualTo("Discord webhook rejected request: 400");
@@ -145,7 +150,7 @@ class ActionInvocationServiceTest {
         when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
         when(connector.invoke(eq(ACTION_ID), any(), any())).thenThrow(new RuntimeException("connection reset"));
 
-        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY);
+        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
 
         assertThat(result.success()).isFalse();
         assertThat(result.message()).contains("connection reset");
@@ -156,11 +161,29 @@ class ActionInvocationServiceTest {
     }
 
     @Test
+    void connectorThrows_withConnectionCredentialInMessage_redactedInPersistedErrorMessage() {
+        // A connector's thrown-exception message can itself embed the connection's own credential (this
+        // test's connection() resolves to accessToken "https://discord/webhook" via the toContext stub
+        // in setUp()) — e.g. RestTemplate's ResourceAccessException embeds the full request URL, and
+        // for a webhook connector the URL IS the credential.
+        when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        when(connector.invoke(eq(ACTION_ID), any(), any())).thenThrow(
+                new RuntimeException("I/O error on POST request for \"https://discord/webhook?wait=true\": Connection refused"));
+
+        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
+
+        assertThat(result.success()).isFalse();
+        assertThat(stored.get().getStatus()).isEqualTo(ActionInvocationStatus.FAILED);
+        assertThat(stored.get().getErrorMessage()).doesNotContain("https://discord/webhook");
+        assertThat(stored.get().getErrorMessage()).contains("***");
+    }
+
+    @Test
     void connectorReturnsExplicitError_isClassifiedPermanent_noRetry_persistsDead() {
         when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
         when(connector.invoke(eq(ACTION_ID), any(), any())).thenReturn(ActionResult.error("bad webhook url"));
 
-        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY);
+        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
 
         assertThat(result.success()).isFalse();
         assertThat(result.message()).isEqualTo("bad webhook url");
@@ -174,7 +197,7 @@ class ActionInvocationServiceTest {
     void unknownActionConnector_persistsDead_withoutInvoking() {
         when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.empty());
 
-        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY);
+        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
 
         assertThat(result.success()).isFalse();
         assertThat(stored.get().getStatus()).isEqualTo(ActionInvocationStatus.DEAD);
@@ -220,5 +243,57 @@ class ActionInvocationServiceTest {
 
         assertThat(retryable.getAttempts()).isEqualTo(2);
         assertThat(retryable.getStatus()).isEqualTo(ActionInvocationStatus.SUCCEEDED);
+    }
+
+    // ---- secret redaction at rest ----
+
+    @Test
+    void sensitiveValueInInput_redactedInPersistedInputJson_butConnectorReceivesRealValue() {
+        when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        when(connector.invoke(eq(ACTION_ID), any(), any())).thenReturn(ActionResult.ok(Map.of("message_id", "m1")));
+
+        Map<String, Object> input = Map.of("content", "token=sekret-value-123");
+
+        ActionResult result = service.invoke(connection(), ACTION_ID, input, IDEMPOTENCY_KEY,
+                List.of("sekret-value-123"));
+
+        assertThat(result.success()).isTrue();
+        // The connector call itself still gets the real, unredacted input.
+        verify(connector).invoke(eq(ACTION_ID), eq(input), any());
+        // But what's persisted at rest has the secret value stripped out.
+        assertThat(stored.get().getInputJson()).doesNotContain("sekret-value-123");
+        assertThat(stored.get().getInputJson()).contains("***");
+    }
+
+    // ---- timeout = terminal-ambiguous, never retried ----
+
+    @Test
+    void timeout_cancelsTheAbandonedCall_deadLettersImmediately_doesNotRetry() {
+        when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        AtomicBoolean interrupted = new AtomicBoolean(false);
+        when(connector.invoke(eq(ACTION_ID), any(), any())).thenAnswer(invocationOnMock -> {
+            try {
+                Thread.sleep(Long.MAX_VALUE);
+            } catch (InterruptedException e) {
+                interrupted.set(true);
+                Thread.currentThread().interrupt();
+            }
+            return ActionResult.ok(Map.of());
+        });
+        // A timeout of 0 makes future.get(...) time out immediately rather than waiting out a real
+        // duration — the connector stub above never completes on its own either way.
+        service.invokeTimeoutSeconds = 0;
+
+        ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("timed out").contains("not retried");
+        assertThat(stored.get().getStatus()).isEqualTo(ActionInvocationStatus.DEAD);
+        // Only ONE attempt — a timeout is treated as terminal-ambiguous and never retried inline.
+        verify(connector, times(1)).invoke(eq(ACTION_ID), any(), any());
+        assertThat(stored.get().getAttempts()).isEqualTo(1);
+
+        // The abandoned call was actually cancelled (interrupted), not left running forever.
+        await().atMost(2, TimeUnit.SECONDS).untilTrue(interrupted);
     }
 }

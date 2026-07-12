@@ -5,6 +5,7 @@ import com.conductor.entity.WorkflowArtifact;
 import com.conductor.entity.WorkflowArtifactStatus;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
+import com.conductor.exception.BusinessException;
 import com.conductor.repository.WorkflowArtifactRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +20,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -27,6 +29,7 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -97,6 +100,16 @@ class WorkflowArtifactServiceTest {
 
         assertThat(result.uploadUrl())
                 .isEqualTo("http://localhost:8080/internal/v1/workflow-runs/run-1/artifacts/" + result.artifactId() + "/content");
+    }
+
+    @Test
+    void create_invalidName_rejectedBeforeTouchingStorageOrRepository() {
+        assertThatThrownBy(() -> service.create(RUN_ID, "build", "jobrun-1", "../evil", "application/json", null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("../evil");
+
+        verifyNoInteractions(storageService);
+        verify(repository, never()).save(any());
     }
 
     @Test

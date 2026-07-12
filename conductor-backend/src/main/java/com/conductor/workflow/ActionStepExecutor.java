@@ -87,11 +87,14 @@ public class ActionStepExecutor implements WorkflowExecutionBackend {
                     input.put(k, v instanceof String s ? interpolator.interpolate(s, ctx) : v));
         }
 
-        String jobRunId = context.getJobRun() != null ? context.getJobRun().getId() : null;
+        if (context.getJobRun() == null || context.getJobRun().getId() == null) {
+            return StepResult.failed("", "action step requires a job run id for idempotency");
+        }
+        String jobRunId = context.getJobRun().getId();
         String stepId = (String) stepDef.get("id");
         String idempotencyKey = "wfstep:" + jobRunId + ":" + stepId;
 
-        ActionResult result = actionInvocationService.invoke(conn, actionId, input, idempotencyKey);
+        ActionResult result = actionInvocationService.invoke(conn, actionId, input, idempotencyKey, ctx.getSecrets().values());
 
         String stepLog = "→ action connector=" + connectorId + " action=" + actionId + " connection=" + conn.getId();
         if (!result.success()) {

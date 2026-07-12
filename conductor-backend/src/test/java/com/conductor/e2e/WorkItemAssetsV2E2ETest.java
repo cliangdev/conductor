@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * End-to-end coverage for the v2 Work Item sub-resources — assets, step-runs, and the outcome metric —
  * against real Postgres. Mirrors {@link WorkItemV2FlowE2ETest}: log in, create a project (which seeds the
  * ENGINEERING workflow), create a Work Item via {@code POST /api/v2/.../work-items}, then exercise the
- * sub-resources. These v2 controllers delegate to the same {@code AssetService}/{@code StepRunService}/
+ * sub-resources. These v2 controllers delegate to the same {@code AssetService}/{@code WorkItemStepRunService}/
  * {@code OutcomeMetricService} as v1 and only translate DTOs ({@code workItemId} → {@code workItemId}), so this
  * guards the full create→list round-trip and the v1↔v2 DTO mapping.
  */

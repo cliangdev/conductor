@@ -4,8 +4,10 @@ import com.conductor.entity.WorkflowArtifact;
 import com.conductor.entity.WorkflowArtifactStatus;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
+import com.conductor.exception.BusinessException;
 import com.conductor.repository.WorkflowArtifactRepository;
 import com.conductor.repository.WorkflowRunRepository;
+import com.conductor.workflow.model.ArtifactSpec;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -59,10 +61,18 @@ public class WorkflowArtifactService {
      * Creates (or reuses, on a step-retry re-declaring the same name) the PENDING row for one declared
      * artifact and mints its upload URL. {@code jobRunId} may be null (not always resolvable at
      * declare time on every dispatch path).
+     *
+     * <p>{@code name} is re-validated here (not just at YAML-publish time by {@code WorkflowValidator}):
+     * this endpoint takes {@code name} straight from the worker's request body, which never goes through
+     * YAML validation, and {@code name} feeds directly into the storage path below.
      */
     @Transactional
     public ArtifactCreateResult create(String runId, String jobId, String jobRunId, String name,
                                         String contentType, Long sizeBytes) {
+        if (name == null || !ArtifactSpec.NAME_PATTERN.matcher(name).matches()) {
+            throw new BusinessException("Invalid artifact name '" + name
+                    + "' — must match " + ArtifactSpec.NAME_PATTERN.pattern());
+        }
         String projectId = resolveProjectId(runId);
         String gcsPath = GCS_PREFIX + "/" + projectId + "/" + runId + "/" + name;
 

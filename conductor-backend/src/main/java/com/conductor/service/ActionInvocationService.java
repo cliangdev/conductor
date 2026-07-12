@@ -22,6 +22,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutorService;
@@ -52,6 +54,12 @@ public class ActionInvocationService {
     private static final int MAX_INLINE_ATTEMPTS = 3;
     private static final int INVOKE_TIMEOUT_SECONDS = 10;
     private static final long INLINE_BACKOFF_MILLIS = 500L;
+
+    /**
+     * Package-private (not final) so unit tests can force a fast, deterministic timeout instead of
+     * waiting out the real production duration — same pattern as {@code GcpStorageService.retryDelays}.
+     */
+    long invokeTimeoutSeconds = INVOKE_TIMEOUT_SECONDS;
 
     private final ActionInvocationRepository repository;
     private final ConnectorRegistry connectorRegistry;
@@ -89,9 +97,16 @@ public class ActionInvocationService {
      * later caller with the SAME key never re-invokes — it just returns the stored result, whatever
      * state that row is in (including FAILED/DEAD from a prior attempt). Only the background sweep
      * re-drives a FAILED row after the fact.
+     *
+     * @param sensitiveValues literal secret values interpolated into {@code input} (e.g. from
+     *                        {@code RuntimeContext.getSecrets()}), if any — empty/null is fine. These
+     *                        are stripped out of the persisted {@code input_json} (replaced with
+     *                        {@code ***}) so they never land plaintext at rest; the connector call
+     *                        itself always receives the real, unredacted {@code input}.
      */
-    public ActionResult invoke(Connection conn, String actionId, Map<String, Object> input, String idempotencyKey) {
-        Claim claim = claimOrLoad(conn, actionId, input, idempotencyKey);
+    public ActionResult invoke(Connection conn, String actionId, Map<String, Object> input, String idempotencyKey,
+                               Collection<String> sensitiveValues) {
+        Claim claim = claimOrLoad(conn, actionId, input, idempotencyKey, sensitiveValues);
         if (!claim.owned()) {
             return resultFromStored(claim.invocation());
         }
@@ -100,9 +115,10 @@ public class ActionInvocationService {
 
     private record Claim(ActionInvocation invocation, boolean owned) {}
 
-    private Claim claimOrLoad(Connection conn, String actionId, Map<String, Object> input, String idempotencyKey) {
+    private Claim claimOrLoad(Connection conn, String actionId, Map<String, Object> input, String idempotencyKey,
+                              Collection<String> sensitiveValues) {
         try {
-            return new Claim(self.insertPendingInNewTx(conn, actionId, input, idempotencyKey), true);
+            return new Claim(self.insertPendingInNewTx(conn, actionId, input, idempotencyKey, sensitiveValues), true);
         } catch (DataIntegrityViolationException e) {
             // Lost the insert race (or a genuine re-run under the same key) — the winning/original row exists.
             ActionInvocation existing = repository.findByIdempotencyKey(idempotencyKey).orElseThrow(() -> e);
@@ -111,15 +127,15 @@ public class ActionInvocationService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public ActionInvocation insertPendingInNewTx(Connection conn, String actionId,
-                                                 Map<String, Object> input, String idempotencyKey) {
+    public ActionInvocation insertPendingInNewTx(Connection conn, String actionId, Map<String, Object> input,
+                                                 String idempotencyKey, Collection<String> sensitiveValues) {
         ActionInvocation invocation = new ActionInvocation();
         invocation.setProjectId(conn.getProjectId());
         invocation.setConnectionId(conn.getId());
         invocation.setConnectorId(conn.getConnectorId());
         invocation.setActionId(actionId);
         invocation.setIdempotencyKey(idempotencyKey);
-        invocation.setInputJson(toJson(input));
+        invocation.setInputJson(LogRedactionService.redactValues(toJson(input), sensitiveValues));
         invocation.setStatus(ActionInvocationStatus.PENDING);
         return repository.save(invocation);
     }
@@ -148,17 +164,31 @@ public class ActionInvocationService {
             self.recordAttemptInNewTx(invocation.getId());
 
             ActionResult result;
+            Future<ActionResult> future = actionExecutor.submit(() -> connector.invoke(actionId, input, ctx));
             try {
-                Future<ActionResult> future = actionExecutor.submit(() -> connector.invoke(actionId, input, ctx));
-                result = future.get(INVOKE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                result = future.get(invokeTimeoutSeconds, TimeUnit.SECONDS);
             } catch (TimeoutException e) {
-                lastError = "Action timed out after " + INVOKE_TIMEOUT_SECONDS + "s";
-                log.warn("Action invocation {} timed out (attempt {})", invocation.getId(), attempt);
-                result = null;
+                // A client-side timeout doesn't tell us whether the connector's request landed
+                // server-side (e.g. a webhook POST can time out on the client while still being
+                // processed) — the outcome is ambiguous, not a known transient failure. Cancel the
+                // still-running call (it's abandoned either way — no point occupying a pool thread)
+                // and dead-letter immediately rather than retrying, which could duplicate a side
+                // effect that actually succeeded.
+                future.cancel(true);
+                String msg = "Action timed out after " + invokeTimeoutSeconds
+                        + "s; outcome unknown — not retried to avoid duplicate side effects";
+                log.warn("Action invocation {} timed out on attempt {} — cancelling and dead-lettering "
+                        + "(ambiguous outcome, not retried)", invocation.getId(), attempt);
+                self.persistDeadInNewTx(invocation.getId(), msg);
+                return ActionResult.error(msg);
             } catch (Exception e) {
                 // A thrown exception (incl. ExecutionException wrapping the connector's own throw) is
-                // TRANSIENT per the ActionConnector contract — retry.
-                lastError = rootMessage(e);
+                // TRANSIENT per the ActionConnector contract — retry. Sanitize before it ever reaches a
+                // log line or persisted column: a connector's exception message can itself embed a
+                // credential (e.g. RestTemplate's ResourceAccessException embeds the full request URL,
+                // and a webhook URL IS the credential) — strip the connection's own resolved credential
+                // defensively, on top of whatever the connector already sanitized on its side.
+                lastError = sanitizeErrorMessage(rootMessage(e), ctx);
                 log.warn("Action invocation {} threw on attempt {}: {}", invocation.getId(), attempt, lastError);
                 result = null;
             }
@@ -263,8 +293,24 @@ public class ActionInvocationService {
         } catch (TimeoutException e) {
             self.persistFailureInNewTx(invocation.getId(), "Action timed out after " + INVOKE_TIMEOUT_SECONDS + "s");
         } catch (Exception e) {
-            self.persistFailureInNewTx(invocation.getId(), rootMessage(e));
+            self.persistFailureInNewTx(invocation.getId(), sanitizeErrorMessage(rootMessage(e), ctx));
         }
+    }
+
+    /**
+     * Strips {@code ctx}'s resolved credential (the connection's {@code accessToken} — a webhook URL,
+     * API key, etc.) out of an error message before it's ever logged or persisted. Defense in depth on
+     * top of whatever a connector already sanitizes itself: a thrown exception's message can embed a
+     * credential in ways a connector author didn't anticipate (e.g. RestTemplate's
+     * {@code ResourceAccessException} embeds the full request URL, and for a webhook connector the URL
+     * IS the credential). Reuses {@link LogRedactionService}'s replace-secrets mechanism, same as the
+     * {@code input_json} redaction in {@link #insertPendingInNewTx}.
+     */
+    private String sanitizeErrorMessage(String message, ConnectionContext ctx) {
+        String accessToken = ctx != null ? ctx.accessToken() : null;
+        Collection<String> credential = accessToken != null && !accessToken.isBlank()
+                ? List.of(accessToken) : List.of();
+        return LogRedactionService.redactValues(message, credential);
     }
 
     private boolean isReadyForRetry(ActionInvocation invocation) {

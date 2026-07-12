@@ -154,6 +154,42 @@ class WorkflowArtifactE2ETest {
     }
 
     @Test
+    void completeArtifact_mismatchedRunToken_returns404_andDoesNotChangeStatus() {
+        String apiKey = createProjectApiKey();
+
+        String workflowIdA = createWorkflow("artifact-cross-run-a-" + System.nanoTime(), soloSelfHostedYaml());
+        String runIdA = dispatchWorkflow(workflowIdA);
+        awaitJobStatus(runIdA, "solo");
+        String runTokenA = (String) dispatchPayload(runIdA, "solo", apiKey).get("runToken");
+
+        String workflowIdB = createWorkflow("artifact-cross-run-b-" + System.nanoTime(), soloSelfHostedYaml());
+        String runIdB = dispatchWorkflow(workflowIdB);
+        awaitJobStatus(runIdB, "solo");
+        String runTokenB = (String) dispatchPayload(runIdB, "solo", apiKey).get("runToken");
+
+        // Declare an artifact under run A.
+        var createResp = rest.exchange(
+                url("/internal/v1/workflow-runs/" + runIdA + "/artifacts"),
+                HttpMethod.POST,
+                new HttpEntity<>(Map.of("jobId", "solo", "name", "report"), runTokenHeaders(runTokenA)),
+                Map.class);
+        assertThat(createResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        String artifactId = (String) createResp.getBody().get("artifactId");
+
+        // Attempt to complete run A's artifact using run B's own (validly-signed, different-run) token.
+        var crossRunComplete = rest.exchange(
+                url("/internal/v1/workflow-runs/" + runIdB + "/artifacts/" + artifactId + "/complete"),
+                HttpMethod.POST,
+                new HttpEntity<>(runTokenHeaders(runTokenB)),
+                Void.class);
+        assertThat(crossRunComplete.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+        // The artifact was never flipped to UPLOADED — resolving it (under its real run) still
+        // returns an empty downloadUrl.
+        assertThat(resolveArtifact(runIdA, "report", runTokenA).get("downloadUrl")).isEqualTo("");
+    }
+
+    @Test
     void artifactEndpoints_invalidRunToken_areUnauthorized() {
         String apiKey = createProjectApiKey();
         String workflowId = createWorkflow("artifact-bad-token-" + System.nanoTime(), soloSelfHostedYaml());

@@ -1,7 +1,6 @@
 package com.conductor.integration.connector.discord;
 
 import com.conductor.integration.ActionConnector;
-import com.conductor.integration.ActionDescriptor;
 import com.conductor.integration.ActionResult;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorConfigField;
@@ -23,11 +22,15 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
+import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Outbound Discord webhook connector. The connection's single secret field ({@code webhook_url})
@@ -39,7 +42,8 @@ import java.util.Map;
 public class DiscordActionConnector implements ActionConnector {
 
     private static final Logger log = LoggerFactory.getLogger(DiscordActionConnector.class);
-    static final String POST_MESSAGE = "post_message";
+    /** Hosts a webhook URL may target — an exact match or a subdomain of one of these. */
+    private static final Set<String> ALLOWED_WEBHOOK_HOSTS = Set.of("discord.com", "discordapp.com");
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -73,20 +77,21 @@ public class DiscordActionConnector implements ActionConnector {
     }
 
     @Override
-    public List<ActionDescriptor> getActions() {
-        return List.of(new ActionDescriptor(POST_MESSAGE, "Post a message to the channel",
-                List.of("content", "username", "embeds_json")));
-    }
-
-    @Override
     public ActionResult invoke(String actionId, Map<String, Object> input, ConnectionContext ctx) {
-        if (!POST_MESSAGE.equals(actionId)) {
+        if (!"post_message".equals(actionId)) {
             return ActionResult.error("Unknown Discord action: " + actionId);
         }
 
         String webhookUrl = ctx.accessToken();
         if (webhookUrl == null || webhookUrl.isBlank()) {
             return ActionResult.error("Discord webhook not configured");
+        }
+        // SSRF guard: the configured webhook_url is POSTed to directly and its response is returned
+        // into step outputs, so an internal/arbitrary URL here would be an exfil/SSRF vector — require
+        // it to actually be a Discord webhook before making any HTTP call.
+        if (!isAllowedWebhookUrl(webhookUrl)) {
+            return ActionResult.error(
+                    "Discord webhook_url must be an https:// URL on discord.com or discordapp.com");
         }
 
         Object contentObj = input != null ? input.get("content") : null;
@@ -124,8 +129,8 @@ public class DiscordActionConnector implements ActionConnector {
 
         String url = webhookUrl + (webhookUrl.contains("?") ? "&" : "?") + "wait=true";
         try {
-            // 5xx (and network I/O errors) throw past this try — the caller treats a thrown
-            // exception as TRANSIENT and retries per ActionConnector's documented contract.
+            // 5xx throws past this try — the caller treats a thrown exception as TRANSIENT and
+            // retries per ActionConnector's documented contract.
             ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.POST, request, String.class);
             return parseSuccess(response.getBody());
         } catch (HttpClientErrorException e) {
@@ -133,6 +138,33 @@ public class DiscordActionConnector implements ActionConnector {
             log.warn("Discord webhook rejected request: {} {}", e.getStatusCode(), e.getResponseBodyAsString());
             return ActionResult.error("Discord webhook rejected request: " + e.getStatusCode().value()
                     + " " + e.getResponseBodyAsString());
+        } catch (ResourceAccessException e) {
+            // A network I/O failure (connection refused/reset, DNS failure, ...): ResourceAccessException's
+            // OWN message embeds the full request URL ("I/O error on POST request for \"<url>\": ..."),
+            // and the Discord webhook URL IS the credential (a secret token in its path) — that must
+            // never reach a log line or ActionInvocationService's persisted error_message. Use the
+            // wrapped cause's message instead (e.g. "Connection refused"), which describes the failure
+            // without embedding the URL, and rethrow with NO cause so nothing downstream can unwrap back
+            // to the original, unsanitized message. Still a thrown exception, so still classified
+            // TRANSIENT per the ActionConnector contract.
+            Throwable rootCause = e.getCause() != null ? e.getCause() : e;
+            String detail = rootCause.getMessage() != null ? rootCause.getMessage() : rootCause.getClass().getSimpleName();
+            throw new RuntimeException("Discord webhook request failed (network error): " + detail);
+        }
+    }
+
+    /** https scheme, and host exactly one of {@link #ALLOWED_WEBHOOK_HOSTS} or a subdomain of one. */
+    private boolean isAllowedWebhookUrl(String url) {
+        try {
+            URI uri = URI.create(url);
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) {
+                return false;
+            }
+            String host = uri.getHost().toLowerCase(Locale.ROOT);
+            return ALLOWED_WEBHOOK_HOSTS.stream()
+                    .anyMatch(allowed -> host.equals(allowed) || host.endsWith("." + allowed));
+        } catch (IllegalArgumentException e) {
+            return false;
         }
     }
 

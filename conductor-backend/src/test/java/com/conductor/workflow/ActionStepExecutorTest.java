@@ -102,6 +102,30 @@ class ActionStepExecutorTest {
     }
 
     @Test
+    void missingJobRunId_failsLoudly_insteadOfMintingCollidingIdempotencyKey() {
+        when(connectionRepository.findByProjectIdAndConnectorId(PROJECT_ID, "discord"))
+                .thenReturn(List.of(activeConnection()));
+
+        Map<String, Object> with = new LinkedHashMap<>();
+        with.put("connector", "discord");
+        with.put("action", "post_message");
+        with.put("input", Map.of("content", "hi"));
+
+        Map<String, Object> stepDef = new LinkedHashMap<>();
+        stepDef.put("id", "post");
+        stepDef.put("uses", "action");
+        stepDef.put("with", with);
+        StepExecutionContext contextWithNoJobRun =
+                new StepExecutionContext(new WorkflowRun(), null, stepDef, emptyContext(), PROJECT_ID);
+
+        StepResult result = executor.execute(contextWithNoJobRun);
+
+        assertThat(result.getStatus().name()).isEqualTo("FAILED");
+        assertThat(result.getErrorReason()).contains("job run id");
+        org.mockito.Mockito.verifyNoInteractions(actionInvocationService);
+    }
+
+    @Test
     void successfulInvoke_interpolatesInput_andMapsOutputsAndIdempotencyKey() {
         when(connectionRepository.findByProjectIdAndConnectorId(PROJECT_ID, "discord"))
                 .thenReturn(List.of(activeConnection()));
@@ -109,7 +133,7 @@ class ActionStepExecutorTest {
         RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(),
                 Map.of(), Map.of("collect", Map.of("summary", "all good")));
 
-        when(actionInvocationService.invoke(any(), eq("post_message"), any(), eq("wfstep:run-1:post")))
+        when(actionInvocationService.invoke(any(), eq("post_message"), any(), eq("wfstep:run-1:post"), any()))
                 .thenReturn(ActionResult.ok(Map.of("message_id", "m1", "channel_id", "c1")));
 
         Map<String, Object> input = new LinkedHashMap<>();
@@ -125,14 +149,14 @@ class ActionStepExecutorTest {
         assertThat(result.getOutputs()).containsEntry("message_id", "m1");
         assertThat(result.getOutputs()).containsEntry("channel_id", "c1");
 
-        verify(actionInvocationService).invoke(any(), eq("post_message"), argThatContainsInterpolatedContent(), eq("wfstep:run-1:post"));
+        verify(actionInvocationService).invoke(any(), eq("post_message"), argThatContainsInterpolatedContent(), eq("wfstep:run-1:post"), any());
     }
 
     @Test
     void failedInvoke_mapsToStepFailure() {
         when(connectionRepository.findByProjectIdAndConnectorId(PROJECT_ID, "discord"))
                 .thenReturn(List.of(activeConnection()));
-        when(actionInvocationService.invoke(any(), anyString(), any(), anyString()))
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
                 .thenReturn(ActionResult.error("Discord webhook rejected request: 400"));
 
         Map<String, Object> with = new LinkedHashMap<>();

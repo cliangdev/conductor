@@ -1,6 +1,7 @@
 package com.conductor.workflow;
 
 import com.conductor.integration.ConnectorRegistry;
+import com.conductor.workflow.model.ArtifactSpec;
 import com.conductor.workflow.model.JobSpec;
 import com.conductor.workflow.model.LoopSpec;
 import com.conductor.workflow.model.StepSpec;
@@ -246,9 +247,6 @@ public class WorkflowValidator {
         }
     }
 
-    private static final java.util.regex.Pattern ARTIFACT_NAME_PATTERN =
-            java.util.regex.Pattern.compile("^[a-z0-9_-]{1,160}$");
-
     /**
      * Validates a step's {@code artifacts:} list (docker/claude-code steps only). A {@code docker}
      * step also needs {@code runs-on: self-hosted} — the conductor-hosted worker-VM docker path
@@ -287,7 +285,7 @@ public class WorkflowValidator {
                 continue;
             }
             String artifactName = nameObj.toString();
-            if (!ARTIFACT_NAME_PATTERN.matcher(artifactName).matches()) {
+            if (!ArtifactSpec.NAME_PATTERN.matcher(artifactName).matches()) {
                 errors.add("job '" + jobId + "': artifact name '" + artifactName
                         + "' must match ^[a-z0-9_-]{1,160}$");
             }
