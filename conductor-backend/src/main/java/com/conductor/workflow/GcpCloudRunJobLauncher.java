@@ -12,22 +12,26 @@ import com.google.cloud.run.v2.TasksClient;
 import com.google.protobuf.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
- * {@link CloudRunJobLauncher} backed by the real Cloud Run Jobs API (v2). Targets the single
- * pre-created Job resource named by {@code gcp.cloudrun.claude-job-name} — the container image and
- * command are pinned on that Job (see {@link ClaudeCodeStepExecutor} javadoc for the one-time
- * {@code gcloud run jobs create} setup); per-execution overrides here only carry env vars and the
- * timeout, since Cloud Run Job execution overrides cannot change the image.
+ * {@link CloudRunJobLauncher} backed by the real Cloud Run Jobs API (v2). Targets whichever Job
+ * resource the caller's {@link CloudRunTarget} names — the container image and command are pinned on
+ * that Job (see {@link ClaudeCodeStepExecutor} javadoc for the one-time {@code gcloud run jobs create}
+ * setup); per-execution overrides here only carry env vars and the timeout, since Cloud Run Job
+ * execution overrides cannot change the image.
+ *
+ * <p>All three methods resolve their clients via {@link CloudRunClientFactory#forTarget} — the
+ * builtin target uses the operator-configured default clients, a customer target
+ * ({@code connectionId != null}) gets clients built from that connection's own credentials.
+ * Poll/cancel must go through the factory too, not default clients: a customer target's executions
+ * live in the customer's own GCP project and are invisible to Conductor's credentials.
  *
  * <p>Assumes the Job has exactly one container — {@link RunJobRequest.Overrides.ContainerOverride}
  * is built without a {@code name}, which Cloud Run applies to the job's sole container.
@@ -38,39 +42,25 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
 
     private static final Logger log = LoggerFactory.getLogger(GcpCloudRunJobLauncher.class);
 
-    private final JobsClient jobsClient;
-    private final ExecutionsClient executionsClient;
-    private final TasksClient tasksClient;
-    private final String projectId;
-    private final String region;
-    private final String jobName;
+    private final CloudRunClientFactory clientFactory;
 
-    public GcpCloudRunJobLauncher(JobsClient jobsClient,
-                                   ExecutionsClient executionsClient,
-                                   TasksClient tasksClient,
-                                   @Value("${gcp.cloudrun.project-id:}") String projectId,
-                                   @Value("${gcp.cloudrun.region:us-central1}") String region,
-                                   @Value("${gcp.cloudrun.claude-job-name:conductor-claude-code}") String jobName) {
-        this.jobsClient = jobsClient;
-        this.executionsClient = executionsClient;
-        this.tasksClient = tasksClient;
-        this.projectId = projectId;
-        this.region = region;
-        this.jobName = jobName;
+    public GcpCloudRunJobLauncher(CloudRunClientFactory clientFactory) {
+        this.clientFactory = clientFactory;
     }
 
     @Override
-    public String startExecution(Map<String, String> env, int timeoutMinutes) {
+    public String startExecution(CloudRunTarget target, ContainerTask task) {
         RunJobRequest.Overrides.ContainerOverride.Builder containerOverride =
                 RunJobRequest.Overrides.ContainerOverride.newBuilder();
-        env.forEach((k, v) -> containerOverride.addEnv(EnvVar.newBuilder().setName(k).setValue(v)));
+        task.env().forEach((k, v) -> containerOverride.addEnv(EnvVar.newBuilder().setName(k).setValue(v)));
 
+        JobsClient jobsClient = clientFactory.forTarget(target).jobs();
         RunJobRequest request = RunJobRequest.newBuilder()
-                .setName(JobName.of(projectId, region, jobName).toString())
+                .setName(JobName.of(target.gcpProjectId(), target.region(), target.jobName()).toString())
                 .setOverrides(RunJobRequest.Overrides.newBuilder()
                         .addContainerOverrides(containerOverride)
                         .setTaskCount(1)
-                        .setTimeout(Duration.newBuilder().setSeconds(timeoutMinutes * 60L)))
+                        .setTimeout(Duration.newBuilder().setSeconds(task.timeoutMinutes() * 60L)))
                 .build();
 
         try {
@@ -79,7 +69,7 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
             // blocking for it to finish. We drive our own poll/timeout loop from there.
             Execution initial = jobsClient.runJobAsync(request).getMetadata()
                     .get(30, TimeUnit.SECONDS);
-            log.info("Started Cloud Run execution {} for job {}", initial.getName(), jobName);
+            log.info("Started Cloud Run execution {} for job {}", initial.getName(), target.jobName());
             return initial.getName();
         } catch (ExecutionException | InterruptedException | TimeoutException e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
@@ -88,20 +78,21 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
     }
 
     @Override
-    public ExecutionState pollExecution(String executionName) {
+    public ExecutionState pollExecution(CloudRunTarget target, String executionName) {
+        ExecutionsClient executionsClient = clientFactory.forTarget(target).executions();
         Execution execution = executionsClient.getExecution(executionName);
 
         if (!execution.hasCompletionTime()) {
             return ExecutionState.running();
         }
         if (execution.getCancelledCount() > 0) {
-            return new ExecutionState(Status.CANCELLED, exitCodeFor(executionName));
+            return new ExecutionState(Status.CANCELLED, exitCodeFor(target, executionName));
         }
         if (execution.getFailedCount() > 0) {
-            return new ExecutionState(Status.FAILED, exitCodeFor(executionName));
+            return new ExecutionState(Status.FAILED, exitCodeFor(target, executionName));
         }
         if (execution.getSucceededCount() > 0) {
-            return new ExecutionState(Status.SUCCEEDED, exitCodeFor(executionName));
+            return new ExecutionState(Status.SUCCEEDED, exitCodeFor(target, executionName));
         }
         // Completion time set but no terminal task counts yet — treat as still running rather than
         // guessing; the next poll tick will resolve once counts land.
@@ -109,9 +100,9 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
     }
 
     @Override
-    public void cancelExecution(String executionName) {
+    public void cancelExecution(CloudRunTarget target, String executionName) {
         try {
-            executionsClient.cancelExecutionAsync(ExecutionName.parse(executionName));
+            clientFactory.forTarget(target).executions().cancelExecutionAsync(ExecutionName.parse(executionName));
         } catch (Exception e) {
             log.warn("Failed to cancel Cloud Run execution {}: {}", executionName, e.getMessage());
         }
@@ -121,8 +112,9 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
      * Best-effort exit code lookup via the Tasks API (single-task jobs only). Never throws — this
      * is a fallback signal only; the container's own self-reported errorReason is authoritative.
      */
-    private Optional<Integer> exitCodeFor(String executionName) {
+    private Optional<Integer> exitCodeFor(CloudRunTarget target, String executionName) {
         try {
+            TasksClient tasksClient = clientFactory.forTarget(target).tasks();
             for (Task task : tasksClient.listTasks(executionName).iterateAll()) {
                 if (task.hasLastAttemptResult()) {
                     return Optional.of(task.getLastAttemptResult().getExitCode());

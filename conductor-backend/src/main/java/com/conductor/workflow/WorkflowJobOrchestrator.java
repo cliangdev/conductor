@@ -467,6 +467,15 @@ public class WorkflowJobOrchestrator {
      * Updates the pre-created row in place when {@code result} carries a workerJobId matching one
      * (e.g. Cloud Run's executor, Phase 5); falls back to today's insert when no workerJobId is set
      * (all current step executors) or no matching row is found.
+     *
+     * <p><b>Log clobber rule:</b> {@link ClaudeCodeStepExecutor} and {@link WorkflowRunLogBroker}
+     * incrementally append launcher lines and streamed container lines to the row's {@code log}
+     * column <i>while the step runs</i> — that content is strictly richer than (and a superset of)
+     * {@code result.getLog()}, which for that executor is just the same launcher lines built up in
+     * an in-memory buffer for other {@link StepResult#getLog()} consumers. So: if the row already
+     * carries non-empty log content, it is NOT overwritten by {@code result.getLog()} here — only
+     * rows with no existing content (all other step types, which don't stream) get their log set
+     * from the result, preserving today's behavior for them.
      */
     private void persistStepRun(WorkflowJobRun jobRun, String stepId, String stepName,
                                 String stepType, StepResult result, String projectId) {
@@ -484,10 +493,12 @@ public class WorkflowJobOrchestrator {
         stepRun.setStepType(stepType);
         stepRun.setStatus(result.getStatus());
 
-        String redactedLog = result.getLog() != null
-                ? logRedactionService.redact(projectId, result.getLog())
-                : null;
-        stepRun.setLog(redactedLog);
+        if (stepRun.getLog() == null || stepRun.getLog().isEmpty()) {
+            String redactedLog = result.getLog() != null
+                    ? logRedactionService.redact(projectId, result.getLog())
+                    : null;
+            stepRun.setLog(redactedLog);
+        }
         stepRun.setErrorReason(result.getErrorReason());
 
         if (!result.getOutputs().isEmpty()) {

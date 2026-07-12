@@ -40,6 +40,8 @@ tags:
     description: Generic inbound webhook receiver
   - name: agents
     description: User-managed named AI Agents and per-provider BYO credentials
+  - name: runtime-targets
+    description: Project-owned runtime targets for claude-code workflow steps (BYO Cloud Run)
 
 paths:
   /health:
@@ -3593,6 +3595,194 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /projects/{projectId}/runtime-targets:
+    get:
+      tags: [runtime-targets]
+      summary: List runtime targets for a project
+      operationId: listRuntimeTargets
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RuntimeTargetResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [runtime-targets]
+      summary: Create a runtime target and provision it synchronously
+      operationId: createRuntimeTarget
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRuntimeTargetRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeTargetResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: A runtime target with this name already exists, or the name is reserved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{projectId}/runtime-targets/{targetId}:
+    get:
+      tags: [runtime-targets]
+      summary: Get a runtime target
+      operationId: getRuntimeTarget
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: targetId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeTargetResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [runtime-targets]
+      summary: Update a runtime target's config (region/image/jobName); re-provisions
+      operationId: updateRuntimeTarget
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: targetId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRuntimeTargetRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeTargetResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [runtime-targets]
+      summary: Delete a runtime target
+      description: >
+        Removes the Conductor-side record only — it does NOT delete the underlying Cloud Run Job
+        resource in the customer's GCP project. Any workflow still referencing the target's name in
+        runs-on will fail at execution with RUNTIME_TARGET_NOT_FOUND.
+      operationId: deleteRuntimeTarget
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: targetId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /projects/{projectId}/runtime-targets/{targetId}/provision:
+    post:
+      tags: [runtime-targets]
+      summary: Retry provisioning for a runtime target (idempotent)
+      operationId: provisionRuntimeTarget
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: targetId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Provisioning result (ACTIVE or ERROR — check the response body, not just the status code)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeTargetResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /oauth/callback:
     get:
       tags: [integrations]
@@ -4136,6 +4326,11 @@ components:
         apiKey:
           type: string
           nullable: true
+        serviceAccountKey:
+          type: string
+          nullable: true
+          description: >
+            Service-account JSON key (SERVICE_ACCOUNT connectors). Write-only; never returned.
         configJson:
           type: object
           additionalProperties: true
@@ -4176,6 +4371,82 @@ components:
           type: string
           format: date-time
           nullable: true
+
+    CreateRuntimeTargetRequest:
+      type: object
+      required: [name, provider, connectionId, gcpProjectId, region, image]
+      properties:
+        name:
+          type: string
+          description: "Slug used in runs-on: <name>. Lowercase alphanumeric + hyphens, must start with a letter/digit."
+        provider:
+          type: string
+          enum: [gcp-cloud-run]
+        connectionId:
+          type: string
+          description: The project's ACTIVE gcp connection to provision against.
+        gcpProjectId:
+          type: string
+        region:
+          type: string
+        image:
+          type: string
+          description: Artifact Registry image reference pinned on the Cloud Run Job at provision time.
+        jobName:
+          type: string
+          nullable: true
+          description: "Defaults to conductor-<name> when omitted."
+
+    UpdateRuntimeTargetRequest:
+      type: object
+      description: Only config fields are mutable — name, provider, and connection are immutable after create. Any change re-provisions.
+      properties:
+        region:
+          type: string
+          nullable: true
+        image:
+          type: string
+          nullable: true
+        jobName:
+          type: string
+          nullable: true
+
+    RuntimeTargetResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+        connectionId:
+          type: string
+        gcpProjectId:
+          type: string
+        region:
+          type: string
+        jobName:
+          type: string
+        image:
+          type: string
+        status:
+          type: string
+          enum: [PROVISIONING, ACTIVE, ERROR]
+        errorMessage:
+          type: string
+          nullable: true
+        warnings:
+          type: array
+          nullable: true
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
 
     ConnectionDataResponse:
       type: object

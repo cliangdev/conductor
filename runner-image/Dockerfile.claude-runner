@@ -1,0 +1,50 @@
+# Dedicated, minimal image for claude-code workflow steps only.
+#
+# The general-purpose conductor-runner (../Dockerfile) stays as-is for `docker` steps and bundles
+# Python/gh/Docker CLI/jq for that use case. claude-code steps only ever spawn the `claude` binary
+# via conductor-claude-entrypoint (Node built-ins only) — no shell tooling required — so this image
+# deliberately omits Python, gh, the Docker CLI, and jq to stay small and start fast on Cloud Run.
+#
+# The Claude CLI version pin below must move in lockstep with the pin in ../Dockerfile — see
+# RunnerImage.java for the full list of places the version is duplicated.
+FROM node:22-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Claude CLI pinned (same version as ../Dockerfile — bump deliberately, verify against the exit
+# taxonomy in conductor-claude-entrypoint.mjs when upgrading). @cliangdev/conductor (the MCP
+# server) is pre-installed globally so the entrypoint's `npx -y @cliangdev/conductor mcp` resolves
+# with no network call at job start.
+#
+# A plain `npm install -g` is not enough: npx resolves a scoped package spec like
+# "@cliangdev/conductor" through its own resolution cache (~/.npm/_npx), which a global install
+# never populates — it only gets written the first time npx itself runs that exact spec. So we
+# point NPM_CONFIG_CACHE at a shared, world-writable location and run the same `npx -y
+# @cliangdev/conductor --version` the entrypoint uses (while the build still has network) to warm
+# that cache, then it's available to any user at container runtime with no registry call.
+ENV NPM_CONFIG_CACHE=/opt/npm-cache
+RUN mkdir -p /opt/npm-cache \
+    && npm install -g @anthropic-ai/claude-code@2.1.206 @cliangdev/conductor \
+    && npx -y @cliangdev/conductor --version \
+    && chmod -R a+rwX /opt/npm-cache
+
+# The pinned CLI must not self-update at container start: that would reintroduce version drift and
+# a startup-time network dependency this image is specifically built to avoid.
+ENV DISABLE_AUTOUPDATER=1
+
+# Create non-root user. node:22-slim already ships a `node` user, but we create a dedicated
+# `runner` user to match ../Dockerfile's contract (uid/gid-agnostic, same username either image).
+RUN useradd -m -s /bin/bash runner
+
+# Create workspace/outputs/inputs directories and the self-reporting entrypoint, owned by the
+# runner user. No default ENTRYPOINT/CMD — same contract as conductor-runner: claude-code steps
+# invoke conductor-claude-entrypoint explicitly.
+RUN mkdir -p /conductor/workspace /conductor/outputs /conductor/inputs \
+    && chown -R runner:runner /conductor
+COPY --chmod=755 conductor-claude-entrypoint.mjs /usr/local/bin/conductor-claude-entrypoint
+
+USER runner
+WORKDIR /conductor/workspace

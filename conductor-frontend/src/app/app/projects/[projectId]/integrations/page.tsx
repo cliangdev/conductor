@@ -7,6 +7,8 @@ import { useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost, createConnection, deleteConnection, apiErrorMessage } from '@/lib/api';
 import type { ConnectionSummary } from '@/lib/api';
+import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
+import { ServiceAccountKeyField } from '@/components/integrations/ServiceAccountKeyField';
 import { usePermissions } from '@/contexts/PermissionsContext';
 import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
@@ -23,7 +25,7 @@ interface ConnectorConfigField {
   key: string;
   label: string;
   hint: string | null;
-  type: 'STRING' | 'SECRET' | 'SELECT' | 'MULTISELECT' | 'BOOLEAN' | 'URL_READONLY';
+  type: 'STRING' | 'SECRET' | 'SELECT' | 'MULTISELECT' | 'BOOLEAN' | 'URL_READONLY' | 'JSON';
   source: 'USER_INPUT' | 'GENERATED';
   required: boolean;
   secret: boolean;
@@ -33,7 +35,7 @@ interface IntegrationListItem {
   connectorId: string;
   name: string;
   category: string;
-  authType: 'NONE' | 'API_KEY' | 'BASIC' | 'OAUTH2' | 'WEBHOOK' | 'APP';
+  authType: 'NONE' | 'API_KEY' | 'BASIC' | 'OAUTH2' | 'WEBHOOK' | 'APP' | 'SERVICE_ACCOUNT';
   capabilities: string[];
   singleInstance: boolean;
   description: string;
@@ -59,6 +61,8 @@ export default function IntegrationsPage() {
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  // Inline validation errors for JSON-typed fields (e.g. a pasted GCP service-account key).
+  const [jsonFieldErrors, setJsonFieldErrors] = useState<Record<string, string>>({});
 
   // Disconnect state
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
@@ -102,18 +106,26 @@ export default function IntegrationsPage() {
     setConnectModal({ connector });
     setFormValues({});
     setConnectError(null);
+    setJsonFieldErrors({});
+  };
+
+  const applyJsonField = (key: string, value: string) => {
+    setFormValues((prev) => ({ ...prev, [key]: value }));
+    const parsed = parseServiceAccountKey(value);
+    setJsonFieldErrors((prev) => ({
+      ...prev,
+      [key]: value.trim() && !parsed.valid ? (parsed.error ?? 'Invalid key') : '',
+    }));
   };
 
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!connectModal || !accessToken) return;
-    setConnecting(true);
-    setConnectError(null);
 
     const { connector } = connectModal;
     const inputFields = connector.configFields.filter((f) => f.source === 'USER_INPUT');
     const secretField = inputFields.find((f) => f.secret);
-    const apiKey = formValues[secretField?.key || 'apiKey'] || formValues['apiKey'];
+    const secretValue = formValues[secretField?.key || 'apiKey'] || formValues['apiKey'];
     const configJson: Record<string, string> = {};
     inputFields
       .filter((f) => !f.secret)
@@ -121,14 +133,29 @@ export default function IntegrationsPage() {
         if (formValues[f.key]) configJson[f.key] = formValues[f.key];
       });
 
+    if (secretField?.type === 'JSON') {
+      const parsed = parseServiceAccountKey(secretValue || '');
+      if (!parsed.valid) {
+        setConnectError(parsed.error ?? 'Invalid key');
+        return;
+      }
+    }
+
+    setConnecting(true);
+    setConnectError(null);
     try {
       await createConnection(
         projectId,
         connector.connectorId,
-        { apiKey, configJson },
+        connector.authType === 'SERVICE_ACCOUNT'
+          ? { serviceAccountKey: secretValue, configJson }
+          : { apiKey: secretValue, configJson },
         accessToken
       );
       setConnectModal(null);
+      // Don't keep the pasted secret in component state past a successful connect.
+      setFormValues({});
+      setJsonFieldErrors({});
       await loadIntegrations();
     } catch (err: unknown) {
       setConnectError(apiErrorMessage(err, 'Connection failed'));
@@ -248,7 +275,9 @@ export default function IntegrationsPage() {
                           ? '••••••• (API Key)'
                           : item.authType === 'WEBHOOK'
                             ? 'Webhook'
-                            : 'OAuth2'}
+                            : item.authType === 'SERVICE_ACCOUNT'
+                              ? 'Service account'
+                              : 'OAuth2'}
                     </div>
                   </div>
                   {/* Single-instance connectors can be removed inline; multi-instance are managed on the detail page. */}
@@ -355,19 +384,52 @@ export default function IntegrationsPage() {
               .filter((field) => field.source === 'USER_INPUT')
               .map((field) => (
                 <div key={field.key}>
-                  <label className="block text-sm font-medium text-foreground mb-1">
-                    {field.label}
-                  </label>
-                  <input
-                    type={field.secret ? 'password' : 'text'}
-                    value={formValues[field.key] || ''}
-                    onChange={(e) =>
-                      setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))
-                    }
-                    placeholder={field.hint || ''}
-                    required={field.required}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
+                  {field.type === 'JSON' ? (
+                    <ServiceAccountKeyField
+                      label={field.label}
+                      hint={field.hint}
+                      required={field.required}
+                      value={formValues[field.key] || ''}
+                      error={jsonFieldErrors[field.key] || null}
+                      onChange={(text) => applyJsonField(field.key, text)}
+                    />
+                  ) : field.type === 'SELECT' ? (
+                    <>
+                      <label className="block text-sm font-medium text-foreground mb-1">
+                        {field.label}
+                      </label>
+                      {/* No connector currently ships enumerated options for the backend to send;
+                          this is a structural placeholder ready for that data. */}
+                      <select
+                        value={formValues[field.key] || ''}
+                        onChange={(e) =>
+                          setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))
+                        }
+                        required={field.required}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      >
+                        <option value="" disabled>
+                          {field.hint || 'Select…'}
+                        </option>
+                      </select>
+                    </>
+                  ) : (
+                    <>
+                      <label className="block text-sm font-medium text-foreground mb-1">
+                        {field.label}
+                      </label>
+                      <input
+                        type={field.secret ? 'password' : 'text'}
+                        value={formValues[field.key] || ''}
+                        onChange={(e) =>
+                          setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))
+                        }
+                        placeholder={field.hint || ''}
+                        required={field.required}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                      />
+                    </>
+                  )}
                 </div>
               ))}
             {connectError && <p className="text-sm text-destructive">{connectError}</p>}

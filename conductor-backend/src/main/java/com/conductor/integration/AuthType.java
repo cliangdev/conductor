@@ -12,6 +12,8 @@ public enum AuthType {
     API_KEY,
     /** Username + password / secret pair. */
     BASIC,
+    /** User pastes/uploads a provider service-account JSON key (GCP). Stored encrypted like API_KEY. */
+    SERVICE_ACCOUNT,
     /** Redirect-based delegated auth with token refresh (GCP Billing, Slack). */
     OAUTH2,
     /** Inbound push; the "credential" is a platform-generated signing secret (GitHub repo webhook). */

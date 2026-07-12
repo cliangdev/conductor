@@ -187,6 +187,11 @@ public class JobDispatchPayloadService {
                 if (!image.isEmpty()) return image;
             }
         }
+        for (Map<String, Object> step : steps) {
+            if ("claude-code".equals(WorkflowJobSteps.resolveStepType(step))) {
+                return RunnerImage.DEFAULT;
+            }
+        }
         return null;
     }
 

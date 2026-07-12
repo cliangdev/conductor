@@ -4,6 +4,7 @@ import com.conductor.entity.Connection;
 import com.conductor.entity.ConnectionDataCache;
 import com.conductor.entity.User;
 import com.conductor.entity.WebhookEvent;
+import com.conductor.exception.BusinessException;
 import com.conductor.generated.api.IntegrationsApi;
 import com.conductor.generated.model.BqDatasetsResponse;
 import com.conductor.generated.model.BqDatasetsResponseDatasetsInner;
@@ -41,6 +42,7 @@ import com.conductor.service.ConnectionService;
 import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.OAuthFlowService;
 import com.conductor.service.ProjectSecurityService;
+import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -83,6 +85,7 @@ public class IntegrationController implements IntegrationsApi {
     private final Optional<GcpBillingConnector> gcpBillingConnector;
     /** Present only outside the {@code local} profile (the real {@link GscConnector} is {@code @Profile("!local")}). */
     private final Optional<GscConnector> gscConnector;
+    private final RuntimeTargetService runtimeTargetService;
 
     @Value("${BACKEND_URL:}")
     private String backendUrl;
@@ -96,6 +99,7 @@ public class IntegrationController implements IntegrationsApi {
                                 ProjectSecurityService projectSecurityService,
                                 Optional<GcpBillingConnector> gcpBillingConnector,
                                 Optional<GscConnector> gscConnector,
+                                RuntimeTargetService runtimeTargetService,
                                 ObjectMapper objectMapper) {
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
@@ -106,6 +110,7 @@ public class IntegrationController implements IntegrationsApi {
         this.projectSecurityService = projectSecurityService;
         this.gcpBillingConnector = gcpBillingConnector;
         this.gscConnector = gscConnector;
+        this.runtimeTargetService = runtimeTargetService;
         this.objectMapper = objectMapper;
     }
 
@@ -193,6 +198,12 @@ public class IntegrationController implements IntegrationsApi {
         String generatedSecret = null;
         if (spec.authType() == AuthType.API_KEY && request != null && request.getApiKey() != null) {
             connectionService.storeTokens(conn, request.getApiKey(), null, null);
+        } else if (spec.authType() == AuthType.SERVICE_ACCOUNT
+                && request != null && request.getServiceAccountKey() != null) {
+            requireValidServiceAccountKey(request.getServiceAccountKey());
+            // The SA JSON key rides the encrypted accessToken slot — same crypto path as API_KEY,
+            // no CredentialService change needed.
+            connectionService.storeTokens(conn, request.getServiceAccountKey(), null, null);
         } else if (spec.authType() == AuthType.WEBHOOK) {
             generatedSecret = randomSecret();
             connectionService.storeWebhookSecret(conn, generatedSecret);
@@ -219,6 +230,9 @@ public class IntegrationController implements IntegrationsApi {
     public ResponseEntity<Void> deleteConnection(String projectId, String connectorId, String connectionId) {
         requireAdminOrCreator(projectId);
         requireConnection(projectId, connectorId, connectionId);
+        // Before the row goes away (runtime_targets.connection_id is ON DELETE SET NULL): flip
+        // referencing runtime targets to ERROR and close their cached Cloud Run clients.
+        runtimeTargetService.onConnectionDeleted(connectionId);
         connectionService.delete(connectionId);
         return ResponseEntity.noContent().build();
     }
@@ -414,6 +428,19 @@ public class IntegrationController implements IntegrationsApi {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Connection not found in project");
         }
         return conn;
+    }
+
+    /** SERVICE_ACCOUNT connectors (GCP) require a well-formed GCP service-account JSON key. */
+    private void requireValidServiceAccountKey(String key) {
+        Map<String, Object> parsed;
+        try {
+            parsed = objectMapper.readValue(key, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            throw new BusinessException("Invalid service-account key: not valid JSON");
+        }
+        if (!"service_account".equals(parsed.get("type"))) {
+            throw new BusinessException("Invalid service-account key: expected \"type\": \"service_account\"");
+        }
     }
 
     private String randomSecret() {

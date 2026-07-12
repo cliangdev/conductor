@@ -25,17 +25,22 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Executes {@code uses: claude-code} workflow steps on {@code runs-on: cloud-run} jobs — launches a
- * pre-created Cloud Run Job ({@link CloudRunJobLauncher}) with the container env contract, polls to
- * completion, and reads the result from the {@link WorkflowStepRun} row the container self-reported
- * into via the {@code /internal/v1} step-complete callback (Phase 2). Self-hosted {@code claude-code}
- * steps never reach this class — {@link WorkflowJobOrchestrator} routes {@code runs-on: self-hosted}
- * jobs to the daemon before entering the step loop; this executor defensively rejects anything other
- * than {@code cloud-run} via {@link StepExecutionContext#getRunsOn()}.
+ * Executes {@code uses: claude-code} workflow steps by launching a Cloud Run Job execution
+ * ({@link CloudRunJobLauncher}) against a target resolved by {@link RuntimeTargetResolver}, polling
+ * to completion, and reading the result from the {@link WorkflowStepRun} row the container
+ * self-reported into via the {@code /internal/v1} step-complete callback. Self-hosted
+ * {@code claude-code} steps never reach this class — {@link WorkflowJobOrchestrator} routes
+ * {@code runs-on: self-hosted} jobs to the daemon before entering the step loop; this executor
+ * rejects anything the resolver doesn't resolve ({@code runs-on: cloud-run} or a named, ACTIVE
+ * project runtime target).
  *
  * <h2>Credentials</h2>
- * The Anthropic API key comes from the project's {@code claude} {@link ProviderCredentialService}
- * credential (the same BYO-key store the {@code agent} step uses). When {@code conductor_mcp: true},
+ * {@code claude-code} steps are subscription-auth only, on every runtime: the container is the
+ * subscription runtime, and the {@link ProviderCredentialService} credential stored under provider
+ * id {@code claude-code} — a Claude Code OAuth token from {@code claude setup-token}, distinct from
+ * the {@code claude} provider the {@code agent} step's Anthropic API key lives under — is injected
+ * as {@code CLAUDE_CODE_OAUTH_TOKEN}. {@code ANTHROPIC_API_KEY} is never set by this class; API-key
+ * users should use the {@code agent} step instead. When {@code conductor_mcp: true},
  * the container also needs a Conductor project API key for its MCP server — {@link ProjectApiKey}'s
  * {@code key_value} column stores the raw key in plaintext (it's looked up by raw value for API-key
  * auth, see {@code ProjectApiKeyRepository#findByKeyValueWithProject}), so it's recovered directly via
@@ -43,22 +48,18 @@ import java.util.UUID;
  * project has multiple non-revoked keys, the first one returned is used — there is no "the" key for
  * automation today; a future refinement could let a step reference one by name.
  *
- * <h2>Crash recovery (partial)</h2>
- * The Cloud Run execution resource name is kept in memory only, not persisted — if this backend
- * instance dies mid-poll and the job is re-dispatched, a fresh {@code execute()} call looks up the
- * pre-created row by {@code (jobRunId, stepId)}:
+ * <h2>Crash recovery</h2>
+ * The Cloud Run execution resource name is persisted onto the step-run row right after
+ * {@link CloudRunJobLauncher#startExecution} returns, so a backend restart can re-attach instead of
+ * relaunching a duplicate execution. A fresh {@code execute()} call looks up the pre-created row by
+ * {@code (jobRunId, stepId)}:
  * <ul>
- *   <li><b>Covered:</b> if the container already self-reported (row status is terminal), the result
- *       is read straight from the row — no relaunch, no duplicate execution.</li>
- *   <li><b>Not covered:</b> if the row is still {@code PENDING}/{@code RUNNING}, the execution name is
- *       gone, so a new Cloud Run execution is launched under the <i>same</i> {@code workerJobId} (to
- *       avoid a duplicate row). The orphaned original execution keeps running; if it later completes
- *       and posts its own step-complete callback, it can race and overwrite whatever the new
- *       execution already persisted for that row. This mirrors the plan's accepted top risk #4 — a
- *       durable execution-name column was considered and rejected for this phase (the entity's
- *       existing {@code image} column is semantically "container image" elsewhere and repurposing it
- *       would mislead anyone reading step rows in the UI); closing the gap needs a schema change,
- *       left for a follow-up.</li>
+ *   <li>if the container already self-reported (row status is terminal), the result is read straight
+ *       from the row — no relaunch, no duplicate execution.</li>
+ *   <li>if the row is still {@code PENDING}/{@code RUNNING} but already carries a stored execution
+ *       name, polling resumes against that same Cloud Run execution — again no relaunch.</li>
+ *   <li>only when neither applies (a brand new row, or an existing row with no execution name yet) is
+ *       a new Cloud Run execution launched.</li>
  * </ul>
  */
 @Component
@@ -67,13 +68,15 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
     private static final Logger log = LoggerFactory.getLogger(ClaudeCodeStepExecutor.class);
 
     private static final String STEP_TYPE = "claude-code";
-    private static final String CLOUD_RUN = "cloud-run";
-    private static final String CLAUDE_PROVIDER = "claude";
+    /** Distinct from {@code "claude"}, the {@code agent} step's Anthropic API-key provider. */
+    private static final String CLAUDE_CODE_PROVIDER = "claude-code";
     private static final int DEFAULT_TIMEOUT_MINUTES = 30;
     private static final int MAX_TIMEOUT_MINUTES = 120;
     private static final int POLL_INTERVAL_SECONDS = 10;
+    private static final List<String> CONTAINER_COMMAND = List.of("conductor-claude-entrypoint");
 
     private final CloudRunJobLauncher launcher;
+    private final RuntimeTargetResolver runtimeTargetResolver;
     private final ProviderCredentialService credentialService;
     private final ProjectApiKeyRepository projectApiKeyRepository;
     private final WorkflowStepRunRepository stepRunRepository;
@@ -81,9 +84,11 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
     private final ProjectSettingsRepository projectSettingsRepository;
     private final WorkflowInterpolator interpolator;
     private final ObjectMapper objectMapper;
+    private final WorkflowRunLogBroker logBroker;
     private final String backendBaseUrl;
 
     public ClaudeCodeStepExecutor(CloudRunJobLauncher launcher,
+                                   RuntimeTargetResolver runtimeTargetResolver,
                                    ProviderCredentialService credentialService,
                                    ProjectApiKeyRepository projectApiKeyRepository,
                                    WorkflowStepRunRepository stepRunRepository,
@@ -91,8 +96,10 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
                                    ProjectSettingsRepository projectSettingsRepository,
                                    WorkflowInterpolator interpolator,
                                    ObjectMapper objectMapper,
+                                   WorkflowRunLogBroker logBroker,
                                    @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.launcher = launcher;
+        this.runtimeTargetResolver = runtimeTargetResolver;
         this.credentialService = credentialService;
         this.projectApiKeyRepository = projectApiKeyRepository;
         this.stepRunRepository = stepRunRepository;
@@ -100,6 +107,7 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         this.projectSettingsRepository = projectSettingsRepository;
         this.interpolator = interpolator;
         this.objectMapper = objectMapper;
+        this.logBroker = logBroker;
         this.backendBaseUrl = backendBaseUrl;
     }
 
@@ -108,11 +116,21 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
 
     @Override
     public StepResult execute(StepExecutionContext context) {
-        if (!CLOUD_RUN.equals(context.getRunsOn())) {
-            return StepResult.failed("", "CLAUDE_INVALID_RUNS_ON: claude-code steps require the job to "
-                    + "declare 'runs-on: cloud-run' (or 'runs-on: self-hosted', dispatched separately "
-                    + "to the daemon). Got: " + context.getRunsOn());
+        Optional<RuntimeTargetResolver.ResolvedRuntime> resolved;
+        try {
+            resolved = runtimeTargetResolver.resolve(context.getProjectId(), context.getRunsOn());
+        } catch (RuntimeTargetNotFoundException e) {
+            return StepResult.failed("", "RUNTIME_TARGET_NOT_FOUND: " + e.getMessage());
+        } catch (RuntimeTargetNotReadyException e) {
+            return StepResult.failed("", "RUNTIME_TARGET_NOT_READY: " + e.getMessage());
         }
+        if (resolved.isEmpty()) {
+            return StepResult.failed("", "CLAUDE_INVALID_RUNS_ON: claude-code steps require the job to "
+                    + "declare 'runs-on: cloud-run' (or a project runtime target, or 'runs-on: self-hosted' "
+                    + "dispatched separately to the daemon). Got: " + context.getRunsOn());
+        }
+        CloudRunTarget target = resolved.get().target();
+        String image = resolved.get().image();
 
         Map<String, Object> stepDef = context.getStepDefinition();
         RuntimeContext ctx = context.getRuntimeContext();
@@ -127,9 +145,11 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         }
         String prompt = interpolator.interpolate(promptObj.toString(), ctx);
 
-        Optional<String> apiKey = credentialService.resolveApiKey(projectId, CLAUDE_PROVIDER);
-        if (apiKey.isEmpty()) {
-            return StepResult.failed("", "CLAUDE_CREDENTIAL_MISSING: no Claude API key configured for this project");
+        Optional<String> oauthToken = credentialService.resolveApiKey(projectId, CLAUDE_CODE_PROVIDER);
+        if (oauthToken.isEmpty()) {
+            return StepResult.failed("", "CLAUDE_SUBSCRIPTION_NOT_CONFIGURED: no Claude Code subscription "
+                    + "token configured for this project. Run 'claude setup-token' and store the result as "
+                    + "the project's Claude Code credential under Integrations → Google Cloud.");
         }
 
         boolean conductorMcp = getBooleanOrDefault(stepDef, "conductor_mcp", false);
@@ -143,43 +163,77 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
             conductorApiKey = keys.get(0).getKeyValue();
         }
 
-        String workerJobId = resolveOrCreateStepRun(jobRun, stepId, stepDef);
-        Optional<StepResult> alreadyTerminal = readTerminalResultIfPresent(jobRun.getId(), workerJobId, stepDef);
-        if (alreadyTerminal.isPresent()) {
+        WorkflowStepRun stepRun = resolveOrCreateStepRun(jobRun, stepId, stepDef);
+        String workerJobId = stepRun.getWorkerJobId();
+
+        Optional<WorkflowStepRun> priorRow = stepRunRepository.findByJobRunIdAndWorkerJobId(jobRun.getId(), workerJobId);
+        if (priorRow.isPresent() && isTerminal(priorRow.get().getStatus())) {
             log.info("claude-code step {} already terminal on resume (workerJobId={}), skipping relaunch",
                     stepId, workerJobId);
-            return alreadyTerminal.get();
+            return resultFromRow(priorRow.get(), stepDef, Optional.empty(), "Resumed from prior run\n");
         }
 
         int timeoutMinutes = resolveTimeoutMinutes(stepDef);
-        Map<String, String> env = buildEnv(stepDef, ctx, prompt, projectId, runId, jobRun, workerJobId,
-                timeoutMinutes, conductorMcp, conductorApiKey, apiKey.get());
-
         StringBuilder logBuilder = new StringBuilder();
-        logBuilder.append("→ Launching Cloud Run execution (timeout=").append(timeoutMinutes).append("m)\n");
+
+        if (priorRow.isPresent() && priorRow.get().getExecutionName() != null) {
+            WorkflowStepRun inFlightRow = priorRow.get();
+            String executionName = inFlightRow.getExecutionName();
+            log.info("claude-code step {} resuming poll on prior Cloud Run execution {} (workerJobId={}), "
+                    + "skipping relaunch", stepId, executionName, workerJobId);
+            appendLauncherLine(inFlightRow, projectId, logBuilder,
+                    "→ Resuming poll on prior Cloud Run execution: " + executionName);
+            return pollUntilTerminal(target, executionName, jobRun.getId(), workerJobId, stepDef, timeoutMinutes,
+                    logBuilder, inFlightRow, projectId);
+        }
+
+        Map<String, String> env = buildEnv(stepDef, ctx, prompt, projectId, runId, jobRun, workerJobId,
+                timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get());
+        ContainerTask task = new ContainerTask(image, CONTAINER_COMMAND, env, timeoutMinutes);
+
+        appendLauncherLine(stepRun, projectId, logBuilder,
+                "→ Launching Cloud Run execution (timeout=" + timeoutMinutes + "m)");
 
         String executionName;
         try {
-            executionName = launcher.startExecution(env, timeoutMinutes);
-            logBuilder.append("← execution: ").append(executionName).append("\n");
+            executionName = launcher.startExecution(target, task);
+            appendLauncherLine(stepRun, projectId, logBuilder, "← execution: " + executionName);
         } catch (Exception e) {
             log.warn("Failed to start Cloud Run execution for claude-code step {}: {}", stepId, e.getMessage());
-            logBuilder.append("✗ ").append(e.getMessage()).append("\n");
+            appendLauncherLine(stepRun, projectId, logBuilder, "✗ " + e.getMessage());
             return StepResult.failed(logBuilder.toString(), "CLAUDE_LAUNCH_ERROR").withWorkerJobId(workerJobId);
         }
 
-        return pollUntilTerminal(executionName, jobRun.getId(), workerJobId, stepDef, timeoutMinutes, logBuilder);
+        stepRun.setExecutionName(executionName);
+        stepRunRepository.save(stepRun);
+
+        return pollUntilTerminal(target, executionName, jobRun.getId(), workerJobId, stepDef, timeoutMinutes,
+                logBuilder, stepRun, projectId);
     }
 
     /**
-     * Looks up the pre-created row for this step by {@code (jobRunId, stepId)}. Reuses its
-     * {@code workerJobId} if found (whatever its status — resume path); otherwise creates a new
-     * RUNNING row with a fresh {@code workerJobId}.
+     * Appends one launcher-side status line both to the in-memory buffer that becomes
+     * {@link StepResult#getLog()} and to the step row's persisted log (via
+     * {@link WorkflowRunLogBroker#appendToStepLog}), so the run-detail UI reflects launcher progress
+     * without waiting for the step to reach a terminal state. {@code stepRun} must be the same row
+     * {@link WorkflowJobOrchestrator#persistStepRun} will later match by workerJobId — its log-clobber
+     * guard relies on this row already carrying content by the time the terminal {@link StepResult} is
+     * persisted, so every line added to {@code logBuilder} in this class must also flow through here.
      */
-    private String resolveOrCreateStepRun(WorkflowJobRun jobRun, String stepId, Map<String, Object> stepDef) {
+    private void appendLauncherLine(WorkflowStepRun stepRun, String projectId, StringBuilder logBuilder, String line) {
+        logBuilder.append(line).append("\n");
+        logBroker.appendToStepLog(stepRun, List.of(line), projectId);
+    }
+
+    /**
+     * Looks up the pre-created row for this step by {@code (jobRunId, stepId)}. Reuses it (whatever
+     * its status or stored execution name — resume path) if found; otherwise creates a new RUNNING
+     * row with a fresh {@code workerJobId}.
+     */
+    private WorkflowStepRun resolveOrCreateStepRun(WorkflowJobRun jobRun, String stepId, Map<String, Object> stepDef) {
         Optional<WorkflowStepRun> existing = stepRunRepository.findByJobRunIdAndStepId(jobRun.getId(), stepId);
         if (existing.isPresent() && existing.get().getWorkerJobId() != null) {
-            return existing.get().getWorkerJobId();
+            return existing.get();
         }
 
         WorkflowStepRun stepRun = existing.orElseGet(WorkflowStepRun::new);
@@ -191,23 +245,14 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         stepRun.setWorkerJobId(UUID.randomUUID().toString());
         stepRun.setStartedAt(OffsetDateTime.now());
         stepRunRepository.save(stepRun);
-        return stepRun.getWorkerJobId();
-    }
-
-    /** If the pre-created row is already terminal (container self-reported before a restart), builds the result from it directly. */
-    private Optional<StepResult> readTerminalResultIfPresent(String jobRunId, String workerJobId, Map<String, Object> stepDef) {
-        Optional<WorkflowStepRun> rowOpt = stepRunRepository.findByJobRunIdAndWorkerJobId(jobRunId, workerJobId);
-        if (rowOpt.isEmpty() || !isTerminal(rowOpt.get().getStatus())) {
-            return Optional.empty();
-        }
-        return Optional.of(resultFromRow(rowOpt.get(), stepDef, Optional.empty(), "Resumed from prior run\n"));
+        return stepRun;
     }
 
     @SuppressWarnings("unchecked")
     private Map<String, String> buildEnv(Map<String, Object> stepDef, RuntimeContext ctx, String prompt,
                                           String projectId, String runId, WorkflowJobRun jobRun, String workerJobId,
                                           int timeoutMinutes, boolean conductorMcp, String conductorApiKey,
-                                          String anthropicApiKey) {
+                                          String oauthToken) {
         Map<String, String> env = new LinkedHashMap<>();
         env.put("CONDUCTOR_STEP_PROMPT", prompt);
 
@@ -253,9 +298,8 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         if (conductorMcp) {
             env.put("CONDUCTOR_API_KEY", conductorApiKey);
         }
-        // Cloud Run always uses API-key billing; CLAUDE_CODE_OAUTH_TOKEN is a self-hosted-only concept
-        // and must never be set here (that path never reaches this executor).
-        env.put("ANTHROPIC_API_KEY", anthropicApiKey);
+        // Subscription auth only, on every runtime this executor launches — never ANTHROPIC_API_KEY.
+        env.put("CLAUDE_CODE_OAUTH_TOKEN", oauthToken);
         return env;
     }
 
@@ -263,28 +307,29 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
      * Bounded-iteration poll loop (not a wall-clock deadline) — matches {@link DockerStepExecutor}'s
      * shape so the timeout path is fast to unit test with {@link #sleepSeconds} overridden to a no-op.
      */
-    private StepResult pollUntilTerminal(String executionName, String jobRunId, String workerJobId,
-                                          Map<String, Object> stepDef, int timeoutMinutes, StringBuilder logBuilder) {
+    private StepResult pollUntilTerminal(CloudRunTarget target, String executionName, String jobRunId, String workerJobId,
+                                          Map<String, Object> stepDef, int timeoutMinutes, StringBuilder logBuilder,
+                                          WorkflowStepRun stepRun, String projectId) {
         int maxIterations = Math.max(1, (timeoutMinutes * 60) / POLL_INTERVAL_SECONDS);
         for (int i = 0; i < maxIterations; i++) {
             sleepSeconds(POLL_INTERVAL_SECONDS);
 
             CloudRunJobLauncher.ExecutionState state;
             try {
-                state = launcher.pollExecution(executionName);
+                state = launcher.pollExecution(target, executionName);
             } catch (Exception e) {
                 log.warn("Poll error for Cloud Run execution {}: {}", executionName, e.getMessage());
                 continue;
             }
 
             if (state.status() != CloudRunJobLauncher.Status.RUNNING) {
-                logBuilder.append("← execution finished: ").append(state.status()).append("\n");
+                appendLauncherLine(stepRun, projectId, logBuilder, "← execution finished: " + state.status());
                 return terminalResult(jobRunId, workerJobId, stepDef, state, logBuilder.toString());
             }
         }
 
-        logBuilder.append("✗ Timed out after ").append(timeoutMinutes).append(" minutes\n");
-        launcher.cancelExecution(executionName);
+        appendLauncherLine(stepRun, projectId, logBuilder, "✗ Timed out after " + timeoutMinutes + " minutes");
+        launcher.cancelExecution(target, executionName);
         return StepResult.failed(logBuilder.toString(), "CLAUDE_TIMEOUT").withWorkerJobId(workerJobId);
     }
 

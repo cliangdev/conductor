@@ -2,6 +2,8 @@ package com.conductor.workflow;
 
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.entity.ProjectApiKey;
+import com.conductor.entity.RuntimeTarget;
+import com.conductor.entity.RuntimeTargetStatus;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowStepRun;
@@ -9,10 +11,13 @@ import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -37,14 +42,20 @@ class ClaudeCodeStepExecutorTest {
     @Mock private WorkflowStepRunRepository stepRunRepository;
     @Mock private RunTokenService runTokenService;
     @Mock private ProjectSettingsRepository projectSettingsRepository;
+    @Mock private RuntimeTargetService runtimeTargetService;
+    @Mock private WorkflowRunLogBroker logBroker;
+
+    private RuntimeTargetResolver runtimeTargetResolver;
 
     private ClaudeCodeStepExecutor executor;
 
     @BeforeEach
     void setUp() {
-        executor = new ClaudeCodeStepExecutor(launcher, credentialService, projectApiKeyRepository,
-                stepRunRepository, runTokenService, projectSettingsRepository,
-                new WorkflowInterpolator(), new ObjectMapper(), "http://localhost:8080") {
+        runtimeTargetResolver = new RuntimeTargetResolver("gcp-proj", "us-central1", "conductor-claude-code",
+                runtimeTargetService);
+        executor = new ClaudeCodeStepExecutor(launcher, runtimeTargetResolver, credentialService,
+                projectApiKeyRepository, stepRunRepository, runTokenService, projectSettingsRepository,
+                new WorkflowInterpolator(), new ObjectMapper(), logBroker, "http://localhost:8080") {
             @Override
             protected void sleepSeconds(int seconds) {
                 // no-op for fast tests
@@ -71,7 +82,7 @@ class ClaudeCodeStepExecutorTest {
     }
 
     private void stubHappyCredentials() {
-        when(credentialService.resolveApiKey(PROJECT_ID, "claude")).thenReturn(Optional.of("sk-ant-xyz"));
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
         when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
         when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
         when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
@@ -92,19 +103,72 @@ class ClaudeCodeStepExecutorTest {
     }
 
     @Test
-    void execute_missingCredentialReturnsFailed() {
-        when(credentialService.resolveApiKey(PROJECT_ID, "claude")).thenReturn(Optional.empty());
+    void execute_unknownRuntimeTargetReturnsRuntimeTargetNotFound() {
+        when(runtimeTargetService.findByProjectIdAndName(PROJECT_ID, "my-target")).thenReturn(Optional.empty());
+
+        StepResult result = executor.execute(context(baseStepDef(), "my-target"));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).contains("RUNTIME_TARGET_NOT_FOUND");
+        verifyNoInteractions(launcher, stepRunRepository, credentialService);
+    }
+
+    @Test
+    void execute_provisioningRuntimeTargetReturnsRuntimeTargetNotReady() {
+        RuntimeTarget target = new RuntimeTarget();
+        target.setName("my-target");
+        target.setStatus(RuntimeTargetStatus.PROVISIONING);
+        when(runtimeTargetService.findByProjectIdAndName(PROJECT_ID, "my-target")).thenReturn(Optional.of(target));
+
+        StepResult result = executor.execute(context(baseStepDef(), "my-target"));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).contains("RUNTIME_TARGET_NOT_READY");
+        verifyNoInteractions(launcher, stepRunRepository, credentialService);
+    }
+
+    @Test
+    void execute_activeRuntimeTargetLaunchesAgainstResolvedCloudRunTarget() {
+        RuntimeTarget target = new RuntimeTarget();
+        target.setName("my-target");
+        target.setStatus(RuntimeTargetStatus.ACTIVE);
+        target.setConnectionId("conn-1");
+        when(runtimeTargetService.findByProjectIdAndName(PROJECT_ID, "my-target")).thenReturn(Optional.of(target));
+        when(runtimeTargetService.configOf(target)).thenReturn(new RuntimeTargetService.TargetRuntimeConfig(
+                "customer-proj", "us-east1", "conductor-my-target",
+                "us-east1-docker.pkg.dev/customer-proj/repo/image:1", List.of()));
+        stubHappyCredentials();
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.empty());
+
+        StepResult result = executor.execute(context(baseStepDef(), "my-target"));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        verify(launcher).startExecution(argThat(t ->
+                "customer-proj".equals(t.gcpProjectId()) &&
+                "us-east1".equals(t.region()) &&
+                "conductor-my-target".equals(t.jobName()) &&
+                "conn-1".equals(t.connectionId())
+        ), argThat(task -> "us-east1-docker.pkg.dev/customer-proj/repo/image:1".equals(task.image())));
+    }
+
+    @Test
+    void execute_missingCredentialReturnsSubscriptionNotConfigured() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.empty());
 
         StepResult result = executor.execute(context(baseStepDef(), "cloud-run"));
 
         assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
-        assertThat(result.getErrorReason()).contains("CLAUDE_CREDENTIAL_MISSING");
+        assertThat(result.getErrorReason()).contains("CLAUDE_SUBSCRIPTION_NOT_CONFIGURED");
         verifyNoInteractions(launcher, stepRunRepository);
     }
 
     @Test
     void execute_missingProjectApiKeyWithMcpEnabledReturnsFailed() {
-        when(credentialService.resolveApiKey(PROJECT_ID, "claude")).thenReturn(Optional.of("sk-ant-xyz"));
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
         when(projectApiKeyRepository.findByProjectIdAndRevokedAtIsNull(PROJECT_ID)).thenReturn(List.of());
 
         Map<String, Object> stepDef = baseStepDef();
@@ -119,8 +183,8 @@ class ClaudeCodeStepExecutorTest {
     @Test
     void execute_happyPathAppliesDeclaredOutputsAndCarriesWorkerJobId() {
         stubHappyCredentials();
-        when(launcher.startExecution(anyMap(), anyInt())).thenReturn("exec-1");
-        when(launcher.pollExecution("exec-1"))
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
 
         WorkflowStepRun completedRow = new WorkflowStepRun();
@@ -143,28 +207,37 @@ class ClaudeCodeStepExecutorTest {
         assertThat(result.getOutputs().get("summary")).isEqualTo("All good");
         assertThat(result.getOutputs().get("title")).isEqualTo("Weekly Report");
 
-        verify(launcher).startExecution(argThat(env ->
-                "sk-ant-xyz".equals(env.get("ANTHROPIC_API_KEY")) &&
-                "ck_abc123".equals(env.get("CONDUCTOR_API_KEY")) &&
-                "Analyze the data".equals(env.get("CONDUCTOR_STEP_PROMPT")) &&
-                env.get("CONDUCTOR_STEP_COMPLETE_URL")
+        verify(launcher).startExecution(argThat(target ->
+                "gcp-proj".equals(target.gcpProjectId()) &&
+                "us-central1".equals(target.region()) &&
+                "conductor-claude-code".equals(target.jobName()) &&
+                target.connectionId() == null
+        ), argThat(task ->
+                "cc-oauth-xyz".equals(task.env().get("CLAUDE_CODE_OAUTH_TOKEN")) &&
+                "ck_abc123".equals(task.env().get("CONDUCTOR_API_KEY")) &&
+                "Analyze the data".equals(task.env().get("CONDUCTOR_STEP_PROMPT")) &&
+                task.env().get("CONDUCTOR_STEP_COMPLETE_URL")
                         .equals("http://localhost:8080/internal/v1/workflow-runs/run-123/steps/"
-                                + env.get("CONDUCTOR_WORKER_JOB_ID") + "/complete")
-        ), eq(30));
+                                + task.env().get("CONDUCTOR_WORKER_JOB_ID") + "/complete") &&
+                task.timeoutMinutes() == 30 &&
+                RunnerImage.DEFAULT.equals(task.image())
+        ));
     }
 
     @Test
-    void execute_neverSetsOauthTokenEnvVar() {
+    void execute_neverSetsAnthropicApiKeyEnvVar() {
         stubHappyCredentials();
-        when(launcher.startExecution(anyMap(), anyInt())).thenReturn("exec-1");
-        when(launcher.pollExecution("exec-1"))
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
         when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
                 .thenReturn(Optional.empty());
 
         executor.execute(context(baseStepDef(), "cloud-run"));
 
-        verify(launcher).startExecution(argThat(env -> !env.containsKey("CLAUDE_CODE_OAUTH_TOKEN")), anyInt());
+        verify(launcher).startExecution(any(CloudRunTarget.class),
+                argThat(task -> !task.env().containsKey("ANTHROPIC_API_KEY")
+                        && task.env().containsKey("CLAUDE_CODE_OAUTH_TOKEN")));
     }
 
     @Test
@@ -199,8 +272,8 @@ class ClaudeCodeStepExecutorTest {
 
     private void assertExitCodeMapping(int exitCode, String expectedReason) {
         stubHappyCredentials();
-        when(launcher.startExecution(anyMap(), anyInt())).thenReturn("exec-1");
-        when(launcher.pollExecution("exec-1"))
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.FAILED, Optional.of(exitCode)));
         // Container never got to self-report — no terminal row ever appears.
         when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
@@ -215,9 +288,9 @@ class ClaudeCodeStepExecutorTest {
     @Test
     void execute_containerErrorReasonPreferredOverExitCodeMapping() {
         stubHappyCredentials();
-        when(launcher.startExecution(anyMap(), anyInt())).thenReturn("exec-1");
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
         // Cloud Run itself reports exit code 77 (would map to CLAUDE_LAUNCH_ERROR)...
-        when(launcher.pollExecution("exec-1"))
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.FAILED, Optional.of(77)));
 
         // ...but the container self-reported its own, more specific errorReason first.
@@ -238,8 +311,8 @@ class ClaudeCodeStepExecutorTest {
     @Test
     void execute_timesOutAndCancelsExecution() {
         stubHappyCredentials();
-        when(launcher.startExecution(anyMap(), anyInt())).thenReturn("exec-timeout");
-        when(launcher.pollExecution("exec-timeout"))
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-timeout");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-timeout")))
                 .thenReturn(CloudRunJobLauncher.ExecutionState.running());
         when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
                 .thenReturn(Optional.empty());
@@ -251,14 +324,14 @@ class ClaudeCodeStepExecutorTest {
 
         assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
         assertThat(result.getErrorReason()).isEqualTo("CLAUDE_TIMEOUT");
-        verify(launcher).cancelExecution("exec-timeout");
+        verify(launcher).cancelExecution(any(CloudRunTarget.class), eq("exec-timeout"));
         // 1 minute / 10s poll interval = 6 polls before giving up.
-        verify(launcher, times(6)).pollExecution("exec-timeout");
+        verify(launcher, times(6)).pollExecution(any(CloudRunTarget.class), eq("exec-timeout"));
     }
 
     @Test
     void execute_resumesWithoutRelaunchingWhenRowAlreadyTerminal() {
-        when(credentialService.resolveApiKey(PROJECT_ID, "claude")).thenReturn(Optional.of("sk-ant-xyz"));
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
 
         WorkflowStepRun priorRow = new WorkflowStepRun();
         priorRow.setStatus(WorkflowStepStatus.SUCCESS);
@@ -275,6 +348,69 @@ class ClaudeCodeStepExecutorTest {
         assertThat(result.getWorkerJobId()).isEqualTo("worker-existing");
         assertThat(result.getOutputs().get("summary")).isEqualTo("done already");
         verifyNoInteractions(launcher);
+        verify(stepRunRepository, never()).save(any());
+    }
+
+    @Test
+    void execute_persistsExecutionNameOnStepRunAfterLaunch() {
+        stubHappyCredentials();
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-777");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-777")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.empty());
+
+        executor.execute(context(baseStepDef(), "cloud-run"));
+
+        ArgumentCaptor<WorkflowStepRun> captor = ArgumentCaptor.forClass(WorkflowStepRun.class);
+        verify(stepRunRepository, atLeastOnce()).save(captor.capture());
+        assertThat(captor.getAllValues())
+                .anySatisfy(row -> assertThat(row.getExecutionName()).isEqualTo("exec-777"));
+    }
+
+    @Test
+    void execute_appendsLauncherLinesToStepRunLogBeforePollingBegins() {
+        stubHappyCredentials();
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.empty());
+
+        executor.execute(context(baseStepDef(), "cloud-run"));
+
+        // The "Launching" line (and the post-launch "execution:" line) must reach the row via the
+        // broker BEFORE any poll is attempted — proving the UI sees launcher progress without
+        // waiting for the step to reach a terminal state, regardless of how long polling takes.
+        InOrder inOrder = inOrder(logBroker, launcher);
+        inOrder.verify(logBroker).appendToStepLog(any(WorkflowStepRun.class),
+                argThat(lines -> lines.size() == 1 && lines.get(0).contains("Launching")), eq(PROJECT_ID));
+        inOrder.verify(logBroker).appendToStepLog(any(WorkflowStepRun.class),
+                argThat(lines -> lines.size() == 1 && lines.get(0).contains("execution: exec-1")), eq(PROJECT_ID));
+        inOrder.verify(launcher).pollExecution(any(CloudRunTarget.class), eq("exec-1"));
+    }
+
+    @Test
+    void execute_resumesPollingWithStoredExecutionNameWithoutRelaunching() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
+
+        WorkflowStepRun inFlightRow = new WorkflowStepRun();
+        inFlightRow.setStatus(WorkflowStepStatus.RUNNING);
+        inFlightRow.setWorkerJobId("worker-inflight");
+        inFlightRow.setExecutionName("exec-inflight");
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.of(inFlightRow));
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(JOB_RUN_ID, "worker-inflight"))
+                .thenReturn(Optional.of(inFlightRow));
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-inflight")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+
+        StepResult result = executor.execute(context(baseStepDef(), "cloud-run"));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        assertThat(result.getWorkerJobId()).isEqualTo("worker-inflight");
+        verify(launcher, never()).startExecution(any(), any());
+        verify(launcher).pollExecution(any(CloudRunTarget.class), eq("exec-inflight"));
         verify(stepRunRepository, never()).save(any());
     }
 

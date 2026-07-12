@@ -18,6 +18,7 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Conductor-hosted](#conductor-hosted)
   - [Self-hosted](#self-hosted)
   - [Cloud Run](#cloud-run)
+  - [Runtime targets (bring your own Cloud Run)](#runtime-targets-bring-your-own-cloud-run)
 - [Self-hosted setup](#self-hosted-setup)
   - [Prerequisites](#prerequisites)
   - [Running the daemon](#running-the-daemon)
@@ -136,7 +137,7 @@ jobs:
 | Field | Description |
 |-------|-------------|
 | `needs` | Job ID or list of job IDs this job depends on. The job runs only after all listed jobs succeed. |
-| `runs-on` | Execution mode: `conductor` (default), `self-hosted`, or `cloud-run`. See [Execution modes](#execution-modes). |
+| `runs-on` | Execution mode: `conductor` (default), `self-hosted`, `cloud-run`, or the name of a project [runtime target](#runtime-targets-bring-your-own-cloud-run). See [Execution modes](#execution-modes). |
 | `if` | Expression evaluated before the job starts. If false, the job is skipped. |
 | `steps` | List of steps to execute in order. |
 | `loop` | Repeat this job up to `max_iterations` times until a condition is met. See [Loops](#loops). |
@@ -284,6 +285,14 @@ Fetches data from a connected integration (Google Search Console, PostHog, Reven
 
 Step outputs are accessible via `${{ steps.ID.outputs.* }}`. The exact output keys depend on the connector and operation — discover them via the `list_integration_tools` MCP tool or by running a test dispatch.
 
+Every integration step also exposes a **`health`** output (`HEALTHY` | `DEGRADED`) — a `DEGRADED` fetch does not fail the step (it may serve stale cached data), and the step log records the reason and the age of the data being served. Gate downstream work on it when stale data would be worse than no data:
+
+```yaml
+analyze:
+  needs: collect
+  if: "${{ needs.collect.outputs.health == 'HEALTHY' }}"
+```
+
 **Credentials are resolved at runtime** — they never appear in the workflow YAML. The integration must be connected first via **Settings → Integrations** before it can be referenced in a workflow.
 
 **Available connectors:**
@@ -376,7 +385,7 @@ jobs:
 
   analyze:
     needs: [collect]
-    runs-on: cloud-run            # or: self-hosted (subscription auth)
+    runs-on: cloud-run            # or: self-hosted / a runtime target — all subscription auth
     steps:
       - id: seo
         uses: claude-code
@@ -409,6 +418,8 @@ jobs:
 | `timeout_minutes` | `30` | Hard wall-clock timeout for the whole step (integer, 1–120). Enforced inside the container (SIGTERM, then SIGKILL) — the step fails with `CLAUDE_TIMEOUT` if exceeded. |
 | `output_schema` | — | JSON Schema requesting a structured JSON answer, passed to `--json-schema`. |
 
+**Live logs** — the run detail view streams the step's activity while it runs: a container-started line, then one compact line per Claude turn/tool call (`→ tool: Read {...}`, `💬 …`), ending with `✓ done: N turns`. Lines persist on the step, so they're also there after the run. The container can always read its own `/conductor/inputs/` files — no `allowed_tools` entry needed for that.
+
 The step exposes these outputs:
 
 | Output | Description |
@@ -430,15 +441,18 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 | `CLAUDE_RATE_LIMITED` | The account's usage/rate limit was exhausted. |
 | `CLAUDE_TIMEOUT` | The step exceeded `timeout_minutes`. |
 | `CLAUDE_CONFIG_ERROR` | Bad step configuration (e.g. invalid `inputs`/`output_schema` JSON, or `claude` failed to launch). |
-| `CLAUDE_CREDENTIAL_MISSING` | No provider credential is configured for the project (`runs-on: cloud-run`) — set one under **Settings → Integrations**. |
-| `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` | No subscription OAuth token is configured on the daemon host (`runs-on: self-hosted`) — see [Subscription auth for claude-code steps](#subscription-auth-for-claude-code-steps). |
+| `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` | No Claude Code subscription OAuth token is configured for this runtime — self-hosted: the daemon host; cloud-run/runtime targets: the project's Claude Code credential. See "Auth & runtime targets" below. |
 | `CLAUDE_LAUNCH_ERROR` | The Cloud Run execution failed to launch, or ended without the container ever reporting a result (e.g. image pull failure, OOM kill). |
 | `PROJECT_API_KEY_MISSING` | `conductor_mcp: true` on `runs-on: cloud-run`, but the project has no active API key (**Settings → API Keys**). |
+| `RUNTIME_TARGET_NOT_FOUND` | `runs-on` names a [runtime target](#runtime-targets-bring-your-own-cloud-run) that no longer exists in the project. |
+| `RUNTIME_TARGET_NOT_READY` | The named runtime target exists but isn't `ACTIVE` (still `PROVISIONING`, or `ERROR`) — fix it under **Integrations → Google Cloud** and retry. |
 
-**Auth & runtime targets** — a `claude-code` step's job `runs-on` determines which Claude credential is used, and there is no fallback between them:
+**Auth & runtime targets** — `claude-code` steps are **subscription auth only, on every runtime**. The containerized Claude Code CLI is the subscription runtime; there is no API-key path for this step type:
 
-- **`runs-on: self-hosted`** uses **subscription auth**: run `claude setup-token` on the daemon host, then `conductor config set-claude-code-oauth-token <token>` to store it in `~/.conductor/config.json`. The token never leaves the machine or transits Conductor's backend — the daemon injects it directly into the container. Billed against the owner's Claude Pro/Max plan, not metered API usage. Per Anthropic's guidance, subscription auth is meant for an individual's own automation, not shared/production use — use `cloud-run` for that.
-- **`runs-on: cloud-run`** uses a **per-project Anthropic API key** — the same provider credential the `agent` step uses (**Settings → Integrations**, resolved at runtime, never in the YAML). Billed as metered API usage.
+- **`runs-on: self-hosted`**: run `claude setup-token` on the daemon host, then `conductor config set-claude-code-oauth-token <token>` to store it in `~/.conductor/config.json`. The token never leaves the machine or transits Conductor's backend — the daemon injects it directly into the container.
+- **`runs-on: cloud-run`** and **`runs-on: <runtime-target>`**: run `claude setup-token` and paste the result as the project's **Claude Code (subscription)** credential (**Integrations → Google Cloud**, KMS-encrypted, write-only — never returned by the API, resolved at runtime, never in the YAML). This is a distinct credential from the `claude` provider the `agent` step uses.
+
+All three are billed against the token owner's Claude Pro/Max plan, not metered API usage. Per Anthropic's guidance, subscription auth is meant for an individual's own automation, not shared/production/metered use — for that, use the **`agent`** step instead (direct API calls against a per-project Anthropic API key), not a containerized `claude-code` step.
 
 ---
 
@@ -601,7 +615,7 @@ jobs:
 
 ## Execution modes
 
-`runs-on` is a job-level setting with three modes. `docker` and `claude-code` steps are the ones that use it — a self-hosted job dispatches **all** of its steps to your daemon as a unit, so mix step types across jobs (not within one self-hosted job) if you need both a self-hosted `docker`/`claude-code` step and a Conductor-hosted `http`/`kestra`/`integration`/`agent` step in the same pipeline.
+`runs-on` is a job-level setting with three built-in modes, plus named [runtime targets](#runtime-targets-bring-your-own-cloud-run) for running in your own cloud. `docker` and `claude-code` steps are the ones that use it — a self-hosted job dispatches **all** of its steps to your daemon as a unit, so mix step types across jobs (not within one self-hosted job) if you need both a self-hosted `docker`/`claude-code` step and a Conductor-hosted `http`/`kestra`/`integration`/`agent` step in the same pipeline.
 
 ### Conductor-hosted
 
@@ -649,7 +663,7 @@ jobs:
           prompt: Summarize the attached data.
 ```
 
-Currently only meaningful for `claude-code` steps. The step runs as a **Google Cloud Run Job execution** on Conductor's GCP project, using a per-project Anthropic API key rather than your own infrastructure. No setup required on your end beyond configuring a `claude` provider credential under **Settings → Integrations** — see "Auth & runtime targets" in the `claude-code` step section above.
+Currently only meaningful for `claude-code` steps. The step runs as a **Google Cloud Run Job execution** on Conductor's GCP project rather than your own infrastructure, using subscription auth. No setup required on your end beyond configuring the project's **Claude Code (subscription)** credential under **Integrations → Google Cloud** — see "Auth & runtime targets" in the `claude-code` step section above.
 
 **One-time infra setup** (operator-only, not per-project): the backend launches executions against a pre-created Cloud Run Job resource rather than creating one per run — image, retry policy, etc. are pinned on that resource:
 
@@ -668,6 +682,56 @@ The backend needs these env vars to target it:
 | `GCP_CLOUDRUN_PROJECT_ID` | GCP project id hosting the Cloud Run Job. |
 | `GCP_CLOUDRUN_REGION` | Region the Job resource was created in. |
 | `GCP_CLOUDRUN_CLAUDE_JOB_NAME` | Name of the pre-created Job resource (`conductor-claude-code` above). |
+
+### Runtime targets (bring your own Cloud Run)
+
+A **runtime target** is a named, project-owned place jobs can run — your own GCP project instead of Conductor's. Reference it by name:
+
+```yaml
+jobs:
+  analyze:
+    runs-on: marketing-gcp        # a runtime target named "marketing-gcp"
+    steps:
+      - uses: claude-code
+        with: { prompt: ... }
+```
+
+`conductor`, `self-hosted`, and `cloud-run` are reserved built-ins; any other `runs-on` scalar must match a runtime target in the project (saving the workflow fails otherwise). The target's name is validated at save time whatever its status; **readiness is enforced at execution time** — a run against a target that is still `PROVISIONING` or in `ERROR` fails the step with `RUNTIME_TARGET_NOT_READY`.
+
+**One-time setup:**
+
+1. **Connect Google Cloud** (Settings → Integrations → Google Cloud): paste or upload a **service-account JSON key**. The key is stored encrypted (same KMS envelope as all integration credentials) and never returned by the API. The service account needs:
+   - `roles/run.developer` — create/update/run the Cloud Run Job
+   - `roles/iam.serviceAccountUser` on the Job's runtime service account
+   - The *runtime* service account (which the Job executes as) needs `roles/artifactregistry.reader` to pull your image, plus whatever the workload itself uses.
+2. **Create the runtime target** (Integrations → Google Cloud → Runtime targets): name (slug), the gcp connection, GCP project id, region, and the **container image** to pin on the Job (e.g. `us-central1-docker.pkg.dev/PROJECT/conductor/runner:3`). Job name defaults to `conductor-<name>`.
+
+Creating (or editing) a target provisions it synchronously: Conductor **verifies the image exists** in your Artifact Registry, then **creates or updates the Cloud Run Job** in your project (image + `conductor-claude-entrypoint` command pinned on the Job, `--max-retries 0`). The target lands `ACTIVE`, or `ERROR` with the reason on the row (missing image, missing IAM permission, …) — fix and hit *Retry provisioning*. A warning (not an error) is recorded when the image's runner-contract label can't be verified.
+
+Deleting a target removes only Conductor's record — **the Cloud Run Job in your project is left in place**.
+
+**Choosing an image.** The image must honor the Conductor runner contract (the `conductor-claude-entrypoint` self-reporting entrypoint — see [Runner image](#runner-image)). For claude-code-only targets, prefer the **dedicated claude runner** (`runner-image/Dockerfile.claude-runner`): node-slim + pinned Claude CLI + pre-warmed MCP resolution, with `DISABLE_AUTOUPDATER=1` — it deliberately omits the Python/gh/Docker-CLI tooling that only `docker` steps need, so it's substantially smaller and cold-starts faster. Patterns:
+
+- **Build the dedicated claude runner** into your Artifact Registry (not yet published to a public registry — built from the repo for now):
+  ```bash
+  docker build --platform linux/amd64 -f runner-image/Dockerfile.claude-runner \
+    -t us-central1-docker.pkg.dev/PROJECT/conductor/claude-runner:1 runner-image/
+  docker push us-central1-docker.pkg.dev/PROJECT/conductor/claude-runner:1
+  ```
+- **Mirror the general-purpose image** into your Artifact Registry (works for claude-code too, just bigger):
+  ```bash
+  docker pull ghcr.io/cliangdev/conductor-runner:3
+  docker tag ghcr.io/cliangdev/conductor-runner:3 us-central1-docker.pkg.dev/PROJECT/conductor/runner:3
+  docker push us-central1-docker.pkg.dev/PROJECT/conductor/runner:3
+  ```
+- **Derive a custom image** that bakes your methodology in as a Claude Code skill (plus any extra tooling), keeping the task prompt in the workflow YAML thin — base it on either runner image:
+  ```dockerfile
+  FROM us-central1-docker.pkg.dev/PROJECT/conductor/claude-runner:1
+  COPY skills/seo-report/ /home/runner/.claude/skills/seo-report/
+  ```
+  Build and push it from your own CI. The base image already contains the Claude CLI and the entrypoint — don't override `ENTRYPOINT`/`CMD`, don't switch off the non-root `runner` user, and leave `/conductor/{workspace,inputs,outputs}` alone. A step prompt can then just say *"Use the seo-report skill on the inputs in /conductor/inputs/"* (add `Skill` to `allowed_tools`).
+
+Credential-wise a runtime-target job behaves like `cloud-run`: the project's Claude Code subscription token (and project API key for `conductor_mcp: true`) are injected by the backend; compute runs — and is billed — in your GCP project.
 
 ---
 
@@ -712,6 +776,8 @@ conductor config set-claude-code-oauth-token <token>
 
 If no token is configured, a `claude-code` step dispatched to that daemon fails immediately with `errorReason: CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` rather than silently falling back to any other credential.
 
+`runs-on: cloud-run` and named runtime targets also use subscription auth, but via a separate project-level credential (**Integrations → Google Cloud → Claude Code (subscription)**) rather than this daemon-local token — see "Auth & runtime targets" under the `claude-code` step above.
+
 ### Runner image
 
 When a `docker` step uses `uses: docker://` (no image name), or a job runs a `claude-code` step, the daemon pulls the default Conductor runner image:
@@ -731,6 +797,8 @@ This image includes:
 | Claude CLI | pinned (bumped deliberately per release) |
 | `curl`, `git`, `jq` | latest stable |
 | `conductor-claude-entrypoint` | self-reporting entrypoint used by `claude-code` steps (see below) |
+
+A **dedicated claude-code image** also exists (`runner-image/Dockerfile.claude-runner`): node-slim + the same pinned Claude CLI + `conductor-claude-entrypoint`, without the Python/gh/Docker-CLI tooling above. Today it's consumed via a [runtime target](#runtime-targets-bring-your-own-cloud-run)'s image field; making it the default image for self-hosted claude-code dispatch is tracked in #268.
 
 The container runs as a non-root `runner` user and ships with **no default `ENTRYPOINT`/`CMD`** — a plain `docker` step's `run:` script executes as before; a `claude-code` step explicitly invokes `conductor-claude-entrypoint`, which materializes the step's `inputs` under `/conductor/inputs/`, optionally wires up the Conductor MCP server, runs `claude -p` with the step's flags, streams logs, and self-reports the result (outputs + `errorReason`) back to Conductor — the same entrypoint runs unmodified whether the launcher is the self-hosted daemon or a Cloud Run Job execution.
 

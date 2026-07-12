@@ -57,6 +57,9 @@ public class WorkflowStepRun {
     @Column(name = "worker_job_id", length = 255)
     private String workerJobId;
 
+    @Column(name = "execution_name", length = 512)
+    private String executionName;
+
     @Column(name = "started_at")
     private OffsetDateTime startedAt;
 
@@ -105,6 +108,9 @@ public class WorkflowStepRun {
 
     public String getWorkerJobId() { return workerJobId; }
     public void setWorkerJobId(String workerJobId) { this.workerJobId = workerJobId; }
+
+    public String getExecutionName() { return executionName; }
+    public void setExecutionName(String executionName) { this.executionName = executionName; }
 
     public OffsetDateTime getStartedAt() { return startedAt; }
     public void setStartedAt(OffsetDateTime startedAt) { this.startedAt = startedAt; }

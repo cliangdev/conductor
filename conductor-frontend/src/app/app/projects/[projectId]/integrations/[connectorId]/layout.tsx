@@ -5,8 +5,10 @@ import { useParams } from 'next/navigation';
 import { Breadcrumb } from '@/components/layout/PageHeader';
 import { Tabs } from '@/components/ui/tabs';
 import WorkflowToolsPanel from '@/components/integrations/WorkflowToolsPanel';
+import ConnectorDocsPanel from '@/components/integrations/ConnectorDocsPanel';
 
 const CONNECTOR_LABELS: Record<string, string> = {
+  gcp: 'Google Cloud',
   posthog: 'PostHog',
   'gcp-billing': 'GCP Billing',
   github: 'GitHub',
@@ -15,7 +17,7 @@ const CONNECTOR_LABELS: Record<string, string> = {
   'apple-search-ads': 'Apple Search Ads',
 };
 
-type Tab = 'overview' | 'tools';
+type Tab = 'overview' | 'tools' | 'docs';
 
 export default function ConnectorLayout({ children }: { children: React.ReactNode }) {
   const { projectId, connectorId } = useParams<{ projectId: string; connectorId: string }>();
@@ -40,13 +42,14 @@ export default function ConnectorLayout({ children }: { children: React.ReactNod
           items={[
             { value: 'overview', label: 'Overview' },
             { value: 'tools', label: 'Tools' },
+            { value: 'docs', label: 'Documentation' },
           ]}
         />
       </div>
 
-      {tab === 'overview' ? children : (
-        <WorkflowToolsPanel projectId={projectId} connectorId={connectorId} />
-      )}
+      {tab === 'overview' && children}
+      {tab === 'tools' && <WorkflowToolsPanel projectId={projectId} connectorId={connectorId} />}
+      {tab === 'docs' && <ConnectorDocsPanel connectorId={connectorId} />}
     </>
   );
 }

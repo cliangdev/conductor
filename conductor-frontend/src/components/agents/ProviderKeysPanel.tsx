@@ -102,57 +102,79 @@ export function ProviderKeysPanel({
 
       {loading ? (
         <div className="text-sm text-muted-foreground">Loading…</div>
-      ) : rows.length === 0 ? (
-        <div className="text-sm text-muted-foreground">No model providers are registered.</div>
       ) : (
         <div className="space-y-4">
-          {rows.map(({ provider, configured }) => (
-            <div key={provider.id} className="flex flex-col gap-2 border-b border-border pb-4 last:border-0 last:pb-0">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-foreground">{provider.id}</span>
-                {configured ? (
-                  <Badge variant="status-approved">Configured</Badge>
-                ) : (
-                  <Badge variant="outline">Not configured</Badge>
-                )}
-              </div>
-              {canMutate ? (
-                <div className="flex gap-2">
-                  <input
-                    type="password"
-                    className={INPUT}
-                    value={drafts[provider.id] ?? ''}
-                    onChange={(e) => setDrafts((prev) => ({ ...prev, [provider.id]: e.target.value }))}
-                    placeholder={configured ? '•••••••• (set — enter a new key to replace)' : 'Enter API key'}
-                    autoComplete="off"
-                  />
-                  <Button
-                    type="button"
-                    onClick={() => handleSave(provider.id)}
-                    disabled={busy === provider.id || !(drafts[provider.id] ?? '').trim()}
-                  >
-                    {configured ? 'Replace' : 'Save'}
-                  </Button>
-                  {configured && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => handleRemove(provider.id)}
-                      disabled={busy === provider.id}
-                    >
-                      Remove
-                    </Button>
-                  )}
-                </div>
-              ) : roleLoading ? (
-                <p className="text-xs text-muted-foreground">Loading…</p>
-              ) : (
-                <p className="text-xs text-muted-foreground">Only admins and creators can manage provider keys.</p>
-              )}
-            </div>
-          ))}
+          {rows.length === 0 && (
+            <div className="text-sm text-muted-foreground">No model providers are registered.</div>
+          )}
+          {rows.map(({ provider, configured }) =>
+            renderRow({
+              id: provider.id,
+              label: provider.id,
+              configured,
+              placeholder: configured ? '•••••••• (set — enter a new key to replace)' : 'Enter API key',
+            }),
+          )}
         </div>
       )}
     </div>
   )
+
+  function renderRow({
+    id,
+    label,
+    configured,
+    placeholder,
+  }: {
+    id: string
+    label: string
+    configured: boolean
+    placeholder: string
+  }) {
+    return (
+      <div key={id} className="flex flex-col gap-2 border-b border-border pb-4 last:border-0 last:pb-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-foreground">{label}</span>
+          {configured ? (
+            <Badge variant="status-approved">Configured</Badge>
+          ) : (
+            <Badge variant="outline">Not configured</Badge>
+          )}
+        </div>
+        {canMutate ? (
+          <div className="flex gap-2">
+            <input
+              type="password"
+              className={INPUT}
+              value={drafts[id] ?? ''}
+              onChange={(e) => setDrafts((prev) => ({ ...prev, [id]: e.target.value }))}
+              placeholder={placeholder}
+              autoComplete="off"
+            />
+            <Button
+              type="button"
+              onClick={() => handleSave(id)}
+              disabled={busy === id || !(drafts[id] ?? '').trim()}
+            >
+              {configured ? 'Replace' : 'Save'}
+            </Button>
+            {configured && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => handleRemove(id)}
+                disabled={busy === id}
+              >
+                Remove
+              </Button>
+            )}
+          </div>
+        ) : roleLoading ? (
+          <p className="text-xs text-muted-foreground">Loading…</p>
+        ) : (
+          <p className="text-xs text-muted-foreground">Only admins and creators can manage provider keys.</p>
+        )}
+      </div>
+    )
+  }
 }

@@ -15,6 +15,7 @@ import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.JwtService;
+import com.conductor.service.LogRedactionService;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.workflow.RunTokenService;
 import com.conductor.workflow.WorkflowRunLogBroker;
@@ -78,6 +79,9 @@ class WorkflowRunLogControllersTest {
 
     @MockitoBean
     private UserApiKeyRepository userApiKeyRepository;
+
+    @MockitoBean
+    private LogRedactionService logRedactionService;
 
     private User testUser;
     private WorkflowRun testRun;
@@ -163,6 +167,18 @@ class WorkflowRunLogControllersTest {
                         .header("Authorization", "Bearer valid-run-token")
                         .contentType("application/json")
                         .content("{\"workerJobId\":\"job-1\",\"lines\":[\"log line 1\"],\"timestamp\":\"2026-04-12T00:00:00Z\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void logChunkReturns200ForValidToken_legacyBodyWithoutWorkerJobId() throws Exception {
+        when(runTokenService.validateRunToken("valid-run-token", "run-1")).thenReturn(true);
+
+        // Backward compat: older runner images that don't send workerJobId yet.
+        mockMvc.perform(post("/internal/v1/workflow-runs/run-1/log-chunk")
+                        .header("Authorization", "Bearer valid-run-token")
+                        .contentType("application/json")
+                        .content("{\"lines\":[\"log line 1\"],\"timestamp\":\"2026-04-12T00:00:00Z\"}"))
                 .andExpect(status().isOk());
     }
 

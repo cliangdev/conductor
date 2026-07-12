@@ -67,6 +67,7 @@ class WorkflowIntegrationToolsTest {
     @MockitoBean private ProjectSecurityService projectSecurityService;
     @MockitoBean private Optional<GcpBillingConnector> gcpBillingConnector;
     @MockitoBean private Optional<GscConnector> gscConnector;
+    @MockitoBean private com.conductor.service.RuntimeTargetService runtimeTargetService;
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     @MockitoBean private JwtService jwtService;
     @MockitoBean private UserRepository userRepository;
@@ -177,6 +178,71 @@ class WorkflowIntegrationToolsTest {
         assertThat(result.getOutputs()).containsKey("data");
         assertThat(result.getOutputs()).containsKey("clicks");
         assertThat(result.getOutputs().get("clicks")).isEqualTo("100");
+    }
+
+    @Test
+    void integrationStepExecutor_degradedFetch_logsReasonAndExposesHealthOutput() throws Exception {
+        ConnectionRepository connRepo = mock(ConnectionRepository.class);
+        IntegrationFetchService fetchSvc = mock(IntegrationFetchService.class);
+
+        Connection conn = new Connection();
+        conn.setId("conn-gsc");
+        conn.setConnectorId("gsc");
+        conn.setStatus("ACTIVE");
+
+        when(connRepo.findByProjectIdAndConnectorId("proj-1", "gsc")).thenReturn(List.of(conn));
+        when(fetchSvc.fetchData("conn-gsc", true))
+            .thenReturn(ConnectorData.degraded("Fetch failed: 401 invalid_grant — token expired", Map.of()));
+
+        ConnectorRegistry registry = mock(ConnectorRegistry.class);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
+
+        StepExecutionContext ctx = mock(StepExecutionContext.class);
+        when(ctx.getProjectId()).thenReturn("proj-1");
+        when(ctx.getStepDefinition()).thenReturn(Map.of(
+            "id", "seo",
+            "uses", "integration",
+            "with", Map.of("connector", "gsc")
+        ));
+
+        StepResult result = executor.execute(ctx);
+
+        assertThat(result.getStatus()).isEqualTo(com.conductor.entity.WorkflowStepStatus.SUCCESS);
+        assertThat(result.getLog())
+            .contains("DEGRADED: Fetch failed: 401 invalid_grant — token expired")
+            .contains("serving data fetched at");
+        assertThat(result.getOutputs().get("health")).isEqualTo("DEGRADED");
+    }
+
+    @Test
+    void integrationStepExecutor_healthyFetch_exposesHealthOutput_withBareStatusLine() throws Exception {
+        ConnectionRepository connRepo = mock(ConnectionRepository.class);
+        IntegrationFetchService fetchSvc = mock(IntegrationFetchService.class);
+
+        Connection conn = new Connection();
+        conn.setId("conn-gsc");
+        conn.setConnectorId("gsc");
+        conn.setStatus("ACTIVE");
+
+        when(connRepo.findByProjectIdAndConnectorId("proj-1", "gsc")).thenReturn(List.of(conn));
+        when(fetchSvc.fetchData("conn-gsc", true))
+            .thenReturn(ConnectorData.healthy(Map.of("clicks", 1)));
+
+        ConnectorRegistry registry = mock(ConnectorRegistry.class);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
+
+        StepExecutionContext ctx = mock(StepExecutionContext.class);
+        when(ctx.getProjectId()).thenReturn("proj-1");
+        when(ctx.getStepDefinition()).thenReturn(Map.of(
+            "id", "seo",
+            "uses", "integration",
+            "with", Map.of("connector", "gsc")
+        ));
+
+        StepResult result = executor.execute(ctx);
+
+        assertThat(result.getLog()).contains("← HEALTHY").doesNotContain("serving data fetched at");
+        assertThat(result.getOutputs().get("health")).isEqualTo("HEALTHY");
     }
 
     @Test

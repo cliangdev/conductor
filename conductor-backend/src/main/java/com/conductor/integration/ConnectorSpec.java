@@ -15,6 +15,10 @@ public record ConnectorSpec(AuthType authType, boolean singleInstance, List<Conn
         return new ConnectorSpec(AuthType.API_KEY, singleInstance, fields);
     }
 
+    public static ConnectorSpec serviceAccount(boolean singleInstance, List<ConnectorConfigField> fields) {
+        return new ConnectorSpec(AuthType.SERVICE_ACCOUNT, singleInstance, fields);
+    }
+
     public static ConnectorSpec oauth2(boolean singleInstance, List<ConnectorConfigField> fields) {
         return new ConnectorSpec(AuthType.OAUTH2, singleInstance, fields);
     }

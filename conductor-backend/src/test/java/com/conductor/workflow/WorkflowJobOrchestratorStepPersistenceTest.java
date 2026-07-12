@@ -104,6 +104,36 @@ class WorkflowJobOrchestratorStepPersistenceTest {
     }
 
     @Test
+    void doesNotOverwriteLog_whenPreCreatedRowAlreadyHasStreamedContent() {
+        WorkflowStepRun preCreated = new WorkflowStepRun();
+        preCreated.setId("step-1");
+        preCreated.setJobRun(jobRun);
+        preCreated.setWorkerJobId("worker-abc");
+        preCreated.setStatus(WorkflowStepStatus.RUNNING);
+        // Launcher lines + streamed container lines, already appended in arrival order while the
+        // step was running (ClaudeCodeStepExecutor / WorkflowRunLogBroker) — strictly richer than
+        // the terminal result's own log text.
+        preCreated.setLog("→ Launching Cloud Run execution\ncontainer streamed line 1\ncontainer streamed line 2\n");
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId("jobrun-1", "worker-abc"))
+                .thenReturn(Optional.of(preCreated));
+
+        StepResult result = StepResult.success("→ Launching Cloud Run execution\n← execution finished: SUCCEEDED\n",
+                Map.of("summary", "ok")).withWorkerJobId("worker-abc");
+        Map<String, Object> stepDef = Map.of("id", "seo", "name", "SEO step", "uses", "claude-code");
+
+        orchestrator.persistStepResult("jobrun-1", stepDef, result, "proj-1");
+
+        ArgumentCaptor<WorkflowStepRun> captor = ArgumentCaptor.forClass(WorkflowStepRun.class);
+        verify(stepRunRepository, times(1)).save(captor.capture());
+        WorkflowStepRun saved = captor.getValue();
+        assertThat(saved.getLog())
+                .isEqualTo("→ Launching Cloud Run execution\ncontainer streamed line 1\ncontainer streamed line 2\n");
+        assertThat(saved.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        assertThat(saved.getOutputJson()).contains("summary");
+        verify(logRedactionService, never()).redact(anyString(), anyString());
+    }
+
+    @Test
     void insertsNewRow_whenWorkerJobIdSetButNoMatchingPreCreatedRow() {
         when(stepRunRepository.findByJobRunIdAndWorkerJobId("jobrun-1", "worker-missing"))
                 .thenReturn(Optional.empty());
