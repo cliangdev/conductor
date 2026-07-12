@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { WorkflowStepRunDto } from '@/types/workflow';
 import { WorkflowLogStream } from './WorkflowLogStream';
 
@@ -13,6 +13,24 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const MAX_LOG_DISPLAY = 10_000;
+const MAX_OUTPUT_VALUE_DISPLAY = 400;
+
+// Backend fills stepName with the literal string "unnamed" when a step
+// definition has no `name`. Prefer stepId, then stepType, in that case.
+function displayStepName(step: WorkflowStepRunDto): string {
+  const name = step.stepName?.trim();
+  if (name && name !== 'unnamed') return name;
+  return step.stepId || step.stepType;
+}
+
+function formatOutputValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
 
 interface ConditionOutput {
   expression?: string;
@@ -61,6 +79,7 @@ interface StepRowProps {
 
 export function StepRow({ step, runId }: StepRowProps) {
   const [expanded, setExpanded] = useState(false);
+  const [userToggled, setUserToggled] = useState(false);
 
   const log = step.log ?? '';
   const isTruncated = log.length > MAX_LOG_DISPLAY;
@@ -68,6 +87,16 @@ export function StepRow({ step, runId }: StepRowProps) {
 
   const isDockerStep = step.stepType === 'docker';
   const isRunningDockerStep = isDockerStep && step.status === 'RUNNING';
+
+  // Auto-expand while a step is actively running and has (or will stream) log
+  // output, so live progress is visible without a manual click. Once the user
+  // has toggled it themselves, respect their choice.
+  useEffect(() => {
+    if (userToggled) return;
+    if (step.status === 'RUNNING' && (log || isRunningDockerStep)) {
+      setExpanded(true);
+    }
+  }, [step.status, log, isRunningDockerStep, userToggled]);
 
   // Append container exit annotation for completed docker steps
   let finalLog = displayLog;
@@ -77,7 +106,7 @@ export function StepRow({ step, runId }: StepRowProps) {
 
   const isConditionStep = step.stepType === 'condition';
 
-  let outputs: Record<string, string> = {};
+  let outputs: Record<string, unknown> = {};
   try {
     if (step.outputJson && !isConditionStep) outputs = JSON.parse(step.outputJson);
   } catch {}
@@ -89,12 +118,15 @@ export function StepRow({ step, runId }: StepRowProps) {
     <div className="px-4 py-3">
       <button
         className="w-full flex items-center gap-3 text-left"
-        onClick={() => setExpanded(e => !e)}
+        onClick={() => {
+          setUserToggled(true);
+          setExpanded(e => !e);
+        }}
       >
         <span className={`text-sm font-medium ${STATUS_COLORS[step.status] ?? ''}`}>
           {step.status}
         </span>
-        <span className="text-sm flex-1">{step.stepName}</span>
+        <span className="text-sm flex-1">{displayStepName(step)}</span>
         <span className="text-xs text-muted-foreground">{step.stepType}</span>
         {hasExpandableContent && (
           <span className="text-xs text-muted-foreground">{expanded ? '▲' : '▼'}</span>
@@ -139,12 +171,27 @@ export function StepRow({ step, runId }: StepRowProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {Object.entries(outputs).map(([key, value]) => (
-                    <tr key={key} className="border-t">
-                      <td className="p-2 font-mono">{key}</td>
-                      <td className="p-2 font-mono break-all">{value}</td>
-                    </tr>
-                  ))}
+                  {Object.entries(outputs).map(([key, value]) => {
+                    const display = formatOutputValue(value);
+                    const isLong = display.length > MAX_OUTPUT_VALUE_DISPLAY;
+                    return (
+                      <tr key={key} className="border-t">
+                        <td className="p-2 font-mono">{key}</td>
+                        <td className="p-2 font-mono break-all">
+                          {isLong ? (
+                            <details>
+                              <summary className="cursor-pointer text-muted-foreground">
+                                {display.slice(0, MAX_OUTPUT_VALUE_DISPLAY)}…
+                              </summary>
+                              <div className="mt-1 whitespace-pre-wrap">{display}</div>
+                            </details>
+                          ) : (
+                            display
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
