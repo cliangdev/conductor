@@ -10,7 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -38,8 +37,8 @@ public class KnowledgeIngestScheduler {
 
     private static final Logger log = LoggerFactory.getLogger(KnowledgeIngestScheduler.class);
 
-    /** Package-private (not final) so tests can shrink the batch without waiting for 10 rows. */
-    static int batchSize = 10;
+    /** Package-private (not final, not static) so tests can shrink the batch without waiting for 10 rows. */
+    int batchSize = 10;
     /** Total attempts before a stuck PROCESSING source is dead-lettered. */
     static final int MAX_ATTEMPTS = 5;
     private static final Set<WorkflowRunStatus> ACTIVE_RUN_STATUSES =
@@ -124,8 +123,7 @@ public class KnowledgeIngestScheduler {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public List<String> claimBatchInNewTx(String projectId, OffsetDateTime now) {
-        List<KnowledgeSource> due =
-                sourceRepository.findDuePendingForProject(projectId, now, PageRequest.of(0, batchSize));
+        List<KnowledgeSource> due = sourceRepository.findDuePendingForProject(projectId, now, batchSize);
         if (due.isEmpty()) {
             return List.of();
         }

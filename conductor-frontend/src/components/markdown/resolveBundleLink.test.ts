@@ -49,7 +49,11 @@ describe('resolveBundleLink', () => {
     expect(resolveBundleLink('')).toBeNull()
   })
 
-  it('collapses .. past the root without throwing', () => {
-    expect(resolveBundleLink('../../jane.md', 'people')).toBe('jane.md')
+  it('returns null for a .. that escapes the bundle root', () => {
+    expect(resolveBundleLink('../../jane.md', 'people')).toBeNull()
+  })
+
+  it('returns null for a .. that escapes the root when baseDir is empty', () => {
+    expect(resolveBundleLink('../jane.md', '')).toBeNull()
   })
 })

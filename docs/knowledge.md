@@ -95,7 +95,10 @@ frontend settings page for it; toggle it via `PATCH /api/v1/projects/{projectId}
    orientation, reads the batch's sources, drafts page content, and writes every resulting page in **one**
    `write_knowledge_pages` call passing `sourceIds` — which atomically marks the batch `PROCESSED` in the
    same transaction as the page writes (`KnowledgeSourceRepository.markProcessed`, `flushAutomatically` +
-   `clearAutomatically`, so a crash between the write and the mark can never happen).
+   `clearAutomatically`, so a crash between the write and the mark can never happen). If no source in the
+   batch warrants a wiki change, the librarian still calls `write_knowledge_pages` with `writes: []` and
+   `sourceIds` set to the full batch — an explicit "no wiki change needed" ack, so the batch is marked
+   `PROCESSED` instead of rotting through the stale-processing sweep into `DEAD`.
 4. **Sweep.** Every tick, any source still `PROCESSING` whose run is missing, terminally
    failed/cancelled/timed-out, or has simply run longer than 30 minutes is resurrected: attempts++, back to
    `PENDING` with exponential backoff (`60s * 2^attempts`), or — at 5 attempts — `DEAD` with an error
@@ -177,7 +180,7 @@ and available to any Claude Code session with the Conductor MCP server configure
 | `read_knowledge_sources` | Fetch inbox sources by id, with offloaded payloads resolved inline. |
 | `search_knowledge` | Full-text search over pages — path, type, title, description, snippet, rank. Orientation before reading. |
 | `read_knowledge_pages` | Fetch full page content by path. `["index.md"]`/`["log.md"]` return the virtual orientation pages. Returned `version` feeds `baseVersion` on the next write. |
-| `write_knowledge_pages` | Atomic batch create/update/delete. A stale write returns a structured `{conflict: true, conflicts: [...]}` result instead of throwing, per [MCP tool guidelines](mcp-tool-guidelines.md) — merge and retry once. |
+| `write_knowledge_pages` | Atomic batch create/update/delete; `writes` may be empty when `sourceIds` is set, to ack a batch that needs no page changes. A stale write returns a structured `{conflict: true, conflicts: [...]}` result instead of throwing, per [MCP tool guidelines](mcp-tool-guidelines.md) — merge and retry once. |
 
 ---
 

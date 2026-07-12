@@ -4,7 +4,10 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { LibraryIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getKnowledgeIndex } from '@/lib/knowledge-api'
+import { usePermissions } from '@/contexts/PermissionsContext'
+import { useToast } from '@/components/ui/toast'
+import { Button } from '@/components/ui/button'
+import { getKnowledgeIndex, enableKnowledge } from '@/lib/knowledge-api'
 import type { KnowledgePageView } from '@/lib/knowledge-api'
 import { apiErrorMessage } from '@/lib/api'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
@@ -20,11 +23,16 @@ function isEmptyIndex(content: string | undefined | null): boolean {
 export default function KnowledgeIndexPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const { accessToken } = useAuth()
+  const { can } = usePermissions()
+  const { showToast } = useToast()
   const router = useRouter()
 
   const [page, setPage] = useState<KnowledgePageView | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [enabling, setEnabling] = useState(false)
+
+  const isAdmin = can('workspace.manage')
 
   useEffect(() => {
     if (!accessToken) return
@@ -36,6 +44,20 @@ export default function KnowledgeIndexPage() {
 
   function handleWikiLink(path: string) {
     router.push(`/app/projects/${projectId}/knowledge/page?path=${encodeURIComponent(path)}`)
+  }
+
+  async function handleEnable() {
+    if (!accessToken) return
+    setEnabling(true)
+    try {
+      await enableKnowledge(projectId, accessToken)
+      showToast('Knowledge enabled for this workspace')
+      setPage(await getKnowledgeIndex(projectId, accessToken))
+    } catch (err) {
+      showToast(apiErrorMessage(err, 'Failed to enable Knowledge'), 'error')
+    } finally {
+      setEnabling(false)
+    }
   }
 
   if (loading) {
@@ -55,10 +77,19 @@ export default function KnowledgeIndexPage() {
       <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground text-center px-6">
         <LibraryIcon className="h-10 w-10 opacity-30" strokeWidth={1.5} />
         <p className="text-sm font-medium">The knowledge base is empty</p>
-        <p className="text-xs max-w-xs">
-          Enable knowledge ingestion in settings, or dispatch the bootstrap workflow, to start
-          populating this workspace&apos;s knowledge base.
-        </p>
+        {isAdmin ? (
+          <>
+            <p className="text-xs max-w-xs">
+              Enable Knowledge, or dispatch the bootstrap workflow, to start populating this
+              workspace&apos;s knowledge base.
+            </p>
+            <Button size="sm" onClick={handleEnable} disabled={enabling}>
+              {enabling ? 'Enabling…' : 'Enable Knowledge'}
+            </Button>
+          </>
+        ) : (
+          <p className="text-xs max-w-xs">Ask a workspace admin to enable Knowledge for this workspace.</p>
+        )}
       </div>
     )
   }

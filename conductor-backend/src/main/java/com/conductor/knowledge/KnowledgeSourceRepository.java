@@ -1,6 +1,5 @@
 package com.conductor.knowledge;
 
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -29,23 +28,36 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
             + "AND (s.nextAttemptAt IS NULL OR s.nextAttemptAt <= :now)")
     List<String> findProjectIdsWithDuePending(@Param("now") OffsetDateTime now);
 
-    /** The oldest-first page of a project's due PENDING sources -- {@code KnowledgeIngestScheduler}'s claim batch. */
-    @Query("SELECT s FROM KnowledgeSource s WHERE s.projectId = :projectId "
-            + "AND s.status = com.conductor.knowledge.KnowledgeSourceStatus.PENDING "
-            + "AND (s.nextAttemptAt IS NULL OR s.nextAttemptAt <= :now) ORDER BY s.receivedAt ASC")
+    /**
+     * The oldest-first batch (up to {@code limit}) of a project's due PENDING sources, row-locked so two
+     * concurrent {@code KnowledgeIngestScheduler} instances can never claim the same source --
+     * {@code FOR UPDATE SKIP LOCKED} isn't expressible in JPQL, so this is native (see
+     * {@code WorkflowJobQueueRepository} for the codebase's other use of this pattern). Caller must flip
+     * the returned rows to PROCESSING in the same transaction that ran this query, before the row locks
+     * release.
+     */
+    @Query(value = "SELECT * FROM knowledge_sources WHERE project_id = :projectId AND status = 'PENDING' "
+            + "AND (next_attempt_at IS NULL OR next_attempt_at <= :now) "
+            + "ORDER BY received_at ASC LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
     List<KnowledgeSource> findDuePendingForProject(@Param("projectId") String projectId,
-                                                    @Param("now") OffsetDateTime now, Pageable pageable);
+                                                    @Param("now") OffsetDateTime now, @Param("limit") int limit);
 
     /**
      * Marks a batch of sources PROCESSED as part of the same transaction that wrote the pages derived
      * from them -- see {@code KnowledgePageService#batchWrite} -- so a crash between the page write and
-     * this update can never leave a source silently re-processed or silently dropped.
+     * this update can never leave a source silently re-processed or silently dropped. Guarded to only
+     * move sources out of PENDING/PROCESSING: a claimed source is PROCESSING, but a bootstrap-flow source
+     * (submitted then written about without ever being claimed by the scheduler -- see
+     * {@code knowledge-bootstrap.yaml}) is still PENDING, so both must be eligible; DEAD/already-PROCESSED
+     * rows must never be silently overwritten.
      * {@code clearAutomatically}: a bulk update bypasses the persistence context, so without it a
      * {@link KnowledgeSource} already loaded earlier in the same transaction would keep reporting its
      * stale pre-update status.
      */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("UPDATE KnowledgeSource s SET s.status = com.conductor.knowledge.KnowledgeSourceStatus.PROCESSED "
-            + "WHERE s.projectId = :projectId AND s.id IN :ids")
+            + "WHERE s.projectId = :projectId AND s.id IN :ids "
+            + "AND s.status IN (com.conductor.knowledge.KnowledgeSourceStatus.PENDING, "
+            + "com.conductor.knowledge.KnowledgeSourceStatus.PROCESSING)")
     int markProcessed(@Param("projectId") String projectId, @Param("ids") Collection<String> ids);
 }

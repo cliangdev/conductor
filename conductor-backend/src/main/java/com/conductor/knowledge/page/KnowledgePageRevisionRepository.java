@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
 import java.util.List;
 
 @Repository
@@ -14,7 +15,11 @@ public interface KnowledgePageRevisionRepository extends JpaRepository<Knowledge
 
     List<KnowledgePageRevision> findByPage_IdOrderByVersionDesc(String pageId);
 
-    List<KnowledgePageRevision> findByPage_ProjectIdOrderByCreatedAtDesc(String projectId, Pageable pageable);
+    /** {@code JOIN FETCH}: the log view reads every revision's page path, so fetch it eagerly instead of
+     *  lazily walking {@code revision.getPage()} once per row (see {@code KnowledgePageService#buildVirtualLog}). */
+    @Query("SELECT r FROM KnowledgePageRevision r JOIN FETCH r.page WHERE r.page.projectId = :projectId "
+            + "ORDER BY r.createdAt DESC")
+    List<KnowledgePageRevision> findByPage_ProjectIdOrderByCreatedAtDesc(@Param("projectId") String projectId, Pageable pageable);
 
     /**
      * {@code flushAutomatically}: native DML doesn't participate in Hibernate's flush-before-query
@@ -26,9 +31,18 @@ public interface KnowledgePageRevisionRepository extends JpaRepository<Knowledge
             nativeQuery = true)
     void linkSource(@Param("revisionId") String revisionId, @Param("sourceId") String sourceId);
 
-    /** Source refs (for display) provenance-linked to one revision, insertion order not guaranteed. */
-    @Query(value = "SELECT s.source_ref FROM knowledge_sources s "
+    /**
+     * Source refs (for display) provenance-linked to a batch of revisions in one round trip, insertion
+     * order not guaranteed -- callers group by {@code revisionId} themselves. Replaces a per-revision
+     * query that made {@code buildVirtualLog}/{@code getRevisions} N+1 (see {@code KnowledgePageService}).
+     */
+    @Query(value = "SELECT rs.revision_id AS revisionId, s.source_ref AS sourceRef FROM knowledge_sources s "
             + "JOIN knowledge_revision_sources rs ON rs.source_id = s.id "
-            + "WHERE rs.revision_id = :revisionId", nativeQuery = true)
-    List<String> findSourceRefsByRevisionId(@Param("revisionId") String revisionId);
+            + "WHERE rs.revision_id IN :revisionIds", nativeQuery = true)
+    List<RevisionSourceRef> findSourceRefsByRevisionIds(@Param("revisionIds") Collection<String> revisionIds);
+
+    interface RevisionSourceRef {
+        String getRevisionId();
+        String getSourceRef();
+    }
 }

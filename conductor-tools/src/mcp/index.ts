@@ -410,7 +410,7 @@ const TOOLS = [
   },
   {
     name: 'write_knowledge_pages',
-    description: "Create, update, or delete wiki pages atomically. Updating an existing page requires its current version as baseVersion (read_knowledge_pages first) — a stale write returns a structured {conflict: true, conflicts: [{path, currentVersion, currentContent}]} result instead of throwing; merge and retry once. Optionally pass sourceIds to mark those knowledge-inbox sources PROCESSED atomically with the write. Verify with read_knowledge_pages.",
+    description: "Create, update, or delete wiki pages atomically. Updating an existing page requires its current version as baseVersion (read_knowledge_pages first) — a stale write returns a structured {conflict: true, conflicts: [{path, currentVersion, currentContent}]} result instead of throwing; merge and retry once. Optionally pass sourceIds to mark those knowledge-inbox sources PROCESSED atomically with the write — pass writes: [] with sourceIds to ack a batch that warrants no wiki change. Verify with read_knowledge_pages.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -426,7 +426,7 @@ const TOOLS = [
             },
             required: ['path'],
           },
-          description: 'Pages to write or delete',
+          description: 'Pages to write or delete; may be empty when sourceIds is provided (no wiki change needed for this batch)',
         },
         sourceIds: { type: 'array', items: { type: 'string' }, description: 'Knowledge-inbox source IDs to mark PROCESSED atomically with this write (optional)' },
       },

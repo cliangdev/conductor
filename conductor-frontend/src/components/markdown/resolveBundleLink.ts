@@ -25,6 +25,7 @@ export function resolveBundleLink(href: string | undefined, baseDir = ''): strin
   for (const segment of raw.split('/')) {
     if (segment === '' || segment === '.') continue
     if (segment === '..') {
+      if (stack.length === 0) return null
       stack.pop()
       continue
     }

@@ -236,6 +236,16 @@ class KnowledgePageServiceTest {
         verifyNoInteractions(pageRepository, revisionRepository, linkRepository, sourceRepository);
     }
 
+    @Test
+    void emptyWritesWithSourceIdsStillMarksSourcesProcessed() {
+        List<PageWriteResult> results = service.batchWrite(PROJECT_ID, List.of(), List.of("src-1", "src-2"),
+                new Actor("workflow", "wf-1", "run-1"));
+
+        assertThat(results).isEmpty();
+        verify(sourceRepository).markProcessed(PROJECT_ID, List.of("src-1", "src-2"));
+        verifyNoInteractions(pageRepository, revisionRepository, linkRepository);
+    }
+
     private KnowledgePage existingPage(String path, int version) {
         KnowledgePage page = new KnowledgePage();
         page.setId("page-" + path.hashCode());

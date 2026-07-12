@@ -1,4 +1,4 @@
-import { apiGet } from '@/lib/api'
+import { apiGet, apiPatch } from '@/lib/api'
 
 export interface KnowledgePageView {
   path: string
@@ -71,6 +71,15 @@ export function searchKnowledge(
   if (opts?.pathPrefix) params.set('pathPrefix', opts.pathPrefix)
   if (opts?.limit) params.set('limit', String(opts.limit))
   return apiGet<KnowledgeSearchHit[]>(`/api/v1/projects/${projectId}/knowledge/search?${params.toString()}`, token)
+}
+
+/** Admin-only: turns on the Knowledge Center ingestion pipeline for this workspace. */
+export function enableKnowledge(projectId: string, token: string): Promise<{ knowledgeEnabled: boolean }> {
+  return apiPatch<{ knowledgeEnabled: boolean }>(
+    `/api/v1/projects/${projectId}/settings`,
+    { knowledgeEnabled: true },
+    token,
+  ) as Promise<{ knowledgeEnabled: boolean }>
 }
 
 export function listKnowledgeRevisions(

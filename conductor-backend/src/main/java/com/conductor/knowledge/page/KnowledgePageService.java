@@ -4,6 +4,8 @@ import com.conductor.exception.BusinessException;
 import com.conductor.knowledge.Actor;
 import com.conductor.knowledge.KnowledgeSourceRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +17,7 @@ import java.time.LocalDate;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -33,6 +36,8 @@ import java.util.regex.Pattern;
  */
 @Service
 public class KnowledgePageService {
+
+    private static final Logger log = LoggerFactory.getLogger(KnowledgePageService.class);
 
     static final String VIRTUAL_INDEX = "index.md";
     static final String VIRTUAL_LOG = "log.md";
@@ -85,10 +90,17 @@ public class KnowledgePageService {
      * {@code baseVersion == null}; supplying a {@code baseVersion} against either is a conflict (the
      * page the caller thinks they're updating has vanished). Deletes require an exact {@code baseVersion}
      * match against a live page.
+     *
+     * <p>{@code writes} may be empty while {@code sourceIds} is not: that's the librarian's explicit "no
+     * wiki change needed" ack for a batch, and still marks those sources PROCESSED so they don't rot
+     * through the stale-processing sweep into DEAD.
      */
     @Transactional
     public List<PageWriteResult> batchWrite(String projectId, List<PageWrite> writes, List<String> sourceIds, Actor actor) {
         if (writes == null || writes.isEmpty()) {
+            if (sourceIds != null && !sourceIds.isEmpty()) {
+                markSourcesProcessed(projectId, sourceIds);
+            }
             return List.of();
         }
 
@@ -142,10 +154,18 @@ public class KnowledgePageService {
         }
 
         if (sourceIds != null && !sourceIds.isEmpty()) {
-            sourceRepository.markProcessed(projectId, sourceIds);
+            markSourcesProcessed(projectId, sourceIds);
         }
 
         return results;
+    }
+
+    private void markSourcesProcessed(String projectId, List<String> sourceIds) {
+        int updated = sourceRepository.markProcessed(projectId, sourceIds);
+        if (updated < sourceIds.size()) {
+            log.warn("markProcessed updated {}/{} sources for project {} -- the rest were already "
+                    + "PROCESSED/DEAD or don't exist", updated, sourceIds.size(), projectId);
+        }
     }
 
     private KnowledgeConflictException.Conflict conflictFor(String path, KnowledgePage current) {
@@ -356,6 +376,7 @@ public class KnowledgePageService {
     private PageView buildVirtualLog(String projectId) {
         List<KnowledgePageRevision> revisions =
                 revisionRepository.findByPage_ProjectIdOrderByCreatedAtDesc(projectId, PageRequest.of(0, LOG_REVISION_LIMIT));
+        Map<String, List<String>> refsByRevisionId = groupSourceRefs(revisions);
         Map<LocalDate, List<KnowledgePageRevision>> byDate = new LinkedHashMap<>();
         for (KnowledgePageRevision revision : revisions) {
             byDate.computeIfAbsent(revision.getCreatedAt().toLocalDate(), d -> new ArrayList<>()).add(revision);
@@ -365,7 +386,7 @@ public class KnowledgePageService {
         for (Map.Entry<LocalDate, List<KnowledgePageRevision>> entry : byDate.entrySet()) {
             sb.append("## ").append(entry.getKey()).append("\n\n");
             for (KnowledgePageRevision revision : entry.getValue()) {
-                List<String> refs = revisionRepository.findSourceRefsByRevisionId(revision.getId());
+                List<String> refs = refsByRevisionId.getOrDefault(revision.getId(), List.of());
                 String suffix = refs.isEmpty() ? "" : " ← " + String.join(", ", refs);
                 sb.append("* **Update**: ").append(revision.getPage().getPath()).append(suffix).append("\n");
             }
@@ -382,13 +403,29 @@ public class KnowledgePageService {
         if (page == null) {
             return List.of();
         }
+        List<KnowledgePageRevision> revisions = revisionRepository.findByPage_IdOrderByVersionDesc(page.getId());
+        Map<String, List<String>> refsByRevisionId = groupSourceRefs(revisions);
         List<RevisionView> views = new ArrayList<>();
-        for (KnowledgePageRevision revision : revisionRepository.findByPage_IdOrderByVersionDesc(page.getId())) {
-            List<String> refs = revisionRepository.findSourceRefsByRevisionId(revision.getId());
+        for (KnowledgePageRevision revision : revisions) {
+            List<String> refs = refsByRevisionId.getOrDefault(revision.getId(), List.of());
             Actor actor = revision.getActor() == null ? null : objectMapper.convertValue(revision.getActor(), Actor.class);
             views.add(new RevisionView(revision.getVersion(), revision.getChangeKind(), actor, revision.getCreatedAt(), refs));
         }
         return views;
+    }
+
+    /** One query for every revision's source refs, grouped by revision id -- instead of one query per
+     *  revision (see {@link KnowledgePageRevisionRepository#findSourceRefsByRevisionIds}). */
+    private Map<String, List<String>> groupSourceRefs(List<KnowledgePageRevision> revisions) {
+        if (revisions.isEmpty()) {
+            return Map.of();
+        }
+        List<String> ids = revisions.stream().map(KnowledgePageRevision::getId).toList();
+        Map<String, List<String>> refsByRevisionId = new HashMap<>();
+        for (KnowledgePageRevisionRepository.RevisionSourceRef row : revisionRepository.findSourceRefsByRevisionIds(ids)) {
+            refsByRevisionId.computeIfAbsent(row.getRevisionId(), k -> new ArrayList<>()).add(row.getSourceRef());
+        }
+        return refsByRevisionId;
     }
 
     /**
