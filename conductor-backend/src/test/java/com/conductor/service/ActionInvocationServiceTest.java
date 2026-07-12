@@ -268,10 +268,12 @@ class ActionInvocationServiceTest {
     // ---- timeout = terminal-ambiguous, never retried ----
 
     @Test
-    void timeout_cancelsTheAbandonedCall_deadLettersImmediately_doesNotRetry() {
+    void timeout_cancelsTheAbandonedCall_deadLettersImmediately_doesNotRetry() throws InterruptedException {
         when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        CountDownLatch connectorEntered = new CountDownLatch(1);
         AtomicBoolean interrupted = new AtomicBoolean(false);
         when(connector.invoke(eq(ACTION_ID), any(), any())).thenAnswer(invocationOnMock -> {
+            connectorEntered.countDown();
             try {
                 Thread.sleep(Long.MAX_VALUE);
             } catch (InterruptedException e) {
@@ -280,11 +282,20 @@ class ActionInvocationServiceTest {
             }
             return ActionResult.ok(Map.of());
         });
-        // A timeout of 0 makes future.get(...) time out immediately rather than waiting out a real
-        // duration — the connector stub above never completes on its own either way.
-        service.invokeTimeoutSeconds = 0;
+        // NOT a 0-second timeout: future.get(0, ...) can time out and cancel the task before the
+        // pool thread ever STARTS it (a cancelled-before-running FutureTask never runs), which made
+        // this test flake on loaded CI runners with "zero interactions" on the connector mock. A
+        // 2-second window is far beyond any realistic task-start latency on the dedicated executor,
+        // while the blocked stub above guarantees the get() still times out.
+        service.invokeTimeoutSeconds = 2;
 
         ActionResult result = service.invoke(connection(), ACTION_ID, Map.of("content", "hi"), IDEMPOTENCY_KEY, List.of());
+
+        // If this ever fires, the task genuinely never started — a clearer failure than a
+        // "zero interactions" Mockito verify below.
+        assertThat(connectorEntered.await(5, TimeUnit.SECONDS))
+                .as("connector call should have started before the timeout window elapsed")
+                .isTrue();
 
         assertThat(result.success()).isFalse();
         assertThat(result.message()).contains("timed out").contains("not retried");
