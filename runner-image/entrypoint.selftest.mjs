@@ -264,6 +264,176 @@ process.exit(0);`,
   );
 }
 
+/** Serializes a stream-json event to a `console.log(JSON.stringify(...))` source line for a fake
+ * claude stub, without manual string-escaping — safe for arbitrary embedded values. */
+function logLine(event) {
+  return `console.log(${JSON.stringify(JSON.stringify(event))});`;
+}
+
+async function testStreamJsonTranslation() {
+  console.log('test: stream-json events are translated to compact human-readable log lines');
+  const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+  const longArg = 'x'.repeat(150);
+  const longText = 'y'.repeat(200);
+  const script = [
+    `console.log('not valid json at all, just a raw line');`,
+    logLine({ type: 'system', subtype: 'init', model: 'claude-opus-4-8', session_id: 'abcdefgh-1234-5678-9999-000000000000' }),
+    logLine({
+      type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: `echo super-secret-run-token and also ${longArg}` } }] },
+    }),
+    logLine({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: longText }] } }),
+    logLine({ type: 'result', subtype: 'success', is_error: false, result: 'OK', num_turns: 3, session_id: 'sess' }),
+    `process.exit(0);`,
+  ].join('\n');
+  writeFakeClaude(binDir, script);
+  const { server, calls, port } = await startFakeBackend();
+  const env = baseEnv({ binDir, port });
+  const { code } = await runEntrypoint(env);
+  server.close();
+  rmSync(binDir, { recursive: true, force: true });
+
+  const allLoggedLines = calls.logChunks.flatMap((c) => c.lines || []);
+
+  assert(code === 0, `exit code is 0 (got ${code})`);
+  assert(calls.stepComplete?.status === 'SUCCESS', 'result event is still classified as SUCCESS for the exit taxonomy');
+  assert(
+    allLoggedLines.some((l) => l === 'not valid json at all, just a raw line'),
+    'malformed/non-JSON stdout line passes through raw, unchanged',
+  );
+  assert(
+    allLoggedLines.some((l) => l.startsWith('→ claude session started') && l.includes('claude-opus-4-8') && l.includes('abcdefgh')),
+    'init event is translated to a session-started line',
+  );
+  assert(
+    allLoggedLines.some((l) => l.startsWith('→ tool: Bash {command:')),
+    'assistant tool_use block is translated to a tool line',
+  );
+  assert(
+    !allLoggedLines.some((l) => l.includes(longArg)),
+    'long tool arg value is truncated, not emitted in full',
+  );
+  assert(
+    !allLoggedLines.some((l) => l.includes('super-secret-run-token')),
+    'run token embedded in tool args is scrubbed, never emitted raw',
+  );
+  assert(
+    allLoggedLines.some((l) => l.startsWith('→ tool: Bash') && l.includes('[REDACTED]')),
+    'the scrubbed tool line shows a [REDACTED] marker in place of the secret',
+  );
+  assert(
+    allLoggedLines.some((l) => l.startsWith('💬 ') && !l.includes(longText)),
+    'assistant text block is translated to a 💬 line, truncated',
+  );
+  assert(
+    allLoggedLines.some((l) => l === '✓ done: 3 turns'),
+    'result event is translated to a done line',
+  );
+  assert(
+    allLoggedLines.some((l) => l === '→ container started, launching claude'),
+    'an early "container started" line is emitted before any claude output',
+  );
+}
+
+async function testWorkerJobIdInLogChunkBody() {
+  console.log('test: log-chunk body carries workerJobId extracted from the step-complete URL path');
+  const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+  writeFakeClaude(
+    binDir,
+    `console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'OK'}));
+process.exit(0);`,
+  );
+  const { server, calls, port } = await startFakeBackend();
+  const env = baseEnv({
+    binDir,
+    port,
+    extra: { CONDUCTOR_STEP_COMPLETE_URL: `http://127.0.0.1:${port}/workflow-runs/run_1/steps/wjob_abc123/complete` },
+  });
+  const { code } = await runEntrypoint(env);
+  server.close();
+  rmSync(binDir, { recursive: true, force: true });
+
+  assert(code === 0, `exit code is 0 (got ${code})`);
+  assert(
+    calls.logChunks.length > 0 && calls.logChunks.every((c) => c.workerJobId === 'wjob_abc123'),
+    'every log-chunk POST body carries workerJobId extracted from the .../steps/{id}/complete URL',
+  );
+}
+
+async function testWorkerJobIdOmittedOnMalformedUrl() {
+  console.log('test: log-chunk body omits workerJobId when the step-complete URL has no /steps/{id}/ segment');
+  const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+  writeFakeClaude(
+    binDir,
+    `console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'OK'}));
+process.exit(0);`,
+  );
+  const { server, calls, port } = await startFakeBackend();
+  // baseEnv's default CONDUCTOR_STEP_COMPLETE_URL (".../step-complete") has no /steps/{id}/
+  // segment — spelled out here anyway so the test documents its own premise.
+  const env = baseEnv({ binDir, port, extra: { CONDUCTOR_STEP_COMPLETE_URL: `http://127.0.0.1:${port}/step-complete` } });
+  const { code } = await runEntrypoint(env);
+  server.close();
+  rmSync(binDir, { recursive: true, force: true });
+
+  assert(code === 0, `exit code is 0 (got ${code})`);
+  assert(
+    calls.logChunks.length > 0 && calls.logChunks.every((c) => !('workerJobId' in c)),
+    'log-chunk body has no workerJobId key when the URL does not match the expected shape',
+  );
+}
+
+async function testAllowedToolsMergesInputsReadWithUserList() {
+  console.log('test: --allowedTools appends Read(/conductor/inputs/**) to a caller-supplied list');
+  const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+  writeFakeClaude(
+    binDir,
+    `const args = process.argv.slice(2);
+const idx = args.indexOf('--allowedTools');
+console.log('allowedTools: ' + (idx >= 0 ? args[idx + 1] : '<missing>'));
+console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'OK'}));
+process.exit(0);`,
+  );
+  const { server, calls, port } = await startFakeBackend();
+  const env = baseEnv({ binDir, port, extra: { CONDUCTOR_ALLOWED_TOOLS: 'Bash(echo:*)' } });
+  const { code } = await runEntrypoint(env);
+  server.close();
+  rmSync(binDir, { recursive: true, force: true });
+
+  const allLoggedLines = calls.logChunks.flatMap((c) => c.lines || []);
+  assert(code === 0, `exit code is 0 (got ${code})`);
+  assert(
+    allLoggedLines.some((l) => l === 'allowedTools: Bash(echo:*),Read(/conductor/inputs/**)'),
+    'caller allowedTools is preserved and Read(/conductor/inputs/**) is appended',
+  );
+}
+
+async function testAllowedToolsDefaultsToInputsReadWithoutUserList() {
+  console.log('test: --allowedTools is always passed, defaulting to Read(/conductor/inputs/**) alone');
+  const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+  writeFakeClaude(
+    binDir,
+    `const args = process.argv.slice(2);
+const idx = args.indexOf('--allowedTools');
+console.log('allowedTools: ' + (idx >= 0 ? args[idx + 1] : '<missing>'));
+console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'OK'}));
+process.exit(0);`,
+  );
+  const { server, calls, port } = await startFakeBackend();
+  const env = baseEnv({ binDir, port });
+  delete env.CONDUCTOR_ALLOWED_TOOLS;
+  const { code } = await runEntrypoint(env);
+  server.close();
+  rmSync(binDir, { recursive: true, force: true });
+
+  const allLoggedLines = calls.logChunks.flatMap((c) => c.lines || []);
+  assert(code === 0, `exit code is 0 (got ${code})`);
+  assert(
+    allLoggedLines.some((l) => l === 'allowedTools: Read(/conductor/inputs/**)'),
+    '--allowedTools defaults to just Read(/conductor/inputs/**) when the caller sets none',
+  );
+}
+
 async function testMcpEnabledWithoutApiKeyFails() {
   console.log('test: MCP enabled without CONDUCTOR_API_KEY is a config error');
   const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
@@ -289,6 +459,11 @@ async function main() {
   await testUnsafeInputFilenameRejected();
   await testMcpConfigWritten();
   await testMcpEnabledWithoutApiKeyFails();
+  await testStreamJsonTranslation();
+  await testWorkerJobIdInLogChunkBody();
+  await testWorkerJobIdOmittedOnMalformedUrl();
+  await testAllowedToolsMergesInputsReadWithUserList();
+  await testAllowedToolsDefaultsToInputsReadWithoutUserList();
 
   for (const root of runnerRoots) rmSync(root, { recursive: true, force: true });
 

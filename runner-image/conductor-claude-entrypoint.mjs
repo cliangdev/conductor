@@ -95,6 +95,23 @@ function sleep(ms) {
 }
 
 /**
+ * Extracts the {workerJobId} path segment from CONDUCTOR_STEP_COMPLETE_URL
+ * (".../workflow-runs/{runId}/steps/{workerJobId}/complete"), so the log-chunk callback can tag
+ * its lines with it. Never throws — an unexpected URL shape just means the field is omitted
+ * (the backend treats it as optional), rather than guessed at.
+ */
+function extractWorkerJobId(stepCompleteUrl) {
+  try {
+    const segments = new URL(stepCompleteUrl).pathname.split('/').filter(Boolean);
+    const stepsIndex = segments.lastIndexOf('steps');
+    if (stepsIndex === -1 || stepsIndex + 1 >= segments.length) return undefined;
+    return segments[stepsIndex + 1];
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Best-effort FAILED report used when we can't even get to spawning `claude` (e.g. missing
  * required env). Only fires if we have enough of the contract to reach the backend at all.
  */
@@ -157,6 +174,9 @@ function writeMcpConfig(env) {
   writeFileSync(MCP_CONFIG_PATH, JSON.stringify(config));
 }
 
+/** Unconditionally merged into --allowedTools — see buildClaudeInvocation. */
+const ALWAYS_ALLOWED_TOOLS = 'Read(/conductor/inputs/**)';
+
 /**
  * Builds the child env and argv for `claude -p`. Auth hygiene: an OAuth token wins over an API
  * key — in `-p` mode an ANTHROPIC_API_KEY silently overrides subscription auth, so we delete it
@@ -174,9 +194,15 @@ function buildClaudeInvocation(env) {
 
   const args = ['-p', env.CONDUCTOR_STEP_PROMPT, '--output-format', 'stream-json', '--verbose'];
 
-  if (env.CONDUCTOR_ALLOWED_TOOLS) {
-    args.push('--allowedTools', env.CONDUCTOR_ALLOWED_TOOLS);
-  }
+  // Always grant Read on the materialized inputs dir, regardless of the caller's allowedTools —
+  // seen live: with a restrictive (or absent) allowlist, claude silently refused to Read
+  // /conductor/inputs/* and fabricated an apologetic answer instead of erroring. allowedTools
+  // grants are additive, so this only ever adds a permission, never narrows the caller's list.
+  const allowedTools = env.CONDUCTOR_ALLOWED_TOOLS
+    ? `${env.CONDUCTOR_ALLOWED_TOOLS},${ALWAYS_ALLOWED_TOOLS}`
+    : ALWAYS_ALLOWED_TOOLS;
+  args.push('--allowedTools', allowedTools);
+
   if (env.CONDUCTOR_MAX_TURNS) {
     args.push('--max-turns', env.CONDUCTOR_MAX_TURNS);
   }
@@ -194,24 +220,44 @@ function buildClaudeInvocation(env) {
 
 /**
  * Runs `claude -p` as a child process, streaming stdout/stderr to the log-chunk endpoint in
- * ~2s batches and enforcing the wrapper timeout (SIGTERM, 10s grace, then SIGKILL).
+ * ~2s batches and enforcing the wrapper timeout (SIGTERM, 10s grace, then SIGKILL). Stdout lines
+ * are stream-json events; each is translated to a compact human-readable line for display (see
+ * translateEvent) before being queued — this is purely cosmetic and never affects the resultEvent
+ * captured for classifyResult. `initialLines` seeds the queue (e.g. the early "container started"
+ * line) so it's flushed first, ahead of anything claude itself emits.
  */
-function runClaude({ childEnv, args }, env, secrets) {
+function runClaude({ childEnv, args }, env, secrets, initialLines = []) {
   return new Promise((resolve) => {
+    // Line buffers per stream — stdout carries the stream-json events (we watch for `result`),
+    // stderr is forwarded as-is. Both feed the same pending-lines queue for log posting.
+    const lineBuffers = { stdout: '', stderr: '' };
+    const workerJobId = extractWorkerJobId(env.CONDUCTOR_STEP_COMPLETE_URL);
+    let pendingLines = [...initialLines];
+    let droppedLogCount = 0;
+    let resultEvent = null;
+    let timedOut = false;
+
+    const pushStdoutLine = (line) => {
+      const event = tryParseEvent(line);
+      if (!event) {
+        pendingLines.push(line); // malformed JSON — raw passthrough, nothing silently lost
+        return;
+      }
+      if (event.type === 'result') resultEvent = event; // classification only, untouched by translation
+      const translated = translateEvent(event);
+      if (translated === null) {
+        pendingLines.push(line); // recognized-but-unhandled shape — raw passthrough
+      } else {
+        pendingLines.push(...translated);
+      }
+    };
+
     const child = spawn('claude', args, {
       cwd: WORKSPACE_DIR,
       env: childEnv,
       // args passed as an array, never shell-interpolated — the prompt can contain anything.
       shell: false,
     });
-
-    // Line buffers per stream — stdout carries the stream-json events (we watch for `result`),
-    // stderr is forwarded as-is. Both feed the same pending-lines queue for log posting.
-    const lineBuffers = { stdout: '', stderr: '' };
-    let pendingLines = [];
-    let droppedLogCount = 0;
-    let resultEvent = null;
-    let timedOut = false;
 
     const flushLogs = async () => {
       if (pendingLines.length === 0) return;
@@ -220,7 +266,9 @@ function runClaude({ childEnv, args }, env, secrets) {
       const ok = await postJson(
         env.CONDUCTOR_LOG_CHUNK_URL,
         env.CONDUCTOR_RUN_TOKEN,
-        { lines: lines.map((l) => scrub(l, secrets)) },
+        // workerJobId is omitted (not just falsy) when extraction fails — JSON.stringify drops
+        // undefined-valued keys, and the backend treats a missing field as optional.
+        { workerJobId, lines: lines.map((l) => scrub(l, secrets)) },
         { retries: LOG_POST_RETRIES },
       );
       if (!ok) droppedLogCount += lines.length;
@@ -233,10 +281,10 @@ function runClaude({ childEnv, args }, env, secrets) {
       lineBuffers[streamName] = lines.pop(); // trailing partial line stays buffered
       for (const line of lines) {
         if (line.trim() === '') continue;
-        pendingLines.push(line);
         if (streamName === 'stdout') {
-          const event = tryParseEvent(line);
-          if (event && event.type === 'result') resultEvent = event;
+          pushStdoutLine(line);
+        } else {
+          pendingLines.push(line);
         }
       }
     };
@@ -260,7 +308,7 @@ function runClaude({ childEnv, args }, env, secrets) {
       clearInterval(flushTimer);
       clearTimeout(hardTimer);
       // Flush any trailing partial line plus whatever's still pending.
-      if (lineBuffers.stdout.trim()) pendingLines.push(lineBuffers.stdout);
+      if (lineBuffers.stdout.trim()) pushStdoutLine(lineBuffers.stdout);
       if (lineBuffers.stderr.trim()) pendingLines.push(lineBuffers.stderr);
       await flushLogs();
       if (droppedLogCount > 0) {
@@ -285,6 +333,108 @@ function tryParseEvent(line) {
   } catch {
     return null;
   }
+}
+
+function truncate(str, maxLen) {
+  return str.length > maxLen ? `${str.slice(0, maxLen)}…` : str;
+}
+
+/** Preferred arg keys to summarize a tool_use block by, roughly most-to-least informative. */
+const TOOL_ARG_PRIORITY = ['file_path', 'path', 'command', 'pattern', 'query', 'url', 'prompt', 'description', 'notebook_path'];
+
+function summarizeToolArgs(input) {
+  if (!input || typeof input !== 'object') return '';
+  const keys = Object.keys(input);
+  if (keys.length === 0) return '';
+  const key = TOOL_ARG_PRIORITY.find((k) => k in input) || keys[0];
+  const raw = input[key];
+  const value = typeof raw === 'string' ? raw : JSON.stringify(raw);
+  return `${key}: ${truncate(value, 100)}`;
+}
+
+function summarizeToolResultContent(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
+      .map((b) => b.text)
+      .join(' ');
+  }
+  if (content && typeof content === 'object') return JSON.stringify(content);
+  return '';
+}
+
+/**
+ * Translates one parsed stream-json event (from `claude -p --output-format stream-json`) into
+ * zero or more compact human-readable log lines, for display in the workflow run UI. Returns
+ * `null` for event shapes we don't recognize (or can't make sense of) — the caller falls back to
+ * the raw (scrubbed) line so nothing is silently dropped. Returns `[]` when the event is
+ * recognized but has nothing worth showing (e.g. an assistant turn with only empty text).
+ * Purely a display concern — never consulted for exit-code classification (see classifyResult).
+ */
+function translateEvent(event) {
+  if (!event || typeof event !== 'object') return null;
+
+  switch (event.type) {
+    case 'system': {
+      if (event.subtype !== 'init') return null;
+      const model = typeof event.model === 'string' ? event.model : 'unknown';
+      const session = typeof event.session_id === 'string' ? truncate(event.session_id, 8) : 'unknown';
+      return [`→ claude session started (model: ${model}, session: ${session}…)`];
+    }
+
+    case 'assistant': {
+      const blocks = event.message && Array.isArray(event.message.content) ? event.message.content : null;
+      if (!blocks) return null;
+      const lines = [];
+      for (const block of blocks) {
+        if (!block || typeof block !== 'object') continue;
+        if (block.type === 'text' && typeof block.text === 'string') {
+          const text = block.text.trim();
+          if (text) lines.push(`💬 ${truncate(text, 160)}`);
+        } else if (block.type === 'tool_use') {
+          const name = typeof block.name === 'string' ? block.name : 'unknown';
+          const argSummary = summarizeToolArgs(block.input);
+          lines.push(`→ tool: ${name}${argSummary ? ` {${argSummary}}` : ''}`);
+        }
+      }
+      return lines;
+    }
+
+    case 'user': {
+      const blocks = event.message && Array.isArray(event.message.content) ? event.message.content : null;
+      if (!blocks) return null;
+      const lines = [];
+      for (const block of blocks) {
+        if (!block || typeof block !== 'object' || block.type !== 'tool_result') continue;
+        const summary = truncate(summarizeToolResultContent(block.content).trim(), 160);
+        const marker = block.is_error ? '✗ tool result (error)' : '← tool result';
+        lines.push(summary ? `${marker}: ${summary}` : marker);
+      }
+      return lines;
+    }
+
+    case 'result': {
+      if (event.is_error) {
+        const message = typeof event.result === 'string' && event.result ? event.result : String(event.subtype || 'unknown error');
+        return [`✗ error: ${truncate(message, 160)}`];
+      }
+      const turns = event.num_turns !== undefined ? event.num_turns : '?';
+      return [`✓ done: ${turns} turns`];
+    }
+
+    default:
+      return null;
+  }
+}
+
+/** Cheap, non-blocking start-line text — never shells out (a `claude --version` subprocess costs
+ * ~300-400ms, too slow for "first line out"). Only uses an env var if one happens to be set. */
+function buildStartLine(env) {
+  if (env.CONDUCTOR_CLAUDE_VERSION) {
+    return `→ container started (claude ${env.CONDUCTOR_CLAUDE_VERSION})`;
+  }
+  return '→ container started, launching claude';
 }
 
 /**
@@ -397,7 +547,7 @@ async function main() {
     process.exit(EXIT.CONFIG_ERROR);
   }
 
-  const runResult = await runClaude(invocation, env, secrets);
+  const runResult = await runClaude(invocation, env, secrets, [buildStartLine(env)]);
   const { exitCode, errorReason, outputs } = classifyResult(runResult, Boolean(env.CONDUCTOR_OUTPUT_SCHEMA_JSON));
 
   localLog(`claude exited code=${runResult.code} signal=${runResult.signal} timedOut=${runResult.timedOut} -> ${errorReason || 'SUCCESS'}`);
