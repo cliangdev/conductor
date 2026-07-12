@@ -5,6 +5,7 @@ import github from './github';
 import revenuecat from './revenuecat';
 import gsc from './gsc';
 import appleSearchAds from './apple-search-ads';
+import discord from './discord';
 
 export const CONNECTOR_DOCS: Record<string, string> = {
   gcp,
@@ -14,4 +15,5 @@ export const CONNECTOR_DOCS: Record<string, string> = {
   revenuecat,
   gsc,
   'apple-search-ads': appleSearchAds,
+  discord,
 };
