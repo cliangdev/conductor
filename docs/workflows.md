@@ -11,6 +11,7 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Steps](#steps)
   - [Step types](#step-types)
   - [Outputs and interpolation](#outputs-and-interpolation)
+  - [Artifacts](#artifacts)
   - [Loops](#loops)
   - [Conditions](#conditions)
   - [Example: monthly SEO analysis](#example-monthly-seo-analysis)
@@ -69,6 +70,32 @@ Adds a **Run Now** button in the workflow UI.
 on:
   workflow_dispatch: {}
 ```
+
+Optionally declare named inputs the caller must/may supply. Each is a `name: {description?, required?}`
+entry, GitHub-Actions-style:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+      dry_run:
+        description: Skip the deploy step
+        required: false
+```
+
+A manual run passes values in the dispatch request body's `inputs` map (also how `dispatch_workflow`
+and the **Run Now** UI pass them):
+
+```json
+{ "inputs": { "environment": "production", "dry_run": "false" } }
+```
+
+Reference them anywhere with `${{ inputs.environment }}`. `inputs:` is declarative only — it isn't
+enforced at dispatch time (an omitted or extra key doesn't fail the run); referencing an
+undeclared input produces a publish-time lint warning (see [Outputs and interpolation](#outputs-and-interpolation)).
 
 #### Webhook
 
@@ -138,11 +165,13 @@ jobs:
 |-------|-------------|
 | `needs` | Job ID or list of job IDs this job depends on. The job runs only after all listed jobs succeed. |
 | `runs-on` | Execution mode: `conductor` (default), `self-hosted`, `cloud-run`, or the name of a project [runtime target](#runtime-targets-bring-your-own-cloud-run). See [Execution modes](#execution-modes). |
-| `if` | Expression evaluated before the job starts. If false, the job is skipped. |
+| `if` | Expression evaluated before the job starts. If false, the job is skipped. Defaults to `success()` when omitted — see [Conditions](#conditions). |
 | `steps` | List of steps to execute in order. |
 | `loop` | Repeat this job up to `max_iterations` times until a condition is met. See [Loops](#loops). |
 
-When an upstream job fails, all jobs that depend on it are marked **skipped** rather than failed, making it easy to see exactly where a run went wrong.
+Every job has an implicit condition of `success()` unless it declares its own `if:` — see
+[Conditions](#conditions) for exactly how a dependent job reacts when an upstream job fails, is
+skipped, or is itself conditional on failure (`if: failure()`/`if: always()`).
 
 ---
 
@@ -245,6 +274,8 @@ Triggers a flow in your Kestra instance and optionally waits for it to finish.
   type: kestra
   namespace: myorg.data
   flow_id: nightly-etl
+  base_url: ${{ secrets.KESTRA_BASE_URL }}
+  api_token: ${{ secrets.KESTRA_API_TOKEN }}
   inputs:
     date: ${{ event.date }}
     env: production
@@ -258,11 +289,18 @@ Triggers a flow in your Kestra instance and optionally waits for it to finish.
 |-------|---------|-------------|
 | `namespace` | — | Kestra flow namespace (required). |
 | `flow_id` | — | Kestra flow ID (required). |
+| `base_url` | `KESTRA_BASE_URL` env var, else the conductor-hosted default | Kestra instance URL. Interpolated — set per-project with `${{ secrets.KESTRA_BASE_URL }}` instead of relying on deployment-wide env vars. |
+| `api_token` | `KESTRA_API_TOKEN` env var | Kestra API bearer token. Interpolated — `${{ secrets.KESTRA_API_TOKEN }}` keeps it out of the deployment config. |
 | `inputs` | — | Input values passed to the Kestra flow. Interpolated. |
 | `wait` | `true` | Wait for the flow to complete before continuing. |
 | `timeout_minutes` | `60` | How long to wait before timing out. |
 | `fail_on_warning` | `false` | Treat Kestra WARNING execution state as a failure. |
 | `outputs` | — | Map of output key → dot-notation path into the Kestra execution response. |
+
+Resolution order for `base_url`/`api_token`: the step's own config (interpolated, so
+`${{ secrets.* }}` works) → the deployment's `KESTRA_BASE_URL`/`KESTRA_API_TOKEN` env vars → the
+conductor-hosted default base URL (no default API token). This lets each workflow target its own
+Kestra instance via project secrets, instead of every workflow sharing one deployment-wide instance.
 
 #### `integration` — Query a connected integration
 
@@ -454,6 +492,55 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 
 All three are billed against the token owner's Claude Pro/Max plan, not metered API usage. Per Anthropic's guidance, subscription auth is meant for an individual's own automation, not shared/production/metered use — for that, use the **`agent`** step instead (direct API calls against a per-project Anthropic API key), not a containerized `claude-code` step.
 
+#### `action` — Call a connector's outbound action
+
+Invokes a named action on a connected integration (post a Discord message, create an issue in a
+third-party tracker, …) without embedding credentials in the workflow YAML. Like the `integration`
+step, the active connection is resolved at runtime from the project's linked integration — but
+`action` is outbound (writes/side-effects) where `integration` is inbound (reads).
+
+```yaml
+- id: notify
+  uses: action
+  with:
+    connector: discord             # connectorId — see Settings → Integrations
+    action: post_message           # action id the connector declares
+    input:
+      content: "Deploy finished: ${{ needs.build.outputs.version }}"
+```
+
+| Field | Description |
+|-------|-------------|
+| `connector` | Connector ID of an ACTIVE integration with the ACTION capability (e.g. `discord`) (required). |
+| `action` | Action id the connector declares (e.g. `post_message`) (required). |
+| `input` | Map passed to the action. String values are interpolated; other values pass through as-is. |
+
+Discover a connector's action ids, and the input keys each expects, via the `list_integration_tools`
+MCP tool (or `list_connector_catalog` for connectors not yet connected in this project) — the
+connector declares them itself rather than the workflow author hardcoding a shape that can drift.
+
+Outputs are the action's own result keys — e.g. Discord's `post_message` returns `message_id` and
+`channel_id`, referenceable as `${{ steps.notify.outputs.message_id }}`. Declare `outputs:` dot-paths
+the same way as `http`/`integration` steps to extract nested values.
+
+**Idempotency.** Each invocation is keyed by this job run + step id — re-driving the *same* job run
+(e.g. a retry) never double-fires the action; a genuinely new job run always fires it again.
+
+**Failure handling** mirrors the `ActionConnector` SPI's transient-vs-permanent contract:
+- **Transient** (the connector threw — network error, 5xx, timeout): retried automatically, up to 3
+  attempts inline within the step, then a background sweep continues retrying (exponential backoff)
+  up to 5 attempts total before the action is dead-lettered.
+- **Permanent** (the connector returned an error result — e.g. a 4xx rejection, bad webhook URL,
+  malformed input): dead-lettered immediately, no retry — the provider already told us the request
+  itself was invalid, so retrying would just waste attempts.
+
+Either way the step fails if the action never succeeds; the step log records the connector, action
+id, and connection used.
+
+**Credentials are resolved at runtime** — they never appear in the workflow YAML. In the example
+above, the Discord webhook URL is configured once on the connection (**Settings → Integrations →
+Discord**), not pasted into the step.
+
 ---
 
 ### Outputs and interpolation
@@ -464,11 +551,27 @@ Use `${{ ... }}` to inject dynamic values into any string field.
 |------------|-------|
 | `${{ event.FIELD }}` | Field from the trigger event payload |
 | `${{ secrets.SECRET_NAME }}` | Project secret (name must be uppercase with underscores) |
+| `${{ inputs.KEY }}` | A manual-dispatch input value (see [Manual dispatch](#manual-dispatch)) |
 | `${{ steps.STEP_ID.outputs.KEY }}` | Output from a step in the current job |
+| `${{ steps.STEP_ID.result }}` | Terminal result of a prior step in the same job: `success`, `failure`, or `skipped` |
 | `${{ needs.JOB_ID.outputs.KEY }}` | Output from a completed upstream job |
+| `${{ needs.JOB_ID.result }}` | Terminal result of an upstream job: `success`, `failure`, or `skipped` |
+| `${{ needs.JOB_ID.artifacts.NAME }}` | Signed, time-limited download URL for an artifact an upstream job produced — see [Artifacts](#artifacts) |
 | `${{ loop.iteration }}` | Current loop iteration number (1-based) |
 
 Unknown references resolve to an empty string rather than erroring.
+
+**Output merge rule.** `needs.JOB_ID.outputs.*` is the merge of every step's declared outputs across
+that job, in deterministic execution order (start time, then step id as a tiebreak). If two steps in
+the same job declare the same output key, the later step (by execution order) wins; the collision is
+logged as a warning.
+
+**Publish-time lint.** Saving a workflow does a best-effort scan of every `${{ ... }}` reference and
+adds a **warning** (never a hard error — these are hints, not a strict contract) for:
+- an unknown root (anything other than `event`, `secrets`, `steps`, `needs`, `inputs`, `loop`)
+- `steps.ID.*` naming a step id not present in the same job
+- `needs.JOB.*` naming a job not declared in this job's `needs`
+- `inputs.KEY` naming a key not declared under `on.workflow_dispatch.inputs`
 
 ```yaml
 jobs:
@@ -501,6 +604,81 @@ jobs:
 ```yaml
 if: "${{ needs.validate.outputs.passed == 'true' && event.branch == 'main' }}"
 ```
+
+---
+
+### Artifacts
+
+Outputs (`outputs:`) are small string values extracted into `${{ ... }}` expressions. **Artifacts**
+are for passing whole files between jobs — a build binary, a rendered report, a dataset — without
+round-tripping them through outputs or a job-shared filesystem.
+
+A `docker` or `claude-code` step declares what it produces with `artifacts:`; a downstream job
+declares what it consumes with a job-level `consumes:`:
+
+```yaml
+jobs:
+  build:
+    runs-on: self-hosted           # docker artifacts require self-hosted (see below)
+    steps:
+      - id: compile
+        uses: docker://node:20-alpine
+        run: npm ci && npm run build && cp dist/app.tar.gz /conductor/workspace/app.tar.gz
+        artifacts:
+          - name: app-bundle
+            path: app.tar.gz        # workspace-relative
+
+  deploy:
+    needs: build
+    consumes: [app-bundle]          # must be produced by one of this job's needs
+    steps:
+      - uses: docker://
+        run: |
+          # $CONDUCTOR_ARTIFACTS_DIR/app-bundle is the downloaded file
+          ./scripts/deploy.sh "$CONDUCTOR_ARTIFACTS_DIR/app-bundle"
+```
+
+| Field | Where | Description |
+|-------|-------|--------------|
+| `artifacts` | step-level (`docker`, `claude-code` only) | List of `{name, path}` this step produces. `name` must match `^[a-z0-9_-]{1,160}$` and be unique across the whole run. `path` is workspace-relative, resolved inside the step's container. |
+| `consumes` | job-level | List of artifact names this job needs downloaded before its steps run. Each name must be produced by a step in one of this job's `needs` — checked at save time. |
+
+**Reading a consumed artifact:**
+- In a container (`docker` self-hosted, or `claude-code` on any runtime): the daemon/entrypoint
+  downloads every consumed artifact into a bind-mounted directory before the step runs, exposed at
+  `$CONDUCTOR_ARTIFACTS_DIR` (fixed at `/conductor/artifacts`).
+- In any step's `${{ }}` interpolation: `${{ needs.JOB.artifacts.NAME }}` resolves to a signed,
+  time-limited (60-minute) GET URL for the file — useful for an `http` step that just needs to pass
+  the file along, without downloading it into a container.
+
+**Support matrix.** `docker` steps need `runs-on: self-hosted` to declare artifacts — the
+Conductor-hosted worker-VM docker path doesn't implement artifact upload/download (the validator
+rejects `artifacts:` on a conductor-hosted `docker` step with a clear error rather than half-working).
+`claude-code` steps support artifacts on **any** runtime (`self-hosted`, `cloud-run`, or a runtime
+target) — but see the runner-image note below for `cloud-run`/runtime-target support specifically.
+
+**Failure semantics — never silent.** A missing declared file (the step said it would produce
+`app-bundle` at that path, but the file isn't there when the step finishes) or a failed
+upload/download always fails the job — there's no silent "artifact just wasn't there" path. Look for
+`ARTIFACT_MISSING`, `ARTIFACT_UPLOAD_FAILED`, or `ARTIFACT_DOWNLOAD_FAILED` in the failed step's
+`errorReason`/log.
+
+**Validator rules enforced at save time:** artifact name shape and uniqueness (across the *entire*
+run graph, not just within one job — two jobs can't produce the same name), artifact type restricted
+to `docker`/`claude-code` steps, and every `consumes:` entry traced back to a producing step in the
+job's own `needs`.
+
+**Daemon version floor.** Self-hosted artifact support requires an up-to-date `conductor` CLI/daemon
+— the dispatch protocol gained the artifact fields additively (protocol version unchanged), so an
+older daemon simply ignores them rather than erroring, which means a stale daemon will silently skip
+downloading/uploading artifacts it doesn't know about. Run `conductor start` from a current install.
+
+**Runner image note (claude-code, cloud-run/runtime targets).** The containerized
+`conductor-claude-entrypoint` gained the same artifact-download/upload contract as the daemon, but
+that only takes effect once a runner image is rebuilt and pushed with the updated entrypoint — the
+currently published `ghcr.io/cliangdev/conductor-runner` tag predates this change. If a `claude-code`
+step with `artifacts`/`consumes` on `cloud-run` or a runtime target doesn't pick up files, rebuild and
+re-push the image (see [Runner image](#runner-image) / [Choosing an image](#runtime-targets-bring-your-own-cloud-run)) before relying on it in production.
 
 ---
 
@@ -550,7 +728,77 @@ jobs:
         url: https://deploy.example.com/ship
 ```
 
-A skipped job shows in the run history as **SKIPPED**, and any jobs that depend on it are also skipped.
+A skipped job shows in the run history as **SKIPPED**. Every job — whether or not it declares `if:`
+— has an effective condition: an explicit `if:` if you write one, otherwise the implicit default
+`success()`.
+
+#### `always()`, `success()`, `failure()`
+
+Inside an `if:` (job or step) or a `condition` step's `expression:`, these three functions read the
+terminal status of the current job's `needs` (for a job-level `if:`) — the same facts are reused for
+every step's `if:` within that job:
+
+| Function | True when |
+|----------|-----------|
+| `always()` | Always — runs regardless of upstream outcome. |
+| `success()` | Every one of the job's `needs` ended `SUCCESS`. False if any need was `FAILED`, `LOOP_EXHAUSTED`, **or `SKIPPED`** — a skip cascades through the default condition the same way a failure does, matching GitHub Actions. A job with no `needs` is vacuously successful (root jobs still run by default). |
+| `failure()` | Any one of the job's `needs` ended `FAILED` or `LOOP_EXHAUSTED`. A `SKIPPED` need does **not** trip `failure()` — only a real failure does. |
+
+They're composable with `&&`, `||`, and the usual comparisons, just like any other value:
+
+```yaml
+notify:
+  needs: [build, test, deploy]
+  if: "${{ failure() || needs.deploy.outputs.rollback == 'true' }}"
+```
+
+`${{ needs.JOB.result }}` (see [Outputs and interpolation](#outputs-and-interpolation)) gives you the
+same information per-job as a plain string (`success`/`failure`/`skipped`) when you want to branch on
+one specific upstream job rather than the aggregate.
+
+#### Step-level `continue-on-error`
+
+A step can opt out of failing its job:
+
+```yaml
+- id: optional-lint
+  type: http
+  url: https://lint.example.com/check
+  continue-on-error: true
+```
+
+A failed step with `continue-on-error: true` does not stop the job or fail it — later steps in the
+job still run, and `${{ steps.optional-lint.result }}` is `failure` so a later step can branch on it:
+
+```yaml
+- if: "${{ steps.optional-lint.result == 'failure' }}"
+  type: http
+  url: https://slack.example.com/notify-lint-issue
+```
+
+(A `condition` step cannot have `continue-on-error` — routing steps always succeed by definition.)
+
+#### Failure propagation: how a downstream job reacts
+
+**This is a behavior change** from earlier versions of this engine. Previously, a failed job hard-skipped
+its *entire* downstream closure — no dependent job's `if:` was ever evaluated once something upstream
+failed. Now, `FAILED`/`SKIPPED`/`LOOP_EXHAUSTED` are terminal outcomes exactly like `SUCCESS`: once a
+job reaches one of them, every dependent whose `needs` are now all terminal becomes **ready**, and
+decides for itself — via its own explicit `if:`, or the implicit `success()` — whether to actually run.
+
+| | Old behavior | New behavior |
+|---|---|---|
+| Upstream job fails, downstream has no `if:` | Downstream hard-skipped, unconditionally | Downstream becomes ready, evaluates the implicit `success()`, which is false → still skips. **Same observable result for the common case.** |
+| Upstream job fails, downstream has `if: failure()` | Never evaluated — hard-skipped anyway, so this `if:` was effectively dead code | Downstream becomes ready, evaluates `failure()` → true → **actually runs**. Cleanup/notify/rollback jobs work as written. |
+| Upstream job fails, downstream has `if: always()` | Never evaluated — hard-skipped anyway | Downstream becomes ready, `always()` → true → **actually runs**. |
+| Upstream job succeeds | Downstream runs (subject to its own `if:`) | Unchanged. |
+| Run-level status when any job failed | `FAILED` | Still `FAILED` — a failed job failing the overall run hasn't changed, only whether dependents get a chance to react. |
+
+Net effect: **a workflow with no `if:` on any job behaves identically to before** (the implicit
+`success()` reproduces the old hard-skip for the plain case). The only workflows that behave
+differently are ones that declare `if: failure()` or `if: always()` on a job downstream of a
+potential failure — those now actually run instead of being silently skipped, which is what most
+authors intended when they wrote them.
 
 ---
 
@@ -562,7 +810,7 @@ A complete pipeline that, on the first of every month, collects search + product
 name: Monthly SEO analysis
 on:
   schedule:
-    - cron: "0 9 1 * *"        # 09:00 UTC on the 1st of each month
+    cron: "0 9 1 * *"        # 09:00 UTC on the 1st of each month
 
 jobs:
   collect_gsc:
@@ -851,7 +1099,7 @@ Claude can design and create workflows for you based on a plain-language descrip
 1. **Invoke the skill** — Type `/conductor:workflow` in Claude Code and describe what you want:
    > "Build a workflow that analyzes our landing page SEO performance weekly and posts a summary to Discord."
 
-2. **Claude runs discovery** — it calls `list_integration_tools` to see which data sources are already connected, and `list_workflows` to understand your existing conventions. You do not need to know connector names, credential keys, or YAML syntax.
+2. **Claude runs discovery** — it calls `list_integration_tools` to see which data sources are already connected, `list_connector_catalog` to recommend integrations you haven't connected yet, `list_workflow_secrets` to see what secret keys already exist (never their values), `list_workflow_runs` to check recent run history, and `list_workflows` to understand your existing conventions. You do not need to know connector names, credential keys, or YAML syntax.
 
 3. **Claude asks clarifying questions** — trigger cadence, output destination (Discord, Slack, Conductor issue), and any scope constraints.
 

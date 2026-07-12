@@ -28,6 +28,13 @@ tax" — wrapping a complex API 1:1 just adds layers without preserving the unde
 Avoid exposing raw CRUD. The agent shouldn't need to know about internal IDs, pagination, or filter
 params unless they directly serve a user intent.
 
+**Two tools for the same intent is sometimes correct** — when the environments they run in genuinely
+differ. `write_document` (upsert by filename, full content) works headlessly (e.g. inside a
+`claude-code` workflow step container) and is preferred; `scaffold_document` requires the local
+daemon (it hands back a local path for the `Write` tool to fill in) and only makes sense in an
+interactive Claude Code session. Each tool's description says which one to prefer and why, so the
+agent doesn't have to guess from context which environment it's in.
+
 ---
 
 ## 3. No false promises
