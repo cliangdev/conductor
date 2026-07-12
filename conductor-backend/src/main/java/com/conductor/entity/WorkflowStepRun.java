@@ -37,8 +37,7 @@ public class WorkflowStepRun {
     private String stepType;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, columnDefinition = "workflow_step_status")
-    @ColumnTransformer(write = "?::workflow_step_status")
+    @Column(name = "status", nullable = false, length = 32)
     private WorkflowStepStatus status;
 
     @Column(name = "log", columnDefinition = "TEXT")

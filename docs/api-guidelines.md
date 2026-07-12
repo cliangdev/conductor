@@ -78,7 +78,8 @@ by controller package. Therefore:
   a new prefix (a new predicate) for a genuine breaking change, and run both during migration. The
   `issues` → `work-items` rename did exactly this: `/api/v2` ran alongside a deprecated v1 shim until
   callers migrated, then the v1 issue surface (paths, schemas, `com.conductor.legacy` controllers) was
-  deleted. Don't reintroduce v1 issue endpoints.
+  deleted. Don't reintroduce v1 issue endpoints. (The `legacy-v1-deprecation.md` tracking doc has been
+  removed now that the migration is complete — this is the authoritative note.)
 - The internal surface has no external consumers, so it can be re-versioned by updating all in-repo
   callers (backend `DockerStepExecutor`, `conductor-worker`, `conductor-tools`) in the same PR.
 

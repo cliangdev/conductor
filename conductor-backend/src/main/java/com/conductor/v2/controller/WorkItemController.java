@@ -26,8 +26,8 @@ import java.util.Map;
 
 /**
  * Canonical v2 Work Item resource ({@code /api/v2/projects/{projectId}/work-items}). This is the successor
- * to the legacy v1 {@code issues} core (see {@code docs/legacy-v1-deprecation.md}); it is additive and does
- * not change v1 behavior. All business logic lives in the shared {@link WorkItemService} /
+ * to the legacy v1 {@code issues} core, which has been fully removed (migration completed 2026). All
+ * business logic lives in the shared {@link WorkItemService} /
  * {@link WorkItemWorkflowService} — this controller only translates the v2 request/response DTOs and maps
  * the {@link WorkItem} entity (which lets v2 surface the bound {@code workflow} slug, unlike v1).
  *

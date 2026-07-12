@@ -20,10 +20,7 @@ public interface WorkflowJobRunRepository extends JpaRepository<WorkflowJobRun, 
 
     List<WorkflowJobRun> findByStatus(WorkflowJobStatus status);
 
-    // Native + explicit cast: workflow_job_status is a native Postgres enum, and neither derived
-    // query methods nor JPQL apply the entity's @ColumnTransformer write-cast to query parameters
-    // (only to persistence) — an uncast varchar bind against the enum column 500s at the JDBC level.
-    @Query(value = "SELECT * FROM workflow_job_runs WHERE status = CAST(:status AS workflow_job_status) AND started_at < :cutoff",
+    @Query(value = "SELECT * FROM workflow_job_runs WHERE status = :status AND started_at < :cutoff",
            nativeQuery = true)
     List<WorkflowJobRun> findByStatusAndStartedAtBefore(@Param("status") String status, @Param("cutoff") OffsetDateTime cutoff);
 

@@ -1,14 +1,14 @@
 package com.conductor.v2.controller;
 
-import com.conductor.entity.StepRun;
 import com.conductor.entity.User;
+import com.conductor.entity.WorkItemStepRun;
 import com.conductor.generated.v2.api.WorkItemStepRunsApi;
 import com.conductor.generated.v2.model.CreateStepRunRequest;
 import com.conductor.generated.v2.model.StepRunBeforeAfter;
 import com.conductor.generated.v2.model.StepRunFlag;
 import com.conductor.generated.v2.model.StepRunProduced;
 import com.conductor.generated.v2.model.StepRunResponse;
-import com.conductor.service.StepRunService;
+import com.conductor.service.WorkItemStepRunService;
 import com.conductor.service.view.StepRunInput;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -22,23 +22,23 @@ import java.util.List;
 /**
  * Canonical v2 step-run sub-resource
  * ({@code /api/v2/projects/{projectId}/work-items/{workItemId}/step-runs}). All business logic lives in the
- * shared {@link StepRunService}, which persists/returns StepRun entities. This controller owns the translation
+ * shared {@link WorkItemStepRunService}, which persists/returns WorkItemStepRun entities. This controller owns the translation
  * between the v2 request/response DTOs and the entity — including serializing the structured
  * {@code produced}/{@code beforeAfter}/{@code flags} to/from the JSONB columns via {@link ObjectMapper}.
  *
  * <p>The {@code /api/v2} prefix is applied structurally by {@code ApiPathConfig} for controllers under the
  * {@code com.conductor.v2} package, so this class maps at bare paths via the generated interface.
  *
- * <p>No {@code @Transactional} here: the mapping reads only the StepRun's own columns and its parent id, so no
+ * <p>No {@code @Transactional} here: the mapping reads only the WorkItemStepRun's own columns and its parent id, so no
  * lazy association is loaded during mapping (open-in-view is off).
  */
 @RestController
 public class WorkItemStepRunsController implements WorkItemStepRunsApi {
 
-    private final StepRunService stepRunService;
+    private final WorkItemStepRunService stepRunService;
     private final ObjectMapper objectMapper;
 
-    public WorkItemStepRunsController(StepRunService stepRunService, ObjectMapper objectMapper) {
+    public WorkItemStepRunsController(WorkItemStepRunService stepRunService, ObjectMapper objectMapper) {
         this.stepRunService = stepRunService;
         this.objectMapper = objectMapper;
     }
@@ -68,7 +68,7 @@ public class WorkItemStepRunsController implements WorkItemStepRunsApi {
                 toJson(request.getProduced()),
                 toJson(request.getBeforeAfter()),
                 toJson(request.getFlags()));
-        StepRun created = stepRunService.createStepRun(projectId, workItemId, input, currentUser());
+        WorkItemStepRun created = stepRunService.createStepRun(projectId, workItemId, input, currentUser());
         return ResponseEntity.status(201).body(toV2(created));
     }
 
@@ -76,7 +76,7 @@ public class WorkItemStepRunsController implements WorkItemStepRunsApi {
         return value == null ? null : objectMapper.valueToTree(value);
     }
 
-    private StepRunResponse toV2(StepRun stepRun) {
+    private StepRunResponse toV2(WorkItemStepRun stepRun) {
         StepRunResponse v2 = new StepRunResponse(
                 stepRun.getId(),
                 stepRun.getWorkItem().getId(),
