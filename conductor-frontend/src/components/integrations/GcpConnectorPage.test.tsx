@@ -25,6 +25,12 @@ vi.mock('./RuntimeTargetsPanel', () => ({
   ),
 }))
 
+vi.mock('./ClaudeCodeCredentialPanel', () => ({
+  default: ({ projectId }: { projectId: string }) => (
+    <div data-testid="claude-code-credential-panel" data-project-id={projectId} />
+  ),
+}))
+
 import * as api from '@/lib/api'
 import GcpConnectorPage from './GcpConnectorPage'
 
@@ -53,6 +59,17 @@ describe('GcpConnectorPage', () => {
 
     const panel = await screen.findByTestId('runtime-targets-panel')
     expect(panel).toHaveAttribute('data-connections-count', '0')
+  })
+
+  it('renders the Claude Code credential panel regardless of connections', async () => {
+    vi.mocked(api.listConnections).mockResolvedValue([activeConnection])
+    const { unmount } = render(<GcpConnectorPage projectId="proj-1" />)
+    expect(await screen.findByTestId('claude-code-credential-panel')).toHaveAttribute('data-project-id', 'proj-1')
+    unmount()
+
+    vi.mocked(api.listConnections).mockResolvedValue([])
+    render(<GcpConnectorPage projectId="proj-1" />)
+    expect(await screen.findByTestId('claude-code-credential-panel')).toBeInTheDocument()
   })
 
   it('no longer shows the old "Manage runtime targets" link', async () => {

@@ -79,7 +79,7 @@ jobs:
 | \`RUNTIME_TARGET_NOT_FOUND\` | The \`runs-on\` name doesn't match any runtime target in this project. |
 | \`RUNTIME_TARGET_NOT_READY\` | The target exists but isn't \`ACTIVE\` yet — fix it on this integration's **Overview** tab, then retry the run. |
 
-**Auth note** — \`claude-code\` steps are **subscription-auth only** on every runtime, including runtime targets. The project's Claude Code (subscription) credential is configured under **Agents → Providers** and injected by the backend at execution time — it is never written into workflow YAML.
+**Auth note** — \`claude-code\` steps are **subscription-auth only** on every runtime, including runtime targets. The project's Claude Code (subscription) credential is configured on this integration's **Overview** tab (paste the output of \`claude setup-token\`) and injected by the backend at execution time — it is never written into workflow YAML. The same credential also powers the built-in \`runs-on: cloud-run\` mode.
 `
 
 export default doc

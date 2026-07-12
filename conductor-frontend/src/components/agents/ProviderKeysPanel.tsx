@@ -16,12 +16,6 @@ import { useToast } from '@/components/ui/toast'
 
 const INPUT = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring'
 
-// Not a model provider (agent steps can't select it) — the Claude Code CLI's own subscription
-// OAuth token, consumed only by `claude-code` workflow steps. Kept out of `listAgentProviders`
-// (that endpoint lists chat-completion model providers), so it's rendered as a fixed extra row
-// using the same credential endpoints as the dynamic rows below.
-const CLAUDE_CODE_PROVIDER_ID = 'claude-code'
-
 interface ProviderRow {
   provider: AgentProviderInfo
   configured: boolean
@@ -40,7 +34,6 @@ export function ProviderKeysPanel({
   const { accessToken } = useAuth()
   const { showToast } = useToast()
   const [rows, setRows] = useState<ProviderRow[]>([])
-  const [claudeCodeConfigured, setClaudeCodeConfigured] = useState(false)
   const [loading, setLoading] = useState(true)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string | null>(null)
@@ -51,21 +44,15 @@ export function ProviderKeysPanel({
     async function load() {
       try {
         const providers = await listAgentProviders(projectId, accessToken!)
-        const [statuses, claudeCodeStatus] = await Promise.all([
-          Promise.all(
-            providers.map((p) =>
-              getProviderCredentialStatus(projectId, p.id, accessToken!)
-                .then((s) => s.configured)
-                .catch(() => false),
-            ),
+        const statuses = await Promise.all(
+          providers.map((p) =>
+            getProviderCredentialStatus(projectId, p.id, accessToken!)
+              .then((s) => s.configured)
+              .catch(() => false),
           ),
-          getProviderCredentialStatus(projectId, CLAUDE_CODE_PROVIDER_ID, accessToken!)
-            .then((s) => s.configured)
-            .catch(() => false),
-        ])
+        )
         if (!cancelled) {
           setRows(providers.map((provider, i) => ({ provider, configured: statuses[i] })))
-          setClaudeCodeConfigured(claudeCodeStatus)
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -82,11 +69,7 @@ export function ProviderKeysPanel({
     setBusy(providerId)
     try {
       await setProviderCredential(projectId, providerId, key, accessToken)
-      if (providerId === CLAUDE_CODE_PROVIDER_ID) {
-        setClaudeCodeConfigured(true)
-      } else {
-        setRows((prev) => prev.map((r) => (r.provider.id === providerId ? { ...r, configured: true } : r)))
-      }
+      setRows((prev) => prev.map((r) => (r.provider.id === providerId ? { ...r, configured: true } : r)))
       setDrafts((prev) => ({ ...prev, [providerId]: '' }))
       showToast('API key saved.', 'success')
     } catch (e) {
@@ -101,11 +84,7 @@ export function ProviderKeysPanel({
     setBusy(providerId)
     try {
       await deleteProviderCredential(projectId, providerId, accessToken)
-      if (providerId === CLAUDE_CODE_PROVIDER_ID) {
-        setClaudeCodeConfigured(false)
-      } else {
-        setRows((prev) => prev.map((r) => (r.provider.id === providerId ? { ...r, configured: false } : r)))
-      }
+      setRows((prev) => prev.map((r) => (r.provider.id === providerId ? { ...r, configured: false } : r)))
       showToast('API key removed.', 'success')
     } catch (e) {
       showToast(apiErrorMessage(e, 'Failed to remove API key.'), 'error')
@@ -136,15 +115,6 @@ export function ProviderKeysPanel({
               placeholder: configured ? '•••••••• (set — enter a new key to replace)' : 'Enter API key',
             }),
           )}
-          {renderRow({
-            id: CLAUDE_CODE_PROVIDER_ID,
-            label: 'Claude Code (subscription)',
-            configured: claudeCodeConfigured,
-            hint: "Paste the output of `claude setup-token` — billed against your Claude Pro/Max plan.",
-            placeholder: claudeCodeConfigured
-              ? '•••••••• (set — enter a new token to replace)'
-              : 'Enter subscription token',
-          })}
         </div>
       )}
     </div>
@@ -154,13 +124,11 @@ export function ProviderKeysPanel({
     id,
     label,
     configured,
-    hint,
     placeholder,
   }: {
     id: string
     label: string
     configured: boolean
-    hint?: string
     placeholder: string
   }) {
     return (
@@ -173,7 +141,6 @@ export function ProviderKeysPanel({
             <Badge variant="outline">Not configured</Badge>
           )}
         </div>
-        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
         {canMutate ? (
           <div className="flex gap-2">
             <input

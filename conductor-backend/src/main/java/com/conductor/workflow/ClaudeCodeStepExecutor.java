@@ -149,7 +149,7 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         if (oauthToken.isEmpty()) {
             return StepResult.failed("", "CLAUDE_SUBSCRIPTION_NOT_CONFIGURED: no Claude Code subscription "
                     + "token configured for this project. Run 'claude setup-token' and store the result as "
-                    + "the project's Claude Code credential under Agents → Providers.");
+                    + "the project's Claude Code credential under Integrations → Google Cloud.");
         }
 
         boolean conductorMcp = getBooleanOrDefault(stepDef, "conductor_mcp", false);

@@ -11,6 +11,7 @@ import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { ConnectorIcon } from './ConnectorIcon';
 import { ServiceAccountKeyField } from './ServiceAccountKeyField';
 import RuntimeTargetsPanel from './RuntimeTargetsPanel';
+import ClaudeCodeCredentialPanel from './ClaudeCodeCredentialPanel';
 
 const CONNECTOR_ID = 'gcp';
 
@@ -187,6 +188,8 @@ export default function GcpConnectorPage({ projectId }: { projectId: string }) {
               )}
             </>
           )}
+
+          <ClaudeCodeCredentialPanel projectId={projectId} />
 
           <RuntimeTargetsPanel projectId={projectId} connections={connections} />
         </div>
