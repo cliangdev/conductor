@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -33,8 +34,6 @@ import java.util.Map;
 public class OAuthFlowService {
 
     private static final Logger log = LoggerFactory.getLogger(OAuthFlowService.class);
-    private static final String GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-    private static final String GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
     /** Fallback scopes when a connector predates the {@link OAuth2Connector} scope declaration. */
     private static final List<String> DEFAULT_GOOGLE_SCOPES = List.of(
@@ -44,14 +43,9 @@ public class OAuthFlowService {
     private final IntegrationOAuthStateRepository oAuthStateRepository;
     private final ConnectionService connectionService;
     private final ConnectorRegistry connectorRegistry;
+    private final Environment environment;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
-
-    @Value("${GOOGLE_OAUTH_CLIENT_ID:}")
-    private String googleClientId;
-
-    @Value("${GOOGLE_OAUTH_CLIENT_SECRET:}")
-    private String googleClientSecret;
 
     @Value("${FRONTEND_URL:http://localhost:3000}")
     private String frontendUrl;
@@ -62,10 +56,12 @@ public class OAuthFlowService {
     public OAuthFlowService(IntegrationOAuthStateRepository oAuthStateRepository,
                             ConnectionService connectionService,
                             ConnectorRegistry connectorRegistry,
+                            Environment environment,
                             ObjectMapper objectMapper) {
         this.oAuthStateRepository = oAuthStateRepository;
         this.connectionService = connectionService;
         this.connectorRegistry = connectorRegistry;
+        this.environment = environment;
         this.objectMapper = objectMapper;
         this.restTemplate = new RestTemplate();
     }
@@ -78,13 +74,26 @@ public class OAuthFlowService {
                 .orElse(DEFAULT_GOOGLE_SCOPES);
     }
 
-    private void requireOAuthConfig() {
-        if (googleClientId == null || googleClientId.isBlank()) {
-            throw new IllegalStateException("GOOGLE_OAUTH_CLIENT_ID is not configured");
+    private OAuth2Connector requireOAuth2Connector(String connectorId) {
+        return connectorRegistry.findOAuth2(connectorId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Connector does not support OAuth2: " + connectorId));
+    }
+
+    private record OAuthCredentials(String clientId, String clientSecret) {}
+
+    private OAuthCredentials requireOAuthConfig(OAuth2Connector connector) {
+        String clientId = environment.getProperty(connector.clientIdProperty(), "");
+        if (clientId.isBlank()) {
+            throw new IllegalStateException(
+                    "OAuth client credentials not configured: " + connector.clientIdProperty());
         }
-        if (googleClientSecret == null || googleClientSecret.isBlank()) {
-            throw new IllegalStateException("GOOGLE_OAUTH_CLIENT_SECRET is not configured");
+        String clientSecret = environment.getProperty(connector.clientSecretProperty(), "");
+        if (clientSecret.isBlank()) {
+            throw new IllegalStateException(
+                    "OAuth client credentials not configured: " + connector.clientSecretProperty());
         }
+        return new OAuthCredentials(clientId, clientSecret);
     }
 
     public String oauthCallbackUri() {
@@ -93,7 +102,8 @@ public class OAuthFlowService {
 
     @Transactional
     public String buildAuthorizationUrl(String projectId, String connectorId, String redirectUri) {
-        requireOAuthConfig();
+        OAuth2Connector connector = requireOAuth2Connector(connectorId);
+        OAuthCredentials creds = requireOAuthConfig(connector);
         oAuthStateRepository.deleteByExpiresAtBefore(OffsetDateTime.now());
 
         byte[] bytes = new byte[16];
@@ -109,15 +119,14 @@ public class OAuthFlowService {
         oAuthStateRepository.save(oauthState);
 
         String scopes = String.join(" ", scopesFor(connectorId));
-        return UriComponentsBuilder.fromUriString(GOOGLE_AUTH_URL)
-                .queryParam("client_id", googleClientId)
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(connector.authorizationUrl())
+                .queryParam("client_id", creds.clientId())
                 .queryParam("redirect_uri", redirectUri)
                 .queryParam("response_type", "code")
-                .queryParam("scope", scopes)
-                .queryParam("access_type", "offline")
-                .queryParam("prompt", "consent")
-                .queryParam("state", state)
-                .build().toUriString();
+                .queryParam("scope", scopes);
+        connector.extraAuthorizationParams().forEach(builder::queryParam);
+        builder.queryParam("state", state);
+        return builder.build().toUriString();
     }
 
     @Transactional
@@ -133,7 +142,7 @@ public class OAuthFlowService {
         String projectId = oauthState.getProjectId();
         String connectorId = oauthState.getConnectorId();
 
-        Map<String, Object> tokenResponse = exchangeCodeForTokens(code, redirectUri);
+        Map<String, Object> tokenResponse = exchangeCodeForTokens(connectorId, code, redirectUri);
 
         String accessToken = (String) tokenResponse.get("access_token");
         String refreshToken = (String) tokenResponse.get("refresh_token");
@@ -151,19 +160,28 @@ public class OAuthFlowService {
         return frontendUrl + "/app/projects/" + projectId + "/integrations/" + connectorId;
     }
 
+    /**
+     * Refreshes the access token for an existing connection. Resolves the connector from the
+     * connection's connectorId — a connection whose connector doesn't support OAuth2 attempting a
+     * refresh indicates a bug elsewhere, so this fails loudly rather than silently.
+     */
     public String refreshAccessToken(Connection conn, String refreshToken) {
-        requireOAuthConfig();
+        OAuth2Connector connector = connectorRegistry.findOAuth2(conn.getConnectorId())
+                .orElseThrow(() -> new IllegalStateException(
+                        "Connector does not support OAuth2 refresh: " + conn.getConnectorId()));
+        OAuthCredentials creds = requireOAuthConfig(connector);
+
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
         params.add("grant_type", "refresh_token");
         params.add("refresh_token", refreshToken);
-        params.add("client_id", googleClientId);
-        params.add("client_secret", googleClientSecret);
+        params.add("client_id", creds.clientId());
+        params.add("client_secret", creds.clientSecret());
 
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(params, headers);
-        ResponseEntity<Map> response = restTemplate.exchange(GOOGLE_TOKEN_URL, HttpMethod.POST, request, Map.class);
+        ResponseEntity<Map> response = restTemplate.exchange(connector.tokenUrl(), HttpMethod.POST, request, Map.class);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> body = response.getBody();
@@ -183,7 +201,10 @@ public class OAuthFlowService {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> exchangeCodeForTokens(String code, String redirectUri) {
+    private Map<String, Object> exchangeCodeForTokens(String connectorId, String code, String redirectUri) {
+        OAuth2Connector connector = requireOAuth2Connector(connectorId);
+        OAuthCredentials creds = requireOAuthConfig(connector);
+
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
 
@@ -191,11 +212,11 @@ public class OAuthFlowService {
         params.add("grant_type", "authorization_code");
         params.add("code", code);
         params.add("redirect_uri", redirectUri);
-        params.add("client_id", googleClientId);
-        params.add("client_secret", googleClientSecret);
+        params.add("client_id", creds.clientId());
+        params.add("client_secret", creds.clientSecret());
 
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(params, headers);
-        ResponseEntity<Map> response = restTemplate.exchange(GOOGLE_TOKEN_URL, HttpMethod.POST, request, Map.class);
+        ResponseEntity<Map> response = restTemplate.exchange(connector.tokenUrl(), HttpMethod.POST, request, Map.class);
         Map<String, Object> body = response.getBody();
         if (body == null || !body.containsKey("access_token")) {
             throw new com.conductor.exception.BusinessException("Token exchange failed: no access_token in response");
