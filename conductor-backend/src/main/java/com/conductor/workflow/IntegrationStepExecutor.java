@@ -99,11 +99,26 @@ public class IntegrationStepExecutor implements WorkflowExecutionBackend {
             String logSnippet = dataJson.length() > MAX_LOG_BYTES
                 ? dataJson.substring(0, MAX_LOG_BYTES) + "\n[truncated]"
                 : dataJson;
+            // A non-healthy fetch (DEGRADED = live fetch failed, possibly serving stale cache) is
+            // undiagnosable from the bare status — always surface the connector's reason and how old
+            // the data being served actually is.
+            String healthLine = "← " + data.healthStatus();
+            if (data.healthStatus() != com.conductor.integration.ConnectorHealth.HEALTHY) {
+                if (data.errorMessage() != null && !data.errorMessage().isBlank()) {
+                    healthLine += ": " + data.errorMessage();
+                }
+                if (data.fetchedAt() != null) {
+                    healthLine += "\n  (serving data fetched at " + data.fetchedAt() + ")";
+                }
+            }
             String stepLog = "→ integration connector=" + connectorId + " connection=" + conn.getId()
-                + "\n← " + data.healthStatus() + "\n" + logSnippet;
+                + "\n" + healthLine + "\n" + logSnippet;
 
             Map<String, String> outputs = new HashMap<>();
             outputs.put("data", dataJson);
+            // Lets workflows gate on fetch health (e.g. `if: ${{ steps.x.outputs.health == 'HEALTHY' }}`)
+            // instead of feeding stale/empty DEGRADED data to downstream steps unnoticed.
+            outputs.put("health", data.healthStatus().name());
             final Set<String> finalFilterKeys = filterKeys;
             if (data.data() != null) {
                 data.data().forEach((k, v) -> {

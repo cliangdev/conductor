@@ -285,6 +285,14 @@ Fetches data from a connected integration (Google Search Console, PostHog, Reven
 
 Step outputs are accessible via `${{ steps.ID.outputs.* }}`. The exact output keys depend on the connector and operation — discover them via the `list_integration_tools` MCP tool or by running a test dispatch.
 
+Every integration step also exposes a **`health`** output (`HEALTHY` | `DEGRADED`) — a `DEGRADED` fetch does not fail the step (it may serve stale cached data), and the step log records the reason and the age of the data being served. Gate downstream work on it when stale data would be worse than no data:
+
+```yaml
+analyze:
+  needs: collect
+  if: "${{ needs.collect.outputs.health == 'HEALTHY' }}"
+```
+
 **Credentials are resolved at runtime** — they never appear in the workflow YAML. The integration must be connected first via **Settings → Integrations** before it can be referenced in a workflow.
 
 **Available connectors:**
