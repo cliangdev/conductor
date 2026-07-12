@@ -174,8 +174,14 @@ function writeMcpConfig(env) {
   writeFileSync(MCP_CONFIG_PATH, JSON.stringify(config));
 }
 
-/** Unconditionally merged into --allowedTools — see buildClaudeInvocation. */
-const ALWAYS_ALLOWED_TOOLS = 'Read(/conductor/inputs/**)';
+/**
+ * Unconditionally merged into --allowedTools — see buildClaudeInvocation. The double slash is
+ * load-bearing: a single leading slash in a permission rule is relative to the working directory
+ * (/conductor/workspace here), so `Read(/conductor/inputs/**)` silently never matches — an
+ * absolute-path rule needs the `//` prefix. Seen live as claude being permission-denied on the
+ * very inputs Conductor materialized for it.
+ */
+const ALWAYS_ALLOWED_TOOLS = 'Read(//conductor/inputs/**)';
 
 /**
  * Builds the child env and argv for `claude -p`. Auth hygiene: an OAuth token wins over an API
@@ -257,6 +263,9 @@ function runClaude({ childEnv, args }, env, secrets, initialLines = []) {
       env: childEnv,
       // args passed as an array, never shell-interpolated — the prompt can contain anything.
       shell: false,
+      // stdin ignored (prompt rides -p argv): otherwise claude waits 3s for piped stdin and
+      // logs "Warning: no stdin data received" into every run.
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     const flushLogs = async () => {
@@ -376,6 +385,12 @@ function translateEvent(event) {
   if (!event || typeof event !== 'object') return null;
 
   switch (event.type) {
+    // Housekeeping telemetry, not activity — an "allowed" rate-limit check on every session start
+    // is pure noise in the step log. Anything not allowed still surfaces via the result event's
+    // rate-limit classification, so dropping these display-only is safe.
+    case 'rate_limit_event':
+      return [];
+
     case 'system': {
       if (event.subtype !== 'init') return null;
       const model = typeof event.model === 'string' ? event.model : 'unknown';

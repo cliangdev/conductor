@@ -384,7 +384,7 @@ process.exit(0);`,
 }
 
 async function testAllowedToolsMergesInputsReadWithUserList() {
-  console.log('test: --allowedTools appends Read(/conductor/inputs/**) to a caller-supplied list');
+  console.log('test: --allowedTools appends Read(//conductor/inputs/**) to a caller-supplied list');
   const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
   writeFakeClaude(
     binDir,
@@ -403,13 +403,13 @@ process.exit(0);`,
   const allLoggedLines = calls.logChunks.flatMap((c) => c.lines || []);
   assert(code === 0, `exit code is 0 (got ${code})`);
   assert(
-    allLoggedLines.some((l) => l === 'allowedTools: Bash(echo:*),Read(/conductor/inputs/**)'),
-    'caller allowedTools is preserved and Read(/conductor/inputs/**) is appended',
+    allLoggedLines.some((l) => l === 'allowedTools: Bash(echo:*),Read(//conductor/inputs/**)'),
+    'caller allowedTools is preserved and Read(//conductor/inputs/**) is appended',
   );
 }
 
 async function testAllowedToolsDefaultsToInputsReadWithoutUserList() {
-  console.log('test: --allowedTools is always passed, defaulting to Read(/conductor/inputs/**) alone');
+  console.log('test: --allowedTools is always passed, defaulting to Read(//conductor/inputs/**) alone');
   const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
   writeFakeClaude(
     binDir,
@@ -429,8 +429,8 @@ process.exit(0);`,
   const allLoggedLines = calls.logChunks.flatMap((c) => c.lines || []);
   assert(code === 0, `exit code is 0 (got ${code})`);
   assert(
-    allLoggedLines.some((l) => l === 'allowedTools: Read(/conductor/inputs/**)'),
-    '--allowedTools defaults to just Read(/conductor/inputs/**) when the caller sets none',
+    allLoggedLines.some((l) => l === 'allowedTools: Read(//conductor/inputs/**)'),
+    '--allowedTools defaults to just Read(//conductor/inputs/**) when the caller sets none',
   );
 }
 
