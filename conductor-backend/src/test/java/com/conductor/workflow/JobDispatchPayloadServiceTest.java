@@ -80,7 +80,7 @@ class JobDispatchPayloadServiceTest {
                 .thenReturn(List.of(jobRun));
         when(contextBuilder.loadSecrets(anyString())).thenReturn(Map.of());
         when(upstreamOutputsResolver.collectUpstreamOutputs(any(), any(), anyString())).thenReturn(Map.of());
-        when(contextBuilder.build(any(), any(), any(), any(), anyInt()))
+        when(contextBuilder.build(any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of()));
         when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
         when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());

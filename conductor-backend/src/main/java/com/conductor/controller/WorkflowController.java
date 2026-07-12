@@ -11,6 +11,7 @@ import com.conductor.entity.WorkflowScheduleSkip;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.WorkflowsApi;
+import com.conductor.generated.model.DispatchWorkflowRequest;
 import com.conductor.generated.model.SetWorkflowEnabledRequest;
 import com.conductor.generated.model.SetWorkflowSidebarRequest;
 import com.conductor.generated.model.UpdateWorkflowRunStatusRequest;
@@ -215,13 +216,15 @@ public class WorkflowController implements WorkflowsApi {
     }
 
     @Override
-    public ResponseEntity<WorkflowRunDto> dispatchWorkflow(String projectId, String workflowId) {
+    public ResponseEntity<WorkflowRunDto> dispatchWorkflow(String projectId, String workflowId,
+                                                            DispatchWorkflowRequest body) {
         String userId = currentUserId();
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new EntityNotFoundException("Project not found");
         }
         WorkflowDefinition workflow = workflowService.getWorkflow(projectId, workflowId);
-        WorkflowRun run = workflowTriggerService.triggerManual(workflow, userId);
+        Map<String, String> inputs = body != null ? body.getInputs() : null;
+        WorkflowRun run = workflowTriggerService.triggerManual(workflow, userId, inputs);
         return ResponseEntity.status(202).body(toRunDto(run));
     }
 
@@ -421,7 +424,18 @@ public class WorkflowController implements WorkflowsApi {
         dto.setStatus(run.getStatus().name());
         dto.setStartedAt(run.getStartedAt());
         dto.setCompletedAt(run.getCompletedAt());
+        dto.setEventPayload(parseEventPayload(run.getEventPayload()));
         return dto;
+    }
+
+    private Map<String, Object> parseEventPayload(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("Failed to parse event payload JSON for run DTO: {}", e.getMessage());
+            return null;
+        }
     }
 
     private WorkflowDefinitionDto toDto(WorkflowDefinition def) {

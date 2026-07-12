@@ -102,7 +102,7 @@ public class JobDispatchPayloadService {
         String projectId = workflow.getProject().getId();
         Map<String, String> secrets = contextBuilder.loadSecrets(projectId);
         Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
-        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, jobRun.getIteration());
+        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, jobDef.needs(), jobRun.getIteration());
 
         Map<String, String> jobEnv = jobDef.raw().get("env") instanceof Map
                 ? interpolateStringMap(castStringObjectMap(jobDef.raw().get("env")), ctx)

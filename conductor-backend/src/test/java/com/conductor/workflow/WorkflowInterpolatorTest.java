@@ -49,4 +49,39 @@ class WorkflowInterpolatorTest {
         RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
         assertEquals("no expressions here", interpolator.interpolate("no expressions here", ctx));
     }
+
+    @Test void interpolatesNeedsResult() {
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of(), 0,
+                Map.of("job-a", "failure"), Map.of(), Map.of());
+        assertEquals("failure", interpolator.interpolate("${{ needs.job-a.result }}", ctx));
+    }
+
+    @Test void unknownNeedsResultResolvesToEmpty() {
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of(), 0,
+                Map.of("job-a", "success"), Map.of(), Map.of());
+        assertEquals("", interpolator.interpolate("${{ needs.job-b.result }}", ctx));
+    }
+
+    @Test void interpolatesStepsResult() {
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of(), 0,
+                Map.of(), Map.of("build", "failure"), Map.of());
+        assertEquals("failure", interpolator.interpolate("${{ steps.build.result }}", ctx));
+    }
+
+    @Test void unknownStepsResultResolvesToEmpty() {
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of(), 0,
+                Map.of(), Map.of("build", "success"), Map.of());
+        assertEquals("", interpolator.interpolate("${{ steps.deploy.result }}", ctx));
+    }
+
+    @Test void interpolatesInputs() {
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of(), 0,
+                Map.of(), Map.of(), Map.of("environment", "staging"));
+        assertEquals("staging", interpolator.interpolate("${{ inputs.environment }}", ctx));
+    }
+
+    @Test void unknownInputResolvesToEmpty() {
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
+        assertEquals("", interpolator.interpolate("${{ inputs.missing }}", ctx));
+    }
 }

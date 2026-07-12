@@ -148,19 +148,22 @@ public class WorkflowJobOrchestrator {
         String projectId = workflow.getProject().getId();
         int loopIteration = jobRun.getIteration() + 1;
 
-        String ifCondition = jobDef.ifCondition();
-        if (ifCondition != null) {
-            Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
-            Map<String, String> secrets = contextBuilder.loadSecrets(projectId);
-            RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
-            String interpolated = interpolator.interpolate(ifCondition, ctx);
-            if (!conditionEvaluator.evaluate(interpolated)) {
-                jobRun.setStatus(WorkflowJobStatus.SKIPPED);
-                jobRun.setCompletedAt(OffsetDateTime.now());
-                jobRunRepository.save(jobRun);
-                propagateSkipToDependents(run, jobId, jobs);
-                return JobExecutionPlan.complete();
-            }
+        // Effective condition: the job's explicit `if:`, or an implicit `success()` — every job is
+        // now gated the same way GitHub Actions gates jobs, rather than only jobs that declared `if:`.
+        Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
+        Map<String, String> secrets = contextBuilder.loadSecrets(projectId);
+        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, jobDef.needs(), loopIteration);
+        ConditionStatusContext statusContext = statusContextOf(ctx);
+        String effectiveCondition = jobDef.ifCondition() != null ? jobDef.ifCondition() : "success()";
+        String interpolated = interpolator.interpolate(effectiveCondition, ctx);
+        if (!conditionEvaluator.evaluate(interpolated, statusContext)) {
+            jobRun.setStatus(WorkflowJobStatus.SKIPPED);
+            jobRun.setCompletedAt(OffsetDateTime.now());
+            jobRunRepository.save(jobRun);
+            // Not a hard-skip cascade: dependents become ready (SKIPPED is terminal) and evaluate
+            // their own conditions — a skipped need doesn't count as failed for their success().
+            enqueueReadyDependents(run, jobId, jobs);
+            return JobExecutionPlan.complete();
         }
 
         if (selfHosted) {
@@ -172,11 +175,23 @@ public class WorkflowJobOrchestrator {
 
         List<StepSpec> executableSteps = jobDef.executableSteps();
 
-        Map<String, String> secrets = contextBuilder.loadSecrets(projectId);
-        Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
-
         return new JobExecutionPlan(runId, jobId, jobRun.getId(), projectId, loopIteration,
-                jobs, jobDef, jobDef.steps(), executableSteps, secrets, upstreamOutputs, false);
+                jobs, jobDef, jobDef.steps(), executableSteps, secrets, upstreamOutputs, statusContext, false);
+    }
+
+    /**
+     * Derives the {@code always()}/{@code success()}/{@code failure()} facts from a context's job
+     * results. {@code allUpstreamSucceeded} is false for a SKIPPED need too (not just FAILED/
+     * LOOP_EXHAUSTED) — a skip cascades through the default {@code success()} condition, matching
+     * GitHub Actions — while {@code anyUpstreamFailed} stays false for a skip (only a real failure
+     * trips {@code failure()}). An empty needs list is vacuously "all succeeded" (root jobs still
+     * run by default).
+     */
+    private ConditionStatusContext statusContextOf(RuntimeContext ctx) {
+        Collection<String> results = ctx.getJobResults().values();
+        boolean anyUpstreamFailed = results.stream().anyMatch("failure"::equals);
+        boolean allUpstreamSucceeded = results.stream().allMatch("success"::equals);
+        return new ConditionStatusContext(anyUpstreamFailed, allUpstreamSucceeded);
     }
 
     /**
@@ -190,10 +205,10 @@ public class WorkflowJobOrchestrator {
         for (StepSpec stepDef : plan.executableSteps) {
             if (jobFailed) break;
             RuntimeContext ctx = self.buildStepContext(plan.runId, plan.jobRunId,
-                    plan.secrets, plan.upstreamOutputs, plan.loopIteration);
-            StepResult result = runStep(plan.runId, plan.jobRunId, stepDef, ctx, plan.projectId, runsOn);
+                    plan.secrets, plan.upstreamOutputs, plan.jobDef.needs(), plan.loopIteration);
+            StepResult result = runStep(plan.runId, plan.jobRunId, stepDef, ctx, plan.projectId, runsOn, plan.statusContext);
             self.persistStepResult(plan.jobRunId, stepDef, result, plan.projectId);
-            if (result.getStatus() == WorkflowStepStatus.FAILED) {
+            if (result.getStatus() == WorkflowStepStatus.FAILED && !stepDef.continueOnError()) {
                 jobFailed = true;
             }
         }
@@ -205,12 +220,13 @@ public class WorkflowJobOrchestrator {
      * minutes on external I/O (HTTP timeouts, Docker polling, Kestra polling).
      */
     private StepResult runStep(String runId, String jobRunId, StepSpec stepDef,
-                               RuntimeContext ctx, String projectId, String runsOn) {
+                               RuntimeContext ctx, String projectId, String runsOn,
+                               ConditionStatusContext statusContext) {
         String stepType = stepDef.type();
         String ifCond = stepDef.ifCondition();
         if (ifCond != null) {
             String interpolated = interpolator.interpolate(ifCond, ctx);
-            if (!conditionEvaluator.evaluate(interpolated)) {
+            if (!conditionEvaluator.evaluate(interpolated, statusContext)) {
                 return StepResult.skipped();
             }
         }
@@ -238,10 +254,11 @@ public class WorkflowJobOrchestrator {
     public RuntimeContext buildStepContext(String runId, String jobRunId,
                                            Map<String, String> secrets,
                                            Map<String, Map<String, String>> upstreamOutputs,
+                                           List<String> needs,
                                            int loopIteration) {
         WorkflowRun run = runRepository.findById(runId).orElseThrow();
         WorkflowJobRun jobRun = jobRunRepository.findById(jobRunId).orElseThrow();
-        return contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
+        return contextBuilder.build(run, jobRun, secrets, upstreamOutputs, needs, loopIteration);
     }
 
     @Transactional
@@ -267,7 +284,9 @@ public class WorkflowJobOrchestrator {
             jobRun.setStatus(WorkflowJobStatus.FAILED);
             jobRun.setCompletedAt(OffsetDateTime.now());
             jobRunRepository.save(jobRun);
-            propagateFailureToDependents(run, plan.jobId, plan.jobs);
+            // FAILED is terminal like any other outcome now — dependents become ready and decide
+            // for themselves (via if: failure()/always()/success()) whether to run or skip.
+            enqueueReadyDependents(run, plan.jobId, plan.jobs);
             return;
         }
 
@@ -335,11 +354,9 @@ public class WorkflowJobOrchestrator {
         WorkflowSpec parsedWorkflow = parseYaml(run.getWorkflow().getYaml());
         Map<String, JobSpec> jobs = parsedWorkflow != null ? parsedWorkflow.jobs() : null;
         if (jobs != null) {
-            if (terminalStatus == WorkflowJobStatus.FAILED) {
-                propagateFailureToDependents(run, jobId, jobs);
-            } else {
-                enqueueReadyDependents(run, jobId, jobs);
-            }
+            // FAILED is terminal like SUCCESS/SKIPPED now — dependents become ready either way and
+            // decide for themselves via their own (explicit or implicit) condition.
+            enqueueReadyDependents(run, jobId, jobs);
         } else {
             log.warn("completeRemoteJob: could not parse workflow YAML for run {} — dependents of job {} "
                     + "not propagated; run will rely on the cleanup sweep", runId, jobId);
@@ -378,9 +395,11 @@ public class WorkflowJobOrchestrator {
         String untilExpr = loopDef.until();
         boolean failOnExhausted = loopDef.failOnExhausted();
 
-        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
+        JobSpec jobDef = jobs.get(jobId);
+        List<String> needs = jobDef != null ? jobDef.needs() : List.of();
+        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, needs, loopIteration);
         String interpolated = interpolator.interpolate(untilExpr, ctx);
-        boolean isDone = conditionEvaluator.evaluate(interpolated);
+        boolean isDone = conditionEvaluator.evaluate(interpolated, statusContextOf(ctx));
 
         if (isDone) {
             jobRun.setStatus(WorkflowJobStatus.SUCCESS);
@@ -407,11 +426,8 @@ public class WorkflowJobOrchestrator {
             jobRun.setCompletedAt(OffsetDateTime.now());
             jobRunRepository.save(jobRun);
 
-            if (failOnExhausted) {
-                propagateFailureToDependents(run, jobId, jobs);
-            } else {
-                enqueueReadyDependents(run, jobId, jobs);
-            }
+            // LOOP_EXHAUSTED is terminal like FAILED — dependents become ready either way.
+            enqueueReadyDependents(run, jobId, jobs);
         }
     }
 
@@ -428,9 +444,11 @@ public class WorkflowJobOrchestrator {
         String thenJobId = thenVal != null ? thenVal.toString() : null;
         String elseJobId = elseVal != null ? elseVal.toString() : null;
 
-        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
+        JobSpec jobDef = jobs.get(jobId);
+        List<String> needs = jobDef != null ? jobDef.needs() : List.of();
+        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, needs, loopIteration);
         String interpolated = interpolator.interpolate(expression, ctx);
-        boolean result = conditionEvaluator.evaluate(interpolated);
+        boolean result = conditionEvaluator.evaluate(interpolated, statusContextOf(ctx));
 
         String activeJobId = result ? thenJobId : elseJobId;
         String skippedJobId = result ? elseJobId : thenJobId;
@@ -438,7 +456,7 @@ public class WorkflowJobOrchestrator {
 
         if (skippedJobId != null) {
             skipJobWithReason(run, skippedJobId, "Condition routed to " + branchName + " branch");
-            propagateSkipToDependents(run, skippedJobId, jobs);
+            hardSkipClosure(run, skippedJobId, jobs, "Ancestor routed to " + branchName + " branch");
         }
         if (activeJobId != null) {
             engine.enqueueJob(run.getId(), activeJobId);
@@ -502,44 +520,64 @@ public class WorkflowJobOrchestrator {
         stepRunRepository.save(stepRun);
     }
 
-    private void propagateSkipToDependents(WorkflowRun run, String skippedJobId, Map<String, JobSpec> jobs) {
-        for (JobSpec job : jobs.values()) {
-            if (job.needs().contains(skippedJobId)) {
-                skipJob(run, job.id());
-                propagateSkipToDependents(run, job.id(), jobs);
+    /**
+     * Hard-skips the untaken branch of a condition step: {@code rootJobId} itself (already marked
+     * SKIPPED by the caller) plus its <b>exclusive</b> descendants — jobs whose every {@code needs}
+     * entry is inside this skip closure. A job that also needs something from the taken branch (a
+     * reconvergence point) is deliberately left alone: it isn't reachable any other way once its
+     * skipped need becomes SKIPPED/terminal (the untaken branch's root is never enqueued, so without
+     * this hard-skip, its exclusive descendants would never be scheduled at all — but a reconvergent
+     * job WILL still get scheduled once its other, live need completes, via {@link
+     * #enqueueReadyDependents}, and it decides for itself via its own condition).
+     *
+     * <p>Computed as a fixed point rather than a single top-down recursion so traversal order can't
+     * cause a reconvergent job to be (incorrectly) skipped just because it's visited before its other
+     * need has been resolved.
+     */
+    private void hardSkipClosure(WorkflowRun run, String rootJobId, Map<String, JobSpec> jobs, String reason) {
+        Set<String> closure = new HashSet<>();
+        closure.add(rootJobId);
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (JobSpec job : jobs.values()) {
+                if (closure.contains(job.id())) continue;
+                List<String> needs = job.needs();
+                if (needs.isEmpty()) continue;
+                if (closure.containsAll(needs)) {
+                    closure.add(job.id());
+                    changed = true;
+                }
             }
+        }
+        closure.remove(rootJobId);
+        for (String jobId : closure) {
+            skipJobWithReason(run, jobId, reason);
         }
     }
 
-    private void propagateFailureToDependents(WorkflowRun run, String failedJobId, Map<String, JobSpec> jobs) {
-        for (JobSpec job : jobs.values()) {
-            if (job.needs().contains(failedJobId)) {
-                skipJob(run, job.id());
-                propagateSkipToDependents(run, job.id(), jobs);
-            }
-        }
-    }
-
+    /**
+     * Enqueues every dependent whose {@code needs} are now all TERMINAL (SUCCESS, FAILED, SKIPPED,
+     * or LOOP_EXHAUSTED) — readiness no longer requires the needs to have succeeded. Each dependent
+     * decides for itself, via its own (explicit or implicit {@code success()}) condition in {@link
+     * #planJobExecution}, whether to run or skip.
+     */
     private void enqueueReadyDependents(WorkflowRun run, String completedJobId, Map<String, JobSpec> jobs) {
         List<WorkflowJobRun> existingJobRuns = jobRunRepository.findByRunId(run.getId());
-        Set<String> completedJobIds = new HashSet<>();
+        Set<String> terminalJobIds = new HashSet<>();
         for (WorkflowJobRun jr : existingJobRuns) {
-            if (jr.getStatus() == WorkflowJobStatus.SUCCESS || jr.getStatus() == WorkflowJobStatus.SKIPPED) {
-                completedJobIds.add(jr.getJobId());
+            if (isTerminalJobStatus(jr.getStatus())) {
+                terminalJobIds.add(jr.getJobId());
             }
         }
 
         for (JobSpec job : jobs.values()) {
-            if (completedJobIds.contains(job.id())) continue;
+            if (terminalJobIds.contains(job.id())) continue;
             List<String> needs = job.needs();
-            if (!needs.isEmpty() && completedJobIds.containsAll(needs)) {
+            if (!needs.isEmpty() && terminalJobIds.containsAll(needs)) {
                 engine.enqueueJob(run.getId(), job.id());
             }
         }
-    }
-
-    private void skipJob(WorkflowRun run, String jobId) {
-        skipJobWithReason(run, jobId, null);
     }
 
     private void skipJobWithReason(WorkflowRun run, String jobId, String reason) {
@@ -591,13 +629,15 @@ public class WorkflowJobOrchestrator {
         final List<StepSpec> executableSteps;
         final Map<String, String> secrets;
         final Map<String, Map<String, String>> upstreamOutputs;
+        /** always()/success()/failure() facts for this job's needs — reused for every step's if:. */
+        final ConditionStatusContext statusContext;
         final boolean done;
 
         JobExecutionPlan(String runId, String jobId, String jobRunId, String projectId,
                          int loopIteration, Map<String, JobSpec> jobs, JobSpec jobDef,
                          List<StepSpec> allSteps, List<StepSpec> executableSteps,
                          Map<String, String> secrets, Map<String, Map<String, String>> upstreamOutputs,
-                         boolean done) {
+                         ConditionStatusContext statusContext, boolean done) {
             this.runId = runId;
             this.jobId = jobId;
             this.jobRunId = jobRunId;
@@ -609,12 +649,13 @@ public class WorkflowJobOrchestrator {
             this.executableSteps = executableSteps;
             this.secrets = secrets;
             this.upstreamOutputs = upstreamOutputs;
+            this.statusContext = statusContext;
             this.done = done;
         }
 
         static JobExecutionPlan complete() {
             return new JobExecutionPlan(null, null, null, null, 0,
-                    null, null, null, null, null, null, true);
+                    null, null, null, null, null, null, null, true);
         }
     }
 }

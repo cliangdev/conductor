@@ -17,6 +17,12 @@ public class RuntimeContext {
     private final Map<String, Map<String, String>> jobOutputs;
     /** 1-based loop iteration number; 0 if not in a loop job */
     private final int loopIteration;
+    /** jobId (one of the current job's needs) → "success"|"failure"|"skipped" */
+    private final Map<String, String> jobResults;
+    /** stepId (prior step in the current job) → "success"|"failure"|"skipped" */
+    private final Map<String, String> stepResults;
+    /** dispatch-time input name → value, from a manual dispatch's {@code inputs} */
+    private final Map<String, String> inputs;
 
     public RuntimeContext(Map<String, Object> eventPayload,
                           Map<String, String> secrets,
@@ -30,11 +36,26 @@ public class RuntimeContext {
                           Map<String, Map<String, String>> stepOutputs,
                           Map<String, Map<String, String>> jobOutputs,
                           int loopIteration) {
+        this(eventPayload, secrets, stepOutputs, jobOutputs, loopIteration,
+                Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap());
+    }
+
+    public RuntimeContext(Map<String, Object> eventPayload,
+                          Map<String, String> secrets,
+                          Map<String, Map<String, String>> stepOutputs,
+                          Map<String, Map<String, String>> jobOutputs,
+                          int loopIteration,
+                          Map<String, String> jobResults,
+                          Map<String, String> stepResults,
+                          Map<String, String> inputs) {
         this.eventPayload = eventPayload != null ? eventPayload : Collections.emptyMap();
         this.secrets = secrets != null ? secrets : Collections.emptyMap();
         this.stepOutputs = stepOutputs != null ? stepOutputs : Collections.emptyMap();
         this.jobOutputs = jobOutputs != null ? jobOutputs : Collections.emptyMap();
         this.loopIteration = loopIteration;
+        this.jobResults = jobResults != null ? jobResults : Collections.emptyMap();
+        this.stepResults = stepResults != null ? stepResults : Collections.emptyMap();
+        this.inputs = inputs != null ? inputs : Collections.emptyMap();
     }
 
     public Map<String, Object> getEventPayload() { return eventPayload; }
@@ -42,4 +63,7 @@ public class RuntimeContext {
     public Map<String, Map<String, String>> getStepOutputs() { return stepOutputs; }
     public Map<String, Map<String, String>> getJobOutputs() { return jobOutputs; }
     public int getLoopIteration() { return loopIteration; }
+    public Map<String, String> getJobResults() { return jobResults; }
+    public Map<String, String> getStepResults() { return stepResults; }
+    public Map<String, String> getInputs() { return inputs; }
 }

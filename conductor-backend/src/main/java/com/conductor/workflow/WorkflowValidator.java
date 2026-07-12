@@ -80,6 +80,11 @@ public class WorkflowValidator {
         return new WorkflowValidationResult(result.getErrors(), warnings);
     }
 
+    private static final java.util.regex.Pattern EXPR_PATTERN =
+            java.util.regex.Pattern.compile("\\$\\{\\{\\s*(.+?)\\s*\\}\\}");
+    private static final Set<String> KNOWN_INTERPOLATION_ROOTS =
+            Set.of("event", "secrets", "steps", "needs", "inputs", "loop");
+
     /**
      * Validates an already-parsed {@link WorkflowSpec} against the step-type registry and the
      * project's runtime targets. Does not include secret-reference warnings (those need the raw
@@ -145,7 +150,7 @@ public class WorkflowValidator {
             errors.add("Circular dependency detected in jobs needs graph: " + needsGraph.keySet());
         }
 
-        return new WorkflowValidationResult(errors, List.of());
+        return new WorkflowValidationResult(errors, lintInterpolations(spec));
     }
 
     private void validateLoop(JobSpec job, List<String> errors) {
@@ -174,6 +179,14 @@ public class WorkflowValidator {
             if (!allowedStepTypes.contains(resolvedType)) {
                 errors.add("Unknown step type: " + resolvedType);
                 continue;
+            }
+
+            Object continueOnErrorVal = step.raw().get("continue-on-error");
+            if (continueOnErrorVal != null && !(continueOnErrorVal instanceof Boolean)) {
+                errors.add("Step continue-on-error must be a boolean in job " + job.id());
+            }
+            if ("condition".equals(resolvedType) && continueOnErrorVal != null) {
+                errors.add("condition step cannot have continue-on-error in job " + job.id());
             }
 
             switch (resolvedType) {
@@ -368,6 +381,86 @@ public class WorkflowValidator {
         }
         inStack.remove(node);
         return false;
+    }
+
+    /**
+     * Publish-time lint over every {@code ${{ ... }}} occurrence in each job (job-level fields plus
+     * all of its steps) — WARNINGS only, never errors, since these are best-effort hints rather than
+     * a strict contract: an unknown root, a {@code steps.<id>.*} reference to a step not in the same
+     * job, a {@code needs.<job>.*} reference to a job not in this job's {@code needs}, or a {@code
+     * inputs.<name>} reference not declared under {@code on.workflow_dispatch.inputs} (warns even
+     * when no {@code inputs:} block exists at all — there's nothing to validate against, so any such
+     * reference is flagged).
+     */
+    private List<String> lintInterpolations(WorkflowSpec spec) {
+        List<String> warnings = new ArrayList<>();
+        Set<String> declaredInputs = declaredInputNames(spec);
+
+        for (JobSpec job : spec.jobs().values()) {
+            Set<String> stepIds = new HashSet<>();
+            for (StepSpec step : job.steps()) {
+                if (step.id() != null) stepIds.add(step.id());
+            }
+            Set<String> needs = new HashSet<>(job.needs());
+
+            List<String> strings = new ArrayList<>();
+            collectStrings(job.raw(), strings);
+
+            for (String text : strings) {
+                java.util.regex.Matcher m = EXPR_PATTERN.matcher(text);
+                while (m.find()) {
+                    String expr = m.group(1).trim();
+                    String root = expr.split("\\.", 2)[0];
+
+                    if (!KNOWN_INTERPOLATION_ROOTS.contains(root)) {
+                        warnings.add("job '" + job.id() + "': unknown reference in '${{ " + expr + " }}'");
+                        continue;
+                    }
+                    if (root.equals("steps")) {
+                        String[] parts = expr.split("\\.", 3);
+                        if (parts.length >= 2 && !stepIds.contains(parts[1])) {
+                            warnings.add("job '" + job.id() + "': steps." + parts[1]
+                                    + " is not a step in this job");
+                        }
+                    } else if (root.equals("needs")) {
+                        String[] parts = expr.split("\\.", 3);
+                        if (parts.length >= 2 && !needs.contains(parts[1])) {
+                            warnings.add("job '" + job.id() + "': needs." + parts[1]
+                                    + " is not declared in this job's needs");
+                        }
+                    } else if (root.equals("inputs")) {
+                        String[] parts = expr.split("\\.", 2);
+                        if (parts.length == 2 && !declaredInputs.contains(parts[1])) {
+                            warnings.add("job '" + job.id() + "': inputs." + parts[1]
+                                    + " is not declared under on.workflow_dispatch.inputs");
+                        }
+                    }
+                }
+            }
+        }
+        return warnings;
+    }
+
+    /** {@code on.workflow_dispatch.inputs} names, GitHub-style ({@code name: {description?, required?}}). */
+    private Set<String> declaredInputNames(WorkflowSpec spec) {
+        Object workflowDispatch = spec.triggers().raw().get("workflow_dispatch");
+        if (!(workflowDispatch instanceof Map<?, ?> wd) || !(wd.get("inputs") instanceof Map<?, ?> inputs)) {
+            return Set.of();
+        }
+        Set<String> names = new HashSet<>();
+        for (Object key : inputs.keySet()) names.add(String.valueOf(key));
+        return names;
+    }
+
+    /** Recursively collects every String leaf value out of a parsed-YAML Map/List/scalar tree. */
+    private void collectStrings(Object node, List<String> out) {
+        if (node instanceof Map<?, ?> map) {
+            for (Object value : map.values()) collectStrings(value, out);
+        } else if (node instanceof List<?> list) {
+            for (Object value : list) collectStrings(value, out);
+        } else if (node instanceof String s) {
+            out.add(s);
+        }
     }
 
     private Set<String> extractSecretReferences(String yaml) {

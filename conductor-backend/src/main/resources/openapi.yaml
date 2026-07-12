@@ -2745,6 +2745,12 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchWorkflowRequest"
       responses:
         "202":
           description: Run created
@@ -5415,6 +5421,15 @@ components:
           type: string
           description: New status for the workflow run (e.g. SUCCESS or FAILED)
 
+    DispatchWorkflowRequest:
+      type: object
+      properties:
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+          description: Input values passed to the run, exposed to steps as ${{ inputs.KEY }}.
+
     WorkflowRunDto:
       type: object
       properties:
@@ -5432,6 +5447,10 @@ components:
         completedAt:
           type: string
           format: date-time
+        eventPayload:
+          type: object
+          readOnly: true
+          description: The run's trigger payload (event fields, and `inputs` for a manual dispatch).
 
     WorkflowRunDetailDto:
       type: object

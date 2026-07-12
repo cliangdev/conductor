@@ -92,15 +92,28 @@ public class WorkflowTriggerService {
     }
 
     /**
-     * Creates a run for manual dispatch. Called from WorkflowDispatchController.
+     * Creates a run for manual dispatch with no inputs (e.g. a plain UI dispatch button).
      */
     @Transactional
     public WorkflowRun triggerManual(WorkflowDefinition workflow, String triggeredByUserId) {
-        Map<String, Object> payload = Map.of(
-                "type", "workflow_dispatch",
-                "triggeredBy", triggeredByUserId,
-                "triggeredAt", java.time.OffsetDateTime.now().toString()
-        );
+        return triggerManual(workflow, triggeredByUserId, null);
+    }
+
+    /**
+     * Creates a run for manual dispatch. Called from WorkflowDispatchController.
+     *
+     * @param inputs dispatch-time input values (exposed to steps as {@code ${{ inputs.KEY }}}), or
+     *               null/empty to omit the key entirely — same shape as no inputs at all.
+     */
+    @Transactional
+    public WorkflowRun triggerManual(WorkflowDefinition workflow, String triggeredByUserId, Map<String, String> inputs) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("type", "workflow_dispatch");
+        payload.put("triggeredBy", triggeredByUserId);
+        payload.put("triggeredAt", java.time.OffsetDateTime.now().toString());
+        if (inputs != null && !inputs.isEmpty()) {
+            payload.put("inputs", inputs);
+        }
         String payloadJson = toJson(payload);
         return createRun(workflow, "workflow_dispatch", payloadJson);
     }
