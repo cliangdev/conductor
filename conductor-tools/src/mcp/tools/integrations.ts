@@ -12,3 +12,7 @@ import { apiGet } from '../api.js'
 export async function listIntegrationTools(_params: Record<string, never>, config: Config): Promise<unknown[]> {
   return apiGet<unknown[]>(`/api/v1/projects/${config.projectId}/integrations/tools`, config)
 }
+
+export async function listConnectorCatalog(_params: Record<string, never>, config: Config): Promise<unknown[]> {
+  return apiGet<unknown[]>(`/api/v1/projects/${config.projectId}/integrations/catalog`, config)
+}

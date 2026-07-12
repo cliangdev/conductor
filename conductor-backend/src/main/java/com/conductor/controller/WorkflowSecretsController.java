@@ -29,7 +29,8 @@ public class WorkflowSecretsController implements WorkflowSecretsApi {
 
     @Override
     public ResponseEntity<List<WorkflowSecretKeyDto>> listWorkflowSecrets(String projectId) {
-        List<WorkflowSecretKeyDto> secrets = workflowSecretsService.listSecretKeys(projectId)
+        User caller = currentUser();
+        List<WorkflowSecretKeyDto> secrets = workflowSecretsService.listSecretKeys(projectId, caller.getId())
                 .stream()
                 .map(this::toDto)
                 .toList();

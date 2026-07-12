@@ -3101,6 +3101,37 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /projects/{projectId}/integrations/catalog:
+    get:
+      tags: [integrations]
+      summary: List all connector types Conductor supports, connected or not
+      description: >
+        The full catalog of registered connectors (unlike listIntegrations' hub view, this is
+        agent-facing — capabilities, config fields, and per-project connected state without
+        per-connection health detail). Used by the MCP server to recommend integrations to connect.
+      operationId: listConnectorCatalog
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ConnectorCatalogEntryDto'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /projects/{projectId}/integrations/tools:
     get:
       tags: [integrations]
@@ -4267,6 +4298,48 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ConnectionSummary'
+
+    ConnectorCatalogEntryDto:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        authType:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        configFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorCatalogConfigFieldDto'
+        connected:
+          type: boolean
+        activeConnectionIds:
+          type: array
+          items:
+            type: string
+
+    ConnectorCatalogConfigFieldDto:
+      type: object
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+        required:
+          type: boolean
+        secret:
+          type: boolean
 
     IntegrationToolItem:
       type: object

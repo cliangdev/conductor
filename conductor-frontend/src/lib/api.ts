@@ -585,3 +585,42 @@ export function provisionRuntimeTarget(
     token,
   )
 }
+
+// ── Workflow secrets (config values workflow YAML references by key) ───────
+//
+// Write-only, like agent provider credentials: the API returns key + timestamps, never the value.
+
+export interface WorkflowSecretKey {
+  key: string
+  createdAt: string
+  updatedAt: string
+}
+
+export function listWorkflowSecrets(projectId: string, token: string): Promise<WorkflowSecretKey[]> {
+  return apiGet<WorkflowSecretKey[]>(`/api/v1/projects/${projectId}/workflow-secrets`, token)
+}
+
+export function createWorkflowSecret(
+  projectId: string,
+  body: { key: string; value: string },
+  token: string,
+): Promise<WorkflowSecretKey> {
+  return apiPost<WorkflowSecretKey>(`/api/v1/projects/${projectId}/workflow-secrets`, body, token)
+}
+
+export function updateWorkflowSecret(
+  projectId: string,
+  key: string,
+  value: string,
+  token: string,
+): Promise<WorkflowSecretKey> {
+  return apiPut<WorkflowSecretKey>(
+    `/api/v1/projects/${projectId}/workflow-secrets/${encodeURIComponent(key)}`,
+    { value },
+    token,
+  )
+}
+
+export function deleteWorkflowSecret(projectId: string, key: string, token: string): Promise<void> {
+  return apiDelete(`/api/v1/projects/${projectId}/workflow-secrets/${encodeURIComponent(key)}`, token)
+}

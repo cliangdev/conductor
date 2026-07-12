@@ -10,6 +10,7 @@ const SETTINGS_LABELS: Record<string, string> = {
   general: 'General',
   members: 'Members & Roles',
   'api-keys': 'API Keys',
+  secrets: 'Secrets',
   notifications: 'Notifications',
   cli: 'CLI',
 };

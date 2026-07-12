@@ -75,7 +75,11 @@ public class WorkflowSecretsService {
         secretRepository.deleteByProjectIdAndKey(projectId, key);
     }
 
-    public List<WorkflowSecret> listSecretKeys(String projectId) {
+    /** Key names only (values stay encrypted). Any project member may list; mutations are ADMIN/CREATOR. */
+    public List<WorkflowSecret> listSecretKeys(String projectId, String userId) {
+        if (!projectSecurityService.isProjectMember(projectId, userId)) {
+            throw new EntityNotFoundException("Project not found");
+        }
         return secretRepository.findByProjectId(projectId);
     }
 

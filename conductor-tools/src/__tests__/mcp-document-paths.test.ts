@@ -7,6 +7,7 @@ vi.mock('../mcp/api.js', () => ({
   apiPost: vi.fn(),
   apiGet: vi.fn(),
   apiPatch: vi.fn(),
+  apiPut: vi.fn(),
   apiDelete: vi.fn(),
   isClientError: (err: unknown) => err instanceof Error && /API error 4\d\d\b/.test(err.message),
 }))
@@ -15,13 +16,14 @@ vi.mock('../mcp/queue.js', () => ({
   queueChange: vi.fn().mockReturnValue(1),
 }))
 
-import { scaffoldDocument } from '../mcp/tools/documents.js'
+import { scaffoldDocument, writeDocument } from '../mcp/tools/documents.js'
 import { createWorkItem, getWorkItem } from '../mcp/tools/issues.js'
-import { apiPost, apiGet } from '../mcp/api.js'
+import { apiPost, apiGet, apiPut } from '../mcp/api.js'
 import type { Config } from '../mcp/config.js'
 
 const mockedApiPost = vi.mocked(apiPost)
 const mockedApiGet = vi.mocked(apiGet)
+const mockedApiPut = vi.mocked(apiPut)
 
 let tmpRoot: string
 let baseConfig: Config
@@ -38,6 +40,7 @@ beforeEach(() => {
   }
   mockedApiPost.mockReset()
   mockedApiGet.mockReset()
+  mockedApiPut.mockReset()
 })
 
 afterEach(() => {
@@ -136,5 +139,52 @@ describe('getWorkItem absolutePath', () => {
       path.join(tmpRoot, '.conductor', 'issues', issueId) + path.sep
     )
     expect(result['localPath']).toBe(`.conductor/issues/${issueId}/`)
+  })
+})
+
+describe('writeDocument', () => {
+  const issueId = 'iss_write'
+
+  it('PUTs content to the v2 documents-by-filename endpoint and mirrors it locally', async () => {
+    mockedApiPut.mockResolvedValueOnce({ id: 'doc_1', filename: 'prd.md', issueId })
+
+    const result = await writeDocument(
+      { issueId, filename: 'prd.md', content: '# Hello', contentType: 'text/markdown' },
+      baseConfig
+    )
+
+    expect(mockedApiPut).toHaveBeenCalledWith(
+      `/api/v2/projects/proj_test/work-items/${issueId}/documents/prd.md`,
+      { content: '# Hello', contentType: 'text/markdown' },
+      baseConfig
+    )
+    expect(result).toEqual({ id: 'doc_1', filename: 'prd.md', issueId })
+
+    const mirroredPath = path.join(tmpRoot, '.conductor', 'issues', issueId, 'prd.md')
+    expect(fs.readFileSync(mirroredPath, 'utf8')).toBe('# Hello')
+  })
+
+  it('omits contentType from the body when not provided', async () => {
+    mockedApiPut.mockResolvedValueOnce({ id: 'doc_2', filename: 'notes.md', issueId })
+
+    await writeDocument({ issueId, filename: 'notes.md', content: 'notes' }, baseConfig)
+
+    expect(mockedApiPut).toHaveBeenCalledWith(
+      `/api/v2/projects/proj_test/work-items/${issueId}/documents/notes.md`,
+      { content: 'notes' },
+      baseConfig
+    )
+  })
+
+  it('succeeds headlessly when there is no local project directory (no localPath configured)', async () => {
+    mockedApiPut.mockResolvedValueOnce({ id: 'doc_3', filename: 'prd.md', issueId })
+    const headlessConfig: Config = { ...baseConfig, localPath: undefined, projects: undefined }
+
+    const result = await writeDocument(
+      { issueId, filename: 'prd.md', content: 'headless content' },
+      headlessConfig
+    )
+
+    expect(result).toEqual({ id: 'doc_3', filename: 'prd.md', issueId })
   })
 })
