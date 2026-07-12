@@ -5238,6 +5238,9 @@ components:
         githubRepoUrl:
           type: string
           nullable: true
+        knowledgeEnabled:
+          type: boolean
+          nullable: true
 
     ProjectSettingsResponse:
       type: object
@@ -5252,6 +5255,8 @@ components:
         githubRepoUrl:
           type: string
           nullable: true
+        knowledgeEnabled:
+          type: boolean
 
     DiscordTestResponse:
       type: object

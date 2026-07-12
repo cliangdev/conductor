@@ -5,6 +5,7 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.ProjectSettingsResponse;
+import com.conductor.knowledge.KnowledgeWorkflowProvisioner;
 import com.conductor.repository.ProjectSettingsRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,6 +21,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -34,6 +36,9 @@ class ProjectSettingsServiceTest {
 
     @Mock
     private RestTemplate restTemplate;
+
+    @Mock
+    private KnowledgeWorkflowProvisioner knowledgeWorkflowProvisioner;
 
     @InjectMocks
     private ProjectSettingsService projectSettingsService;
@@ -62,7 +67,7 @@ class ProjectSettingsServiceTest {
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
         ProjectSettingsResponse response = projectSettingsService.updateSettings(
-                PROJECT_ID, VALID_WEBHOOK, null, null, null, adminUser);
+                PROJECT_ID, VALID_WEBHOOK, null, null, null, null, adminUser);
 
         ArgumentCaptor<ProjectSettings> captor = ArgumentCaptor.forClass(ProjectSettings.class);
         verify(projectSettingsRepository).save(captor.capture());
@@ -90,7 +95,7 @@ class ProjectSettingsServiceTest {
         when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, "https://example.com/webhook", null, null, null, adminUser))
+                PROJECT_ID, "https://example.com/webhook", null, null, null, null, adminUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid Discord webhook URL");
     }
@@ -100,7 +105,7 @@ class ProjectSettingsServiceTest {
         when(projectSecurityService.isProjectAdmin(PROJECT_ID, reviewerUser.getId())).thenReturn(false);
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, VALID_WEBHOOK, null, null, null, reviewerUser))
+                PROJECT_ID, VALID_WEBHOOK, null, null, null, null, reviewerUser))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("Only ADMIN can manage project settings");
     }
@@ -110,12 +115,12 @@ class ProjectSettingsServiceTest {
         when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, null, 0, null, null, adminUser))
+                PROJECT_ID, null, 0, null, null, null, adminUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("runTokenTtlHours must be between 1 and 168");
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, null, 169, null, null, adminUser))
+                PROJECT_ID, null, 169, null, null, null, adminUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("runTokenTtlHours must be between 1 and 168");
     }
@@ -126,11 +131,59 @@ class ProjectSettingsServiceTest {
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        projectSettingsService.updateSettings(PROJECT_ID, null, 48, null, null, adminUser);
+        projectSettingsService.updateSettings(PROJECT_ID, null, 48, null, null, null, adminUser);
 
         ArgumentCaptor<ProjectSettings> captor = ArgumentCaptor.forClass(ProjectSettings.class);
         verify(projectSettingsRepository).save(captor.capture());
         assertThat(captor.getValue().getRunTokenTtlHours()).isEqualTo(48);
+    }
+
+    @Test
+    void updateSettingsProvisionsKnowledgeWorkflowsOnEnableTransition() {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
+        when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        projectSettingsService.updateSettings(PROJECT_ID, null, null, null, null, true, adminUser);
+
+        verify(knowledgeWorkflowProvisioner).provision(PROJECT_ID);
+    }
+
+    @Test
+    void updateSettingsDoesNotReprovisionWhenAlreadyEnabled() {
+        ProjectSettings settings = new ProjectSettings();
+        settings.setProjectId(PROJECT_ID);
+        settings.setKnowledgeEnabled(true);
+
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.of(settings));
+        when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        projectSettingsService.updateSettings(PROJECT_ID, null, null, null, null, true, adminUser);
+
+        verify(knowledgeWorkflowProvisioner, never()).provision(any());
+    }
+
+    @Test
+    void updateSettingsDoesNotProvisionWhenKnowledgeEnabledOmitted() {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
+        when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        projectSettingsService.updateSettings(PROJECT_ID, VALID_WEBHOOK, null, null, null, null, adminUser);
+
+        verify(knowledgeWorkflowProvisioner, never()).provision(any());
+    }
+
+    @Test
+    void isKnowledgeEnabledReflectsSettingsRow() {
+        ProjectSettings settings = new ProjectSettings();
+        settings.setProjectId(PROJECT_ID);
+        settings.setKnowledgeEnabled(true);
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.of(settings));
+
+        assertThat(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).isTrue();
+        assertThat(projectSettingsService.isKnowledgeEnabled("no-settings-row")).isFalse();
     }
 
     @Test

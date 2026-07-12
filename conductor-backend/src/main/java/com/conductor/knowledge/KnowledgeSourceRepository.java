@@ -1,11 +1,13 @@
 package com.conductor.knowledge;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -18,6 +20,21 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
     List<KnowledgeSource> findByProjectIdAndIdIn(String projectId, Collection<String> ids);
 
     List<KnowledgeSource> findByProjectIdAndStatusOrderByReceivedAtDesc(String projectId, KnowledgeSourceStatus status);
+
+    List<KnowledgeSource> findByStatus(KnowledgeSourceStatus status);
+
+    /** Distinct projects with at least one PENDING source due for (re)processing -- {@code KnowledgeIngestScheduler}'s dispatch fan-out. */
+    @Query("SELECT DISTINCT s.projectId FROM KnowledgeSource s "
+            + "WHERE s.status = com.conductor.knowledge.KnowledgeSourceStatus.PENDING "
+            + "AND (s.nextAttemptAt IS NULL OR s.nextAttemptAt <= :now)")
+    List<String> findProjectIdsWithDuePending(@Param("now") OffsetDateTime now);
+
+    /** The oldest-first page of a project's due PENDING sources -- {@code KnowledgeIngestScheduler}'s claim batch. */
+    @Query("SELECT s FROM KnowledgeSource s WHERE s.projectId = :projectId "
+            + "AND s.status = com.conductor.knowledge.KnowledgeSourceStatus.PENDING "
+            + "AND (s.nextAttemptAt IS NULL OR s.nextAttemptAt <= :now) ORDER BY s.receivedAt ASC")
+    List<KnowledgeSource> findDuePendingForProject(@Param("projectId") String projectId,
+                                                    @Param("now") OffsetDateTime now, Pageable pageable);
 
     /**
      * Marks a batch of sources PROCESSED as part of the same transaction that wrote the pages derived

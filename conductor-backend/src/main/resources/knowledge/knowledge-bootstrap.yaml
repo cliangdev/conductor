@@ -1,0 +1,71 @@
+name: Knowledge Bootstrap
+
+# System-managed workflow (see KnowledgeWorkflowProvisioner). Unlike knowledge-librarian this is
+# operator-triggered, once, to seed the wiki from an existing codebase: dispatch it manually (Run Now
+# in the workflow UI, or the dispatch_workflow MCP tool) with an `inputs.repo` of "owner/repo".
+#
+# Operator prerequisite: add a project workflow secret named GITHUB_TOKEN (Settings → Workflows →
+# Secrets) with read access to the target repo — this step's prompt uses it to clone privately. A
+# public repo could omit it, but the prompt always references it for uniformity; leave the secret
+# unset (interpolates to empty string) for a public repo and git will still succeed unauthenticated.
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "GitHub repo to bootstrap knowledge from, as owner/repo (e.g. cliangdev/conductor)"
+        required: true
+
+concurrency: single
+
+jobs:
+  bootstrap:
+    runs-on: cloud-run
+    steps:
+      - id: bootstrap
+        uses: claude-code
+        with:
+          conductor_mcp: true
+          allowed_tools: "Bash,Read,Glob,Grep,mcp__conductor__submit_knowledge_source,mcp__conductor__write_knowledge_pages,mcp__conductor__read_knowledge_pages"
+          max_turns: 60
+          timeout_minutes: 45
+          prompt: |
+            You are bootstrapping the Knowledge Center wiki for this Conductor project from an
+            existing codebase. Target repo: ${{ inputs.repo }}
+
+            Steps:
+            1. Clone it shallowly into the workspace:
+               `git clone --depth 1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ inputs.repo }}.git repo`
+               (if GITHUB_TOKEN is unset this still works for a public repo — the token segment is just
+               empty). `cd repo` and run `git rev-parse HEAD` to capture the commit SHA you're reading.
+            2. Read `_schema.md` via read_knowledge_pages(["_schema.md"]) for the frontmatter contract,
+               page-type taxonomy, path layout, and create-vs-edit heuristics. Follow it exactly.
+            3. Explore the repo (README, top-level directory structure, CLAUDE.md-style docs if
+               present, major modules/services) using Read/Glob/Grep — enough to describe its
+               architecture and main features, not an exhaustive file-by-file audit.
+            4. Register the snapshot as ONE by-reference knowledge source:
+               submit_knowledge_source({
+                 sourceType: "codebase.snapshot",
+                 sourceRef: "github:${{ inputs.repo }}@<the SHA from step 1>",
+                 title: "Codebase snapshot: ${{ inputs.repo }}"
+               })
+               Note the returned sourceId — every page you write in step 5 must be provenance-linked
+               to it.
+            5. Write pages seeding two areas, in one or more write_knowledge_pages batches, each call
+               passing `sourceIds: [<the sourceId from step 4>]`:
+               - `engineering/architecture/*.md` — one page per major architectural
+                 component/service/module (per `_schema.md`'s "architecture" type).
+               - `product/features/*.md` — one page per major user-facing feature you can identify
+                 (per `_schema.md`'s "feature" type).
+               Cross-link related pages with bundle-absolute links (`/dir/page.md`). Prefer several
+               focused pages over one giant page.
+
+            Return a short JSON summary: {"sourceId": "...", "pagesWritten": <int>}.
+          output_schema:
+            type: object
+            required: [sourceId]
+            properties:
+              sourceId: { type: string }
+              pagesWritten: { type: integer }
+        outputs:
+          sourceId: body.sourceId
+          pagesWritten: body.pagesWritten

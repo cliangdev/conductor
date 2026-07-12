@@ -1,8 +1,11 @@
 package com.conductor.integration.connector.github;
 
 import com.conductor.integration.*;
+import com.conductor.knowledge.KnowledgeIngestionService;
+import com.conductor.knowledge.KnowledgeSubmission;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
+import com.conductor.service.ProjectSettingsService;
 import com.conductor.service.WorkItemService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,8 +19,12 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -51,6 +58,8 @@ public class GitHubConnector implements WebhookConnector {
     private final ConnectionRepository connectionRepository;
     private final ConnectionService connectionService;
     private final GitHubAppService gitHubAppService;
+    private final KnowledgeIngestionService knowledgeIngestionService;
+    private final ProjectSettingsService projectSettingsService;
     private final ObjectMapper objectMapper;
     /** App-level webhook signing secret (one per GitHub App, not per connection). */
     private final String appWebhookSecret;
@@ -59,12 +68,16 @@ public class GitHubConnector implements WebhookConnector {
                            ConnectionRepository connectionRepository,
                            ConnectionService connectionService,
                            GitHubAppService gitHubAppService,
+                           KnowledgeIngestionService knowledgeIngestionService,
+                           ProjectSettingsService projectSettingsService,
                            ObjectMapper objectMapper,
                            @Value("${GITHUB_APP_WEBHOOK_SECRET:}") String appWebhookSecret) {
         this.workItemService = workItemService;
         this.connectionRepository = connectionRepository;
         this.connectionService = connectionService;
         this.gitHubAppService = gitHubAppService;
+        this.knowledgeIngestionService = knowledgeIngestionService;
+        this.projectSettingsService = projectSettingsService;
         this.objectMapper = objectMapper;
         this.appWebhookSecret = appWebhookSecret;
     }
@@ -180,6 +193,8 @@ public class GitHubConnector implements WebhookConnector {
                 return;
             }
 
+            submitMergedPrKnowledge(ctx.projectId(), root);
+
             String prBody = root.path("pull_request").path("body").asText("");
             String prUrl = root.path("pull_request").path("html_url").asText("");
 
@@ -207,6 +222,54 @@ public class GitHubConnector implements WebhookConnector {
         } catch (Exception e) {
             // Surface to the dispatcher so the event is marked FAILED and retried.
             throw new RuntimeException("Failed to process GitHub event: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Knowledge Center adapter: on a merged PR (knowledge enabled), submits it as a
+     * {@code github.pr_merged} source regardless of whether it references a Conductor issue -- unlike
+     * {@link #handleEvent}'s issue-completion path, this is about the codebase, not a specific Work
+     * Item. Own try/catch so any failure here (including the enablement check) never disrupts the
+     * pre-existing issue-completion flow above/below it.
+     */
+    private void submitMergedPrKnowledge(String projectId, JsonNode root) {
+        try {
+            if (!projectSettingsService.isKnowledgeEnabled(projectId)) {
+                return;
+            }
+            String fullName = root.path("repository").path("full_name").asText(null);
+            int number = root.path("pull_request").path("number").asInt(-1);
+            if (fullName == null || fullName.isBlank() || number < 0) {
+                return;
+            }
+            String sourceRef = "github:" + fullName + "#" + number;
+            String title = root.path("pull_request").path("title").asText(null);
+
+            List<String> labels = new ArrayList<>();
+            for (JsonNode label : root.path("pull_request").path("labels")) {
+                String name = nodeText(label.path("name"));
+                if (name != null) labels.add(name);
+            }
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("title", title);
+            payload.put("body", root.path("pull_request").path("body").asText(""));
+            payload.put("labels", labels);
+            payload.put("merged_by", nodeText(root.path("pull_request").path("merged_by").path("login")));
+            payload.put("baseSha", nodeText(root.path("pull_request").path("base").path("sha")));
+            payload.put("headSha", nodeText(root.path("pull_request").path("head").path("sha")));
+            if (root.path("pull_request").hasNonNull("changed_files")) {
+                payload.put("changedFilesCount", root.path("pull_request").path("changed_files").asInt());
+            }
+
+            KnowledgeSubmission submission = new KnowledgeSubmission(
+                    projectId, "github.pr_merged", sourceRef, title, "application/json",
+                    objectMapper.writeValueAsString(payload), OffsetDateTime.now(),
+                    "github-pr-merged:" + sourceRef, new KnowledgeSubmission.Origin("GITHUB_CONNECTOR", sourceRef),
+                    null);
+            knowledgeIngestionService.submit(submission);
+        } catch (Exception e) {
+            log.warn("Failed to submit knowledge source for merged PR (project {}): {}", projectId, e.getMessage());
         }
     }
 
