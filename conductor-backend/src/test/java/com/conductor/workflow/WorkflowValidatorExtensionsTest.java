@@ -8,7 +8,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class WorkflowValidatorExtensionsTest {
 
-    private final WorkflowValidator validator = new WorkflowValidator();
+    private final WorkflowValidator validator = new WorkflowValidator(
+            Set.of("http", "docker", "kestra", "condition", "integration", "agent", "claude-code"));
 
     private WorkflowValidationResult validate(String yaml) {
         return validator.validate(yaml, Set.of());
@@ -201,7 +202,7 @@ class WorkflowValidatorExtensionsTest {
                 steps:
                   - id: gsc
                     uses: integration
-                    with: { connection: google-search-console, query: top_queries_last_7_days }
+                    with: { connector: gsc, operation: top_queries_last_7_days }
                     outputs: { data: body.data }
               analyze:
                 needs: [collect]
@@ -628,5 +629,116 @@ class WorkflowValidatorExtensionsTest {
                 """;
         WorkflowValidationResult result = validate(yaml);
         assertThat(result.getErrors()).anyMatch(e -> e.contains("Invalid runs-on value: my-target"));
+    }
+
+    // --- Registry-driven step type checks (closes the unchecked-`uses:` hole) ---
+
+    @Test
+    void unknownUsesValue_isRejected() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  build:
+                    steps:
+                      - id: bogus
+                        uses: totally-not-a-real-step-type
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("Unknown step type: totally-not-a-real-step-type"));
+    }
+
+    @Test
+    void integrationStep_missingConnector_isRejected() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  collect:
+                    steps:
+                      - id: gsc
+                        uses: integration
+                        with:
+                          operation: search_analytics
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("integration step missing required field: with.connector"));
+    }
+
+    @Test
+    void integrationStep_withConnector_isAccepted() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  collect:
+                    steps:
+                      - id: gsc
+                        uses: integration
+                        with:
+                          connector: gsc
+                          operation: search_analytics
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).noneMatch(e -> e.contains("integration"));
+    }
+
+    @Test
+    void agentStep_missingAgent_isRejected() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  analyze:
+                    steps:
+                      - id: report
+                        uses: agent
+                        with:
+                          task: "do the thing"
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("agent step missing required field: with.agent"));
+    }
+
+    @Test
+    void agentStep_withAgent_isAccepted() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  analyze:
+                    steps:
+                      - id: report
+                        uses: agent
+                        with:
+                          agent: marketing-agent
+                          task: "do the thing"
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).noneMatch(e -> e.contains("agent step"));
+    }
+
+    @Test
+    void restrictedRegistry_rejectsStepTypeNotInExplicitSet() {
+        // The @VisibleForTesting Set<String> constructor lets a test scope the registry down to
+        // exactly the types it cares about — here, a validator that only knows "http" correctly
+        // rejects a docker step even though production always registers all executor beans.
+        WorkflowValidator restricted = new WorkflowValidator(Set.of("http", "condition"));
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  build:
+                    steps:
+                      - uses: docker://ubuntu:22.04
+                """;
+        WorkflowValidationResult result = restricted.validate(yaml, Set.of());
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("Unknown step type: docker"));
     }
 }

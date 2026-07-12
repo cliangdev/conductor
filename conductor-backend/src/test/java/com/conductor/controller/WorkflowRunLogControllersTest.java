@@ -19,6 +19,7 @@ import com.conductor.service.LogRedactionService;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.workflow.RunTokenService;
 import com.conductor.workflow.WorkflowRunLogBroker;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,7 +45,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * centralized {@code ApiPathConfig} prefixes resolve correctly across both API surfaces.
  */
 @WebMvcTest({WorkflowLogStreamController.class, WorkflowInternalCallbackController.class})
-@Import({SecurityConfig.class, GlobalExceptionHandler.class, WorkflowRunLogBroker.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, WorkflowRunLogBroker.class, WorkflowYamlParser.class})
 class WorkflowRunLogControllersTest {
 
     @Autowired

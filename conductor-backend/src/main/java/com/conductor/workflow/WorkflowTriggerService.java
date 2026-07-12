@@ -9,6 +9,12 @@ import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowScheduleRepository;
+import com.conductor.workflow.model.ConductorEventTrigger;
+import com.conductor.workflow.model.JobSpec;
+import com.conductor.workflow.model.StepSpec;
+import com.conductor.workflow.model.WorkflowSpec;
+import com.conductor.workflow.model.WorkflowYamlException;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,17 +39,20 @@ public class WorkflowTriggerService {
     private final WorkflowExecutionEngine executionEngine;
     private final WorkflowScheduleRepository scheduleRepository;
     private final ObjectMapper objectMapper;
+    private final WorkflowYamlParser yamlParser;
 
     public WorkflowTriggerService(WorkflowDefinitionRepository workflowRepository,
                                    WorkflowRunRepository workflowRunRepository,
                                    @Lazy WorkflowExecutionEngine executionEngine,
                                    WorkflowScheduleRepository scheduleRepository,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   WorkflowYamlParser yamlParser) {
         this.workflowRepository = workflowRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.executionEngine = executionEngine;
         this.scheduleRepository = scheduleRepository;
         this.objectMapper = objectMapper;
+        this.yamlParser = yamlParser;
     }
 
     /**
@@ -59,8 +68,16 @@ public class WorkflowTriggerService {
 
         for (WorkflowDefinition workflow : workflows) {
             if (!workflow.isEnabled()) continue;
-            if (!hasConductorIssueTrigger(workflow.getYaml())) continue;
-            if (!passesStatusFilter(workflow.getYaml(), event)) continue;
+            // findByProjectId returns every Workflow in the project regardless of kind — a LIFECYCLE
+            // (statechart) workflow has no yaml (it uses `definition` instead), so skip those before
+            // ever attempting to parse rather than relying on WorkflowYamlException for an expected,
+            // common case (every project has at least the seeded ENGINEERING lifecycle workflow).
+            if (workflow.getYaml() == null) continue;
+            WorkflowSpec spec = parseYaml(workflow.getYaml());
+            if (spec == null) continue;
+            ConductorEventTrigger trigger = spec.triggers().events().stream().findFirst().orElse(null);
+            if (trigger == null) continue;
+            if (!passesStatusFilter(trigger, event)) continue;
 
             createRun(workflow, "conductor.work_item.status_changed", buildEventPayload(event));
         }
@@ -139,22 +156,18 @@ public class WorkflowTriggerService {
     }
 
     private String extractScheduleCron(String yaml) {
+        WorkflowSpec spec = parseYaml(yaml);
+        if (spec == null || spec.triggers().schedule() == null) return null;
+        return spec.triggers().schedule().cron();
+    }
+
+    /** Parses a workflow's stored YAML, degrading to null on malformed YAML (same contract the old
+     *  SnakeYAML try/catch calls had). */
+    private WorkflowSpec parseYaml(String yaml) {
         try {
-            org.yaml.snakeyaml.Yaml snakeYaml = new org.yaml.snakeyaml.Yaml();
-            @SuppressWarnings("unchecked")
-            Map<String, Object> parsed = snakeYaml.load(yaml);
-            Object onBlock = parsed.containsKey("on") ? parsed.get("on") : parsed.get(Boolean.TRUE);
-            if (!(onBlock instanceof Map)) return null;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> triggers = (Map<String, Object>) onBlock;
-            Object scheduleTrigger = triggers.get("schedule");
-            if (!(scheduleTrigger instanceof Map)) return null;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> scheduleConfig = (Map<String, Object>) scheduleTrigger;
-            Object cronVal = scheduleConfig.get("cron");
-            return cronVal != null ? cronVal.toString().trim() : null;
-        } catch (Exception e) {
-            log.warn("Failed to parse schedule trigger from YAML: {}", e.getMessage());
+            return yamlParser.parse(yaml);
+        } catch (WorkflowYamlException e) {
+            log.warn("Failed to parse workflow YAML: {}", e.getMessage());
             return null;
         }
     }
@@ -176,31 +189,22 @@ public class WorkflowTriggerService {
     }
 
     private void enqueueInitialJobs(WorkflowDefinition workflow, WorkflowRun run) {
-        try {
-            org.yaml.snakeyaml.Yaml yaml = new org.yaml.snakeyaml.Yaml();
-            Map<String, Object> parsed = yaml.load(workflow.getYaml());
-            Object jobsObj = parsed.get("jobs");
-            if (!(jobsObj instanceof Map)) return;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> jobs = (Map<String, Object>) jobsObj;
+        WorkflowSpec spec = parseYaml(workflow.getYaml());
+        if (spec == null) {
+            log.warn("Failed to enqueue initial jobs for run {}: could not parse workflow YAML", run.getId());
+            return;
+        }
+        Map<String, JobSpec> jobs = spec.jobs();
 
-            // Collect condition step targets — these jobs should NOT be enqueued upfront;
-            // they are enqueued at runtime when the condition step evaluates.
-            java.util.Set<String> conditionTargets = collectConditionTargets(jobs);
+        // Collect condition step targets — these jobs should NOT be enqueued upfront;
+        // they are enqueued at runtime when the condition step evaluates.
+        java.util.Set<String> conditionTargets = collectConditionTargets(jobs);
 
-            for (Map.Entry<String, Object> entry : jobs.entrySet()) {
-                String jobId = entry.getKey();
-                if (!(entry.getValue() instanceof Map)) continue;
-                if (conditionTargets.contains(jobId)) continue;
-                @SuppressWarnings("unchecked")
-                Map<String, Object> job = (Map<String, Object>) entry.getValue();
-                Object needs = job.get("needs");
-                if (needs == null || (needs instanceof List && ((List<?>) needs).isEmpty())) {
-                    executionEngine.enqueueJob(run.getId(), jobId);
-                }
+        for (JobSpec job : jobs.values()) {
+            if (conditionTargets.contains(job.id())) continue;
+            if (job.needs().isEmpty()) {
+                executionEngine.enqueueJob(run.getId(), job.id());
             }
-        } catch (Exception e) {
-            log.warn("Failed to enqueue initial jobs for run {}: {}", run.getId(), e.getMessage());
         }
     }
 
@@ -209,57 +213,26 @@ public class WorkflowTriggerService {
      * These jobs must not be auto-enqueued at workflow start — they are triggered
      * only when the condition step evaluates and routes to them.
      */
-    @SuppressWarnings("unchecked")
-    private java.util.Set<String> collectConditionTargets(Map<String, Object> jobs) {
+    private java.util.Set<String> collectConditionTargets(Map<String, JobSpec> jobs) {
         java.util.Set<String> targets = new java.util.HashSet<>();
-        for (Map.Entry<String, Object> entry : jobs.entrySet()) {
-            if (!(entry.getValue() instanceof Map)) continue;
-            Map<String, Object> job = (Map<String, Object>) entry.getValue();
-            Object stepsObj = job.get("steps");
-            if (!(stepsObj instanceof java.util.List)) continue;
-            for (Object stepObj : (java.util.List<?>) stepsObj) {
-                if (!(stepObj instanceof Map)) continue;
-                Map<String, Object> step = (Map<String, Object>) stepObj;
-                if (!"condition".equals(step.get("type"))) continue;
-                Object then = step.get("then");
-                Object else_ = step.get("else");
-                if (then instanceof String) targets.add((String) then);
-                if (else_ instanceof String) targets.add((String) else_);
+        for (JobSpec job : jobs.values()) {
+            for (StepSpec step : job.steps()) {
+                if (!"condition".equals(step.type())) continue;
+                Object then = step.raw().get("then");
+                Object else_ = step.raw().get("else");
+                if (then instanceof String s) targets.add(s);
+                if (else_ instanceof String s) targets.add(s);
             }
         }
         return targets;
     }
 
-    private boolean hasConductorIssueTrigger(String yaml) {
-        return yaml != null && yaml.contains("conductor.work_item.status_changed");
-    }
-
-    private boolean passesStatusFilter(String yaml, NotificationEvent event) {
-        try {
-            org.yaml.snakeyaml.Yaml snakeYaml = new org.yaml.snakeyaml.Yaml();
-            @SuppressWarnings("unchecked")
-            java.util.Map<String, Object> parsed = snakeYaml.load(yaml);
-            // SnakeYAML 1.1 parses bare 'on' as Boolean.TRUE
-            Object onBlock = parsed.containsKey("on") ? parsed.get("on") : parsed.get(Boolean.TRUE);
-            if (!(onBlock instanceof java.util.Map)) return true;
-            @SuppressWarnings("unchecked")
-            java.util.Map<String, Object> triggers = (java.util.Map<String, Object>) onBlock;
-            Object triggerConfig = triggers.get("conductor.work_item.status_changed");
-            if (!(triggerConfig instanceof java.util.Map)) return true;
-            @SuppressWarnings("unchecked")
-            java.util.Map<String, Object> config = (java.util.Map<String, Object>) triggerConfig;
-            Object filtersObj = config.get("filters");
-            if (!(filtersObj instanceof java.util.Map)) return true;
-            @SuppressWarnings("unchecked")
-            java.util.Map<String, Object> filters = (java.util.Map<String, Object>) filtersObj;
-            Object statusFilter = filters.get("status");
-            if (statusFilter == null) return true;
-            String toStatus = event.getMetadata().get("toStatus");
-            return statusFilter.toString().equalsIgnoreCase(toStatus);
-        } catch (Exception e) {
-            log.warn("Failed to parse trigger filters: {}", e.getMessage());
-            return true;
-        }
+    /** Passes when no status filter is declared, or the event's target status matches any declared entry. */
+    private boolean passesStatusFilter(ConductorEventTrigger trigger, NotificationEvent event) {
+        List<String> statusFilter = trigger.statusFilter();
+        if (statusFilter.isEmpty()) return true;
+        String toStatus = event.getMetadata().get("toStatus");
+        return statusFilter.stream().anyMatch(s -> s.equalsIgnoreCase(toStatus));
     }
 
     private String buildEventPayload(NotificationEvent event) {

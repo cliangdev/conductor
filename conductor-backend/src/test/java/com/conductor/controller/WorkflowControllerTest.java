@@ -21,6 +21,7 @@ import com.conductor.service.WorkflowService;
 import com.conductor.service.WorkflowViewService;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowTriggerService;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,12 @@ class WorkflowControllerTest {
         @Bean
         ObjectMapper objectMapper() {
             return new ObjectMapper();
+        }
+
+        // No dependencies of its own; a real instance is simpler than mocking parse() per test.
+        @Bean
+        WorkflowYamlParser workflowYamlParser() {
+            return new WorkflowYamlParser();
         }
     }
 

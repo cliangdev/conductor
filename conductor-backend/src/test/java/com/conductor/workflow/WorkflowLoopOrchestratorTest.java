@@ -50,7 +50,7 @@ class WorkflowLoopOrchestratorTest {
                 jobRunRepository, stepRunRepository, runRepository, workflowRepository,
                 engine, conditionEvaluator, interpolator, contextBuilder,
                 logRedactionService, List.of(), objectMapper, selfHostedJobDispatcher,
-                upstreamOutputsResolver);
+                upstreamOutputsResolver, new com.conductor.workflow.model.WorkflowYamlParser());
         // The production code uses @Lazy @Autowired self so @Transactional helper methods
         // go through the Spring proxy. In unit tests there is no Spring context, so point
         // self at the bare instance — @Transactional is a no-op without a tx manager anyway.

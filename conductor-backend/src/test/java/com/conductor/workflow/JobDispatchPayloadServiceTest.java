@@ -47,7 +47,8 @@ class JobDispatchPayloadServiceTest {
     void setUp() {
         service = new JobDispatchPayloadService(runRepository, jobRunRepository, stepRunRepository,
                 contextBuilder, new WorkflowInterpolator(), runTokenService, projectSettingsRepository,
-                new ObjectMapper(), upstreamOutputsResolver, "http://localhost:8080");
+                new ObjectMapper(), upstreamOutputsResolver, "http://localhost:8080",
+                new com.conductor.workflow.model.WorkflowYamlParser());
     }
 
     private WorkflowRun runWithYaml(String yaml) {

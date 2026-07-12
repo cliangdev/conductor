@@ -5,6 +5,7 @@ import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.workflow.model.JobSpec;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
@@ -36,12 +37,11 @@ public class UpstreamOutputsResolver {
     }
 
     public Map<String, Map<String, String>> collectUpstreamOutputs(WorkflowRun run,
-                                                                     Map<String, Object> jobs,
+                                                                     Map<String, JobSpec> jobs,
                                                                      String currentJobId) {
         Map<String, Map<String, String>> result = new HashMap<>();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> currentJob = (Map<String, Object>) jobs.get(currentJobId);
-        List<String> needs = getNeedsList(currentJob);
+        JobSpec currentJob = jobs.get(currentJobId);
+        List<String> needs = currentJob != null ? currentJob.needs() : List.of();
 
         for (String depJobId : needs) {
             List<WorkflowJobRun> depJobRuns = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(run.getId(), depJobId);
@@ -63,14 +63,5 @@ public class UpstreamOutputsResolver {
             result.put(depJobId, jobOutputs);
         }
         return result;
-    }
-
-    @SuppressWarnings("unchecked")
-    public List<String> getNeedsList(Map<String, Object> job) {
-        Object needs = job.get("needs");
-        if (needs == null) return List.of();
-        if (needs instanceof List) return (List<String>) needs;
-        if (needs instanceof String) return List.of((String) needs);
-        return List.of();
     }
 }

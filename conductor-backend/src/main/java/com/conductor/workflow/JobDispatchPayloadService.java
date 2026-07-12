@@ -14,6 +14,11 @@ import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.workflow.model.JobSpec;
+import com.conductor.workflow.model.StepSpec;
+import com.conductor.workflow.model.WorkflowSpec;
+import com.conductor.workflow.model.WorkflowYamlException;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
@@ -45,6 +50,7 @@ public class JobDispatchPayloadService {
     private final ProjectSettingsRepository projectSettingsRepository;
     private final ObjectMapper objectMapper;
     private final UpstreamOutputsResolver upstreamOutputsResolver;
+    private final WorkflowYamlParser yamlParser;
     private final String backendBaseUrl;
 
     public JobDispatchPayloadService(WorkflowRunRepository runRepository,
@@ -56,7 +62,8 @@ public class JobDispatchPayloadService {
                                       ProjectSettingsRepository projectSettingsRepository,
                                       ObjectMapper objectMapper,
                                       UpstreamOutputsResolver upstreamOutputsResolver,
-                                      @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
+                                      @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl,
+                                      WorkflowYamlParser yamlParser) {
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
@@ -67,6 +74,7 @@ public class JobDispatchPayloadService {
         this.objectMapper = objectMapper;
         this.upstreamOutputsResolver = upstreamOutputsResolver;
         this.backendBaseUrl = backendBaseUrl;
+        this.yamlParser = yamlParser;
     }
 
     @Transactional(readOnly = true)
@@ -84,25 +92,23 @@ public class JobDispatchPayloadService {
         }
 
         WorkflowDefinition workflow = run.getWorkflow();
-        Map<String, Object> parsedWorkflow = parseYaml(workflow.getYaml());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> jobs = parsedWorkflow != null ? (Map<String, Object>) parsedWorkflow.get("jobs") : null;
-        if (jobs == null || !(jobs.get(jobId) instanceof Map)) {
+        WorkflowSpec parsedWorkflow = parseYaml(workflow.getYaml());
+        Map<String, JobSpec> jobs = parsedWorkflow != null ? parsedWorkflow.jobs() : null;
+        if (jobs == null || !jobs.containsKey(jobId)) {
             throw new EntityNotFoundException("Job definition not found in workflow YAML: " + jobId);
         }
-        @SuppressWarnings("unchecked")
-        Map<String, Object> jobDef = (Map<String, Object>) jobs.get(jobId);
+        JobSpec jobDef = jobs.get(jobId);
 
         String projectId = workflow.getProject().getId();
         Map<String, String> secrets = contextBuilder.loadSecrets(projectId);
         Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
         RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, jobRun.getIteration());
 
-        Map<String, String> jobEnv = jobDef.get("env") instanceof Map
-                ? interpolateStringMap(castStringObjectMap(jobDef.get("env")), ctx)
+        Map<String, String> jobEnv = jobDef.raw().get("env") instanceof Map
+                ? interpolateStringMap(castStringObjectMap(jobDef.raw().get("env")), ctx)
                 : new HashMap<>();
 
-        List<Map<String, Object>> steps = WorkflowJobSteps.executableSteps(jobDef);
+        List<StepSpec> steps = jobDef.executableSteps();
         List<JobDispatchStepDto> stepDtos = new ArrayList<>();
         for (int i = 0; i < steps.size(); i++) {
             stepDtos.add(buildStepDto(jobRun.getId(), i, steps.get(i), ctx));
@@ -127,17 +133,15 @@ public class JobDispatchPayloadService {
         return dto;
     }
 
-    @SuppressWarnings("unchecked")
-    private JobDispatchStepDto buildStepDto(String jobRunId, int index, Map<String, Object> stepDef, RuntimeContext ctx) {
+    private JobDispatchStepDto buildStepDto(String jobRunId, int index, StepSpec stepDef, RuntimeContext ctx) {
         JobDispatchStepDto dto = new JobDispatchStepDto();
         dto.setStepIndex(index);
         dto.setWorkerJobId(jobRunId + ":" + index);
-        dto.setStepId((String) stepDef.get("id"));
-        dto.setStepName((String) stepDef.getOrDefault("name", "unnamed"));
-        dto.setStepType(WorkflowJobSteps.resolveStepType(stepDef));
+        dto.setStepId(stepDef.id());
+        dto.setStepName(stepDef.name() != null ? stepDef.name() : "unnamed");
+        dto.setStepType(stepDef.type());
 
-        Object withObj = stepDef.get("with");
-        Map<String, Object> with = withObj instanceof Map ? (Map<String, Object>) withObj : Map.of();
+        Map<String, Object> with = stepDef.with();
 
         Object promptVal = with.get("prompt");
         if (promptVal != null) {
@@ -168,7 +172,7 @@ public class JobDispatchPayloadService {
             dto.setMaxTurns(n.intValue());
         }
 
-        Object envVal = stepDef.get("env");
+        Object envVal = stepDef.raw().get("env");
         if (envVal instanceof Map) {
             dto.setEnv(interpolateStringMap(castStringObjectMap(envVal), ctx));
         }
@@ -176,19 +180,19 @@ public class JobDispatchPayloadService {
         return dto;
     }
 
-    private String resolveJobImage(Map<String, Object> jobDef, List<Map<String, Object>> steps) {
-        Object containerObj = jobDef.get("container");
+    private String resolveJobImage(JobSpec jobDef, List<StepSpec> steps) {
+        Object containerObj = jobDef.raw().get("container");
         if (containerObj instanceof Map<?, ?> container && container.get("image") != null) {
             return container.get("image").toString();
         }
-        for (Map<String, Object> step : steps) {
-            if (step.get("uses") instanceof String uses && uses.startsWith(DOCKER_USES_PREFIX)) {
+        for (StepSpec step : steps) {
+            if (step.raw().get("uses") instanceof String uses && uses.startsWith(DOCKER_USES_PREFIX)) {
                 String image = uses.substring(DOCKER_USES_PREFIX.length()).trim();
                 if (!image.isEmpty()) return image;
             }
         }
-        for (Map<String, Object> step : steps) {
-            if ("claude-code".equals(WorkflowJobSteps.resolveStepType(step))) {
+        for (StepSpec step : steps) {
+            if ("claude-code".equals(step.type())) {
                 return RunnerImage.DEFAULT;
             }
         }
@@ -209,7 +213,7 @@ public class JobDispatchPayloadService {
         return (Map<String, Object>) obj;
     }
 
-    private Map<String, Map<String, String>> collectUpstreamOutputs(WorkflowRun run, Map<String, Object> jobs, String currentJobId) {
+    private Map<String, Map<String, String>> collectUpstreamOutputs(WorkflowRun run, Map<String, JobSpec> jobs, String currentJobId) {
         return upstreamOutputsResolver.collectUpstreamOutputs(run, jobs, currentJobId);
     }
 
@@ -219,10 +223,10 @@ public class JobDispatchPayloadService {
                 .orElse(24);
     }
 
-    private Map<String, Object> parseYaml(String yaml) {
+    private WorkflowSpec parseYaml(String yaml) {
         try {
-            return new org.yaml.snakeyaml.Yaml().load(yaml);
-        } catch (Exception e) {
+            return yamlParser.parse(yaml);
+        } catch (WorkflowYamlException e) {
             return null;
         }
     }
