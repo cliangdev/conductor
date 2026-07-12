@@ -24,4 +24,18 @@ public class IntegrationConfig {
                 },
                 new ThreadPoolExecutor.CallerRunsPolicy());
     }
+
+    @Bean(name = "actionInvocationExecutor")
+    public ExecutorService actionInvocationExecutor() {
+        return new ThreadPoolExecutor(
+                5, 10, 60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(50),
+                r -> {
+                    Thread t = new Thread(r);
+                    t.setName("action-invocation-" + t.getId());
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy());
+    }
 }

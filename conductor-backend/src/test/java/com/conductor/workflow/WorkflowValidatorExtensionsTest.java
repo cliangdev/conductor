@@ -9,7 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WorkflowValidatorExtensionsTest {
 
     private final WorkflowValidator validator = new WorkflowValidator(
-            Set.of("http", "docker", "kestra", "condition", "integration", "agent", "claude-code"));
+            Set.of("http", "docker", "kestra", "condition", "integration", "agent", "claude-code", "action"));
 
     private WorkflowValidationResult validate(String yaml) {
         return validator.validate(yaml, Set.of());
@@ -702,6 +702,65 @@ class WorkflowValidatorExtensionsTest {
                 """;
         WorkflowValidationResult result = validate(yaml);
         assertThat(result.getErrors()).anyMatch(e -> e.contains("agent step missing required field: with.agent"));
+    }
+
+    @Test
+    void actionStep_missingConnector_isRejected() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  notify:
+                    steps:
+                      - id: post
+                        uses: action
+                        with:
+                          action: post_message
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("action step missing required field: with.connector"));
+    }
+
+    @Test
+    void actionStep_missingAction_isRejected() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  notify:
+                    steps:
+                      - id: post
+                        uses: action
+                        with:
+                          connector: discord
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("action step missing required field: with.action"));
+    }
+
+    @Test
+    void actionStep_withConnectorAndAction_isAccepted() {
+        // The test-only constructor wires no ConnectorRegistry, so the unknown-connector/action lint
+        // (warning-only) never fires here — this only exercises the required-field checks.
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  notify:
+                    steps:
+                      - id: post
+                        uses: action
+                        with:
+                          connector: discord
+                          action: post_message
+                          input:
+                            content: "hello"
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).noneMatch(e -> e.contains("action step"));
     }
 
     @Test

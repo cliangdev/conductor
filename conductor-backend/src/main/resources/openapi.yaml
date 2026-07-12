@@ -4283,7 +4283,7 @@ components:
             type: string
         toolMetadata:
           type: object
-          description: Tool metadata including description, operations, and connection-specific config hints
+          description: Tool metadata including description, operations, actions, and connection-specific config hints
           additionalProperties: true
 
     ConnectorConfigFieldDto:

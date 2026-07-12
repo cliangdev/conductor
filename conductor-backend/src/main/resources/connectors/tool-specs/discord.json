@@ -1,0 +1,15 @@
+{
+  "description": "Post messages to a Discord channel via an incoming webhook",
+  "actions": [
+    {
+      "id": "post_message",
+      "description": "Post a message to the connected Discord channel",
+      "params": {
+        "content": "Message text (required)",
+        "username": "Override the webhook's display name (optional)",
+        "embeds_json": "JSON string of a Discord embeds array (optional)"
+      },
+      "outputKeys": ["message_id", "channel_id"]
+    }
+  ]
+}

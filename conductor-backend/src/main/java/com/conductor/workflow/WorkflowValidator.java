@@ -1,5 +1,6 @@
 package com.conductor.workflow;
 
+import com.conductor.integration.ConnectorRegistry;
 import com.conductor.workflow.model.JobSpec;
 import com.conductor.workflow.model.LoopSpec;
 import com.conductor.workflow.model.StepSpec;
@@ -22,10 +23,18 @@ public class WorkflowValidator {
 
     private final WorkflowYamlParser yamlParser;
     private final Set<String> allowedStepTypes;
+    /**
+     * Null under the test-only constructor. Used only for the (best-effort, warning-only) action-step
+     * connector/action-id lint — never for the required-field checks, so validation still works
+     * without it wired up.
+     */
+    private final ConnectorRegistry connectorRegistry;
 
     @Autowired
-    public WorkflowValidator(WorkflowYamlParser yamlParser, List<WorkflowExecutionBackend> backends) {
+    public WorkflowValidator(WorkflowYamlParser yamlParser, List<WorkflowExecutionBackend> backends,
+                             ConnectorRegistry connectorRegistry) {
         this.yamlParser = yamlParser;
+        this.connectorRegistry = connectorRegistry;
         Set<String> types = new HashSet<>();
         for (WorkflowExecutionBackend backend : backends) {
             types.add(backend.getStepType());
@@ -45,6 +54,7 @@ public class WorkflowValidator {
     WorkflowValidator(Set<String> allowedStepTypes) {
         this.yamlParser = new WorkflowYamlParser();
         this.allowedStepTypes = Set.copyOf(allowedStepTypes);
+        this.connectorRegistry = null;
     }
 
     /** Delegates with no project runtime targets — existing callers/tests keep today's behavior unchanged. */
@@ -92,6 +102,7 @@ public class WorkflowValidator {
      */
     public WorkflowValidationResult validate(WorkflowSpec spec, Set<String> runtimeTargetNames) {
         List<String> errors = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
 
         // Structural gates: these must hold before any typed field can be trusted, so they read
         // the raw parsed document directly rather than the typed WorkflowSpec fields.
@@ -132,7 +143,7 @@ public class WorkflowValidator {
             }
 
             validateLoop(job, errors);
-            validateSteps(job, jobs, runsOnVal, runtimeTargetNames, conditionTargets, errors);
+            validateSteps(job, jobs, runsOnVal, runtimeTargetNames, conditionTargets, errors, warnings);
         }
 
         // Validate condition targets not in regular needs
@@ -150,7 +161,8 @@ public class WorkflowValidator {
             errors.add("Circular dependency detected in jobs needs graph: " + needsGraph.keySet());
         }
 
-        return new WorkflowValidationResult(errors, lintInterpolations(spec));
+        warnings.addAll(lintInterpolations(spec));
+        return new WorkflowValidationResult(errors, warnings);
     }
 
     private void validateLoop(JobSpec job, List<String> errors) {
@@ -165,7 +177,8 @@ public class WorkflowValidator {
     }
 
     private void validateSteps(JobSpec job, Map<String, JobSpec> jobs, Object runsOnVal,
-                               Set<String> runtimeTargetNames, Set<String> conditionTargets, List<String> errors) {
+                               Set<String> runtimeTargetNames, Set<String> conditionTargets,
+                               List<String> errors, List<String> warnings) {
         List<StepSpec> steps = job.steps();
         for (int i = 0; i < steps.size(); i++) {
             StepSpec step = steps.get(i);
@@ -200,6 +213,7 @@ public class WorkflowValidator {
                 case CLAUDE_CODE_TYPE -> validateClaudeCodeStep(step, job.id(), runsOnVal, runtimeTargetNames, errors);
                 case "integration" -> validateIntegrationStep(step, errors);
                 case "agent" -> validateAgentStep(step, errors);
+                case "action" -> validateActionStep(step, errors, warnings);
                 default -> { /* http, docker: no extra config checks today */ }
             }
         }
@@ -349,6 +363,44 @@ public class WorkflowValidator {
         Object agent = step.with().get("agent");
         if (agent == null || agent.toString().isBlank()) {
             errors.add("agent step missing required field: with.agent");
+        }
+    }
+
+    /**
+     * {@code with.connector} and {@code with.action} are required (hard errors — the executor cannot
+     * run without them). Whether the connector id is registered, and whether it declares the given
+     * action id, is checked only as a WARNING: the registry is the set of connector beans wired up in
+     * THIS environment, and a local-profile authoring/test environment may lack a connector (e.g.
+     * {@code @Profile("!local")}) that is very much registered in production — flagging that as an
+     * error would make workflows unpublishable in exactly the environment authors use to write them.
+     */
+    private void validateActionStep(StepSpec step, List<String> errors, List<String> warnings) {
+        Object connectorObj = step.with().get("connector");
+        Object actionObj = step.with().get("action");
+        if (connectorObj == null || connectorObj.toString().isBlank()) {
+            errors.add("action step missing required field: with.connector");
+        }
+        if (actionObj == null || actionObj.toString().isBlank()) {
+            errors.add("action step missing required field: with.action");
+        }
+        if (connectorRegistry == null || connectorObj == null || connectorObj.toString().isBlank()) {
+            return;
+        }
+
+        String connectorId = connectorObj.toString();
+        Optional<com.conductor.integration.ActionConnector> connector = connectorRegistry.findAction(connectorId);
+        if (connector.isEmpty()) {
+            warnings.add("action step references connector '" + connectorId
+                    + "' which is not registered as an action connector in this environment");
+            return;
+        }
+        if (actionObj != null && !actionObj.toString().isBlank()) {
+            String actionId = actionObj.toString();
+            boolean known = connector.get().getActions().stream().anyMatch(a -> a.id().equals(actionId));
+            if (!known) {
+                warnings.add("action step references action '" + actionId + "' which connector '"
+                        + connectorId + "' does not declare");
+            }
         }
     }
 

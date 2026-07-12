@@ -28,11 +28,11 @@ class WorkflowValidatorRegistrySmokeTest extends AbstractNoneWebIntegrationTest 
                 .collect(Collectors.toSet());
 
         assertThat(stepTypes).containsExactlyInAnyOrder(
-                "http", "docker", "kestra", "integration", "agent", "claude-code");
+                "http", "docker", "kestra", "integration", "agent", "claude-code", "action");
 
         Set<String> allowedWithCondition = new java.util.HashSet<>(stepTypes);
         allowedWithCondition.add("condition");
         assertThat(allowedWithCondition).containsExactlyInAnyOrder(
-                "http", "docker", "kestra", "integration", "agent", "claude-code", "condition");
+                "http", "docker", "kestra", "integration", "agent", "claude-code", "action", "condition");
     }
 }
