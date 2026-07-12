@@ -14,6 +14,7 @@ import {
   FolderIcon,
   GitBranchIcon,
   KeyIcon,
+  LibraryIcon,
   LockIcon,
   LogOutIcon,
   MoreHorizontalIcon,
@@ -383,6 +384,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 onNavigate={onNavigate}
               >
                 Docs
+              </NavItem>
+              <NavItem
+                href={`/app/projects/${currentWorkspace.id}/knowledge`}
+                icon={<LibraryIcon className="h-4 w-4" />}
+                onNavigate={onNavigate}
+              >
+                Knowledge
               </NavItem>
             </div>
 
