@@ -20,6 +20,7 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Self-hosted](#self-hosted)
   - [Cloud Run](#cloud-run)
   - [Runtime targets (bring your own Cloud Run)](#runtime-targets-bring-your-own-cloud-run)
+- [System-managed workflows](#system-managed-workflows)
 - [Self-hosted setup](#self-hosted-setup)
   - [Prerequisites](#prerequisites)
   - [Running the daemon](#running-the-daemon)
@@ -99,7 +100,7 @@ undeclared input produces a publish-time lint warning (see [Outputs and interpol
 
 #### Webhook
 
-A unique webhook URL is generated per workflow. POST to it from any external service (GitHub Actions, Zapier, etc.) to trigger a run. The request body is available as `${{ event.* }}` during the run.
+A unique webhook URL is generated per workflow. POST to it from any external service (GitHub Actions, Zapier, etc.) to trigger a run. The request body is available as `${{ event.* }}` during the run — the same `${{ event.FIELD }}` expression every trigger type populates (see [Outputs and interpolation](#outputs-and-interpolation)), not something specific to webhooks.
 
 ```yaml
 on:
@@ -561,6 +562,14 @@ Use `${{ ... }}` to inject dynamic values into any string field.
 
 Unknown references resolve to an empty string rather than erroring.
 
+**`event.FIELD` isn't webhook-only.** Every trigger type stores its payload on the run, and
+`${{ event.FIELD }}` reads whatever is there regardless of what started the run: a webhook's POST body, a
+`workflow_dispatch` call's inputs, a Work Item status-change event's `toStatus`/`fromStatus`/`workItemId`,
+or a payload a system process passed programmatically. The Knowledge Center's `knowledge-librarian`
+workflow is an example of the last case — it's dispatched by a scheduler, not a human, and reads
+`${{ event.sourceIds }}` from a payload the dispatcher built directly (see
+[`docs/knowledge.md`](knowledge.md)) rather than declaring `workflow_dispatch` `inputs`.
+
 **Output merge rule.** `needs.JOB_ID.outputs.*` is the merge of every step's declared outputs across
 that job, in deterministic execution order (start time, then step id as a tiebreak). If two steps in
 the same job declare the same output key, the later step (by execution order) wins; the collision is
@@ -980,6 +989,31 @@ Deleting a target removes only Conductor's record — **the Cloud Run Job in you
   Build and push it from your own CI. The base image already contains the Claude CLI and the entrypoint — don't override `ENTRYPOINT`/`CMD`, don't switch off the non-root `runner` user, and leave `/conductor/{workspace,inputs,outputs}` alone. A step prompt can then just say *"Use the seo-report skill on the inputs in /conductor/inputs/"* (add `Skill` to `allowed_tools`).
 
 Credential-wise a runtime-target job behaves like `cloud-run`: the project's Claude Code subscription token (and project API key for `conductor_mcp: true`) are injected by the backend; compute runs — and is billed — in your GCP project.
+
+---
+
+## System-managed workflows
+
+Some automation workflows are provisioned automatically by a Conductor feature rather than authored by a
+project member — identified purely by a reserved workflow `name` (there's no schema-level "system" flag).
+Two ship today, both seeded the first time a project turns on the **Knowledge Center**
+(`knowledge_enabled` project setting — no dedicated frontend page yet, toggled via
+`PATCH /api/v1/projects/{projectId}/settings`) and re-provisioned idempotently on every subsequent enable:
+
+| Workflow name | Trigger | Purpose |
+|---|---|---|
+| `knowledge-librarian` | `workflow_dispatch`, fired programmatically — never by a human | Files a batch of newly-ingested knowledge sources into wiki pages. `concurrency: single`. |
+| `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input | Operator-triggered, once, to seed the wiki from an existing GitHub codebase. |
+
+Both are ordinary workflows once created — visible and re-editable in the workflow list like any other —
+just authored by Conductor instead of a person. Both run as `claude-code` steps on `runs-on: cloud-run`
+with `conductor_mcp: true`, so they need the project's **Claude Code (subscription)** credential and an
+active **project API key**, same as any `claude-code` step using `conductor_mcp` (see
+[Auth & runtime targets](#claude-code--run-claude-code-headlessly)); `knowledge-bootstrap` additionally
+needs a `GITHUB_TOKEN` workflow secret to bootstrap from a private repo.
+
+See [`docs/knowledge.md`](knowledge.md) for the full Knowledge Center domain model — ingestion envelope,
+page format, and pipeline these workflows are part of.
 
 ---
 

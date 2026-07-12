@@ -102,7 +102,8 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 `work_item_reviewers` → `reviews` (APPROVED/CHANGES_REQUESTED/COMMENTED)  
 `comments` + `comment_replies` (line-level or selection-based anchors)  
 `project_settings` (Discord webhook URL)  
-`invites`, `api_keys`
+`invites`, `api_keys`  
+`knowledge_sources` → `knowledge_pages`/`knowledge_page_revisions` (+ links) — agent-maintained wiki, see [`docs/knowledge.md`](docs/knowledge.md)
 
 **Future eng/marketing grouping** should use **labels + saved views** (or a nullable `group` tag on `project_members`), *not* a nested container above projects — that two-level org→project model was deliberately removed for simplicity.
 
@@ -142,6 +143,7 @@ See `scripts/gcloud-alias-example.sh` for a persistent shell alias.
 
 - [`docs/api-guidelines.md`](docs/api-guidelines.md) — OpenAPI-first workflow, external vs internal API split, REST conventions. **Read before creating or updating any API.**
 - [`docs/workflows.md`](docs/workflows.md) — Workflow YAML format, trigger types, step types, execution modes, self-hosted runner setup.
+- [`docs/knowledge.md`](docs/knowledge.md) — Knowledge Center: ingestion envelope, wiki page model, librarian workflows.
 - [`docs/mcp-tool-guidelines.md`](docs/mcp-tool-guidelines.md) — MCP tool design principles: context budget, action–verify pattern, dispatch–status pattern, checklist. **Read before creating or updating any MCP tool.**
 - [`docs/dev-workflow.md`](docs/dev-workflow.md) — PR branch deploy/test/debug loop: deploy labels, skip-tests, live MCP testing, log access.
 - [`docs/cli-assets.md`](docs/cli-assets.md) — Naming conventions and lifecycle for CLI-distributed Claude assets (commands, skills, agents). **Read before adding, renaming, or removing any asset under `conductor-tools/assets/claude/`.**
