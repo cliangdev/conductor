@@ -6,9 +6,11 @@ import com.conductor.entity.WorkflowJobStatus;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.entity.WorkflowStepStatus;
+import com.conductor.entity.Project;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.service.LogRedactionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,9 +20,12 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -35,12 +40,14 @@ class WorkflowRunLogBrokerTest {
     private final WorkflowRunRepository runRepository = mock(WorkflowRunRepository.class);
     private final WorkflowJobRunRepository jobRunRepository = mock(WorkflowJobRunRepository.class);
     private final WorkflowStepRunRepository stepRunRepository = mock(WorkflowStepRunRepository.class);
+    private final LogRedactionService logRedactionService = mock(LogRedactionService.class);
 
     private WorkflowRunLogBroker broker;
 
     @BeforeEach
     void setUp() {
-        broker = new WorkflowRunLogBroker(runRepository, jobRunRepository, stepRunRepository, new ObjectMapper());
+        broker = new WorkflowRunLogBroker(runRepository, jobRunRepository, stepRunRepository, new ObjectMapper(),
+                logRedactionService);
     }
 
     private WorkflowJobRun jobRunWithStep(WorkflowStepRun step) {
@@ -214,6 +221,50 @@ class WorkflowRunLogBrokerTest {
 
         assertThat(step.getOutputJson()).contains("hello");
         verify(stepRunRepository).save(step);
+    }
+
+    @Test
+    void appendLogChunk_withWorkerJobId_appendsRedactedLinesToStepRowAndBuffersRunLevel() {
+        WorkflowStepRun step = new WorkflowStepRun();
+        step.setId("step-1");
+        step.setWorkerJobId("jobrun-1:0");
+        step.setLog("existing line\n");
+        WorkflowJobRun jobRun = jobRunWithStep(step);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        WorkflowDefinition def = new WorkflowDefinition();
+        def.setYaml("jobs: {}");
+        Project project = new Project();
+        project.setId("proj-1");
+        def.setProject(project);
+        WorkflowRun run = new WorkflowRun();
+        run.setId("run-1");
+        run.setWorkflow(def);
+        when(runRepository.findByIdWithWorkflow("run-1")).thenReturn(Optional.of(run));
+
+        when(logRedactionService.redact(eq("proj-1"), anyString())).thenAnswer(inv -> inv.getArgument(1));
+
+        broker.appendLogChunk("run-1", "jobrun-1:0", List.of("new line 1", "new line 2"));
+
+        assertThat(step.getLog()).isEqualTo("existing line\nnew line 1\nnew line 2\n");
+        verify(logRedactionService).redact("proj-1", "new line 1\nnew line 2\n");
+        verify(stepRunRepository).save(step);
+    }
+
+    @Test
+    void appendLogChunk_withoutWorkerJobId_behavesExactlyAsBefore_noStepRowLookup() {
+        broker.appendLogChunk("run-1", List.of("line 1"));
+
+        verifyNoInteractions(jobRunRepository, stepRunRepository, logRedactionService);
+    }
+
+    @Test
+    void appendLogChunk_unknownWorkerJobId_isRunLevelOnly_doesNotCrash() {
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of());
+
+        broker.appendLogChunk("run-1", "does-not-exist", List.of("line 1"));
+
+        verify(stepRunRepository, never()).save(org.mockito.ArgumentMatchers.any());
     }
 
     @Test

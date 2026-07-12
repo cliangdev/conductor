@@ -84,6 +84,7 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
     private final ProjectSettingsRepository projectSettingsRepository;
     private final WorkflowInterpolator interpolator;
     private final ObjectMapper objectMapper;
+    private final WorkflowRunLogBroker logBroker;
     private final String backendBaseUrl;
 
     public ClaudeCodeStepExecutor(CloudRunJobLauncher launcher,
@@ -95,6 +96,7 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
                                    ProjectSettingsRepository projectSettingsRepository,
                                    WorkflowInterpolator interpolator,
                                    ObjectMapper objectMapper,
+                                   WorkflowRunLogBroker logBroker,
                                    @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.launcher = launcher;
         this.runtimeTargetResolver = runtimeTargetResolver;
@@ -105,6 +107,7 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         this.projectSettingsRepository = projectSettingsRepository;
         this.interpolator = interpolator;
         this.objectMapper = objectMapper;
+        this.logBroker = logBroker;
         this.backendBaseUrl = backendBaseUrl;
     }
 
@@ -174,33 +177,52 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         StringBuilder logBuilder = new StringBuilder();
 
         if (priorRow.isPresent() && priorRow.get().getExecutionName() != null) {
-            String executionName = priorRow.get().getExecutionName();
+            WorkflowStepRun inFlightRow = priorRow.get();
+            String executionName = inFlightRow.getExecutionName();
             log.info("claude-code step {} resuming poll on prior Cloud Run execution {} (workerJobId={}), "
                     + "skipping relaunch", stepId, executionName, workerJobId);
-            logBuilder.append("→ Resuming poll on prior Cloud Run execution: ").append(executionName).append("\n");
-            return pollUntilTerminal(target, executionName, jobRun.getId(), workerJobId, stepDef, timeoutMinutes, logBuilder);
+            appendLauncherLine(inFlightRow, projectId, logBuilder,
+                    "→ Resuming poll on prior Cloud Run execution: " + executionName);
+            return pollUntilTerminal(target, executionName, jobRun.getId(), workerJobId, stepDef, timeoutMinutes,
+                    logBuilder, inFlightRow, projectId);
         }
 
         Map<String, String> env = buildEnv(stepDef, ctx, prompt, projectId, runId, jobRun, workerJobId,
                 timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get());
         ContainerTask task = new ContainerTask(image, CONTAINER_COMMAND, env, timeoutMinutes);
 
-        logBuilder.append("→ Launching Cloud Run execution (timeout=").append(timeoutMinutes).append("m)\n");
+        appendLauncherLine(stepRun, projectId, logBuilder,
+                "→ Launching Cloud Run execution (timeout=" + timeoutMinutes + "m)");
 
         String executionName;
         try {
             executionName = launcher.startExecution(target, task);
-            logBuilder.append("← execution: ").append(executionName).append("\n");
+            appendLauncherLine(stepRun, projectId, logBuilder, "← execution: " + executionName);
         } catch (Exception e) {
             log.warn("Failed to start Cloud Run execution for claude-code step {}: {}", stepId, e.getMessage());
-            logBuilder.append("✗ ").append(e.getMessage()).append("\n");
+            appendLauncherLine(stepRun, projectId, logBuilder, "✗ " + e.getMessage());
             return StepResult.failed(logBuilder.toString(), "CLAUDE_LAUNCH_ERROR").withWorkerJobId(workerJobId);
         }
 
         stepRun.setExecutionName(executionName);
         stepRunRepository.save(stepRun);
 
-        return pollUntilTerminal(target, executionName, jobRun.getId(), workerJobId, stepDef, timeoutMinutes, logBuilder);
+        return pollUntilTerminal(target, executionName, jobRun.getId(), workerJobId, stepDef, timeoutMinutes,
+                logBuilder, stepRun, projectId);
+    }
+
+    /**
+     * Appends one launcher-side status line both to the in-memory buffer that becomes
+     * {@link StepResult#getLog()} and to the step row's persisted log (via
+     * {@link WorkflowRunLogBroker#appendToStepLog}), so the run-detail UI reflects launcher progress
+     * without waiting for the step to reach a terminal state. {@code stepRun} must be the same row
+     * {@link WorkflowJobOrchestrator#persistStepRun} will later match by workerJobId — its log-clobber
+     * guard relies on this row already carrying content by the time the terminal {@link StepResult} is
+     * persisted, so every line added to {@code logBuilder} in this class must also flow through here.
+     */
+    private void appendLauncherLine(WorkflowStepRun stepRun, String projectId, StringBuilder logBuilder, String line) {
+        logBuilder.append(line).append("\n");
+        logBroker.appendToStepLog(stepRun, List.of(line), projectId);
     }
 
     /**
@@ -286,7 +308,8 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
      * shape so the timeout path is fast to unit test with {@link #sleepSeconds} overridden to a no-op.
      */
     private StepResult pollUntilTerminal(CloudRunTarget target, String executionName, String jobRunId, String workerJobId,
-                                          Map<String, Object> stepDef, int timeoutMinutes, StringBuilder logBuilder) {
+                                          Map<String, Object> stepDef, int timeoutMinutes, StringBuilder logBuilder,
+                                          WorkflowStepRun stepRun, String projectId) {
         int maxIterations = Math.max(1, (timeoutMinutes * 60) / POLL_INTERVAL_SECONDS);
         for (int i = 0; i < maxIterations; i++) {
             sleepSeconds(POLL_INTERVAL_SECONDS);
@@ -300,12 +323,12 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
             }
 
             if (state.status() != CloudRunJobLauncher.Status.RUNNING) {
-                logBuilder.append("← execution finished: ").append(state.status()).append("\n");
+                appendLauncherLine(stepRun, projectId, logBuilder, "← execution finished: " + state.status());
                 return terminalResult(jobRunId, workerJobId, stepDef, state, logBuilder.toString());
             }
         }
 
-        logBuilder.append("✗ Timed out after ").append(timeoutMinutes).append(" minutes\n");
+        appendLauncherLine(stepRun, projectId, logBuilder, "✗ Timed out after " + timeoutMinutes + " minutes");
         launcher.cancelExecution(target, executionName);
         return StepResult.failed(logBuilder.toString(), "CLAUDE_TIMEOUT").withWorkerJobId(workerJobId);
     }

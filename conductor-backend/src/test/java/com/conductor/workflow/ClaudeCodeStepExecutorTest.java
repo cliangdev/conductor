@@ -17,6 +17,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -42,6 +43,7 @@ class ClaudeCodeStepExecutorTest {
     @Mock private RunTokenService runTokenService;
     @Mock private ProjectSettingsRepository projectSettingsRepository;
     @Mock private RuntimeTargetService runtimeTargetService;
+    @Mock private WorkflowRunLogBroker logBroker;
 
     private RuntimeTargetResolver runtimeTargetResolver;
 
@@ -53,7 +55,7 @@ class ClaudeCodeStepExecutorTest {
                 runtimeTargetService);
         executor = new ClaudeCodeStepExecutor(launcher, runtimeTargetResolver, credentialService,
                 projectApiKeyRepository, stepRunRepository, runTokenService, projectSettingsRepository,
-                new WorkflowInterpolator(), new ObjectMapper(), "http://localhost:8080") {
+                new WorkflowInterpolator(), new ObjectMapper(), logBroker, "http://localhost:8080") {
             @Override
             protected void sleepSeconds(int seconds) {
                 // no-op for fast tests
@@ -364,6 +366,28 @@ class ClaudeCodeStepExecutorTest {
         verify(stepRunRepository, atLeastOnce()).save(captor.capture());
         assertThat(captor.getAllValues())
                 .anySatisfy(row -> assertThat(row.getExecutionName()).isEqualTo("exec-777"));
+    }
+
+    @Test
+    void execute_appendsLauncherLinesToStepRunLogBeforePollingBegins() {
+        stubHappyCredentials();
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.empty());
+
+        executor.execute(context(baseStepDef(), "cloud-run"));
+
+        // The "Launching" line (and the post-launch "execution:" line) must reach the row via the
+        // broker BEFORE any poll is attempted — proving the UI sees launcher progress without
+        // waiting for the step to reach a terminal state, regardless of how long polling takes.
+        InOrder inOrder = inOrder(logBroker, launcher);
+        inOrder.verify(logBroker).appendToStepLog(any(WorkflowStepRun.class),
+                argThat(lines -> lines.size() == 1 && lines.get(0).contains("Launching")), eq(PROJECT_ID));
+        inOrder.verify(logBroker).appendToStepLog(any(WorkflowStepRun.class),
+                argThat(lines -> lines.size() == 1 && lines.get(0).contains("execution: exec-1")), eq(PROJECT_ID));
+        inOrder.verify(launcher).pollExecution(any(CloudRunTarget.class), eq("exec-1"));
     }
 
     @Test

@@ -9,6 +9,7 @@ import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.service.LogRedactionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,6 +51,7 @@ public class WorkflowRunLogBroker {
     private final WorkflowJobRunRepository jobRunRepository;
     private final WorkflowStepRunRepository stepRunRepository;
     private final ObjectMapper objectMapper;
+    private final LogRedactionService logRedactionService;
 
     private final ConcurrentHashMap<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, List<String>> runLogs = new ConcurrentHashMap<>();
@@ -57,11 +59,13 @@ public class WorkflowRunLogBroker {
     public WorkflowRunLogBroker(WorkflowRunRepository runRepository,
                                 WorkflowJobRunRepository jobRunRepository,
                                 WorkflowStepRunRepository stepRunRepository,
-                                ObjectMapper objectMapper) {
+                                ObjectMapper objectMapper,
+                                LogRedactionService logRedactionService) {
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
         this.objectMapper = objectMapper;
+        this.logRedactionService = logRedactionService;
     }
 
     /**
@@ -92,13 +96,73 @@ public class WorkflowRunLogBroker {
         return emitter;
     }
 
-    /** Buffer log lines for a run and fan them out to any live subscriber. */
+    /** Buffer log lines for a run and fan them out to any live subscriber. No step-row persistence. */
     public void appendLogChunk(String runId, List<String> lines) {
+        appendLogChunk(runId, null, lines);
+    }
+
+    /**
+     * Buffer log lines for a run (SSE fan-out + run-level buffer, unconditional — same as the
+     * 2-arg overload) and, when {@code workerJobId} is present, ALSO append them to that step's
+     * persisted {@code log} column so the run-detail REST API and the polling UI show live
+     * container output instead of only the terminal launcher summary. {@code workerJobId} is
+     * optional for backward compat with runner images that don't send it yet; an unresolvable
+     * workerJobId (already-cleaned-up run, race with row creation) degrades to run-level-only
+     * buffering rather than failing the callback.
+     */
+    public void appendLogChunk(String runId, String workerJobId, List<String> lines) {
         runLogs.computeIfAbsent(runId, k -> Collections.synchronizedList(new ArrayList<>())).addAll(lines);
         SseEmitter emitter = activeEmitters.get(runId);
         if (emitter != null) {
             sendLogChunk(emitter, lines);
         }
+        if (workerJobId == null || lines.isEmpty()) {
+            return;
+        }
+        Optional<WorkflowStepRun> step = findStepRunByWorkerJobId(runId, workerJobId);
+        if (step.isPresent()) {
+            appendToStepLog(step.get(), lines, resolveProjectId(runId));
+        } else {
+            log.debug("appendLogChunk: no step run found for workerJobId {} in run {}, buffered at "
+                    + "run-level only", workerJobId, runId);
+        }
+    }
+
+    private Optional<WorkflowStepRun> findStepRunByWorkerJobId(String runId, String workerJobId) {
+        List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(runId);
+        for (WorkflowJobRun jobRun : jobRuns) {
+            for (WorkflowStepRun step : stepRunRepository.findByJobRunId(jobRun.getId())) {
+                if (workerJobId.equals(step.getWorkerJobId())) {
+                    return Optional.of(step);
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    private String resolveProjectId(String runId) {
+        return runRepository.findByIdWithWorkflow(runId)
+                .map(r -> r.getWorkflow().getProject().getId())
+                .orElse(null);
+    }
+
+    /**
+     * Appends log lines to a step run's persisted {@code log} column (redacting secrets first) and
+     * saves. Shared by the streamed log-chunk callback above and {@link ClaudeCodeStepExecutor}'s
+     * launcher-side status lines, so both land on the row in arrival order. Plain read-modify-write:
+     * concurrent chunk posts for one step are unlikely (single container, ~2s batches) so no
+     * sequencing/locking is attempted — a rare interleaving could drop a line, an acceptable
+     * tradeoff for a display-only log.
+     */
+    void appendToStepLog(WorkflowStepRun step, List<String> lines, String projectId) {
+        if (lines.isEmpty()) {
+            return;
+        }
+        String chunk = String.join("\n", lines) + "\n";
+        String redacted = projectId != null ? logRedactionService.redact(projectId, chunk) : chunk;
+        String existing = step.getLog();
+        step.setLog(existing != null ? existing + redacted : redacted);
+        stepRunRepository.save(step);
     }
 
     /** Record step outputs for a worker job (idempotent; unknown job is a no-op). */

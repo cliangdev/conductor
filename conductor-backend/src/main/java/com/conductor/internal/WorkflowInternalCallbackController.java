@@ -46,7 +46,7 @@ public class WorkflowInternalCallbackController implements WorkflowInternalApi {
             return ResponseEntity.status(401).build();
         }
         List<String> lines = body.getLines() != null ? body.getLines() : Collections.emptyList();
-        broker.appendLogChunk(runId, lines);
+        broker.appendLogChunk(runId, body.getWorkerJobId(), lines);
         return ResponseEntity.ok().build();
     }
 

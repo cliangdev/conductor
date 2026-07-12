@@ -410,6 +410,8 @@ jobs:
 | `timeout_minutes` | `30` | Hard wall-clock timeout for the whole step (integer, 1–120). Enforced inside the container (SIGTERM, then SIGKILL) — the step fails with `CLAUDE_TIMEOUT` if exceeded. |
 | `output_schema` | — | JSON Schema requesting a structured JSON answer, passed to `--json-schema`. |
 
+**Live logs** — the run detail view streams the step's activity while it runs: a container-started line, then one compact line per Claude turn/tool call (`→ tool: Read {...}`, `💬 …`), ending with `✓ done: N turns`. Lines persist on the step, so they're also there after the run. The container can always read its own `/conductor/inputs/` files — no `allowed_tools` entry needed for that.
+
 The step exposes these outputs:
 
 | Output | Description |
