@@ -252,6 +252,31 @@ class WorkflowRunLogBrokerTest {
     }
 
     @Test
+    void appendToStepLog_staleCallerEntity_doesNotWipeChunksAlreadyOnTheRow() {
+        // The executor holds its entity across the whole step execution; container chunks land on
+        // the row in the meantime. The terminal append must re-read the row, not save the stale copy
+        // (the bug showed as "claude logs vanish when the step completes").
+        WorkflowStepRun stale = new WorkflowStepRun();
+        stale.setId("step-1");
+        stale.setWorkerJobId("jobrun-1:0");
+        stale.setLog("→ Launching\n← execution: exec-1\n");
+
+        WorkflowStepRun fresh = new WorkflowStepRun();
+        fresh.setId("step-1");
+        fresh.setWorkerJobId("jobrun-1:0");
+        fresh.setLog("→ Launching\n← execution: exec-1\n→ tool: Read\n💬 analyzing…\n");
+        when(stepRunRepository.findById("step-1")).thenReturn(Optional.of(fresh));
+
+        broker.appendToStepLog(stale, List.of("← execution finished: SUCCEEDED"), null);
+
+        verify(stepRunRepository).save(fresh);
+        assertThat(fresh.getLog()).isEqualTo(
+                "→ Launching\n← execution: exec-1\n→ tool: Read\n💬 analyzing…\n← execution finished: SUCCEEDED\n");
+        // Caller's copy is synced forward so later appends through it can't resurrect the stale prefix.
+        assertThat(stale.getLog()).isEqualTo(fresh.getLog());
+    }
+
+    @Test
     void appendLogChunk_withoutWorkerJobId_behavesExactlyAsBefore_noStepRowLookup() {
         broker.appendLogChunk("run-1", List.of("line 1"));
 

@@ -149,10 +149,16 @@ public class WorkflowRunLogBroker {
     /**
      * Appends log lines to a step run's persisted {@code log} column (redacting secrets first) and
      * saves. Shared by the streamed log-chunk callback above and {@link ClaudeCodeStepExecutor}'s
-     * launcher-side status lines, so both land on the row in arrival order. Plain read-modify-write:
-     * concurrent chunk posts for one step are unlikely (single container, ~2s batches) so no
-     * sequencing/locking is attempted — a rare interleaving could drop a line, an acceptable
-     * tradeoff for a display-only log.
+     * launcher-side status lines, so both land on the row in arrival order.
+     *
+     * <p>The row is ALWAYS re-read fresh by id before appending: callers (the executor in
+     * particular) hold their entity across the whole step execution, so appending to the caller's
+     * in-memory copy and saving it would overwrite every container-streamed chunk that landed on
+     * the row in the meantime with the caller's stale snapshot — seen live as "the claude logs
+     * vanish when the step completes". Plain fresh read-modify-write beyond that: concurrent chunk
+     * posts for one step are unlikely (single container, ~2s batches) so no sequencing/locking is
+     * attempted — a rare interleaving could drop a line, an acceptable tradeoff for a display-only
+     * log.
      */
     void appendToStepLog(WorkflowStepRun step, List<String> lines, String projectId) {
         if (lines.isEmpty()) {
@@ -160,9 +166,15 @@ public class WorkflowRunLogBroker {
         }
         String chunk = String.join("\n", lines) + "\n";
         String redacted = projectId != null ? logRedactionService.redact(projectId, chunk) : chunk;
-        String existing = step.getLog();
-        step.setLog(existing != null ? existing + redacted : redacted);
-        stepRunRepository.save(step);
+        WorkflowStepRun fresh = step.getId() != null
+                ? stepRunRepository.findById(step.getId()).orElse(step)
+                : step;
+        String existing = fresh.getLog();
+        fresh.setLog(existing != null ? existing + redacted : redacted);
+        stepRunRepository.save(fresh);
+        // Keep the caller's copy consistent so a later append through the same reference doesn't
+        // resurrect a stale prefix if the row lookup above ever misses.
+        step.setLog(fresh.getLog());
     }
 
     /** Record step outputs for a worker job (idempotent; unknown job is a no-op). */
