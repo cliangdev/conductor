@@ -3,6 +3,12 @@ package com.conductor.workflow;
 import com.conductor.entity.*;
 import com.conductor.repository.*;
 import com.conductor.service.LogRedactionService;
+import com.conductor.workflow.model.JobSpec;
+import com.conductor.workflow.model.LoopSpec;
+import com.conductor.workflow.model.StepSpec;
+import com.conductor.workflow.model.WorkflowSpec;
+import com.conductor.workflow.model.WorkflowYamlException;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
@@ -33,6 +39,7 @@ public class WorkflowJobOrchestrator {
     private final ObjectMapper objectMapper;
     private final SelfHostedJobDispatcher selfHostedJobDispatcher;
     private final UpstreamOutputsResolver upstreamOutputsResolver;
+    private final WorkflowYamlParser yamlParser;
 
     // Self-reference injected lazily so @Transactional helpers are invoked through the Spring proxy
     // even when called from the same class. Required because executeJob() is deliberately NOT
@@ -53,7 +60,8 @@ public class WorkflowJobOrchestrator {
                                    List<WorkflowExecutionBackend> backends,
                                    ObjectMapper objectMapper,
                                    SelfHostedJobDispatcher selfHostedJobDispatcher,
-                                   UpstreamOutputsResolver upstreamOutputsResolver) {
+                                   UpstreamOutputsResolver upstreamOutputsResolver,
+                                   WorkflowYamlParser yamlParser) {
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
         this.runRepository = runRepository;
@@ -66,6 +74,7 @@ public class WorkflowJobOrchestrator {
         this.objectMapper = objectMapper;
         this.selfHostedJobDispatcher = selfHostedJobDispatcher;
         this.upstreamOutputsResolver = upstreamOutputsResolver;
+        this.yamlParser = yamlParser;
         Map<String, WorkflowExecutionBackend> backendMap = new HashMap<>();
         for (WorkflowExecutionBackend b : backends) backendMap.put(b.getStepType(), b);
         this.backends = backendMap;
@@ -109,17 +118,15 @@ public class WorkflowJobOrchestrator {
         }
 
         WorkflowDefinition workflow = run.getWorkflow();
-        Map<String, Object> parsedWorkflow = parseYaml(workflow.getYaml());
+        WorkflowSpec parsedWorkflow = parseYaml(workflow.getYaml());
         if (parsedWorkflow == null) return null;
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> jobs = (Map<String, Object>) parsedWorkflow.get("jobs");
-        if (jobs == null || !jobs.containsKey(jobId)) return null;
+        Map<String, JobSpec> jobs = parsedWorkflow.jobs();
+        if (!jobs.containsKey(jobId)) return null;
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> jobDef = (Map<String, Object>) jobs.get(jobId);
+        JobSpec jobDef = jobs.get(jobId);
 
-        boolean selfHosted = "self-hosted".equals(jobDef.get("runs-on"));
+        boolean selfHosted = "self-hosted".equals(jobDef.runsOn());
         if (selfHosted) {
             // Lock the run row so a duplicate readiness trigger for this job (e.g. two dependents in
             // a diamond `needs` both becoming ready at once) can't race past the check below and
@@ -141,19 +148,22 @@ public class WorkflowJobOrchestrator {
         String projectId = workflow.getProject().getId();
         int loopIteration = jobRun.getIteration() + 1;
 
-        String ifCondition = (String) jobDef.get("if");
-        if (ifCondition != null) {
-            Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
-            Map<String, String> secrets = contextBuilder.loadSecrets(projectId);
-            RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
-            String interpolated = interpolator.interpolate(ifCondition, ctx);
-            if (!conditionEvaluator.evaluate(interpolated)) {
-                jobRun.setStatus(WorkflowJobStatus.SKIPPED);
-                jobRun.setCompletedAt(OffsetDateTime.now());
-                jobRunRepository.save(jobRun);
-                propagateSkipToDependents(run, jobId, jobs);
-                return JobExecutionPlan.complete();
-            }
+        // Effective condition: the job's explicit `if:`, or an implicit `success()` — every job is
+        // now gated the same way GitHub Actions gates jobs, rather than only jobs that declared `if:`.
+        Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
+        Map<String, String> secrets = contextBuilder.loadSecrets(projectId);
+        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, jobDef.needs(), loopIteration);
+        ConditionStatusContext statusContext = statusContextOf(ctx);
+        String effectiveCondition = jobDef.ifCondition() != null ? jobDef.ifCondition() : "success()";
+        String interpolated = interpolator.interpolate(effectiveCondition, ctx);
+        if (!conditionEvaluator.evaluate(interpolated, statusContext)) {
+            jobRun.setStatus(WorkflowJobStatus.SKIPPED);
+            jobRun.setCompletedAt(OffsetDateTime.now());
+            jobRunRepository.save(jobRun);
+            // Not a hard-skip cascade: dependents become ready (SKIPPED is terminal) and evaluate
+            // their own conditions — a skipped need doesn't count as failed for their success().
+            enqueueReadyDependents(run, jobId, jobs);
+            return JobExecutionPlan.complete();
         }
 
         if (selfHosted) {
@@ -163,18 +173,25 @@ public class WorkflowJobOrchestrator {
             return JobExecutionPlan.complete();
         }
 
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> steps = (List<Map<String, Object>>) jobDef.get("steps");
-        if (steps == null) steps = List.of();
-        List<Map<String, Object>> executableSteps = steps.stream()
-                .filter(s -> !"condition".equals(s.get("type")))
-                .toList();
-
-        Map<String, String> secrets = contextBuilder.loadSecrets(projectId);
-        Map<String, Map<String, String>> upstreamOutputs = collectUpstreamOutputs(run, jobs, jobId);
+        List<StepSpec> executableSteps = jobDef.executableSteps();
 
         return new JobExecutionPlan(runId, jobId, jobRun.getId(), projectId, loopIteration,
-                jobs, jobDef, steps, executableSteps, secrets, upstreamOutputs, false);
+                jobs, jobDef, jobDef.steps(), executableSteps, secrets, upstreamOutputs, statusContext, false);
+    }
+
+    /**
+     * Derives the {@code always()}/{@code success()}/{@code failure()} facts from a context's job
+     * results. {@code allUpstreamSucceeded} is false for a SKIPPED need too (not just FAILED/
+     * LOOP_EXHAUSTED) — a skip cascades through the default {@code success()} condition, matching
+     * GitHub Actions — while {@code anyUpstreamFailed} stays false for a skip (only a real failure
+     * trips {@code failure()}). An empty needs list is vacuously "all succeeded" (root jobs still
+     * run by default).
+     */
+    private ConditionStatusContext statusContextOf(RuntimeContext ctx) {
+        Collection<String> results = ctx.getJobResults().values();
+        boolean anyUpstreamFailed = results.stream().anyMatch("failure"::equals);
+        boolean allUpstreamSucceeded = results.stream().allMatch("success"::equals);
+        return new ConditionStatusContext(anyUpstreamFailed, allUpstreamSucceeded);
     }
 
     /**
@@ -184,14 +201,15 @@ public class WorkflowJobOrchestrator {
      */
     private boolean runSteps(JobExecutionPlan plan) {
         boolean jobFailed = false;
-        String runsOn = (String) plan.jobDef.get("runs-on");
-        for (Map<String, Object> stepDef : plan.executableSteps) {
+        String runsOn = plan.jobDef.runsOn();
+        for (StepSpec stepDef : plan.executableSteps) {
             if (jobFailed) break;
             RuntimeContext ctx = self.buildStepContext(plan.runId, plan.jobRunId,
-                    plan.secrets, plan.upstreamOutputs, plan.loopIteration);
-            StepResult result = runStep(plan.runId, plan.jobRunId, stepDef, ctx, plan.projectId, runsOn);
+                    plan.secrets, plan.upstreamOutputs, plan.jobDef.needs(), plan.loopIteration);
+            StepResult result = runStep(plan.runId, plan.jobRunId, stepDef, ctx, plan.projectId, runsOn,
+                    plan.jobDef.consumes(), plan.statusContext);
             self.persistStepResult(plan.jobRunId, stepDef, result, plan.projectId);
-            if (result.getStatus() == WorkflowStepStatus.FAILED) {
+            if (result.getStatus() == WorkflowStepStatus.FAILED && !stepDef.continueOnError()) {
                 jobFailed = true;
             }
         }
@@ -202,13 +220,14 @@ public class WorkflowJobOrchestrator {
      * Runs a single step's backend. NO transaction here — backend.execute() may block for
      * minutes on external I/O (HTTP timeouts, Docker polling, Kestra polling).
      */
-    private StepResult runStep(String runId, String jobRunId, Map<String, Object> stepDef,
-                               RuntimeContext ctx, String projectId, String runsOn) {
-        String stepType = resolveStepType(stepDef);
-        String ifCond = (String) stepDef.get("if");
+    private StepResult runStep(String runId, String jobRunId, StepSpec stepDef,
+                               RuntimeContext ctx, String projectId, String runsOn,
+                               List<String> consumes, ConditionStatusContext statusContext) {
+        String stepType = stepDef.type();
+        String ifCond = stepDef.ifCondition();
         if (ifCond != null) {
             String interpolated = interpolator.interpolate(ifCond, ctx);
-            if (!conditionEvaluator.evaluate(interpolated)) {
+            if (!conditionEvaluator.evaluate(interpolated, statusContext)) {
                 return StepResult.skipped();
             }
         }
@@ -218,21 +237,9 @@ public class WorkflowJobOrchestrator {
             return StepResult.failed("", "Unknown step type: " + stepType);
         }
 
-        // When using the `uses: <type>` + `with: {...}` format, flatten `with` params into the
-        // stepDef so executors can read them the same way as the legacy flat-key format.
-        Map<String, Object> effectiveStepDef = stepDef;
-        if (stepDef.containsKey("uses") && stepDef.containsKey("with")) {
-            Object withObj = stepDef.get("with");
-            if (withObj instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> withParams = (Map<String, Object>) withObj;
-                effectiveStepDef = new java.util.HashMap<>(stepDef);
-                effectiveStepDef.putAll(withParams);
-            }
-        }
-
         // Executors only read non-lazy primitives (IDs). Load once inside a short read-only tx.
-        StepExecutionContext execCtx = self.buildStepExecutionContext(runId, jobRunId, effectiveStepDef, ctx, projectId, runsOn);
+        StepExecutionContext execCtx =
+                self.buildStepExecutionContext(runId, jobRunId, stepDef.effectiveConfig(), ctx, projectId, runsOn, consumes);
         return backend.execute(execCtx);
     }
 
@@ -240,28 +247,37 @@ public class WorkflowJobOrchestrator {
     public StepExecutionContext buildStepExecutionContext(String runId, String jobRunId,
                                                           Map<String, Object> stepDef,
                                                           RuntimeContext ctx, String projectId, String runsOn) {
+        return buildStepExecutionContext(runId, jobRunId, stepDef, ctx, projectId, runsOn, List.of());
+    }
+
+    @Transactional(readOnly = true)
+    public StepExecutionContext buildStepExecutionContext(String runId, String jobRunId,
+                                                          Map<String, Object> stepDef,
+                                                          RuntimeContext ctx, String projectId, String runsOn,
+                                                          List<String> consumes) {
         WorkflowRun run = runRepository.findById(runId).orElseThrow();
         WorkflowJobRun jobRun = jobRunRepository.findById(jobRunId).orElseThrow();
-        return new StepExecutionContext(run, jobRun, stepDef, ctx, projectId, runsOn);
+        return new StepExecutionContext(run, jobRun, stepDef, ctx, projectId, runsOn, consumes);
     }
 
     @Transactional(readOnly = true)
     public RuntimeContext buildStepContext(String runId, String jobRunId,
                                            Map<String, String> secrets,
                                            Map<String, Map<String, String>> upstreamOutputs,
+                                           List<String> needs,
                                            int loopIteration) {
         WorkflowRun run = runRepository.findById(runId).orElseThrow();
         WorkflowJobRun jobRun = jobRunRepository.findById(jobRunId).orElseThrow();
-        return contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
+        return contextBuilder.build(run, jobRun, secrets, upstreamOutputs, needs, loopIteration);
     }
 
     @Transactional
-    public void persistStepResult(String jobRunId, Map<String, Object> stepDef,
+    public void persistStepResult(String jobRunId, StepSpec stepDef,
                                    StepResult result, String projectId) {
         WorkflowJobRun jobRun = jobRunRepository.findById(jobRunId).orElseThrow();
-        String stepId = (String) stepDef.get("id");
-        String stepName = (String) stepDef.getOrDefault("name", "unnamed");
-        String stepType = resolveStepType(stepDef);
+        String stepId = stepDef.id();
+        String stepName = stepDef.name() != null ? stepDef.name() : "unnamed";
+        String stepType = stepDef.type();
         persistStepRun(jobRun, stepId, stepName, stepType, result, projectId);
     }
 
@@ -278,22 +294,23 @@ public class WorkflowJobOrchestrator {
             jobRun.setStatus(WorkflowJobStatus.FAILED);
             jobRun.setCompletedAt(OffsetDateTime.now());
             jobRunRepository.save(jobRun);
-            propagateFailureToDependents(run, plan.jobId, plan.jobs);
+            // FAILED is terminal like any other outcome now — dependents become ready and decide
+            // for themselves (via if: failure()/always()/success()) whether to run or skip.
+            enqueueReadyDependents(run, plan.jobId, plan.jobs);
             return;
         }
 
-        List<Map<String, Object>> steps = plan.allSteps;
-        Map<String, Object> lastStep = steps.isEmpty() ? null : steps.get(steps.size() - 1);
-        if (lastStep != null && "condition".equals(lastStep.get("type"))) {
+        List<StepSpec> steps = plan.allSteps;
+        StepSpec lastStep = steps.isEmpty() ? null : steps.get(steps.size() - 1);
+        if (lastStep != null && "condition".equals(lastStep.type())) {
             handleConditionStep(run, jobRun, lastStep, plan.secrets, plan.upstreamOutputs,
                     plan.loopIteration, plan.jobId, plan.jobs);
             return;
         }
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> loopDef = (Map<String, Object>) plan.jobDef.get("loop");
+        LoopSpec loopDef = plan.jobDef.loop();
         if (loopDef != null) {
-            handleLoop(run, jobRun, plan.jobDef, loopDef, plan.jobId, plan.jobs,
+            handleLoop(run, jobRun, loopDef, plan.jobId, plan.jobs,
                     plan.secrets, plan.upstreamOutputs, plan.loopIteration);
             return;
         }
@@ -344,15 +361,12 @@ public class WorkflowJobOrchestrator {
         jobRun.setCompletedAt(OffsetDateTime.now());
         jobRunRepository.save(jobRun);
 
-        Map<String, Object> parsedWorkflow = parseYaml(run.getWorkflow().getYaml());
-        @SuppressWarnings("unchecked")
-        Map<String, Object> jobs = parsedWorkflow != null ? (Map<String, Object>) parsedWorkflow.get("jobs") : null;
+        WorkflowSpec parsedWorkflow = parseYaml(run.getWorkflow().getYaml());
+        Map<String, JobSpec> jobs = parsedWorkflow != null ? parsedWorkflow.jobs() : null;
         if (jobs != null) {
-            if (terminalStatus == WorkflowJobStatus.FAILED) {
-                propagateFailureToDependents(run, jobId, jobs);
-            } else {
-                enqueueReadyDependents(run, jobId, jobs);
-            }
+            // FAILED is terminal like SUCCESS/SKIPPED now — dependents become ready either way and
+            // decide for themselves via their own (explicit or implicit) condition.
+            enqueueReadyDependents(run, jobId, jobs);
         } else {
             log.warn("completeRemoteJob: could not parse workflow YAML for run {} — dependents of job {} "
                     + "not propagated; run will rely on the cleanup sweep", runId, jobId);
@@ -381,21 +395,21 @@ public class WorkflowJobOrchestrator {
         return jobRunRepository.save(jr);
     }
 
-    @SuppressWarnings("unchecked")
     private void handleLoop(WorkflowRun run, WorkflowJobRun jobRun,
-                            Map<String, Object> jobDef,
-                            Map<String, Object> loopDef,
-                            String jobId, Map<String, Object> jobs,
+                            LoopSpec loopDef,
+                            String jobId, Map<String, JobSpec> jobs,
                             Map<String, String> secrets,
                             Map<String, Map<String, String>> upstreamOutputs,
                             int loopIteration) {
-        int maxIterations = ((Number) loopDef.get("max_iterations")).intValue();
-        String untilExpr = (String) loopDef.get("until");
-        boolean failOnExhausted = !Boolean.FALSE.equals(loopDef.get("fail_on_exhausted"));
+        int maxIterations = loopDef.maxIterations();
+        String untilExpr = loopDef.until();
+        boolean failOnExhausted = loopDef.failOnExhausted();
 
-        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
+        JobSpec jobDef = jobs.get(jobId);
+        List<String> needs = jobDef != null ? jobDef.needs() : List.of();
+        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, needs, loopIteration);
         String interpolated = interpolator.interpolate(untilExpr, ctx);
-        boolean isDone = conditionEvaluator.evaluate(interpolated);
+        boolean isDone = conditionEvaluator.evaluate(interpolated, statusContextOf(ctx));
 
         if (isDone) {
             jobRun.setStatus(WorkflowJobStatus.SUCCESS);
@@ -422,28 +436,29 @@ public class WorkflowJobOrchestrator {
             jobRun.setCompletedAt(OffsetDateTime.now());
             jobRunRepository.save(jobRun);
 
-            if (failOnExhausted) {
-                propagateFailureToDependents(run, jobId, jobs);
-            } else {
-                enqueueReadyDependents(run, jobId, jobs);
-            }
+            // LOOP_EXHAUSTED is terminal like FAILED — dependents become ready either way.
+            enqueueReadyDependents(run, jobId, jobs);
         }
     }
 
-    @SuppressWarnings("unchecked")
     private void handleConditionStep(WorkflowRun run, WorkflowJobRun jobRun,
-                                     Map<String, Object> conditionStep,
+                                     StepSpec conditionStep,
                                      Map<String, String> secrets,
                                      Map<String, Map<String, String>> upstreamOutputs,
                                      int loopIteration,
-                                     String jobId, Map<String, Object> jobs) {
-        String expression = (String) conditionStep.get("expression");
-        String thenJobId = (String) conditionStep.get("then");
-        String elseJobId = (String) conditionStep.get("else");
+                                     String jobId, Map<String, JobSpec> jobs) {
+        Object expressionVal = conditionStep.raw().get("expression");
+        String expression = expressionVal != null ? expressionVal.toString() : null;
+        Object thenVal = conditionStep.raw().get("then");
+        Object elseVal = conditionStep.raw().get("else");
+        String thenJobId = thenVal != null ? thenVal.toString() : null;
+        String elseJobId = elseVal != null ? elseVal.toString() : null;
 
-        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, loopIteration);
+        JobSpec jobDef = jobs.get(jobId);
+        List<String> needs = jobDef != null ? jobDef.needs() : List.of();
+        RuntimeContext ctx = contextBuilder.build(run, jobRun, secrets, upstreamOutputs, needs, loopIteration);
         String interpolated = interpolator.interpolate(expression, ctx);
-        boolean result = conditionEvaluator.evaluate(interpolated);
+        boolean result = conditionEvaluator.evaluate(interpolated, statusContextOf(ctx));
 
         String activeJobId = result ? thenJobId : elseJobId;
         String skippedJobId = result ? elseJobId : thenJobId;
@@ -451,7 +466,7 @@ public class WorkflowJobOrchestrator {
 
         if (skippedJobId != null) {
             skipJobWithReason(run, skippedJobId, "Condition routed to " + branchName + " branch");
-            propagateSkipToDependents(run, skippedJobId, jobs);
+            hardSkipClosure(run, skippedJobId, jobs, "Ancestor routed to " + branchName + " branch");
         }
         if (activeJobId != null) {
             engine.enqueueJob(run.getId(), activeJobId);
@@ -515,56 +530,64 @@ public class WorkflowJobOrchestrator {
         stepRunRepository.save(stepRun);
     }
 
-    private void propagateSkipToDependents(WorkflowRun run, String skippedJobId, Map<String, Object> jobs) {
-        for (Map.Entry<String, Object> entry : jobs.entrySet()) {
-            if (!(entry.getValue() instanceof Map)) continue;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> job = (Map<String, Object>) entry.getValue();
-            List<String> needs = getNeedsList(job);
-            if (needs.contains(skippedJobId)) {
-                skipJob(run, entry.getKey());
-                propagateSkipToDependents(run, entry.getKey(), jobs);
+    /**
+     * Hard-skips the untaken branch of a condition step: {@code rootJobId} itself (already marked
+     * SKIPPED by the caller) plus its <b>exclusive</b> descendants — jobs whose every {@code needs}
+     * entry is inside this skip closure. A job that also needs something from the taken branch (a
+     * reconvergence point) is deliberately left alone: it isn't reachable any other way once its
+     * skipped need becomes SKIPPED/terminal (the untaken branch's root is never enqueued, so without
+     * this hard-skip, its exclusive descendants would never be scheduled at all — but a reconvergent
+     * job WILL still get scheduled once its other, live need completes, via {@link
+     * #enqueueReadyDependents}, and it decides for itself via its own condition).
+     *
+     * <p>Computed as a fixed point rather than a single top-down recursion so traversal order can't
+     * cause a reconvergent job to be (incorrectly) skipped just because it's visited before its other
+     * need has been resolved.
+     */
+    private void hardSkipClosure(WorkflowRun run, String rootJobId, Map<String, JobSpec> jobs, String reason) {
+        Set<String> closure = new HashSet<>();
+        closure.add(rootJobId);
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (JobSpec job : jobs.values()) {
+                if (closure.contains(job.id())) continue;
+                List<String> needs = job.needs();
+                if (needs.isEmpty()) continue;
+                if (closure.containsAll(needs)) {
+                    closure.add(job.id());
+                    changed = true;
+                }
             }
+        }
+        closure.remove(rootJobId);
+        for (String jobId : closure) {
+            skipJobWithReason(run, jobId, reason);
         }
     }
 
-    private void propagateFailureToDependents(WorkflowRun run, String failedJobId, Map<String, Object> jobs) {
-        for (Map.Entry<String, Object> entry : jobs.entrySet()) {
-            if (!(entry.getValue() instanceof Map)) continue;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> job = (Map<String, Object>) entry.getValue();
-            List<String> needs = getNeedsList(job);
-            if (needs.contains(failedJobId)) {
-                skipJob(run, entry.getKey());
-                propagateSkipToDependents(run, entry.getKey(), jobs);
-            }
-        }
-    }
-
-    private void enqueueReadyDependents(WorkflowRun run, String completedJobId, Map<String, Object> jobs) {
+    /**
+     * Enqueues every dependent whose {@code needs} are now all TERMINAL (SUCCESS, FAILED, SKIPPED,
+     * or LOOP_EXHAUSTED) — readiness no longer requires the needs to have succeeded. Each dependent
+     * decides for itself, via its own (explicit or implicit {@code success()}) condition in {@link
+     * #planJobExecution}, whether to run or skip.
+     */
+    private void enqueueReadyDependents(WorkflowRun run, String completedJobId, Map<String, JobSpec> jobs) {
         List<WorkflowJobRun> existingJobRuns = jobRunRepository.findByRunId(run.getId());
-        Set<String> completedJobIds = new HashSet<>();
+        Set<String> terminalJobIds = new HashSet<>();
         for (WorkflowJobRun jr : existingJobRuns) {
-            if (jr.getStatus() == WorkflowJobStatus.SUCCESS || jr.getStatus() == WorkflowJobStatus.SKIPPED) {
-                completedJobIds.add(jr.getJobId());
+            if (isTerminalJobStatus(jr.getStatus())) {
+                terminalJobIds.add(jr.getJobId());
             }
         }
 
-        for (Map.Entry<String, Object> entry : jobs.entrySet()) {
-            String jobId = entry.getKey();
-            if (completedJobIds.contains(jobId)) continue;
-            if (!(entry.getValue() instanceof Map)) continue;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> job = (Map<String, Object>) entry.getValue();
-            List<String> needs = getNeedsList(job);
-            if (!needs.isEmpty() && completedJobIds.containsAll(needs)) {
-                engine.enqueueJob(run.getId(), jobId);
+        for (JobSpec job : jobs.values()) {
+            if (terminalJobIds.contains(job.id())) continue;
+            List<String> needs = job.needs();
+            if (!needs.isEmpty() && terminalJobIds.containsAll(needs)) {
+                engine.enqueueJob(run.getId(), job.id());
             }
         }
-    }
-
-    private void skipJob(WorkflowRun run, String jobId) {
-        skipJobWithReason(run, jobId, null);
     }
 
     private void skipJobWithReason(WorkflowRun run, String jobId, String reason) {
@@ -584,28 +607,16 @@ public class WorkflowJobOrchestrator {
     }
 
     private Map<String, Map<String, String>> collectUpstreamOutputs(WorkflowRun run,
-                                                                     Map<String, Object> jobs,
+                                                                     Map<String, JobSpec> jobs,
                                                                      String currentJobId) {
         return upstreamOutputsResolver.collectUpstreamOutputs(run, jobs, currentJobId);
     }
 
-    private List<String> getNeedsList(Map<String, Object> job) {
-        return upstreamOutputsResolver.getNeedsList(job);
-    }
-
-    private String resolveStepType(Map<String, Object> stepDef) {
-        Object usesVal = stepDef.get("uses");
-        if (usesVal instanceof String uses) {
-            if (uses.startsWith("docker://")) return "docker";
-            return uses;  // "integration", "http", "kestra", "condition"
-        }
-        return (String) stepDef.getOrDefault("type", "http");
-    }
-
-    private Map<String, Object> parseYaml(String yaml) {
+    /** Parses a workflow's stored YAML, degrading to null (like the old SnakeYAML try/catch) on malformed YAML. */
+    private WorkflowSpec parseYaml(String yaml) {
         try {
-            return new org.yaml.snakeyaml.Yaml().load(yaml);
-        } catch (Exception e) {
+            return yamlParser.parse(yaml);
+        } catch (WorkflowYamlException e) {
             log.error("Failed to parse YAML: {}", e.getMessage());
             return null;
         }
@@ -622,19 +633,21 @@ public class WorkflowJobOrchestrator {
         final String jobRunId;
         final String projectId;
         final int loopIteration;
-        final Map<String, Object> jobs;
-        final Map<String, Object> jobDef;
-        final List<Map<String, Object>> allSteps;
-        final List<Map<String, Object>> executableSteps;
+        final Map<String, JobSpec> jobs;
+        final JobSpec jobDef;
+        final List<StepSpec> allSteps;
+        final List<StepSpec> executableSteps;
         final Map<String, String> secrets;
         final Map<String, Map<String, String>> upstreamOutputs;
+        /** always()/success()/failure() facts for this job's needs — reused for every step's if:. */
+        final ConditionStatusContext statusContext;
         final boolean done;
 
         JobExecutionPlan(String runId, String jobId, String jobRunId, String projectId,
-                         int loopIteration, Map<String, Object> jobs, Map<String, Object> jobDef,
-                         List<Map<String, Object>> allSteps, List<Map<String, Object>> executableSteps,
+                         int loopIteration, Map<String, JobSpec> jobs, JobSpec jobDef,
+                         List<StepSpec> allSteps, List<StepSpec> executableSteps,
                          Map<String, String> secrets, Map<String, Map<String, String>> upstreamOutputs,
-                         boolean done) {
+                         ConditionStatusContext statusContext, boolean done) {
             this.runId = runId;
             this.jobId = jobId;
             this.jobRunId = jobRunId;
@@ -646,12 +659,13 @@ public class WorkflowJobOrchestrator {
             this.executableSteps = executableSteps;
             this.secrets = secrets;
             this.upstreamOutputs = upstreamOutputs;
+            this.statusContext = statusContext;
             this.done = done;
         }
 
         static JobExecutionPlan complete() {
             return new JobExecutionPlan(null, null, null, null, 0,
-                    null, null, null, null, null, null, true);
+                    null, null, null, null, null, null, null, true);
         }
     }
 }

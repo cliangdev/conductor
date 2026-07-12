@@ -25,15 +25,61 @@ function assert(cond, message) {
   }
 }
 
-/** Starts a fake Conductor backend capturing log-chunk and step-complete POST bodies. */
+/**
+ * Starts a fake Conductor backend capturing log-chunk and step-complete POST bodies, plus a
+ * minimal artifact protocol: POST /artifacts declares one (returns a same-origin PUT upload URL,
+ * exercising the "no Authorization header on a foreign signed URL" branch is covered by unit tests
+ * elsewhere — this fake backend only stands in for the local-passthrough shape), PUT
+ * /artifacts/:id/content captures the uploaded bytes, POST /artifacts/:id/complete records it, and
+ * GET /download/:name serves canned bytes for consumed-artifact download tests.
+ */
 function startFakeBackend() {
-  const calls = { logChunks: [], stepComplete: null, authHeaders: [] };
+  const calls = { logChunks: [], stepComplete: null, authHeaders: [], artifactContent: {}, artifactCompleted: [] };
+  const downloads = {};
+  let nextArtifactId = 1;
   const server = createServer((req, res) => {
-    let body = '';
-    req.on('data', (chunk) => (body += chunk));
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
     req.on('end', () => {
+      const body = Buffer.concat(chunks);
       calls.authHeaders.push(req.headers.authorization);
-      const parsed = body ? JSON.parse(body) : {};
+
+      if (req.method === 'GET' && req.url.startsWith('/download/')) {
+        const name = decodeURIComponent(req.url.slice('/download/'.length));
+        if (!(name in downloads)) {
+          res.writeHead(404);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+        res.end(downloads[name]);
+        return;
+      }
+
+      if (req.method === 'POST' && req.url === '/artifacts') {
+        const { name } = JSON.parse(body.toString() || '{}');
+        const artifactId = `art_${nextArtifactId++}`;
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ artifactId, uploadUrl: `http://127.0.0.1:${port}/artifacts/${artifactId}/content` }));
+        void name;
+        return;
+      }
+      if (req.method === 'PUT' && /^\/artifacts\/[^/]+\/content$/.test(req.url)) {
+        const artifactId = req.url.split('/')[2];
+        calls.artifactContent[artifactId] = body;
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+      if (req.method === 'POST' && /^\/artifacts\/[^/]+\/complete$/.test(req.url)) {
+        const artifactId = req.url.split('/')[2];
+        calls.artifactCompleted.push(artifactId);
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+
+      const parsed = body.length > 0 ? JSON.parse(body.toString()) : {};
       if (req.url === '/log-chunk') {
         calls.logChunks.push(parsed);
       } else if (req.url === '/step-complete') {
@@ -43,8 +89,12 @@ function startFakeBackend() {
       res.end('{}');
     });
   });
+  let port;
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve({ server, calls, port: server.address().port }));
+    server.listen(0, '127.0.0.1', () => {
+      port = server.address().port;
+      resolve({ server, calls, port, seedDownload: (name, content) => (downloads[name] = Buffer.from(content)) });
+    });
   });
 }
 
@@ -449,6 +499,99 @@ async function testMcpEnabledWithoutApiKeyFails() {
   assert(calls.stepComplete?.errorReason === 'CLAUDE_CONFIG_ERROR', 'errorReason is CLAUDE_CONFIG_ERROR');
 }
 
+async function testProducedArtifactIsUploaded() {
+  console.log('test: declared artifact is uploaded (create -> PUT content -> complete)');
+  const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+  // Fake claude writes its "artifact" into cwd, which the entrypoint spawns at WORKSPACE_DIR.
+  writeFakeClaude(
+    binDir,
+    `require('fs').writeFileSync('report.json', '{"ok":true}');
+console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'OK'}));
+process.exit(0);`,
+  );
+  const { server, calls, port } = await startFakeBackend();
+  const env = baseEnv({
+    binDir,
+    port,
+    extra: {
+      CONDUCTOR_ARTIFACTS_URL: `http://127.0.0.1:${port}/artifacts`,
+      CONDUCTOR_STEP_ARTIFACTS_JSON: JSON.stringify([{ name: 'report', path: 'report.json' }]),
+    },
+  });
+  const { code } = await runEntrypoint(env);
+  server.close();
+  rmSync(binDir, { recursive: true, force: true });
+
+  assert(code === 0, `exit code is 0 (got ${code})`);
+  assert(calls.stepComplete?.status === 'SUCCESS', 'step-complete status is SUCCESS');
+  const uploadedIds = Object.keys(calls.artifactContent);
+  assert(uploadedIds.length === 1, 'exactly one artifact was PUT');
+  assert(
+    uploadedIds.length === 1 && calls.artifactContent[uploadedIds[0]].toString() === '{"ok":true}',
+    'the uploaded bytes match the file the fake claude wrote',
+  );
+  assert(
+    uploadedIds.length === 1 && calls.artifactCompleted.includes(uploadedIds[0]),
+    'the artifact was marked complete after upload',
+  );
+}
+
+async function testDeclaredArtifactMissingFailsTheStep() {
+  console.log('test: declared artifact missing from workspace fails the step (CLAUDE_ARTIFACT_MISSING)');
+  const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+  writeFakeClaude(
+    binDir,
+    `console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'OK'}));
+process.exit(0);`,
+  );
+  const { server, calls, port } = await startFakeBackend();
+  const env = baseEnv({
+    binDir,
+    port,
+    extra: {
+      CONDUCTOR_ARTIFACTS_URL: `http://127.0.0.1:${port}/artifacts`,
+      CONDUCTOR_STEP_ARTIFACTS_JSON: JSON.stringify([{ name: 'report', path: 'never-written.json' }]),
+    },
+  });
+  const { code } = await runEntrypoint(env);
+  server.close();
+  rmSync(binDir, { recursive: true, force: true });
+
+  assert(code === 20, `exit code is 20 (got ${code})`);
+  assert(calls.stepComplete?.status === 'FAILED', 'step-complete status is FAILED');
+  assert(calls.stepComplete?.errorReason === 'CLAUDE_ARTIFACT_MISSING', 'errorReason is CLAUDE_ARTIFACT_MISSING');
+  assert(Object.keys(calls.artifactContent).length === 0, 'nothing was uploaded');
+}
+
+async function testConsumedArtifactIsDownloaded() {
+  console.log('test: consumed artifacts are downloaded into CONDUCTOR_ARTIFACTS_DIR before claude runs');
+  const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+  writeFakeClaude(
+    binDir,
+    `console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'OK'}));
+process.exit(0);`,
+  );
+  const { server, seedDownload, port } = await startFakeBackend();
+  seedDownload('upstream-data', '{"from":"upstream"}');
+  const env = baseEnv({
+    binDir,
+    port,
+    extra: {
+      CONDUCTOR_CONSUMED_ARTIFACTS_JSON: JSON.stringify([
+        { name: 'upstream-data', downloadUrl: `http://127.0.0.1:${port}/download/upstream-data` },
+      ]),
+    },
+  });
+  const { code } = await runEntrypoint(env);
+  server.close();
+  rmSync(binDir, { recursive: true, force: true });
+
+  assert(code === 0, `exit code is 0 (got ${code})`);
+  const downloadedPath = path.join(env.CONDUCTOR_RUNNER_ROOT, 'artifacts', 'upstream-data');
+  const content = readFileSync(downloadedPath, 'utf8');
+  assert(content === '{"from":"upstream"}', 'the consumed artifact was downloaded with the correct content');
+}
+
 async function main() {
   await testSuccessWithStructuredOutput();
   await testAuthError();
@@ -464,6 +607,9 @@ async function main() {
   await testWorkerJobIdOmittedOnMalformedUrl();
   await testAllowedToolsMergesInputsReadWithUserList();
   await testAllowedToolsDefaultsToInputsReadWithoutUserList();
+  await testProducedArtifactIsUploaded();
+  await testDeclaredArtifactMissingFailsTheStep();
+  await testConsumedArtifactIsDownloaded();
 
   for (const root of runnerRoots) rmSync(root, { recursive: true, force: true });
 

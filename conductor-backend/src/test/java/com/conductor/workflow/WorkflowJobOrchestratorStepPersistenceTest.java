@@ -8,6 +8,8 @@ import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.LogRedactionService;
+import com.conductor.workflow.model.StepSpec;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,7 +55,8 @@ class WorkflowJobOrchestratorStepPersistenceTest {
                 List.of(),
                 new ObjectMapper(),
                 mock(SelfHostedJobDispatcher.class),
-                mock(UpstreamOutputsResolver.class));
+                mock(UpstreamOutputsResolver.class),
+                new WorkflowYamlParser());
 
         jobRun = new WorkflowJobRun();
         jobRun.setId("jobrun-1");
@@ -72,7 +75,8 @@ class WorkflowJobOrchestratorStepPersistenceTest {
                 .thenReturn(Optional.of(preCreated));
 
         StepResult result = StepResult.success("done", Map.of("summary", "ok")).withWorkerJobId("worker-abc");
-        Map<String, Object> stepDef = Map.of("id", "seo", "name", "SEO step", "uses", "claude-code");
+        StepSpec stepDef = new StepSpec("seo", "SEO step", "claude-code", null, false, Map.of(),
+                List.of(), Map.of("id", "seo", "name", "SEO step", "uses", "claude-code"));
 
         orchestrator.persistStepResult("jobrun-1", stepDef, result, "proj-1");
 
@@ -89,7 +93,8 @@ class WorkflowJobOrchestratorStepPersistenceTest {
     @Test
     void insertsNewRow_whenNoWorkerJobIdOnResult() {
         StepResult result = StepResult.success("done", Map.of());
-        Map<String, Object> stepDef = Map.of("id", "post", "name", "Notify", "type", "http");
+        StepSpec stepDef = new StepSpec("post", "Notify", "http", null, false, Map.of(),
+                List.of(), Map.of("id", "post", "name", "Notify", "type", "http"));
 
         orchestrator.persistStepResult("jobrun-1", stepDef, result, "proj-1");
 
@@ -119,7 +124,8 @@ class WorkflowJobOrchestratorStepPersistenceTest {
 
         StepResult result = StepResult.success("→ Launching Cloud Run execution\n← execution finished: SUCCEEDED\n",
                 Map.of("summary", "ok")).withWorkerJobId("worker-abc");
-        Map<String, Object> stepDef = Map.of("id", "seo", "name", "SEO step", "uses", "claude-code");
+        StepSpec stepDef = new StepSpec("seo", "SEO step", "claude-code", null, false, Map.of(),
+                List.of(), Map.of("id", "seo", "name", "SEO step", "uses", "claude-code"));
 
         orchestrator.persistStepResult("jobrun-1", stepDef, result, "proj-1");
 
@@ -139,7 +145,8 @@ class WorkflowJobOrchestratorStepPersistenceTest {
                 .thenReturn(Optional.empty());
 
         StepResult result = StepResult.failed("boom", "CLAUDE_AGENT_ERROR").withWorkerJobId("worker-missing");
-        Map<String, Object> stepDef = Map.of("id", "seo", "name", "SEO step", "uses", "claude-code");
+        StepSpec stepDef = new StepSpec("seo", "SEO step", "claude-code", null, false, Map.of(),
+                List.of(), Map.of("id", "seo", "name", "SEO step", "uses", "claude-code"));
 
         orchestrator.persistStepResult("jobrun-1", stepDef, result, "proj-1");
 

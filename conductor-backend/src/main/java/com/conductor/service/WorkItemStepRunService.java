@@ -1,10 +1,10 @@
 package com.conductor.service;
 
 import com.conductor.entity.WorkItem;
-import com.conductor.entity.StepRun;
+import com.conductor.entity.WorkItemStepRun;
 import com.conductor.entity.User;
 import com.conductor.repository.WorkItemRepository;
-import com.conductor.repository.StepRunRepository;
+import com.conductor.repository.WorkItemStepRunRepository;
 import com.conductor.service.view.StepRunInput;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
@@ -18,33 +18,33 @@ import java.util.List;
  * translation); everything else is a scalar column.
  */
 @Service
-public class StepRunService {
+public class WorkItemStepRunService {
 
-    private final StepRunRepository stepRunRepository;
+    private final WorkItemStepRunRepository workItemStepRunRepository;
     private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
 
-    public StepRunService(StepRunRepository stepRunRepository,
+    public WorkItemStepRunService(WorkItemStepRunRepository workItemStepRunRepository,
                           WorkItemRepository workItemRepository,
                           ProjectSecurityService projectSecurityService) {
-        this.stepRunRepository = stepRunRepository;
+        this.workItemStepRunRepository = workItemStepRunRepository;
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
     }
 
     @Transactional(readOnly = true)
-    public List<StepRun> listStepRuns(String projectId, String workItemId, User caller) {
+    public List<WorkItemStepRun> listStepRuns(String projectId, String workItemId, User caller) {
         verifyMembership(projectId, caller.getId());
         findWorkItemInProject(projectId, workItemId);
-        return stepRunRepository.findAllByWorkItemIdOrderByCreatedAtDesc(workItemId);
+        return workItemStepRunRepository.findAllByWorkItemIdOrderByCreatedAtDesc(workItemId);
     }
 
     @Transactional
-    public StepRun createStepRun(String projectId, String workItemId, StepRunInput input, User caller) {
+    public WorkItemStepRun createStepRun(String projectId, String workItemId, StepRunInput input, User caller) {
         verifyMembership(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
-        StepRun stepRun = new StepRun();
+        WorkItemStepRun stepRun = new WorkItemStepRun();
         stepRun.setWorkItem(workItem);
         stepRun.setWorkflow(input.workflow());
         stepRun.setFromStatus(input.fromStatus());
@@ -59,7 +59,7 @@ public class StepRunService {
         stepRun.setProduced(input.produced());
         stepRun.setBeforeAfter(input.beforeAfter());
         stepRun.setFlags(input.flags());
-        stepRunRepository.save(stepRun);
+        workItemStepRunRepository.save(stepRun);
         return stepRun;
     }
 

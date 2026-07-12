@@ -11,6 +11,7 @@ import com.conductor.entity.WorkflowScheduleSkip;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.WorkflowsApi;
+import com.conductor.generated.model.DispatchWorkflowRequest;
 import com.conductor.generated.model.SetWorkflowEnabledRequest;
 import com.conductor.generated.model.SetWorkflowSidebarRequest;
 import com.conductor.generated.model.UpdateWorkflowRunStatusRequest;
@@ -42,6 +43,9 @@ import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.conductor.workflow.lifecycle.Statechart;
+import com.conductor.workflow.model.WorkflowSpec;
+import com.conductor.workflow.model.WorkflowYamlException;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -82,6 +86,7 @@ public class WorkflowController implements WorkflowsApi {
     private final WorkflowDefinitionLifecycleService lifecycleService;
     private final WorkflowViewService workflowViewService;
     private final ObjectMapper objectMapper;
+    private final WorkflowYamlParser yamlParser;
 
     public WorkflowController(WorkflowService workflowService,
                                WorkflowTriggerService workflowTriggerService,
@@ -95,7 +100,8 @@ public class WorkflowController implements WorkflowsApi {
                                WorkflowScheduleSkipRepository scheduleSkipRepository,
                                WorkflowDefinitionLifecycleService lifecycleService,
                                WorkflowViewService workflowViewService,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               WorkflowYamlParser yamlParser) {
         this.workflowService = workflowService;
         this.workflowTriggerService = workflowTriggerService;
         this.workflowJobOrchestrator = workflowJobOrchestrator;
@@ -109,6 +115,7 @@ public class WorkflowController implements WorkflowsApi {
         this.lifecycleService = lifecycleService;
         this.workflowViewService = workflowViewService;
         this.objectMapper = objectMapper;
+        this.yamlParser = yamlParser;
     }
 
     @Override
@@ -209,13 +216,15 @@ public class WorkflowController implements WorkflowsApi {
     }
 
     @Override
-    public ResponseEntity<WorkflowRunDto> dispatchWorkflow(String projectId, String workflowId) {
+    public ResponseEntity<WorkflowRunDto> dispatchWorkflow(String projectId, String workflowId,
+                                                            DispatchWorkflowRequest body) {
         String userId = currentUserId();
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new EntityNotFoundException("Project not found");
         }
         WorkflowDefinition workflow = workflowService.getWorkflow(projectId, workflowId);
-        WorkflowRun run = workflowTriggerService.triggerManual(workflow, userId);
+        Map<String, String> inputs = body != null ? body.getInputs() : null;
+        WorkflowRun run = workflowTriggerService.triggerManual(workflow, userId, inputs);
         return ResponseEntity.status(202).body(toRunDto(run));
     }
 
@@ -285,21 +294,9 @@ public class WorkflowController implements WorkflowsApi {
 
     private String extractWebhookSecret(String yaml) {
         try {
-            org.yaml.snakeyaml.Yaml snakeYaml = new org.yaml.snakeyaml.Yaml();
-            @SuppressWarnings("unchecked")
-            Map<String, Object> parsed = snakeYaml.load(yaml);
-            // SnakeYAML 1.1 parses bare 'on' as Boolean.TRUE
-            Object onBlock = parsed.containsKey("on") ? parsed.get("on") : parsed.get(Boolean.TRUE);
-            if (!(onBlock instanceof Map)) return null;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> triggers = (Map<String, Object>) onBlock;
-            Object webhookConfig = triggers.get("webhook");
-            if (!(webhookConfig instanceof Map)) return null;
-            @SuppressWarnings("unchecked")
-            Map<String, Object> config = (Map<String, Object>) webhookConfig;
-            Object secretVal = config.get("secret");
-            return secretVal != null ? secretVal.toString() : null;
-        } catch (Exception e) {
+            WorkflowSpec spec = yamlParser.parse(yaml);
+            return spec.triggers().webhook() != null ? spec.triggers().webhook().secret() : null;
+        } catch (WorkflowYamlException e) {
             return null;
         }
     }
@@ -427,7 +424,18 @@ public class WorkflowController implements WorkflowsApi {
         dto.setStatus(run.getStatus().name());
         dto.setStartedAt(run.getStartedAt());
         dto.setCompletedAt(run.getCompletedAt());
+        dto.setEventPayload(parseEventPayload(run.getEventPayload()));
         return dto;
+    }
+
+    private Map<String, Object> parseEventPayload(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("Failed to parse event payload JSON for run DTO: {}", e.getMessage());
+            return null;
+        }
     }
 
     private WorkflowDefinitionDto toDto(WorkflowDefinition def) {

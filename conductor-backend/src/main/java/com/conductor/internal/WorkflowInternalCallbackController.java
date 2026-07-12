@@ -2,10 +2,14 @@ package com.conductor.internal;
 
 import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.generated.internal.api.WorkflowInternalApi;
+import com.conductor.generated.internal.model.CreateWorkflowArtifactRequest;
+import com.conductor.generated.internal.model.CreateWorkflowArtifactResponse;
 import com.conductor.generated.internal.model.JobFailedRequest;
 import com.conductor.generated.internal.model.LogChunkRequest;
 import com.conductor.generated.internal.model.OutputsRequest;
+import com.conductor.generated.internal.model.ResolveWorkflowArtifactResponse;
 import com.conductor.generated.internal.model.StepCompleteRequest;
+import com.conductor.service.WorkflowArtifactService;
 import com.conductor.workflow.RunTokenService;
 import com.conductor.workflow.WorkflowRunLogBroker;
 import jakarta.servlet.http.HttpServletRequest;
@@ -34,10 +38,13 @@ public class WorkflowInternalCallbackController implements WorkflowInternalApi {
 
     private final RunTokenService runTokenService;
     private final WorkflowRunLogBroker broker;
+    private final WorkflowArtifactService artifactService;
 
-    public WorkflowInternalCallbackController(RunTokenService runTokenService, WorkflowRunLogBroker broker) {
+    public WorkflowInternalCallbackController(RunTokenService runTokenService, WorkflowRunLogBroker broker,
+                                               WorkflowArtifactService artifactService) {
         this.runTokenService = runTokenService;
         this.broker = broker;
+        this.artifactService = artifactService;
     }
 
     @Override
@@ -85,6 +92,42 @@ public class WorkflowInternalCallbackController implements WorkflowInternalApi {
         broker.recordStepCompleted(runId, workerJobId, WorkflowStepStatus.valueOf(body.getStatus()),
                 body.getExitCode(), body.getErrorReason(), body.getOutputs());
         return ResponseEntity.ok().build();
+    }
+
+    @Override
+    public ResponseEntity<CreateWorkflowArtifactResponse> createWorkflowArtifact(String runId, CreateWorkflowArtifactRequest body) {
+        if (!validateRunToken(runId)) {
+            return ResponseEntity.status(401).build();
+        }
+        Long sizeBytes = body.getSizeBytes();
+        WorkflowArtifactService.ArtifactCreateResult result =
+                artifactService.create(runId, body.getJobId(), null, body.getName(), body.getContentType(), sizeBytes);
+        CreateWorkflowArtifactResponse response = new CreateWorkflowArtifactResponse();
+        response.setArtifactId(result.artifactId());
+        response.setUploadUrl(result.uploadUrl());
+        return ResponseEntity.status(201).body(response);
+    }
+
+    @Override
+    public ResponseEntity<Void> completeWorkflowArtifact(String runId, String artifactId) {
+        if (!validateRunToken(runId)) {
+            return ResponseEntity.status(401).build();
+        }
+        if (!artifactService.belongsToRun(artifactId, runId)) {
+            return ResponseEntity.notFound().build();
+        }
+        artifactService.complete(artifactId);
+        return ResponseEntity.ok().build();
+    }
+
+    @Override
+    public ResponseEntity<ResolveWorkflowArtifactResponse> resolveWorkflowArtifact(String runId, String name) {
+        if (!validateRunToken(runId)) {
+            return ResponseEntity.status(401).build();
+        }
+        ResolveWorkflowArtifactResponse response = new ResolveWorkflowArtifactResponse();
+        response.setDownloadUrl(artifactService.resolveDownloadUrl(runId, name).orElse(""));
+        return ResponseEntity.ok(response);
     }
 
     private boolean validateRunToken(String runId) {

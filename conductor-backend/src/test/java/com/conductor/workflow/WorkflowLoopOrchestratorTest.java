@@ -36,6 +36,7 @@ class WorkflowLoopOrchestratorTest {
     @Mock LogRedactionService logRedactionService;
     @Mock SelfHostedJobDispatcher selfHostedJobDispatcher;
     @Mock UpstreamOutputsResolver upstreamOutputsResolver;
+    @Mock com.conductor.service.WorkflowArtifactService artifactService;
 
     WorkflowJobOrchestrator orchestrator;
     ConditionEvaluator conditionEvaluator = new ConditionEvaluator();
@@ -45,12 +46,12 @@ class WorkflowLoopOrchestratorTest {
     @BeforeEach
     void setUp() {
         RuntimeContextBuilder contextBuilder = new RuntimeContextBuilder(
-                secretsService, stepRunRepository, jobRunRepository, objectMapper);
+                secretsService, stepRunRepository, jobRunRepository, objectMapper, artifactService);
         orchestrator = new WorkflowJobOrchestrator(
                 jobRunRepository, stepRunRepository, runRepository, workflowRepository,
                 engine, conditionEvaluator, interpolator, contextBuilder,
                 logRedactionService, List.of(), objectMapper, selfHostedJobDispatcher,
-                upstreamOutputsResolver);
+                upstreamOutputsResolver, new com.conductor.workflow.model.WorkflowYamlParser());
         // The production code uses @Lazy @Autowired self so @Transactional helper methods
         // go through the Spring proxy. In unit tests there is no Spring context, so point
         // self at the bare instance — @Transactional is a no-op without a tx manager anyway.

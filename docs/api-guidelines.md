@@ -78,7 +78,8 @@ by controller package. Therefore:
   a new prefix (a new predicate) for a genuine breaking change, and run both during migration. The
   `issues` → `work-items` rename did exactly this: `/api/v2` ran alongside a deprecated v1 shim until
   callers migrated, then the v1 issue surface (paths, schemas, `com.conductor.legacy` controllers) was
-  deleted. Don't reintroduce v1 issue endpoints.
+  deleted. Don't reintroduce v1 issue endpoints. (The `legacy-v1-deprecation.md` tracking doc has been
+  removed now that the migration is complete — this is the authoritative note.)
 - The internal surface has no external consumers, so it can be re-versioned by updating all in-repo
   callers (backend `DockerStepExecutor`, `conductor-worker`, `conductor-tools`) in the same PR.
 
@@ -103,6 +104,16 @@ by controller package. Therefore:
   (`/log-chunk`, `/local-files`).
 - **Collections:** prefer pagination for unbounded lists; keep query params for filtering/sorting, not
   for selecting actions.
+- **Registry-driven discovery endpoints:** a sub-resource that lists *what the backend supports*
+  regardless of per-project state (e.g. `GET /projects/{projectId}/integrations/catalog`, listing every
+  registered connector, connected or not) is a distinct operation from the per-project hub view (`GET
+  /projects/{projectId}/integrations`, connected instances only) — give it its own `operationId` and
+  response schema rather than overloading the hub endpoint with a query flag. Agent-facing discovery
+  tools (MCP `list_connector_catalog`) call the catalog endpoint directly.
+- **Optional request bodies for trigger-style actions:** an action endpoint that's meaningful with no
+  input (e.g. `POST /projects/{projectId}/workflows/{workflowId}/dispatch`) should mark its
+  `requestBody` `required: false` rather than forcing callers to send `{}` — see `dispatchWorkflow`'s
+  optional `DispatchWorkflowRequest` (an `inputs` map, itself optional).
 
 ---
 

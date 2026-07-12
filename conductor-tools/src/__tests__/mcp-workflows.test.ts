@@ -19,6 +19,8 @@ import {
   transitionWorkItem,
   recordAsset,
   reportStepRun,
+  listWorkflowRuns,
+  listWorkflowSecrets,
 } from '../mcp/tools/workflows.js'
 
 const config: Config = {
@@ -116,5 +118,28 @@ describe('workflow-aware MCP tools', () => {
       { stepKind: 'skill', status: 'AWAITING_REVIEW', inputBrief: 'do x', reportedBy: 'me', skill: 'conductor:implement' },
       config
     )
+  })
+
+  it('list_workflow_runs GETs the runs resource with no query params by default', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([{ id: 'run-1', status: 'SUCCESS' }])
+    const result = await listWorkflowRuns({ workflowId: 'wf-1' }, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/runs', config)
+    expect(result).toEqual([{ id: 'run-1', status: 'SUCCESS' }])
+  })
+
+  it('list_workflow_runs forwards page/size as query params', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    await listWorkflowRuns({ workflowId: 'wf-1', page: 2, size: 10 }, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/runs?page=2&size=10', config)
+  })
+
+  it('list_workflow_secrets GETs the secrets resource and returns keys only, stripping other fields', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { key: 'DISCORD_WEBHOOK_URL', createdAt: '2026-01-01', updatedAt: '2026-01-02', value: 'should-not-leak' },
+      { key: 'API_TOKEN' },
+    ])
+    const result = await listWorkflowSecrets({}, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflow-secrets', config)
+    expect(result).toEqual([{ key: 'DISCORD_WEBHOOK_URL' }, { key: 'API_TOKEN' }])
   })
 })

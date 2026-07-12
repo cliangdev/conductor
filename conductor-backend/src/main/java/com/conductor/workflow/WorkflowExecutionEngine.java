@@ -2,6 +2,10 @@ package com.conductor.workflow;
 
 import com.conductor.entity.*;
 import com.conductor.repository.*;
+import com.conductor.workflow.model.JobSpec;
+import com.conductor.workflow.model.WorkflowSpec;
+import com.conductor.workflow.model.WorkflowYamlException;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +32,7 @@ public class WorkflowExecutionEngine {
     private final WorkflowStepRunRepository stepRunRepository;
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowJobOrchestrator orchestrator;
+    private final WorkflowYamlParser yamlParser;
 
     // Adaptive poll backoff (in 500ms ticks). Busy (work found last poll) → every tick (500ms).
     // Idle → exponentially back off up to MAX_BACKOFF_TICKS * 500ms = 5s between DB queries.
@@ -46,13 +51,15 @@ public class WorkflowExecutionEngine {
                                    WorkflowJobRunRepository jobRunRepository,
                                    WorkflowStepRunRepository stepRunRepository,
                                    WorkflowDefinitionRepository workflowRepository,
-                                   WorkflowJobOrchestrator orchestrator) {
+                                   WorkflowJobOrchestrator orchestrator,
+                                   WorkflowYamlParser yamlParser) {
         this.queueRepository = queueRepository;
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
         this.workflowRepository = workflowRepository;
         this.orchestrator = orchestrator;
+        this.yamlParser = yamlParser;
     }
 
     /**
@@ -210,13 +217,10 @@ public class WorkflowExecutionEngine {
         List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(run.getId());
         log.info("checkRunCompletion: runId={}, jobRuns={}", run.getId(), jobRuns.stream().map(j -> j.getJobId() + "=" + j.getStatus()).toList());
         WorkflowDefinition workflow = run.getWorkflow();
-        Map<String, Object> parsedWorkflow = parseYaml(workflow.getYaml());
+        WorkflowSpec parsedWorkflow = parseYaml(workflow.getYaml());
         if (parsedWorkflow == null) return;
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> jobs = (Map<String, Object>) parsedWorkflow.get("jobs");
-        if (jobs == null) return;
-
+        Map<String, JobSpec> jobs = parsedWorkflow.jobs();
         int totalJobs = jobs.size();
 
         // For loop jobs, there may be multiple WorkflowJobRun rows per jobId.
@@ -250,11 +254,10 @@ public class WorkflowExecutionEngine {
                 || status == WorkflowJobStatus.LOOP_EXHAUSTED;
     }
 
-    private Map<String, Object> parseYaml(String yaml) {
+    private WorkflowSpec parseYaml(String yaml) {
         try {
-            org.yaml.snakeyaml.Yaml snakeYaml = new org.yaml.snakeyaml.Yaml();
-            return snakeYaml.load(yaml);
-        } catch (Exception e) {
+            return yamlParser.parse(yaml);
+        } catch (WorkflowYamlException e) {
             log.error("Failed to parse workflow YAML: {}", e.getMessage());
             return null;
         }

@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -188,7 +189,7 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         }
 
         Map<String, String> env = buildEnv(stepDef, ctx, prompt, projectId, runId, jobRun, workerJobId,
-                timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get());
+                timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get(), context.getConsumes());
         ContainerTask task = new ContainerTask(image, CONTAINER_COMMAND, env, timeoutMinutes);
 
         appendLauncherLine(stepRun, projectId, logBuilder,
@@ -252,7 +253,7 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
     private Map<String, String> buildEnv(Map<String, Object> stepDef, RuntimeContext ctx, String prompt,
                                           String projectId, String runId, WorkflowJobRun jobRun, String workerJobId,
                                           int timeoutMinutes, boolean conductorMcp, String conductorApiKey,
-                                          String oauthToken) {
+                                          String oauthToken, List<String> consumes) {
         Map<String, String> env = new LinkedHashMap<>();
         env.put("CONDUCTOR_STEP_PROMPT", prompt);
 
@@ -300,7 +301,36 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         }
         // Subscription auth only, on every runtime this executor launches — never ANTHROPIC_API_KEY.
         env.put("CLAUDE_CODE_OAUTH_TOKEN", oauthToken);
+
+        Object artifactsObj = stepDef.get("artifacts");
+        if (artifactsObj instanceof List<?> declaredArtifacts && !declaredArtifacts.isEmpty()) {
+            env.put("CONDUCTOR_ARTIFACTS_URL", backendBaseUrl + "/internal/v1/workflow-runs/" + runId + "/artifacts");
+            env.put("CONDUCTOR_STEP_ARTIFACTS_JSON", toJson(declaredArtifacts));
+        }
+
+        if (consumes != null && !consumes.isEmpty()) {
+            List<Map<String, String>> consumedArtifacts = new ArrayList<>();
+            for (String name : consumes) {
+                String downloadUrl = findJobArtifactUrl(ctx, name);
+                if (downloadUrl != null) {
+                    consumedArtifacts.add(Map.of("name", name, "downloadUrl", downloadUrl));
+                }
+            }
+            if (!consumedArtifacts.isEmpty()) {
+                env.put("CONDUCTOR_CONSUMED_ARTIFACTS_JSON", toJson(consumedArtifacts));
+                env.put("CONDUCTOR_ARTIFACTS_DIR", "/conductor/artifacts");
+            }
+        }
         return env;
+    }
+
+    /** Searches every needed job's resolved artifacts (see {@link RuntimeContext#getJobArtifacts()}) for one named {@code name}. */
+    private String findJobArtifactUrl(RuntimeContext ctx, String name) {
+        for (Map<String, String> jobArtifacts : ctx.getJobArtifacts().values()) {
+            String url = jobArtifacts.get(name);
+            if (url != null) return url;
+        }
+        return null;
     }
 
     /**

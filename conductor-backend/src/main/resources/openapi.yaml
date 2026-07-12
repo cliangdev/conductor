@@ -2745,6 +2745,12 @@ paths:
           required: true
           schema:
             type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchWorkflowRequest"
       responses:
         "202":
           description: Run created
@@ -3090,6 +3096,37 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/IntegrationListItem'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/integrations/catalog:
+    get:
+      tags: [integrations]
+      summary: List all connector types Conductor supports, connected or not
+      description: >
+        The full catalog of registered connectors (unlike listIntegrations' hub view, this is
+        agent-facing — capabilities, config fields, and per-project connected state without
+        per-connection health detail). Used by the MCP server to recommend integrations to connect.
+      operationId: listConnectorCatalog
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ConnectorCatalogEntryDto'
         '401':
           description: Unauthenticated
         '403':
@@ -4262,6 +4299,48 @@ components:
           items:
             $ref: '#/components/schemas/ConnectionSummary'
 
+    ConnectorCatalogEntryDto:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        authType:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        configFields:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConnectorCatalogConfigFieldDto'
+        connected:
+          type: boolean
+        activeConnectionIds:
+          type: array
+          items:
+            type: string
+
+    ConnectorCatalogConfigFieldDto:
+      type: object
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+        required:
+          type: boolean
+        secret:
+          type: boolean
+
     IntegrationToolItem:
       type: object
       properties:
@@ -4277,7 +4356,7 @@ components:
             type: string
         toolMetadata:
           type: object
-          description: Tool metadata including description, operations, and connection-specific config hints
+          description: Tool metadata including description, operations, actions, and connection-specific config hints
           additionalProperties: true
 
     ConnectorConfigFieldDto:
@@ -5415,6 +5494,15 @@ components:
           type: string
           description: New status for the workflow run (e.g. SUCCESS or FAILED)
 
+    DispatchWorkflowRequest:
+      type: object
+      properties:
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+          description: Input values passed to the run, exposed to steps as ${{ inputs.KEY }}.
+
     WorkflowRunDto:
       type: object
       properties:
@@ -5432,6 +5520,10 @@ components:
         completedAt:
           type: string
           format: date-time
+        eventPayload:
+          type: object
+          readOnly: true
+          description: The run's trigger payload (event fields, and `inputs` for a manual dispatch).
 
     WorkflowRunDetailDto:
       type: object
@@ -5594,6 +5686,32 @@ components:
         outputSchemaJson:
           type: string
           description: Raw `with.output_schema`, serialized to a JSON string
+        artifacts:
+          type: array
+          description: >
+            This step's declared `artifacts:` (docker/claude-code steps only). Additive/optional — a
+            daemon that predates artifact support simply ignores it.
+          items:
+            $ref: "#/components/schemas/DispatchArtifactDto"
+
+    DispatchArtifactDto:
+      type: object
+      required: [name, path]
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+          description: Workspace-relative path inside the step's container
+
+    ConsumedArtifactDto:
+      type: object
+      required: [name, downloadUrl]
+      properties:
+        name:
+          type: string
+        downloadUrl:
+          type: string
 
     JobDispatchCallbacksDto:
       type: object
@@ -5636,6 +5754,19 @@ components:
           type: string
         callbacks:
           $ref: "#/components/schemas/JobDispatchCallbacksDto"
+        artifactsUrl:
+          type: string
+          description: >
+            Internal base URL for this run's artifact endpoints (`{artifactsUrl}` +
+            `/{artifactId}/complete`, etc.) — present whenever any step in this job declares
+            artifacts. Additive/optional.
+        consumedArtifacts:
+          type: array
+          description: >
+            This job's `consumes:` artifacts, pre-resolved to signed download URLs at payload-build
+            time. Additive/optional — empty/absent for jobs that don't consume any.
+          items:
+            $ref: "#/components/schemas/ConsumedArtifactDto"
 
     CompleteWorkflowJobRequest:
       type: object

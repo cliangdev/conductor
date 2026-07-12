@@ -40,6 +40,7 @@ class JobDispatchPayloadServiceTest {
     @Mock private RunTokenService runTokenService;
     @Mock private ProjectSettingsRepository projectSettingsRepository;
     @Mock private UpstreamOutputsResolver upstreamOutputsResolver;
+    @Mock private com.conductor.service.WorkflowArtifactService artifactService;
 
     private JobDispatchPayloadService service;
 
@@ -47,7 +48,8 @@ class JobDispatchPayloadServiceTest {
     void setUp() {
         service = new JobDispatchPayloadService(runRepository, jobRunRepository, stepRunRepository,
                 contextBuilder, new WorkflowInterpolator(), runTokenService, projectSettingsRepository,
-                new ObjectMapper(), upstreamOutputsResolver, "http://localhost:8080");
+                new ObjectMapper(), upstreamOutputsResolver, "http://localhost:8080",
+                new com.conductor.workflow.model.WorkflowYamlParser(), artifactService);
     }
 
     private WorkflowRun runWithYaml(String yaml) {
@@ -79,7 +81,7 @@ class JobDispatchPayloadServiceTest {
                 .thenReturn(List.of(jobRun));
         when(contextBuilder.loadSecrets(anyString())).thenReturn(Map.of());
         when(upstreamOutputsResolver.collectUpstreamOutputs(any(), any(), anyString())).thenReturn(Map.of());
-        when(contextBuilder.build(any(), any(), any(), any(), anyInt()))
+        when(contextBuilder.build(any(), any(), any(), any(), any(), anyInt()))
                 .thenReturn(new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of()));
         when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
         when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());

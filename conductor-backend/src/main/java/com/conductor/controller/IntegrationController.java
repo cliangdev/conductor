@@ -12,6 +12,8 @@ import com.conductor.generated.model.ConnectionDataResponse;
 import com.conductor.generated.model.ConnectionHealthResponse;
 import com.conductor.generated.model.ConnectionResponse;
 import com.conductor.generated.model.ConnectionSummary;
+import com.conductor.generated.model.ConnectorCatalogConfigFieldDto;
+import com.conductor.generated.model.ConnectorCatalogEntryDto;
 import com.conductor.generated.model.ConnectorConfigFieldDto;
 import com.conductor.generated.model.CreateConnectionRequest;
 import com.conductor.generated.model.GcpProjectsResponse;
@@ -137,6 +139,35 @@ public class IntegrationController implements IntegrationsApi {
                     .configFields(toConfigFieldDtos(spec))
                     .connections(connections.stream().map(this::toConnectionSummary).toList());
             items.add(item);
+        }
+        return ResponseEntity.ok(items);
+    }
+
+    @Override
+    public ResponseEntity<List<ConnectorCatalogEntryDto>> listConnectorCatalog(String projectId) {
+        requireMember(projectId);
+        List<ConnectorCatalogEntryDto> items = new ArrayList<>();
+        for (Connector connector : connectorRegistry.getAll()) {
+            ConnectorMetadata meta = connector.getMetadata();
+            ConnectorSpec spec = connector.getSpec();
+            // "Connected"/active here means a usable connection (ACTIVE status), not merely a row
+            // existing — this catalog tells the agent what it can act on right now.
+            List<String> activeConnectionIds = connectionService.list(projectId, connector.getId()).stream()
+                    .filter(c -> "ACTIVE".equals(c.getStatus()))
+                    .map(Connection::getId)
+                    .toList();
+
+            items.add(new ConnectorCatalogEntryDto()
+                    .id(connector.getId())
+                    .name(meta.name())
+                    .description(meta.description())
+                    .category(meta.category().name())
+                    .authType(spec.authType().name())
+                    .capabilities(connectorRegistry.capabilitiesOf(connector).stream()
+                            .map(Capability::name).toList())
+                    .configFields(toCatalogConfigFieldDtos(spec))
+                    .connected(!activeConnectionIds.isEmpty())
+                    .activeConnectionIds(activeConnectionIds));
         }
         return ResponseEntity.ok(items);
     }
@@ -457,6 +488,17 @@ public class IntegrationController implements IntegrationsApi {
                         .hint(f.hint())
                         .type(f.type().name())
                         .source(f.source().name())
+                        .required(f.required())
+                        .secret(f.secret()))
+                .toList();
+    }
+
+    private List<ConnectorCatalogConfigFieldDto> toCatalogConfigFieldDtos(ConnectorSpec spec) {
+        return spec.fields().stream()
+                .map(f -> new ConnectorCatalogConfigFieldDto()
+                        .name(f.key())
+                        .label(f.label())
+                        .type(f.type().name())
                         .required(f.required())
                         .secret(f.secret()))
                 .toList();

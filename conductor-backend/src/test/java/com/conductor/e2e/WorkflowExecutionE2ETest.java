@@ -292,6 +292,247 @@ class WorkflowExecutionE2ETest {
         wireMock.verify(0, getRequestedFor(urlEqualTo("/job-b-never")));
     }
 
+    /**
+     * A→(B fails)→{C if: failure(), D no-if, E if: always()}: C and E run despite B's failure,
+     * D is SKIPPED (its implicit success() sees B's failure), and the run is still FAILED overall
+     * even though C and E both ran to SUCCESS afterward.
+     */
+    @Test
+    void manualDispatch_diamondWithFailureTolerantJobs_runsFailureAndAlwaysJobs() {
+        wireMock.stubFor(get(urlEqualTo("/diamond-a")).willReturn(aResponse().withStatus(200)));
+        wireMock.stubFor(get(urlEqualTo("/diamond-b")).willReturn(aResponse().withStatus(500)));
+        wireMock.stubFor(get(urlEqualTo("/diamond-c")).willReturn(aResponse().withStatus(200)));
+        wireMock.stubFor(get(urlEqualTo("/diamond-d")).willReturn(aResponse().withStatus(200)));
+        wireMock.stubFor(get(urlEqualTo("/diamond-e")).willReturn(aResponse().withStatus(200)));
+
+        String yaml = """
+                name: Diamond Failure
+                on:
+                  workflow_dispatch: {}
+                jobs:
+                  a:
+                    steps:
+                      - name: A
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/diamond-a
+                  b:
+                    needs: [a]
+                    steps:
+                      - name: B
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/diamond-b
+                  c:
+                    needs: [b]
+                    if: "failure()"
+                    steps:
+                      - name: C
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/diamond-c
+                  d:
+                    needs: [b]
+                    steps:
+                      - name: D
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/diamond-d
+                  e:
+                    needs: [b]
+                    if: "always()"
+                    steps:
+                      - name: E
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/diamond-e
+                """.formatted(wireMock.port());
+
+        String workflowId = createWorkflow("diamond-failure-" + System.nanoTime(), yaml);
+        String runId = dispatchWorkflow(workflowId);
+        awaitTerminalStatus(runId);
+
+        var detail = getRunDetail(workflowId, runId);
+        assertThat(detail.get("status")).isEqualTo("FAILED");
+
+        List<Map<String, Object>> jobs = jobs(detail);
+        assertThat(statusOf(jobs, "b")).isEqualTo("FAILED");
+        assertThat(statusOf(jobs, "c")).isEqualTo("SUCCESS");
+        assertThat(statusOf(jobs, "d")).isEqualTo("SKIPPED");
+        assertThat(statusOf(jobs, "e")).isEqualTo("SUCCESS");
+
+        wireMock.verify(1, getRequestedFor(urlEqualTo("/diamond-c")));
+        wireMock.verify(0, getRequestedFor(urlEqualTo("/diamond-d")));
+        wireMock.verify(1, getRequestedFor(urlEqualTo("/diamond-e")));
+    }
+
+    /**
+     * A fails → B (needs A, no if:) → C (needs B, no if:): the skip cascades through the implicit
+     * success() at every hop, matching GitHub Actions and the old hard-skip-cascade behavior —
+     * BOTH B and C end SKIPPED (not just the immediate dependent), and the run is FAILED overall.
+     */
+    @Test
+    void manualDispatch_noIfChain_failureCascadesThroughMultipleHops() {
+        wireMock.stubFor(get(urlEqualTo("/chain-a")).willReturn(aResponse().withStatus(500)));
+        wireMock.stubFor(get(urlEqualTo("/chain-b")).willReturn(aResponse().withStatus(200)));
+        wireMock.stubFor(get(urlEqualTo("/chain-c")).willReturn(aResponse().withStatus(200)));
+
+        String yaml = """
+                name: No-If Chain
+                on:
+                  workflow_dispatch: {}
+                jobs:
+                  a:
+                    steps:
+                      - name: A
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/chain-a
+                  b:
+                    needs: [a]
+                    steps:
+                      - name: B
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/chain-b
+                  c:
+                    needs: [b]
+                    steps:
+                      - name: C
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/chain-c
+                """.formatted(wireMock.port());
+
+        String workflowId = createWorkflow("no-if-chain-" + System.nanoTime(), yaml);
+        String runId = dispatchWorkflow(workflowId);
+        awaitTerminalStatus(runId);
+
+        var detail = getRunDetail(workflowId, runId);
+        assertThat(detail.get("status")).isEqualTo("FAILED");
+
+        List<Map<String, Object>> jobs = jobs(detail);
+        assertThat(statusOf(jobs, "a")).isEqualTo("FAILED");
+        assertThat(statusOf(jobs, "b")).isEqualTo("SKIPPED");
+        assertThat(statusOf(jobs, "c")).isEqualTo("SKIPPED");
+
+        wireMock.verify(0, getRequestedFor(urlEqualTo("/chain-b")));
+        wireMock.verify(0, getRequestedFor(urlEqualTo("/chain-c")));
+    }
+
+    /**
+     * A fails → B (needs A, if: always()) still runs and succeeds → C (needs B, no if:) RUNS: since
+     * B itself SUCCEEDED, C's implicit success() sees an all-succeeded needs set — the chain "heals"
+     * after an always() job, even though the run is still FAILED overall (A failed).
+     */
+    @Test
+    void manualDispatch_alwaysJobHealsChain_downstreamNoIfJobRuns() {
+        wireMock.stubFor(get(urlEqualTo("/heal-a")).willReturn(aResponse().withStatus(500)));
+        wireMock.stubFor(get(urlEqualTo("/heal-b")).willReturn(aResponse().withStatus(200)));
+        wireMock.stubFor(get(urlEqualTo("/heal-c")).willReturn(aResponse().withStatus(200)));
+
+        String yaml = """
+                name: Always Heals Chain
+                on:
+                  workflow_dispatch: {}
+                jobs:
+                  a:
+                    steps:
+                      - name: A
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/heal-a
+                  b:
+                    needs: [a]
+                    if: "always()"
+                    steps:
+                      - name: B
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/heal-b
+                  c:
+                    needs: [b]
+                    steps:
+                      - name: C
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/heal-c
+                """.formatted(wireMock.port());
+
+        String workflowId = createWorkflow("always-heals-chain-" + System.nanoTime(), yaml);
+        String runId = dispatchWorkflow(workflowId);
+        awaitTerminalStatus(runId);
+
+        var detail = getRunDetail(workflowId, runId);
+        assertThat(detail.get("status")).isEqualTo("FAILED");
+
+        List<Map<String, Object>> jobs = jobs(detail);
+        assertThat(statusOf(jobs, "a")).isEqualTo("FAILED");
+        assertThat(statusOf(jobs, "b")).isEqualTo("SUCCESS");
+        assertThat(statusOf(jobs, "c")).isEqualTo("SUCCESS");
+
+        wireMock.verify(1, getRequestedFor(urlEqualTo("/heal-b")));
+        wireMock.verify(1, getRequestedFor(urlEqualTo("/heal-c")));
+    }
+
+    /**
+     * A step marked continue-on-error keeps the job running (and it still reaches SUCCESS) even
+     * though that step itself ends FAILED — and a later step's `if:` can read its result via
+     * steps.<id>.result.
+     */
+    @Test
+    void manualDispatch_continueOnErrorStep_jobSucceedsAndLaterStepSeesFailureResult() {
+        wireMock.stubFor(get(urlEqualTo("/coe-fails")).willReturn(aResponse().withStatus(500)));
+        wireMock.stubFor(get(urlEqualTo("/coe-after")).willReturn(aResponse().withStatus(200)));
+
+        String yaml = """
+                name: Continue On Error
+                on:
+                  workflow_dispatch: {}
+                jobs:
+                  job1:
+                    steps:
+                      - id: might-fail
+                        name: Might Fail
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/coe-fails
+                        continue-on-error: true
+                      - id: check
+                        name: Check Result
+                        type: http
+                        method: GET
+                        url: http://localhost:%1$d/coe-after
+                        if: "${{ steps.might-fail.result }} == 'failure'"
+                """.formatted(wireMock.port());
+
+        String workflowId = createWorkflow("continue-on-error-" + System.nanoTime(), yaml);
+        String runId = dispatchWorkflow(workflowId);
+        awaitTerminalStatus(runId);
+
+        var detail = getRunDetail(workflowId, runId);
+        assertThat(detail.get("status")).isEqualTo("SUCCESS");
+
+        List<Map<String, Object>> jobs = jobs(detail);
+        assertThat(jobs).hasSize(1);
+        assertThat(jobs.get(0).get("status")).isEqualTo("SUCCESS");
+
+        List<Map<String, Object>> steps = steps(jobs.get(0));
+        Map<String, Object> mightFail = steps.stream()
+                .filter(s -> "might-fail".equals(s.get("stepId"))).findFirst().orElseThrow();
+        Map<String, Object> check = steps.stream()
+                .filter(s -> "check".equals(s.get("stepId"))).findFirst().orElseThrow();
+        assertThat(mightFail.get("status")).isEqualTo("FAILED");
+        assertThat(check.get("status")).isEqualTo("SUCCESS");
+
+        wireMock.verify(1, getRequestedFor(urlEqualTo("/coe-after")));
+    }
+
+    private String statusOf(List<Map<String, Object>> jobs, String jobId) {
+        return (String) jobs.stream()
+                .filter(j -> jobId.equals(j.get("jobId"))).findFirst().orElseThrow().get("status");
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private String createWorkflow(String name, String yaml) {

@@ -6,6 +6,8 @@ import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.repository.DaemonEventRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.workflow.model.JobSpec;
+import com.conductor.workflow.model.StepSpec;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,15 +42,15 @@ public class SelfHostedJobDispatcher {
         this.objectMapper = objectMapper;
     }
 
-    public void dispatch(WorkflowRun run, String jobId, WorkflowJobRun jobRun, Map<String, Object> jobDef) {
-        List<Map<String, Object>> steps = WorkflowJobSteps.executableSteps(jobDef);
+    public void dispatch(WorkflowRun run, String jobId, WorkflowJobRun jobRun, JobSpec jobDef) {
+        List<StepSpec> steps = jobDef.executableSteps();
         for (int i = 0; i < steps.size(); i++) {
-            Map<String, Object> stepDef = steps.get(i);
+            StepSpec stepDef = steps.get(i);
             WorkflowStepRun stepRun = new WorkflowStepRun();
             stepRun.setJobRun(jobRun);
-            stepRun.setStepId((String) stepDef.get("id"));
-            stepRun.setStepName((String) stepDef.getOrDefault("name", "unnamed"));
-            stepRun.setStepType(WorkflowJobSteps.resolveStepType(stepDef));
+            stepRun.setStepId(stepDef.id());
+            stepRun.setStepName(stepDef.name() != null ? stepDef.name() : "unnamed");
+            stepRun.setStepType(stepDef.type());
             stepRun.setWorkerJobId(jobRun.getId() + ":" + i);
             stepRunRepository.save(stepRun);
         }

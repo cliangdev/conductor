@@ -9,7 +9,7 @@
 // Zero npm dependencies: only Node built-ins (process, fs, child_process, global fetch).
 
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 // Root of the container's Conductor filesystem contract. Always /conductor in production —
@@ -18,6 +18,11 @@ const RUNNER_ROOT = process.env.CONDUCTOR_RUNNER_ROOT || '/conductor';
 const INPUTS_DIR = path.join(RUNNER_ROOT, 'inputs');
 const WORKSPACE_DIR = path.join(RUNNER_ROOT, 'workspace');
 const MCP_CONFIG_PATH = path.join(RUNNER_ROOT, 'mcp-config.json');
+// Populated from CONDUCTOR_ARTIFACTS_DIR when the job consumes artifacts — on a self-hosted daemon
+// this is a bind mount the daemon already downloaded into (see job-runner.ts), but the entrypoint
+// downloads into it here regardless (idempotent overwrite), since it's the only option at all on
+// Cloud Run, which has no shared host volume.
+const ARTIFACTS_DIR = process.env.CONDUCTOR_ARTIFACTS_DIR || path.join(RUNNER_ROOT, 'artifacts');
 const LOG_FLUSH_INTERVAL_MS = 2000;
 const COMPLETE_POST_RETRIES = 3;
 const LOG_POST_RETRIES = 1;
@@ -152,6 +157,115 @@ function materializeInputs(env) {
     }
     writeFileSync(path.join(INPUTS_DIR, filename), String(content));
   }
+}
+
+/**
+ * Downloads every consumed artifact (from CONDUCTOR_CONSUMED_ARTIFACTS_JSON, a JSON array of
+ * `{name, downloadUrl}`) into {@link ARTIFACTS_DIR}. No-op if the env var is absent (the job
+ * consumes nothing). A download failure is a ConfigError — a consumer step that can't get the
+ * files it declared `consumes:` on has nothing sensible to fall back to.
+ */
+async function materializeConsumedArtifacts(env) {
+  const raw = env.CONDUCTOR_CONSUMED_ARTIFACTS_JSON;
+  if (!raw) return;
+  let artifacts;
+  try {
+    artifacts = JSON.parse(raw);
+  } catch (err) {
+    throw new ConfigError(`CONDUCTOR_CONSUMED_ARTIFACTS_JSON is not valid JSON: ${err.message}`);
+  }
+  mkdirSync(ARTIFACTS_DIR, { recursive: true });
+  for (const { name, downloadUrl } of artifacts) {
+    if (!isSafeFilename(name)) {
+      throw new ConfigError(`Rejected unsafe consumed-artifact name: ${name}`);
+    }
+    let res;
+    try {
+      res = await fetch(downloadUrl);
+    } catch (err) {
+      throw new ConfigError(`Failed to download consumed artifact '${name}': ${err.message}`);
+    }
+    if (!res.ok) {
+      throw new ConfigError(`Failed to download consumed artifact '${name}': HTTP ${res.status}`);
+    }
+    writeFileSync(path.join(ARTIFACTS_DIR, name), Buffer.from(await res.arrayBuffer()));
+  }
+}
+
+/** POSTs JSON and returns the parsed response body, or null on any failure (non-2xx or network error). */
+async function postJsonForResult(url, token, body) {
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * PUTs raw bytes to an artifact's upload URL. A signed GCS URL is self-contained and must NOT
+ * carry an Authorization header; the local-profile passthrough URL is backend-relative (starts
+ * with CONDUCTOR_API_URL) and DOES need the run-token bearer header — that's the only signal
+ * available to tell the two apart (mirrors job-runner.ts's putArtifactContent).
+ */
+async function putArtifactBytes(uploadUrl, content, runToken, apiUrl) {
+  const headers = {};
+  if (uploadUrl.startsWith(apiUrl)) {
+    headers.Authorization = `Bearer ${runToken}`;
+  }
+  try {
+    const res = await fetch(uploadUrl, { method: 'PUT', headers, body: content });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Uploads every artifact declared in CONDUCTOR_STEP_ARTIFACTS_JSON (a JSON array of
+ * `{name, path}`), reading each from {@link WORKSPACE_DIR}. No-op (returns ok) if the env var is
+ * absent. Stops at the first problem: a missing declared file, or any create/PUT/complete HTTP
+ * step failing.
+ */
+async function uploadDeclaredArtifacts(env) {
+  const raw = env.CONDUCTOR_STEP_ARTIFACTS_JSON;
+  if (!raw) return { ok: true };
+  let artifacts;
+  try {
+    artifacts = JSON.parse(raw);
+  } catch (err) {
+    return { ok: false, errorReason: 'CLAUDE_ARTIFACT_UPLOAD_FAILED', message: `CONDUCTOR_STEP_ARTIFACTS_JSON is not valid JSON: ${err.message}` };
+  }
+  const artifactsUrl = env.CONDUCTOR_ARTIFACTS_URL;
+  if (!artifactsUrl) {
+    return { ok: false, errorReason: 'CLAUDE_ARTIFACT_UPLOAD_FAILED', message: 'CONDUCTOR_ARTIFACTS_URL is required when artifacts are declared' };
+  }
+  for (const { name, path: relPath } of artifacts) {
+    let content;
+    try {
+      content = readFileSync(path.join(WORKSPACE_DIR, relPath));
+    } catch {
+      return { ok: false, errorReason: 'CLAUDE_ARTIFACT_MISSING', message: `declared artifact '${name}' not found at ${relPath}` };
+    }
+    const created = await postJsonForResult(artifactsUrl, env.CONDUCTOR_RUN_TOKEN, { jobId: env.CONDUCTOR_JOB_ID, name });
+    if (!created) {
+      return { ok: false, errorReason: 'CLAUDE_ARTIFACT_UPLOAD_FAILED', message: `failed to declare artifact '${name}'` };
+    }
+    const putOk = await putArtifactBytes(created.uploadUrl, content, env.CONDUCTOR_RUN_TOKEN, env.CONDUCTOR_API_URL);
+    if (!putOk) {
+      return { ok: false, errorReason: 'CLAUDE_ARTIFACT_UPLOAD_FAILED', message: `upload failed for artifact '${name}'` };
+    }
+    const completedResult = await postJson(`${artifactsUrl}/${created.artifactId}/complete`, env.CONDUCTOR_RUN_TOKEN, {});
+    if (!completedResult) {
+      return { ok: false, errorReason: 'CLAUDE_ARTIFACT_UPLOAD_FAILED', message: `complete failed for artifact '${name}'` };
+    }
+  }
+  return { ok: true };
 }
 
 function writeMcpConfig(env) {
@@ -558,6 +672,7 @@ async function main() {
   try {
     mkdirSync(WORKSPACE_DIR, { recursive: true });
     materializeInputs(env);
+    await materializeConsumedArtifacts(env);
     invocation = buildClaudeInvocation(env);
   } catch (err) {
     const message = scrub(err.message || String(err), secrets);
@@ -566,7 +681,16 @@ async function main() {
   }
 
   const runResult = await runClaude(invocation, env, secrets, [buildStartLine(env)]);
-  const { exitCode, errorReason, outputs } = classifyResult(runResult, Boolean(env.CONDUCTOR_OUTPUT_SCHEMA_JSON));
+  let { exitCode, errorReason, outputs } = classifyResult(runResult, Boolean(env.CONDUCTOR_OUTPUT_SCHEMA_JSON));
+
+  if (exitCode === EXIT.SUCCESS) {
+    const artifactResult = await uploadDeclaredArtifacts(env);
+    if (!artifactResult.ok) {
+      exitCode = EXIT.CONFIG_ERROR;
+      errorReason = artifactResult.errorReason;
+      localLog(errorReason, scrub(artifactResult.message, secrets));
+    }
+  }
 
   localLog(`claude exited code=${runResult.code} signal=${runResult.signal} timedOut=${runResult.timedOut} -> ${errorReason || 'SUCCESS'}`);
 

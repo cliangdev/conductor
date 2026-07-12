@@ -51,8 +51,11 @@ public class KestraStepExecutor implements WorkflowExecutionBackend {
         int timeoutMinutes = getIntOrDefault(stepDef, "timeout_minutes", DEFAULT_TIMEOUT_MINUTES);
         boolean failOnWarning = getBooleanOrDefault(stepDef, "fail_on_warning", false);
 
-        String baseUrl = System.getenv().getOrDefault("KESTRA_BASE_URL", DEFAULT_BASE_URL);
-        String apiToken = System.getenv("KESTRA_API_TOKEN");
+        // Resolution order: step config (interpolated — so `${{ secrets.X }}` works) → the
+        // deployment's env vars (existing self-hosted/Cloud Run config) → the conductor-hosted default.
+        String baseUrl = resolveConfigString(stepDef, "base_url", ctx,
+                System.getenv().getOrDefault("KESTRA_BASE_URL", DEFAULT_BASE_URL));
+        String apiToken = resolveConfigString(stepDef, "api_token", ctx, System.getenv("KESTRA_API_TOKEN"));
 
         Map<String, String> interpolatedInputs = interpolateInputs(stepDef, ctx);
 
@@ -161,6 +164,13 @@ public class KestraStepExecutor implements WorkflowExecutionBackend {
         Map<String, String> outputs = extractOutputs(stepDef, executionJson);
         outputs.put("executionId", executionId);
         return StepResult.success(logBuilder.toString(), outputs);
+    }
+
+    /** Reads and interpolates a string step-config key, falling back when absent/blank. */
+    private String resolveConfigString(Map<String, Object> stepDef, String key, RuntimeContext ctx, String fallback) {
+        Object val = stepDef.get(key);
+        if (val == null || val.toString().isBlank()) return fallback;
+        return interpolator.interpolate(val.toString(), ctx);
     }
 
     private Map<String, String> interpolateInputs(Map<String, Object> stepDef, RuntimeContext ctx) {

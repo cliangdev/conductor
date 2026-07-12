@@ -14,6 +14,7 @@ import {
   FolderIcon,
   GitBranchIcon,
   KeyIcon,
+  LockIcon,
   LogOutIcon,
   MoreHorizontalIcon,
   PlusIcon,
@@ -438,6 +439,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                       onNavigate={onNavigate}
                     >
                       API Keys
+                    </NavItem>
+                    <NavItem
+                      href={`/app/projects/${currentWorkspace.id}/settings/secrets`}
+                      icon={<LockIcon className="h-4 w-4" />}
+                      onNavigate={onNavigate}
+                    >
+                      Secrets
                     </NavItem>
                     <NavItem
                       href={`/app/projects/${currentWorkspace.id}/settings/notifications`}

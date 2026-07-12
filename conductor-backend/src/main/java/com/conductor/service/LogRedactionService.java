@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
 import java.util.Map;
 
 /**
@@ -21,8 +22,19 @@ public class LogRedactionService {
     public String redact(String projectId, String logText) {
         if (logText == null || logText.isEmpty()) return logText;
         Map<String, String> secrets = secretsService.resolveSecrets(projectId);
-        String result = logText;
-        for (String value : secrets.values()) {
+        return redactValues(logText, secrets.values());
+    }
+
+    /**
+     * Reusable core: replaces every occurrence of each non-blank value in {@code sensitiveValues} with
+     * {@code ***}. Shared with {@link ActionInvocationService}, which already holds the literal secret
+     * values it needs redacted (interpolated into an action step's input) rather than a project id to
+     * re-resolve them from.
+     */
+    public static String redactValues(String text, Collection<String> sensitiveValues) {
+        if (text == null || text.isEmpty() || sensitiveValues == null) return text;
+        String result = text;
+        for (String value : sensitiveValues) {
             if (value != null && !value.isEmpty()) {
                 result = result.replace(value, "***");
             }

@@ -10,6 +10,11 @@ import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.LogRedactionService;
+import com.conductor.workflow.model.JobSpec;
+import com.conductor.workflow.model.StepSpec;
+import com.conductor.workflow.model.WorkflowSpec;
+import com.conductor.workflow.model.WorkflowYamlException;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,6 +57,7 @@ public class WorkflowRunLogBroker {
     private final WorkflowStepRunRepository stepRunRepository;
     private final ObjectMapper objectMapper;
     private final LogRedactionService logRedactionService;
+    private final WorkflowYamlParser yamlParser;
 
     private final ConcurrentHashMap<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, List<String>> runLogs = new ConcurrentHashMap<>();
@@ -60,12 +66,14 @@ public class WorkflowRunLogBroker {
                                 WorkflowJobRunRepository jobRunRepository,
                                 WorkflowStepRunRepository stepRunRepository,
                                 ObjectMapper objectMapper,
-                                LogRedactionService logRedactionService) {
+                                LogRedactionService logRedactionService,
+                                WorkflowYamlParser yamlParser) {
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
         this.objectMapper = objectMapper;
         this.logRedactionService = logRedactionService;
+        this.yamlParser = yamlParser;
     }
 
     /**
@@ -257,34 +265,28 @@ public class WorkflowRunLogBroker {
                     runId, step.getId());
             return outputs;
         }
-        Map<String, Object> stepDef = resolveStepDefinition(runOpt.get(), jobRun, step);
+        StepSpec stepDef = resolveStepDefinition(runOpt.get(), jobRun, step);
         if (stepDef == null) {
             log.warn("recordStepCompleted: could not resolve step definition for workerJobId {} in run {}, "
                     + "persisting outputs unmapped", step.getWorkerJobId(), runId);
             return outputs;
         }
         Map<String, String> mappedOutputs = new HashMap<>(outputs);
-        StepOutputMapper.applyDeclaredOutputs(stepDef,
+        StepOutputMapper.applyDeclaredOutputs(stepDef.raw(),
                 StepOutputMapper.outputsTree(objectMapper, mappedOutputs), mappedOutputs);
         return mappedOutputs;
     }
 
-    private Map<String, Object> resolveStepDefinition(WorkflowRun run, WorkflowJobRun jobRun, WorkflowStepRun step) {
-        Map<String, Object> parsedWorkflow = parseYaml(run.getWorkflow().getYaml());
+    private StepSpec resolveStepDefinition(WorkflowRun run, WorkflowJobRun jobRun, WorkflowStepRun step) {
+        WorkflowSpec parsedWorkflow = parseYaml(run.getWorkflow().getYaml());
         if (parsedWorkflow == null) return null;
-        Object jobsObj = parsedWorkflow.get("jobs");
-        if (!(jobsObj instanceof Map)) return null;
-        @SuppressWarnings("unchecked")
-        Map<String, Object> jobs = (Map<String, Object>) jobsObj;
-        Object jobDefObj = jobs.get(jobRun.getJobId());
-        if (!(jobDefObj instanceof Map)) return null;
-        @SuppressWarnings("unchecked")
-        Map<String, Object> jobDef = (Map<String, Object>) jobDefObj;
-        List<Map<String, Object>> steps = WorkflowJobSteps.executableSteps(jobDef);
+        JobSpec jobDef = parsedWorkflow.jobs().get(jobRun.getJobId());
+        if (jobDef == null) return null;
+        List<StepSpec> steps = jobDef.executableSteps();
 
         String stepId = step.getStepId();
         if (stepId != null) {
-            return steps.stream().filter(s -> stepId.equals(s.get("id"))).findFirst().orElse(null);
+            return steps.stream().filter(s -> stepId.equals(s.id())).findFirst().orElse(null);
         }
 
         Integer index = parseIndexSuffix(step.getWorkerJobId());
@@ -304,10 +306,10 @@ public class WorkflowRunLogBroker {
         }
     }
 
-    private Map<String, Object> parseYaml(String yaml) {
+    private WorkflowSpec parseYaml(String yaml) {
         try {
-            return new org.yaml.snakeyaml.Yaml().load(yaml);
-        } catch (Exception e) {
+            return yamlParser.parse(yaml);
+        } catch (WorkflowYamlException e) {
             log.error("Failed to parse workflow YAML: {}", e.getMessage());
             return null;
         }

@@ -8,7 +8,8 @@ import java.util.regex.Pattern;
 
 /**
  * Resolves ${{ expr }} expressions in workflow YAML strings against a RuntimeContext.
- * Supports dot-notation paths: event.FIELD, secrets.KEY, steps.ID.outputs.KEY, needs.JOB.outputs.KEY
+ * Supports dot-notation paths: event.FIELD, secrets.KEY, steps.ID.outputs.KEY, steps.ID.result,
+ * needs.JOB.outputs.KEY, needs.JOB.result, needs.JOB.artifacts.NAME, inputs.KEY.
  * Unknown references resolve to empty string (no exception).
  */
 @Component
@@ -52,7 +53,7 @@ public class WorkflowInterpolator {
                 String key = expr.substring("secrets.".length());
                 return context.getSecrets().getOrDefault(key, "");
             } else if (expr.startsWith("steps.")) {
-                // steps.STEP_ID.outputs.KEY
+                // steps.STEP_ID.outputs.KEY or steps.STEP_ID.result
                 String[] parts = expr.split("\\.", 4);
                 if (parts.length == 4 && "outputs".equals(parts[2])) {
                     String stepId = parts[1];
@@ -60,8 +61,11 @@ public class WorkflowInterpolator {
                     Map<String, String> outputs = context.getStepOutputs().get(stepId);
                     return outputs != null ? outputs.getOrDefault(outputKey, "") : "";
                 }
+                if (parts.length == 3 && "result".equals(parts[2])) {
+                    return context.getStepResults().getOrDefault(parts[1], "");
+                }
             } else if (expr.startsWith("needs.")) {
-                // needs.JOB_ID.outputs.KEY
+                // needs.JOB_ID.outputs.KEY or needs.JOB_ID.result or needs.JOB_ID.artifacts.NAME
                 String[] parts = expr.split("\\.", 4);
                 if (parts.length == 4 && "outputs".equals(parts[2])) {
                     String jobId = parts[1];
@@ -69,6 +73,18 @@ public class WorkflowInterpolator {
                     Map<String, String> outputs = context.getJobOutputs().get(jobId);
                     return outputs != null ? outputs.getOrDefault(outputKey, "") : "";
                 }
+                if (parts.length == 4 && "artifacts".equals(parts[2])) {
+                    String jobId = parts[1];
+                    String artifactName = parts[3];
+                    Map<String, String> artifacts = context.getJobArtifacts().get(jobId);
+                    return artifacts != null ? artifacts.getOrDefault(artifactName, "") : "";
+                }
+                if (parts.length == 3 && "result".equals(parts[2])) {
+                    return context.getJobResults().getOrDefault(parts[1], "");
+                }
+            } else if (expr.startsWith("inputs.")) {
+                String key = expr.substring("inputs.".length());
+                return context.getInputs().getOrDefault(key, "");
             }
         } catch (Exception e) {
             // Swallow — return empty string

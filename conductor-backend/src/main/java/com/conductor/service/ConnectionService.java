@@ -205,22 +205,33 @@ public class ConnectionService {
         }
     }
 
-    /** Compute tool metadata for a connection on-the-fly from the connector's static spec + non-secret config. */
+    /**
+     * Compute tool metadata for a connection on-the-fly from the connector's static spec + non-secret
+     * config. Populated for any connector with a discoverable capability — {@code findFetch} (pull,
+     * contributes {@code operations}) or {@code findAction} (outbound, contributes {@code actions}); a
+     * connector implementing both gets both in the same merged map.
+     */
     public Optional<Map<String, Object>> computeToolMetadata(Connection c) {
-        return connectorRegistry.findFetch(c.getConnectorId()).map(fetch -> {
-            IntegrationToolSpec spec = fetch.getToolSpec();
-            Map<String, Object> merged = new java.util.LinkedHashMap<>();
-            merged.put("description", spec.description());
-            merged.put("operations", spec.operations());
-            Set<String> secretKeys = fetch.getSpec().fields().stream()
-                    .filter(com.conductor.integration.ConnectorConfigField::secret)
-                    .map(com.conductor.integration.ConnectorConfigField::key)
-                    .collect(Collectors.toSet());
-            parseConfig(c.getConfigJson()).forEach((k, v) -> {
-                if (v != null && !secretKeys.contains(k)) merged.put(k, v);
-            });
-            return merged;
+        Optional<com.conductor.integration.FetchConnector> fetch = connectorRegistry.findFetch(c.getConnectorId());
+        Optional<com.conductor.integration.ActionConnector> action = connectorRegistry.findAction(c.getConnectorId());
+        Optional<Connector> connector = fetch.<Connector>map(f -> f).or(() -> action.map(a -> a));
+        if (connector.isEmpty()) {
+            return Optional.empty();
+        }
+
+        IntegrationToolSpec spec = connector.get().getToolSpec();
+        Map<String, Object> merged = new java.util.LinkedHashMap<>();
+        merged.put("description", spec.description());
+        merged.put("operations", spec.operations());
+        merged.put("actions", spec.actions());
+        Set<String> secretKeys = connector.get().getSpec().fields().stream()
+                .filter(com.conductor.integration.ConnectorConfigField::secret)
+                .map(com.conductor.integration.ConnectorConfigField::key)
+                .collect(Collectors.toSet());
+        parseConfig(c.getConfigJson()).forEach((k, v) -> {
+            if (v != null && !secretKeys.contains(k)) merged.put(k, v);
         });
+        return Optional.of(merged);
     }
 
     private void computeAndStoreToolMetadata(Connection c) {

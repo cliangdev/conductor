@@ -8,7 +8,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class WorkflowValidatorLoopConditionTest {
 
-    private final WorkflowValidator validator = new WorkflowValidator();
+    private final WorkflowValidator validator = new WorkflowValidator(
+            Set.of("http", "docker", "kestra", "condition", "integration", "agent", "claude-code"));
 
     private WorkflowValidationResult validate(String yaml) {
         return validator.validate(yaml, Set.of());

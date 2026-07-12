@@ -47,7 +47,7 @@ class WorkflowRunLogBrokerTest {
     @BeforeEach
     void setUp() {
         broker = new WorkflowRunLogBroker(runRepository, jobRunRepository, stepRunRepository, new ObjectMapper(),
-                logRedactionService);
+                logRedactionService, new com.conductor.workflow.model.WorkflowYamlParser());
     }
 
     private WorkflowJobRun jobRunWithStep(WorkflowStepRun step) {

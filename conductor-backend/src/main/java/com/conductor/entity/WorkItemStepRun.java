@@ -21,8 +21,8 @@ import java.util.UUID;
  * Reported by the local skill via MCP. Nested arrays (produced/flags) and the before/after are stored as JSONB.
  */
 @Entity
-@Table(name = "step_runs")
-public class StepRun {
+@Table(name = "work_item_step_runs")
+public class WorkItemStepRun {
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)

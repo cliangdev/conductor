@@ -4,6 +4,8 @@ import com.conductor.config.SecurityConfig;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinition;
+import com.conductor.entity.WorkflowRun;
+import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
@@ -21,6 +23,7 @@ import com.conductor.service.WorkflowService;
 import com.conductor.service.WorkflowViewService;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowTriggerService;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,12 +40,15 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -62,6 +68,12 @@ class WorkflowControllerTest {
         @Bean
         ObjectMapper objectMapper() {
             return new ObjectMapper();
+        }
+
+        // No dependencies of its own; a real instance is simpler than mocking parse() per test.
+        @Bean
+        WorkflowYamlParser workflowYamlParser() {
+            return new WorkflowYamlParser();
         }
     }
 
@@ -186,5 +198,50 @@ class WorkflowControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sidebarEnabled").value(false))
                 .andExpect(jsonPath("$.kind").value("LIFECYCLE"));
+    }
+
+    private WorkflowRun runWithEventPayload(String eventPayloadJson) {
+        WorkflowRun run = new WorkflowRun();
+        run.setId("run-1");
+        run.setWorkflow(automationWorkflow());
+        run.setTriggerType("workflow_dispatch");
+        run.setStatus(WorkflowRunStatus.PENDING);
+        run.setStartedAt(OffsetDateTime.now());
+        run.setEventPayload(eventPayloadJson);
+        return run;
+    }
+
+    @Test
+    void dispatchWorkflow_withInputs_passesInputsAndReturnsEventPayload() throws Exception {
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(automationWorkflow());
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workflowTriggerService.triggerManual(any(), eq("user-1"), eq(java.util.Map.of("environment", "staging"))))
+                .thenReturn(runWithEventPayload(
+                        "{\"type\":\"workflow_dispatch\",\"inputs\":{\"environment\":\"staging\"}}"));
+
+        mockMvc.perform(post("/api/v1/projects/{p}/workflows/{w}/dispatch", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"inputs\":{\"environment\":\"staging\"}}"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value("run-1"))
+                .andExpect(jsonPath("$.eventPayload.inputs.environment").value("staging"));
+
+        verify(workflowTriggerService).triggerManual(any(), eq("user-1"), eq(java.util.Map.of("environment", "staging")));
+    }
+
+    @Test
+    void dispatchWorkflow_withoutBody_stillWorks() throws Exception {
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(automationWorkflow());
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workflowTriggerService.triggerManual(any(), eq("user-1"), isNull()))
+                .thenReturn(runWithEventPayload("{\"type\":\"workflow_dispatch\"}"));
+
+        mockMvc.perform(post("/api/v1/projects/{p}/workflows/{w}/dispatch", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value("run-1"));
+
+        verify(workflowTriggerService).triggerManual(any(), eq("user-1"), isNull());
     }
 }

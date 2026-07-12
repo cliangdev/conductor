@@ -37,8 +37,10 @@ If ambiguous, ask:
 Run these in parallel before designing anything:
 
 ```
-1. list_integration_tools  → what data sources are connected + their operations
-2. list_workflows          → existing workflows (for naming/area conventions)
+1. list_integration_tools    → what data sources/actions are already connected + their operations
+2. list_workflows            → existing workflows (for naming/area conventions)
+3. list_connector_catalog    → integrations NOT yet connected, for recommending a fit
+4. list_workflow_secrets     → which ${{ secrets.X }} keys already exist (never their values)
 ```
 
 Then ask the user (use AskUserQuestion for structured choices where applicable):
@@ -50,10 +52,20 @@ Then ask the user (use AskUserQuestion for structured choices where applicable):
    - Work Item status change → `on: conductor.work_item.status_changed:`
    - Manual run button → `on: workflow_dispatch:`
 3. **What data or actions does it need?** (use `list_integration_tools` output to suggest connected options)
-4. **Where do results go?** Discord webhook, Slack, create a Conductor issue, HTTP POST, etc.
+4. **Where do results go?** Discord/Slack post, create a Conductor issue, HTTP POST, etc.
 
 If `list_integration_tools` shows relevant connected integrations, name them explicitly:
 > "I can see Google Search Console is connected (operations: search_analytics, top_queries, top_pages). Should I use that as the data source?"
+
+If the goal needs a data source or outbound action that **isn't** connected yet, check
+`list_connector_catalog` and name the specific connector rather than falling back to a raw `http`
+step silently:
+> "Posting to Discord needs the Discord connector — it's not connected yet. Connect it under
+> **Settings → Integrations**, or I can use a raw `http` step with a webhook secret instead."
+
+If the design will reference `${{ secrets.SOME_KEY }}`, confirm it's in the `list_workflow_secrets`
+result before designing around it — don't assume a secret exists because the user mentioned it.
+Secrets are added under **Settings → Secrets**.
 
 ---
 
@@ -92,10 +104,17 @@ steps:
 | Step type | `uses` value | When to use |
 |-----------|-------------|-------------|
 | Integration | `integration` | Connected data source (GSC, PostHog, RevenueCat, GCP Billing) |
+| Action | `action` | Outbound side effect via a connector with the ACTION capability (e.g. `discord post_message`) |
 | HTTP | `http` | Any REST API call; custom integrations |
 | Docker | `docker://image` | Run a script or CLI tool in a container |
+| Agent | `agent` | Hand a task to a named AI agent (Settings → Agents) |
+| Claude Code | `claude-code` | Headless Claude Code (`claude -p`), full tool-calling loop, optional Conductor MCP access |
 | Condition | `condition` | Branch to different jobs based on a runtime value |
 | Kestra | `kestra` | Delegate to an existing Kestra flow |
+
+Prefer `uses: action` over a raw `http` step with a webhook-secret whenever an action connector
+exists for the target — same reasoning as preferring `integration` over `http` for reads:
+credentials stay off the connector, never in the YAML.
 
 ### Reference: Interpolation
 
@@ -103,8 +122,12 @@ steps:
 |------------|-------|
 | `${{ event.FIELD }}` | Trigger event payload field |
 | `${{ secrets.SECRET_NAME }}` | Project secret (custom secrets only; integrations don't need this) |
+| `${{ inputs.KEY }}` | A manual-dispatch input value (see `on.workflow_dispatch.inputs`) |
 | `${{ steps.STEP_ID.outputs.KEY }}` | Output from a step in the current job |
+| `${{ steps.STEP_ID.result }}` | Terminal result of a prior step: `success` / `failure` / `skipped` |
 | `${{ needs.JOB_ID.outputs.KEY }}` | Output from a completed upstream job |
+| `${{ needs.JOB_ID.result }}` | Terminal result of an upstream job: `success` / `failure` / `skipped` |
+| `${{ needs.JOB_ID.artifacts.NAME }}` | Signed download URL for an artifact an upstream job produced |
 | `${{ loop.iteration }}` | Current loop iteration (1-based) |
 
 ### Annotated example — Weekly SEO report
@@ -131,13 +154,69 @@ jobs:
     runs-on: conductor
     steps:
       - id: notify
-        uses: http
+        uses: action
         with:
-          method: POST
-          url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          body: >
-            {"content": "📊 Weekly SEO Report\nTop pages: ${{ needs.fetch_seo.outputs.data }}"}
+          connector: discord
+          action: post_message
+          input:
+            content: "📊 Weekly SEO Report\nTop pages: ${{ needs.fetch_seo.outputs.data }}"
 ```
+
+---
+
+## Resilience patterns
+
+These are the skill's key value-add for digest/report-style workflows: don't let one failed
+collector job silently kill the whole report.
+
+**`if: always()` / `if: failure()` on downstream jobs.** A digest job should usually still post even
+if one collector failed — pair with `needs.JOB.result` to mark that section unavailable instead of
+skipping the whole digest:
+
+```yaml
+digest:
+  needs: [collect_gsc, collect_posthog]
+  if: always()
+  steps:
+    - uses: action
+      with:
+        connector: discord
+        action: post_message
+        input:
+          content: "GSC (${{ needs.collect_gsc.result }}): ${{ needs.collect_gsc.outputs.data }}"
+```
+
+**Step-level `continue-on-error`.** Let one optional step fail without failing the job; branch later
+steps on `${{ steps.ID.result }}`:
+
+```yaml
+- id: optional_lint
+  type: http
+  url: https://lint.example.com/check
+  continue-on-error: true
+```
+
+**Dispatch `inputs` for parameterized/backfill runs.** Declare `on.workflow_dispatch.inputs` so a
+manual re-run (e.g. `dispatch_workflow` with `inputs: {date: "2026-06-01"}`) can target a specific
+date/env rather than always running "now":
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      date: { description: "Backfill date (YYYY-MM-DD)", required: false }
+```
+
+Reference it as `${{ inputs.date }}` anywhere in the workflow.
+
+## Artifacts
+
+For whole-file handoff between jobs (a build binary, a rendered report, a dataset) — not the small
+string values `outputs:` is for — a `docker` or `claude-code` step declares `artifacts: [{name, path}]`
+and a downstream job declares `consumes: [name]`. Reach for this when a job needs to hand a real file
+to another job rather than a string. Note: `docker` artifact producers require `runs-on: self-hosted`
+(the Conductor-hosted docker path doesn't support artifact upload); `claude-code` supports artifacts
+on any runtime.
 
 ---
 
@@ -174,15 +253,19 @@ publish_workflow(workflowId)
 
 ### 3d. Test dispatch (optional)
 
-dispatch_workflow(workflowId)
+dispatch_workflow(workflowId, inputs?)
 
-Offer to trigger a test run immediately so the user can see it work. Returns workflowId + runId.
+Offer to trigger a test run immediately so the user can see it work. Pass `inputs` if the workflow
+declares `on.workflow_dispatch.inputs` (e.g. a backfill date) — otherwise omit it. Returns workflowId + runId.
 
 After dispatching, call get_workflow_run once to check the run started:
 
 get_workflow_run(workflowId, runId)
 
 Don't poll — one check is enough since runs are async. Include the status in the final report to the user. A RUNNING or SUCCESS status means the workflow is live and executing.
+
+For a scheduled or event-triggered workflow (no immediate dispatch to check), use
+`list_workflow_runs(workflowId)` later to see whether it has actually fired since going live.
 
 ---
 
@@ -267,10 +350,10 @@ publish_workflow(workflowId)                 // DRAFT → PUBLISHED
 These rules apply regardless of the user's request. Never deviate from them.
 
 1. **Always call `list_integration_tools` before designing** — never guess what integrations are available from secret key names or conversation context.
-2. **Use `uses: integration` for any connected integration** — credentials must never appear in workflow YAML.
+2. **Use `uses: integration` for reads and `uses: action` for outbound side effects** on any connected integration — credentials must never appear in workflow YAML.
 3. **Always call `get_workflow` after `create_workflow`** — close the observability loop before publishing.
 4. **DRAFT is the safe buffer** — only call `publish_workflow` when the design is fully confirmed.
 5. **Fix publish errors in place** — call `update_workflow` and retry; never call `create_workflow` a second time for the same workflow.
-6. **Do not invent connector IDs** — only use `connectorId` values returned by `list_integration_tools`.
+6. **Never invent connector IDs** — use `list_integration_tools` for what's connected, `list_connector_catalog` for what's available but not yet connected. Same for secrets: verify with `list_workflow_secrets` before designing around a `${{ secrets.X }}` reference.
 7. **Register a custom skill before binding it** — for a statechart `skill` step whose id is not a built-in or
    already registered (`list_skills`), call `register_skill` first, or Publish will reject the definition.

@@ -19,8 +19,21 @@ public class ConditionEvaluator {
      * Evaluates a condition expression (already interpolated — no ${{ }} in input).
      * The input may have been extracted from ${{ condition }} by stripping the outer delimiters.
      * Returns true if the condition is truthy, false otherwise.
+     *
+     * <p>Delegates with {@link ConditionStatusContext#NONE} — {@code always()}/{@code success()}/
+     * {@code failure()} are unavailable through this overload (they all evaluate as if no upstream
+     * job had failed).
      */
     public boolean evaluate(String expression) {
+        return evaluate(expression, ConditionStatusContext.NONE);
+    }
+
+    /**
+     * Evaluates a condition expression with {@code always()}, {@code success()} and {@code failure()}
+     * resolved against {@code statusContext}. These behave as GitHub-Actions-style boolean primaries:
+     * composable with {@code &&}, {@code ||}, and comparison operators just like any other value.
+     */
+    public boolean evaluate(String expression, ConditionStatusContext statusContext) {
         if (expression == null || expression.isBlank()) return false;
         String expr = expression.trim();
         if (expr.startsWith("${{")) {
@@ -28,7 +41,7 @@ public class ConditionEvaluator {
             expr = expr.substring(3, expr.length() - 2).trim();
         }
         try {
-            return evalOr(new Parser(expr));
+            return evalOr(new Parser(expr, statusContext));
         } catch (Exception e) {
             log.warn("Failed to evaluate condition '{}': {}", expression, e.getMessage());
             return false;
@@ -79,10 +92,12 @@ public class ConditionEvaluator {
 
     private static class Parser {
         private final String input;
+        private final ConditionStatusContext statusContext;
         private int pos;
 
-        Parser(String input) {
+        Parser(String input, ConditionStatusContext statusContext) {
             this.input = input;
+            this.statusContext = statusContext;
             this.pos = 0;
         }
 
@@ -102,6 +117,18 @@ public class ConditionEvaluator {
         String readValue() {
             skipWhitespace();
             if (pos >= input.length()) return "";
+            if (input.startsWith("always()", pos)) {
+                pos += "always()".length();
+                return "true";
+            }
+            if (input.startsWith("success()", pos)) {
+                pos += "success()".length();
+                return statusContext.allUpstreamSucceeded() ? "true" : "false";
+            }
+            if (input.startsWith("failure()", pos)) {
+                pos += "failure()".length();
+                return statusContext.anyUpstreamFailed() ? "true" : "false";
+            }
             if (input.charAt(pos) == '\'') {
                 pos++;
                 int start = pos;

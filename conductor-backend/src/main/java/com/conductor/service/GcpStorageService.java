@@ -3,6 +3,7 @@ package com.conductor.service;
 import com.conductor.exception.StorageUploadException;
 import com.google.cloud.storage.BlobId;
 import com.google.cloud.storage.BlobInfo;
+import com.google.cloud.storage.HttpMethod;
 import com.google.cloud.storage.Storage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,6 +12,8 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @Service
@@ -90,6 +93,25 @@ public class GcpStorageService implements StorageService {
         BlobInfo blobInfo = BlobInfo.newBuilder(BlobId.of(bucketName, gcsPath)).build();
         URL url = storage.signUrl(blobInfo, expiryMinutes, TimeUnit.MINUTES,
                 Storage.SignUrlOption.withV4Signature());
+        return url.toString();
+    }
+
+    @Override
+    public String generateSignedUploadUrl(String gcsPath, String contentType, int expiryMinutes) {
+        BlobInfo.Builder blobInfoBuilder = BlobInfo.newBuilder(BlobId.of(bucketName, gcsPath));
+        boolean hasContentType = contentType != null && !contentType.isBlank();
+        if (hasContentType) {
+            blobInfoBuilder.setContentType(contentType);
+        }
+        List<Storage.SignUrlOption> options = new ArrayList<>();
+        options.add(Storage.SignUrlOption.httpMethod(HttpMethod.PUT));
+        options.add(Storage.SignUrlOption.withV4Signature());
+        if (hasContentType) {
+            // Bakes the Content-Type into the signature so the PUT must send the same header value.
+            options.add(Storage.SignUrlOption.withContentType());
+        }
+        URL url = storage.signUrl(blobInfoBuilder.build(), expiryMinutes, TimeUnit.MINUTES,
+                options.toArray(new Storage.SignUrlOption[0]));
         return url.toString();
     }
 }

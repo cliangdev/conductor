@@ -1,10 +1,10 @@
 package com.conductor.service;
 
-import com.conductor.entity.StepRun;
+import com.conductor.entity.WorkItemStepRun;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
-import com.conductor.repository.StepRunRepository;
+import com.conductor.repository.WorkItemStepRunRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.service.view.StepRunInput;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,23 +21,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
-class StepRunServiceTest {
+class WorkItemStepRunServiceTest {
 
     private static final String PROJECT_ID = "proj-1";
     private static final String ISSUE_ID = "issue-1";
 
-    private StepRunRepository stepRunRepository;
+    private WorkItemStepRunRepository stepRunRepository;
     private WorkItemRepository workItemRepository;
     private ProjectSecurityService projectSecurityService;
-    private StepRunService service;
+    private WorkItemStepRunService service;
     private final ObjectMapper mapper = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
-        stepRunRepository = Mockito.mock(StepRunRepository.class);
+        stepRunRepository = Mockito.mock(WorkItemStepRunRepository.class);
         workItemRepository = Mockito.mock(WorkItemRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
-        service = new StepRunService(stepRunRepository, workItemRepository, projectSecurityService);
+        service = new WorkItemStepRunService(stepRunRepository, workItemRepository, projectSecurityService);
         when(stepRunRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
     }
@@ -68,7 +68,7 @@ class StepRunServiceTest {
                 "Implement the assets table per tasks.json", "czl0909", null, null,
                 produced, null, null);
 
-        StepRun response = service.createStepRun(PROJECT_ID, ISSUE_ID, input, caller());
+        WorkItemStepRun response = service.createStepRun(PROJECT_ID, ISSUE_ID, input, caller());
 
         assertThat(response.getWorkItem().getId()).isEqualTo(ISSUE_ID);
         assertThat(response.getStatus()).isEqualTo("AWAITING_REVIEW");

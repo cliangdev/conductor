@@ -5,8 +5,11 @@ import com.conductor.entity.Connection;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.integration.AuthType;
+import com.conductor.integration.Capability;
 import com.conductor.integration.Connector;
+import com.conductor.integration.ConnectorCategory;
 import com.conductor.integration.ConnectorConfigField;
+import com.conductor.integration.ConnectorMetadata;
 import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.FieldType;
@@ -338,5 +341,74 @@ class IntegrationControllerTest {
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations")
                         .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isOk());
+    }
+
+    // ---- listConnectorCatalog ----
+
+    @Test
+    void listConnectorCatalog_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/catalog")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listConnectorCatalog_member_returnsAllRegisteredConnectors_withActiveConnectionState() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+
+        Connector connector = mock(Connector.class);
+        when(connector.getId()).thenReturn("posthog");
+        when(connector.getMetadata()).thenReturn(new ConnectorMetadata(
+                "posthog", "PostHog", ConnectorCategory.ANALYTICS, "Product analytics", "PH"));
+        when(connector.getSpec()).thenReturn(ConnectorSpec.apiKey(true, List.of(
+                ConnectorConfigField.userInput("apiKey", "API Key", "hint", FieldType.SECRET, true))));
+        when(connectorRegistry.getAll()).thenReturn(List.of(connector));
+        when(connectorRegistry.capabilitiesOf(connector)).thenReturn(List.of(Capability.FETCH));
+
+        Connection active = new Connection();
+        active.setId("conn-active");
+        active.setStatus("ACTIVE");
+        Connection erroring = new Connection();
+        erroring.setId("conn-error");
+        erroring.setStatus("ERROR");
+        when(connectionService.list(PROJECT_ID, "posthog")).thenReturn(List.of(active, erroring));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/catalog")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value("posthog"))
+                .andExpect(jsonPath("$[0].name").value("PostHog"))
+                .andExpect(jsonPath("$[0].description").value("Product analytics"))
+                .andExpect(jsonPath("$[0].category").value("ANALYTICS"))
+                .andExpect(jsonPath("$[0].authType").value("API_KEY"))
+                .andExpect(jsonPath("$[0].capabilities[0]").value("FETCH"))
+                .andExpect(jsonPath("$[0].configFields[0].name").value("apiKey"))
+                .andExpect(jsonPath("$[0].configFields[0].secret").value(true))
+                .andExpect(jsonPath("$[0].connected").value(true))
+                .andExpect(jsonPath("$[0].activeConnectionIds.length()").value(1))
+                .andExpect(jsonPath("$[0].activeConnectionIds[0]").value("conn-active"));
+    }
+
+    @Test
+    void listConnectorCatalog_noActiveConnections_isNotConnected() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+
+        Connector connector = mock(Connector.class);
+        when(connector.getId()).thenReturn("posthog");
+        when(connector.getMetadata()).thenReturn(new ConnectorMetadata(
+                "posthog", "PostHog", ConnectorCategory.ANALYTICS, "Product analytics", "PH"));
+        when(connector.getSpec()).thenReturn(ConnectorSpec.apiKey(true, List.of()));
+        when(connectorRegistry.getAll()).thenReturn(List.of(connector));
+        when(connectorRegistry.capabilitiesOf(connector)).thenReturn(List.of(Capability.FETCH));
+        when(connectionService.list(PROJECT_ID, "posthog")).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/catalog")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].connected").value(false))
+                .andExpect(jsonPath("$[0].activeConnectionIds.length()").value(0));
     }
 }

@@ -179,6 +179,39 @@ export async function getWorkflowRun(
   )
 }
 
+export async function listWorkflowRuns(
+  params: { workflowId: string; page?: number; size?: number },
+  config: Config
+): Promise<unknown[]> {
+  const query = new URLSearchParams()
+  if (params.page !== undefined) query.set('page', String(params.page))
+  if (params.size !== undefined) query.set('size', String(params.size))
+  const qs = query.toString()
+  const raw = await apiGet<unknown[]>(
+    `/api/v1/projects/${config.projectId}/workflows/${params.workflowId}/runs${qs ? `?${qs}` : ''}`,
+    config
+  )
+  return Array.isArray(raw) ? raw : []
+}
+
+/**
+ * Names only — the backend never returns secret values over this endpoint, and this tool must not
+ * either. Strips any other field defensively even if the response ever grows one.
+ */
+export async function listWorkflowSecrets(
+  _params: Record<string, never>,
+  config: Config
+): Promise<{ key: string }[]> {
+  const raw = await apiGet<Record<string, unknown>[]>(
+    `/api/v1/projects/${config.projectId}/workflow-secrets`,
+    config
+  )
+  const list = Array.isArray(raw) ? raw : []
+  return list
+    .filter((s): s is Record<string, unknown> => typeof s?.['key'] === 'string')
+    .map((s) => ({ key: s['key'] as string }))
+}
+
 export async function reportStepRun(
   params: {
     issueId: string

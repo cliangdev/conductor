@@ -3,8 +3,7 @@ info:
   title: Conductor API v2
   description: >-
     Conductor API v2 — the canonical Work Item resource. Supersedes the legacy
-    v1 `issues` core endpoints (see docs/legacy-v1-deprecation.md). This spec is
-    additive: v1 remains served unchanged.
+    v1 `issues` core endpoints, which have been fully removed (migration completed 2026).
   version: "2.0.0"
 servers:
   - url: /api/v2

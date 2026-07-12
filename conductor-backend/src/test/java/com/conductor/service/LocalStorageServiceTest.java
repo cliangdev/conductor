@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class LocalStorageServiceTest {
 
@@ -30,6 +31,30 @@ class LocalStorageServiceTest {
         Path written = tempDir.resolve("proj/issues/issue-1/doc-1/spec.md");
         assertThat(written).exists();
         assertThat(Files.readAllBytes(written)).isEqualTo(content);
+    }
+
+    @Test
+    void uploadRejectsPathEscapingStorageRoot() {
+        assertThatThrownBy(() -> localStorageService.upload("../evil.txt", "pwned".getBytes(), "text/plain"))
+                .isInstanceOf(SecurityException.class);
+
+        assertThat(tempDir.getParent().resolve("evil.txt")).doesNotExist();
+    }
+
+    @Test
+    void downloadRejectsPathEscapingStorageRoot() throws IOException {
+        // A file that genuinely exists just outside the storage root — proves the guard blocks
+        // reading it via a crafted gcsPath, not merely that the target happens to be missing.
+        Path outsideFile = tempDir.getParent().resolve("outside-" + System.nanoTime() + ".txt");
+        Files.write(outsideFile, "secret".getBytes());
+        try {
+            String traversal = "../" + outsideFile.getFileName();
+
+            assertThatThrownBy(() -> localStorageService.download(traversal))
+                    .isInstanceOf(SecurityException.class);
+        } finally {
+            Files.deleteIfExists(outsideFile);
+        }
     }
 
     @Test

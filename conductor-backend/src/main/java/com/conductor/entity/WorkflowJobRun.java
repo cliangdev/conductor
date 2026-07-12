@@ -10,7 +10,6 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-import org.hibernate.annotations.ColumnTransformer;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -31,8 +30,7 @@ public class WorkflowJobRun {
     private String jobId;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, columnDefinition = "workflow_job_status")
-    @ColumnTransformer(write = "?::workflow_job_status")
+    @Column(name = "status", nullable = false, length = 32)
     private WorkflowJobStatus status;
 
     @Column(name = "iteration", nullable = false)

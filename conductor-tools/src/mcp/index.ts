@@ -10,7 +10,7 @@ import {
   listWorkItems,
   getWorkItem,
 } from './tools/issues.js'
-import { deleteDocument, scaffoldDocument } from './tools/documents.js'
+import { deleteDocument, scaffoldDocument, writeDocument } from './tools/documents.js'
 import { listWorkItemComments } from './tools/comments.js'
 import {
   listWorkflows,
@@ -24,8 +24,10 @@ import {
   publishWorkflow,
   dispatchWorkflow,
   getWorkflowRun,
+  listWorkflowRuns,
+  listWorkflowSecrets,
 } from './tools/workflows.js'
-import { listIntegrationTools } from './tools/integrations.js'
+import { listIntegrationTools, listConnectorCatalog } from './tools/integrations.js'
 import { listAgents } from './tools/agents.js'
 import { listSkills, registerSkill } from './tools/skills.js'
 
@@ -110,7 +112,7 @@ const TOOLS = [
   },
   {
     name: 'scaffold_document',
-    description: 'Create an empty document file locally and register it with the backend. Returns absolutePath (use this with the Write tool — Write requires absolute paths) and localPath (relative, for display).',
+    description: 'Create an empty document file locally and register it with the backend. Returns absolutePath (use this with the Write tool — Write requires absolute paths) and localPath (relative, for display). Prefer write_document — this tool requires the local daemon and does not work in headless containers.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -118,6 +120,20 @@ const TOOLS = [
         filename: { type: 'string', description: 'Document filename (e.g., prd.md)' },
       },
       required: ['issueId', 'filename'],
+    },
+  },
+  {
+    name: 'write_document',
+    description: 'Create or update a Work Item document by filename with full content (upsert). Works headlessly (workflow containers) — supersedes scaffold_document+Write for new documents. Verify via the returned document response.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item (issue) ID' },
+        filename: { type: 'string', description: 'Document filename (e.g., prd.md)' },
+        content: { type: 'string', description: 'Full document content' },
+        contentType: { type: 'string', description: 'MIME type (optional, defaults to text/markdown)' },
+      },
+      required: ['issueId', 'filename', 'content'],
     },
   },
   {
@@ -183,6 +199,11 @@ const TOOLS = [
   {
     name: 'list_integration_tools',
     description: 'List connected integrations and their available data operations for workflow authoring. Always call before designing a workflow — returns ACTIVE connections with connectorId, displayLabel, capabilities, and toolMetadata (description + operations list with id, outputShape, and outputKeys). Use connectorId in workflow YAML as: uses: integration / with: / connector: <connectorId> / operation: <operationId>',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'list_connector_catalog',
+    description: 'List ALL connector types Conductor supports (connected or not): capabilities (FETCH/ACTION/WEBHOOK), config fields, and whether this project has an active connection. Use to recommend integrations to connect; use list_integration_tools for operations/actions of ACTIVE connections.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -261,12 +282,12 @@ const TOOLS = [
   },
   {
     name: 'dispatch_workflow',
-    description: 'Manually trigger a workflow run for testing. Returns runId. Only works on PUBLISHED YAML automation workflows (not statechart lifecycle workflows).',
+    description: 'Manually trigger a workflow run for testing. Optional inputs map becomes ${{ inputs.KEY }} in the run. Returns runId. Only works on PUBLISHED YAML automation workflows (not statechart lifecycle workflows). Call get_workflow_run after to verify the run started; for scheduled/event runs use list_workflow_runs instead.',
     inputSchema: {
       type: 'object',
       properties: {
         workflowId: { type: 'string', description: 'Workflow definition ID' },
-        inputs: { type: 'object', description: 'Optional input values passed to the workflow run' },
+        inputs: { type: 'object', description: 'Input values passed to the workflow run, available as ${{ inputs.KEY }} in the YAML (optional)' },
       },
       required: ['workflowId'],
     },
@@ -282,6 +303,24 @@ const TOOLS = [
       },
       required: ['workflowId', 'runId'],
     },
+  },
+  {
+    name: 'list_workflow_runs',
+    description: 'List recent runs for a workflow (newest first): runId, status, triggerType, timings. Entry point for checking scheduled/event runs — get runId here, then get_workflow_run for step detail.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: { type: 'string', description: 'Workflow definition ID' },
+        page: { type: 'number', description: 'Page number, 0-based (optional, default 0)' },
+        size: { type: 'number', description: 'Page size (optional, default 50)' },
+      },
+      required: ['workflowId'],
+    },
+  },
+  {
+    name: 'list_workflow_secrets',
+    description: 'List the names of workflow secrets configured for this project (keys only — values are never returned here or anywhere over MCP). Secrets are set in the app under Settings → Secrets.',
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'report_step_run',
@@ -403,6 +442,9 @@ export async function runMcpServer(): Promise<void> {
         case 'list_integration_tools': {
           return successResponse(await listIntegrationTools({}, config))
         }
+        case 'list_connector_catalog': {
+          return successResponse(await listConnectorCatalog({}, config))
+        }
         case 'list_workflows': {
           return successResponse(
             await listWorkflows(
@@ -488,6 +530,21 @@ export async function runMcpServer(): Promise<void> {
             )
           )
         }
+        case 'list_workflow_runs': {
+          return successResponse(
+            await listWorkflowRuns(
+              {
+                workflowId: params['workflowId'] as string,
+                page: params['page'] as number | undefined,
+                size: params['size'] as number | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'list_workflow_secrets': {
+          return successResponse(await listWorkflowSecrets({}, config))
+        }
         case 'get_available_transitions': {
           return successResponse(
             await getAvailableTransitions({ issueId: params['issueId'] as string }, config)
@@ -544,6 +601,18 @@ export async function runMcpServer(): Promise<void> {
             {
               issueId: params['issueId'] as string,
               filename: params['filename'] as string,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'write_document': {
+          const result = await writeDocument(
+            {
+              issueId: params['issueId'] as string,
+              filename: params['filename'] as string,
+              content: params['content'] as string,
+              contentType: params['contentType'] as string | undefined,
             },
             config
           )
