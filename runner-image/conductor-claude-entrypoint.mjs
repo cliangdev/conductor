@@ -392,6 +392,9 @@ function translateEvent(event) {
       return [];
 
     case 'system': {
+      // Token-count telemetry streams continuously while the model thinks — drop it from the
+      // display log (like rate_limit_event above); other unknown system subtypes still pass raw.
+      if (event.subtype === 'thinking_tokens') return [];
       if (event.subtype !== 'init') return null;
       const model = typeof event.model === 'string' ? event.model : 'unknown';
       const session = typeof event.session_id === 'string' ? truncate(event.session_id, 8) : 'unknown';
