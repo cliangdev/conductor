@@ -5613,6 +5613,32 @@ components:
         outputSchemaJson:
           type: string
           description: Raw `with.output_schema`, serialized to a JSON string
+        artifacts:
+          type: array
+          description: >
+            This step's declared `artifacts:` (docker/claude-code steps only). Additive/optional — a
+            daemon that predates artifact support simply ignores it.
+          items:
+            $ref: "#/components/schemas/DispatchArtifactDto"
+
+    DispatchArtifactDto:
+      type: object
+      required: [name, path]
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+          description: Workspace-relative path inside the step's container
+
+    ConsumedArtifactDto:
+      type: object
+      required: [name, downloadUrl]
+      properties:
+        name:
+          type: string
+        downloadUrl:
+          type: string
 
     JobDispatchCallbacksDto:
       type: object
@@ -5655,6 +5681,19 @@ components:
           type: string
         callbacks:
           $ref: "#/components/schemas/JobDispatchCallbacksDto"
+        artifactsUrl:
+          type: string
+          description: >
+            Internal base URL for this run's artifact endpoints (`{artifactsUrl}` +
+            `/{artifactId}/complete`, etc.) — present whenever any step in this job declares
+            artifacts. Additive/optional.
+        consumedArtifacts:
+          type: array
+          description: >
+            This job's `consumes:` artifacts, pre-resolved to signed download URLs at payload-build
+            time. Additive/optional — empty/absent for jobs that don't consume any.
+          items:
+            $ref: "#/components/schemas/ConsumedArtifactDto"
 
     CompleteWorkflowJobRequest:
       type: object

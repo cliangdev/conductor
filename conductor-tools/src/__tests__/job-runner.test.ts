@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import type { ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import * as fs from 'fs'
+import * as path from 'path'
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -56,6 +57,7 @@ function makeStep(overrides: Partial<{
   maxTurns: number
   inputsJson: string
   outputSchemaJson: string
+  artifacts: Array<{ name: string; path: string }>
 }> = {}) {
   return {
     stepIndex: overrides.stepIndex ?? 0,
@@ -74,6 +76,8 @@ function makeDispatchPayload(overrides: Partial<{
   env: Record<string, string>
   steps: ReturnType<typeof makeStep>[]
   runToken: string
+  artifactsUrl: string
+  consumedArtifacts: Array<{ name: string; downloadUrl: string }>
 }> = {}) {
   return {
     jobRunId: overrides.jobRunId ?? 'jobrun_1',
@@ -86,6 +90,8 @@ function makeDispatchPayload(overrides: Partial<{
       logChunkUrlTemplate: 'http://localhost:8080/internal/v1/workflow-runs/run_abc/log-chunk',
       stepCompleteUrlTemplate: 'http://localhost:8080/internal/v1/workflow-runs/run_abc/steps/{workerJobId}/complete',
     },
+    artifactsUrl: overrides.artifactsUrl,
+    consumedArtifacts: overrides.consumedArtifacts,
   }
 }
 
@@ -126,6 +132,14 @@ function jsonResponse(status: number, body: unknown): Response {
 
 function fetchUrls(mockFetch: ReturnType<typeof vi.fn>): string[] {
   return mockFetch.mock.calls.map((c) => c[0] as string)
+}
+
+function arrayBufferResponse(status: number, content: string): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    arrayBuffer: async () => new TextEncoder().encode(content).buffer,
+  } as unknown as Response
 }
 
 // ─── buildStepEnv ────────────────────────────────────────────────────────────
@@ -194,6 +208,40 @@ describe('buildStepEnv', () => {
     const env = buildStepEnv(payload, step, mockEvent, mockConfig, 'u1', 'u2')
 
     expect(env.CONDUCTOR_TIMEOUT_MINUTES).toBe('5')
+  })
+
+  it('sets CONDUCTOR_ARTIFACTS_URL/STEP_ARTIFACTS_JSON for a claude-code step that declares artifacts', () => {
+    const payload = makeDispatchPayload({ artifactsUrl: 'http://backend/internal/v1/workflow-runs/run_abc/artifacts' })
+    const step = makeStep({ stepType: 'claude-code', artifacts: [{ name: 'report', path: 'out/report.json' }] })
+
+    const env = buildStepEnv(payload, step, mockEvent, mockConfig, 'u1', 'u2')
+
+    expect(env.CONDUCTOR_ARTIFACTS_URL).toBe('http://backend/internal/v1/workflow-runs/run_abc/artifacts')
+    expect(JSON.parse(env.CONDUCTOR_STEP_ARTIFACTS_JSON!)).toEqual([{ name: 'report', path: 'out/report.json' }])
+  })
+
+  it('sets CONDUCTOR_CONSUMED_ARTIFACTS_JSON/CONDUCTOR_ARTIFACTS_DIR for a claude-code step when the job consumes artifacts', () => {
+    const payload = makeDispatchPayload({
+      consumedArtifacts: [{ name: 'upstream', downloadUrl: 'http://backend/download/upstream' }],
+    })
+    const step = makeStep({ stepType: 'claude-code' })
+
+    const env = buildStepEnv(payload, step, mockEvent, mockConfig, 'u1', 'u2')
+
+    expect(JSON.parse(env.CONDUCTOR_CONSUMED_ARTIFACTS_JSON!)).toEqual([
+      { name: 'upstream', downloadUrl: 'http://backend/download/upstream' },
+    ])
+    expect(env.CONDUCTOR_ARTIFACTS_DIR).toBe('/conductor/artifacts')
+  })
+
+  it('does not set artifact env vars for a non-claude-code step, even if it declares artifacts', () => {
+    const payload = makeDispatchPayload({ artifactsUrl: 'http://backend/artifacts' })
+    const step = makeStep({ stepType: 'docker', artifacts: [{ name: 'report', path: 'out/report.json' }] })
+
+    const env = buildStepEnv(payload, step, mockEvent, mockConfig, 'u1', 'u2')
+
+    expect(env.CONDUCTOR_ARTIFACTS_URL).toBeUndefined()
+    expect(env.CONDUCTOR_STEP_ARTIFACTS_JSON).toBeUndefined()
   })
 })
 
@@ -627,5 +675,208 @@ describe('runWorkflowJob', () => {
     const runArgs = mockChildProcess.spawn.mock.calls[1][1] as string[]
     expect(runArgs).toContain('-e')
     expect(runArgs).toContain('CONDUCTOR_PROJECT_ID=proj_123')
+  })
+})
+
+// ─── Artifacts ───────────────────────────────────────────────────────────────
+
+describe('runWorkflowJob - artifacts', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('downloads consumed artifacts once per job and bind-mounts them at /conductor/artifacts', async () => {
+    const payload = makeDispatchPayload({
+      steps: [makeStep({ stepType: 'http', workerJobId: 'jobrun_1:0' })],
+      consumedArtifacts: [{ name: 'upstream', downloadUrl: 'http://backend/download/upstream' }],
+    })
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/dispatch-payload')) return Promise.resolve(jsonResponse(200, payload))
+      if (url === 'http://backend/download/upstream') return Promise.resolve(arrayBufferResponse(200, 'upstream-content'))
+      return Promise.resolve(jsonResponse(200, {}))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    let capturedFileContent: string | undefined
+    mockChildProcess.spawn.mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker pull
+    mockChildProcess.spawn.mockImplementationOnce((..._args: unknown[]) => {
+      // docker run — read the mounted file synchronously, before the job-level cleanup removes it.
+      const args = _args[1] as string[]
+      const volIdx = args.indexOf('-v')
+      if (volIdx >= 0) {
+        const hostDir = args[volIdx + 1].split(':')[0]
+        capturedFileContent = fs.readFileSync(path.join(hostDir, 'upstream'), 'utf8')
+      }
+      return makeAutoClosingProcess(0)
+    })
+
+    await runWorkflowJob(mockEvent, mockConfig)
+
+    const runArgs = mockChildProcess.spawn.mock.calls[1][1] as string[]
+    const volIdx = runArgs.indexOf('-v')
+    expect(volIdx).toBeGreaterThanOrEqual(0)
+    expect(runArgs[volIdx + 1]).toMatch(/:\/conductor\/artifacts$/)
+    expect(capturedFileContent).toBe('upstream-content')
+  })
+
+  it('fails the job (before docker pull or any step) when a consumed-artifact download responds non-OK', async () => {
+    const payload = makeDispatchPayload({
+      steps: [makeStep({ stepType: 'http', workerJobId: 'jobrun_1:0' })],
+      consumedArtifacts: [{ name: 'upstream', downloadUrl: 'http://backend/download/upstream' }],
+    })
+    const jobCompleteBodies: Record<string, unknown>[] = []
+    // Plain per-test stub function, not vi.fn().mockRejectedValue/a mocked non-ok response — this
+    // repo's vitest gotcha is specifically about rejected-promise mocks being flagged as unhandled
+    // even when caught, so a plain async function sidesteps it entirely.
+    async function fetchStub(url: string, init?: RequestInit): Promise<Response> {
+      if (url.includes('/dispatch-payload')) return jsonResponse(200, payload)
+      if (url === 'http://backend/download/upstream') return { ok: false, status: 500 } as unknown as Response
+      if (url.includes('/jobs/job_1/complete')) {
+        jobCompleteBodies.push(JSON.parse(init!.body as string))
+      }
+      return jsonResponse(200, {})
+    }
+    vi.stubGlobal('fetch', fetchStub)
+
+    await runWorkflowJob(mockEvent, mockConfig)
+
+    // Neither the image pull nor any step ever ran.
+    expect(mockChildProcess.spawn).not.toHaveBeenCalled()
+    expect(jobCompleteBodies).toHaveLength(1)
+    expect(jobCompleteBodies[0].status).toBe('FAILED')
+    expect(jobCompleteBodies[0].errorReason).toContain('ARTIFACT_DOWNLOAD_FAILED')
+    expect(jobCompleteBodies[0].errorReason).toContain('upstream')
+  })
+
+  it('fails the job with a named-artifact reason when the consumed-artifact fetch itself throws', async () => {
+    const payload = makeDispatchPayload({
+      steps: [makeStep({ stepType: 'http', workerJobId: 'jobrun_1:0' })],
+      consumedArtifacts: [{ name: 'upstream', downloadUrl: 'http://backend/download/upstream' }],
+    })
+    const jobCompleteBodies: Record<string, unknown>[] = []
+    async function fetchStub(url: string, init?: RequestInit): Promise<Response> {
+      if (url.includes('/dispatch-payload')) return jsonResponse(200, payload)
+      if (url === 'http://backend/download/upstream') throw new Error('network down')
+      if (url.includes('/jobs/job_1/complete')) {
+        jobCompleteBodies.push(JSON.parse(init!.body as string))
+      }
+      return jsonResponse(200, {})
+    }
+    vi.stubGlobal('fetch', fetchStub)
+
+    await runWorkflowJob(mockEvent, mockConfig)
+
+    expect(mockChildProcess.spawn).not.toHaveBeenCalled()
+    expect(jobCompleteBodies).toHaveLength(1)
+    expect(jobCompleteBodies[0].status).toBe('FAILED')
+    expect(jobCompleteBodies[0].errorReason).toContain('ARTIFACT_DOWNLOAD_FAILED')
+    expect(jobCompleteBodies[0].errorReason).toContain('upstream')
+  })
+
+  it("uploads a docker step's declared artifacts after a successful run, then removes the retained container", async () => {
+    const payload = makeDispatchPayload({
+      artifactsUrl: 'http://backend/internal/v1/workflow-runs/run_abc/artifacts',
+      steps: [
+        makeStep({
+          stepType: 'docker',
+          workerJobId: 'jobrun_1:0',
+          artifacts: [{ name: 'report', path: 'out/report.json' }],
+        }),
+      ],
+    })
+    const createCalls: string[] = []
+    const putBodies: string[] = []
+    const completeCalls: string[] = []
+    const mockFetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/dispatch-payload')) return Promise.resolve(jsonResponse(200, payload))
+      if (url === payload.artifactsUrl) {
+        createCalls.push(url)
+        return Promise.resolve(
+          jsonResponse(201, {
+            artifactId: 'art_1',
+            uploadUrl: 'http://backend/internal/v1/workflow-runs/run_abc/artifacts/art_1/content',
+          })
+        )
+      }
+      if (url.endsWith('/art_1/content')) {
+        putBodies.push(Buffer.from(init!.body as ArrayBuffer).toString())
+        return Promise.resolve(jsonResponse(200, {}))
+      }
+      if (url.endsWith('/art_1/complete')) {
+        completeCalls.push(url)
+        return Promise.resolve(jsonResponse(200, {}))
+      }
+      return Promise.resolve(jsonResponse(200, {}))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    mockChildProcess.spawn.mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker pull
+    mockChildProcess.spawn.mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker run
+    mockChildProcess.spawn.mockImplementationOnce((..._args: unknown[]) => {
+      // docker cp <container>:<workspace path> <tmpFile> — write the "copied" content for real.
+      const args = _args[1] as string[]
+      fs.writeFileSync(args[2], '{"ok":true}')
+      return makeAutoClosingProcess(0)
+    })
+    mockChildProcess.spawn.mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker rm
+
+    await runWorkflowJob(mockEvent, mockConfig)
+
+    // The run container was NOT given --rm (kept alive so docker cp could pull the file out).
+    const runArgs = mockChildProcess.spawn.mock.calls[1][1] as string[]
+    expect(runArgs).not.toContain('--rm')
+
+    expect(createCalls).toHaveLength(1)
+    expect(putBodies[0]).toBe('{"ok":true}')
+    expect(completeCalls).toHaveLength(1)
+
+    const rmCall = mockChildProcess.spawn.mock.calls.find(
+      (c) => c[0] === 'docker' && (c[1] as string[])[0] === 'rm'
+    )
+    expect(rmCall).toBeDefined()
+
+    const stepCompleteCall = mockFetch.mock.calls.find((c) => (c[0] as string).includes('/steps/jobrun_1:0/complete'))
+    expect(JSON.parse((stepCompleteCall![1] as RequestInit).body as string)).toEqual({ status: 'SUCCESS' })
+  })
+
+  it('fails the step when a declared artifact is missing from the workspace after docker cp', async () => {
+    const payload = makeDispatchPayload({
+      artifactsUrl: 'http://backend/artifacts',
+      steps: [
+        makeStep({
+          stepType: 'docker',
+          workerJobId: 'jobrun_1:0',
+          artifacts: [{ name: 'report', path: 'missing.json' }],
+        }),
+      ],
+    })
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/dispatch-payload')) return Promise.resolve(jsonResponse(200, payload))
+      return Promise.resolve(jsonResponse(200, {}))
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    mockChildProcess.spawn
+      .mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker pull
+      .mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker run
+      .mockImplementationOnce(() => makeAutoClosingProcess(1)) // docker cp fails — no file written
+      .mockImplementationOnce(() => makeAutoClosingProcess(0)) // docker rm
+
+    await runWorkflowJob(mockEvent, mockConfig)
+
+    const stepCompleteCall = mockFetch.mock.calls.find((c) => (c[0] as string).includes('/steps/jobrun_1:0/complete'))
+    const body = JSON.parse((stepCompleteCall![1] as RequestInit).body as string)
+    expect(body.status).toBe('FAILED')
+    expect(body.errorReason).toContain('ARTIFACT_MISSING')
+
+    const jobCompleteCall = mockFetch.mock.calls.find((c) => (c[0] as string).includes('/jobs/job_1/complete'))
+    const jobBody = JSON.parse((jobCompleteCall![1] as RequestInit).body as string)
+    expect(jobBody.status).toBe('FAILED')
   })
 })

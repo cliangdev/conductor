@@ -76,7 +76,7 @@ class WorkflowJobOrchestratorStepPersistenceTest {
 
         StepResult result = StepResult.success("done", Map.of("summary", "ok")).withWorkerJobId("worker-abc");
         StepSpec stepDef = new StepSpec("seo", "SEO step", "claude-code", null, false, Map.of(),
-                Map.of("id", "seo", "name", "SEO step", "uses", "claude-code"));
+                List.of(), Map.of("id", "seo", "name", "SEO step", "uses", "claude-code"));
 
         orchestrator.persistStepResult("jobrun-1", stepDef, result, "proj-1");
 
@@ -94,7 +94,7 @@ class WorkflowJobOrchestratorStepPersistenceTest {
     void insertsNewRow_whenNoWorkerJobIdOnResult() {
         StepResult result = StepResult.success("done", Map.of());
         StepSpec stepDef = new StepSpec("post", "Notify", "http", null, false, Map.of(),
-                Map.of("id", "post", "name", "Notify", "type", "http"));
+                List.of(), Map.of("id", "post", "name", "Notify", "type", "http"));
 
         orchestrator.persistStepResult("jobrun-1", stepDef, result, "proj-1");
 
@@ -125,7 +125,7 @@ class WorkflowJobOrchestratorStepPersistenceTest {
         StepResult result = StepResult.success("→ Launching Cloud Run execution\n← execution finished: SUCCEEDED\n",
                 Map.of("summary", "ok")).withWorkerJobId("worker-abc");
         StepSpec stepDef = new StepSpec("seo", "SEO step", "claude-code", null, false, Map.of(),
-                Map.of("id", "seo", "name", "SEO step", "uses", "claude-code"));
+                List.of(), Map.of("id", "seo", "name", "SEO step", "uses", "claude-code"));
 
         orchestrator.persistStepResult("jobrun-1", stepDef, result, "proj-1");
 
@@ -146,7 +146,7 @@ class WorkflowJobOrchestratorStepPersistenceTest {
 
         StepResult result = StepResult.failed("boom", "CLAUDE_AGENT_ERROR").withWorkerJobId("worker-missing");
         StepSpec stepDef = new StepSpec("seo", "SEO step", "claude-code", null, false, Map.of(),
-                Map.of("id", "seo", "name", "SEO step", "uses", "claude-code"));
+                List.of(), Map.of("id", "seo", "name", "SEO step", "uses", "claude-code"));
 
         orchestrator.persistStepResult("jobrun-1", stepDef, result, "proj-1");
 

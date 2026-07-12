@@ -71,6 +71,16 @@ public class LocalStorageService implements StorageService {
         return Files.isWritable(storagePath) || tryCreateStorageDir();
     }
 
+    /**
+     * Local storage has no signed-URL mechanism (there's no separate object-storage service to sign
+     * against) — always returns null so callers fall back to a passthrough upload endpoint that reads
+     * the body directly and calls {@link #upload}.
+     */
+    @Override
+    public String generateSignedUploadUrl(String gcsPath, String contentType, int expiryMinutes) {
+        return null;
+    }
+
     private boolean tryCreateStorageDir() {
         try {
             Files.createDirectories(storagePath);

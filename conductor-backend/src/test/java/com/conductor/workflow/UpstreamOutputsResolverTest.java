@@ -43,8 +43,8 @@ class UpstreamOutputsResolverTest {
         WorkflowRun run = new WorkflowRun();
         run.setId("run-1");
 
-        JobSpec jobA = new JobSpec("a", List.of(), null, null, null, List.of(), Map.of());
-        JobSpec jobB = new JobSpec("b", List.of("a"), null, null, null, List.of(), Map.of());
+        JobSpec jobA = new JobSpec("a", List.of(), null, null, null, List.of(), List.of(), Map.of());
+        JobSpec jobB = new JobSpec("b", List.of("a"), null, null, null, List.of(), List.of(), Map.of());
         Map<String, JobSpec> jobs = Map.of("a", jobA, "b", jobB);
 
         WorkflowJobRun jobRunA = new WorkflowJobRun();
@@ -69,7 +69,7 @@ class UpstreamOutputsResolverTest {
         WorkflowRun run = new WorkflowRun();
         run.setId("run-1");
 
-        JobSpec jobB = new JobSpec("b", List.of("a"), null, null, null, List.of(), Map.of());
+        JobSpec jobB = new JobSpec("b", List.of("a"), null, null, null, List.of(), List.of(), Map.of());
         Map<String, JobSpec> jobs = Map.of("b", jobB);
 
         when(jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc("run-1", "a"))

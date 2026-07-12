@@ -84,6 +84,9 @@ class WorkflowRunLogControllersTest {
     @MockitoBean
     private LogRedactionService logRedactionService;
 
+    @MockitoBean
+    private com.conductor.service.WorkflowArtifactService artifactService;
+
     private User testUser;
     private WorkflowRun testRun;
 

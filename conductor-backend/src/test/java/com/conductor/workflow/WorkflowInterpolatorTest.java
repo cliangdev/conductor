@@ -84,4 +84,20 @@ class WorkflowInterpolatorTest {
         RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
         assertEquals("", interpolator.interpolate("${{ inputs.missing }}", ctx));
     }
+
+    @Test void interpolatesNeedsArtifact() {
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of(), 0,
+                Map.of(), Map.of(), Map.of(),
+                Map.of("build", Map.of("report", "https://storage.example/signed-url")));
+        assertEquals("https://storage.example/signed-url",
+                interpolator.interpolate("${{ needs.build.artifacts.report }}", ctx));
+    }
+
+    @Test void unknownNeedsArtifactResolvesToEmpty() {
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of(), 0,
+                Map.of(), Map.of(), Map.of(),
+                Map.of("build", Map.of("report", "https://storage.example/signed-url")));
+        assertEquals("", interpolator.interpolate("${{ needs.build.artifacts.missing }}", ctx));
+        assertEquals("", interpolator.interpolate("${{ needs.other-job.artifacts.report }}", ctx));
+    }
 }

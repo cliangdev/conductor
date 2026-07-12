@@ -112,7 +112,8 @@ public class WorkflowYamlParser {
         String ifCondition = textOrNull(jobMap.get("if"));
         LoopSpec loop = parseLoop(jobMap.get("loop"));
         List<StepSpec> steps = parseSteps(jobMap.get("steps"));
-        return new JobSpec(jobId, needs, runsOn, ifCondition, loop, steps, jobMap);
+        List<String> consumes = normalizeStringList(jobMap.get("consumes"));
+        return new JobSpec(jobId, needs, runsOn, ifCondition, loop, steps, consumes, jobMap);
     }
 
     private LoopSpec parseLoop(Object loopObj) {
@@ -147,7 +148,29 @@ public class WorkflowYamlParser {
         boolean continueOnError = Boolean.TRUE.equals(stepMap.get("continue-on-error"));
         @SuppressWarnings("unchecked")
         Map<String, Object> with = stepMap.get("with") instanceof Map<?, ?> w ? (Map<String, Object>) w : Map.of();
-        return new StepSpec(id, name, type, ifCondition, continueOnError, with, stepMap);
+        List<ArtifactSpec> artifacts = parseArtifacts(stepMap.get("artifacts"));
+        return new StepSpec(id, name, type, ifCondition, continueOnError, with, artifacts, stepMap);
+    }
+
+    /**
+     * Tolerant, like the rest of this parser: a malformed entry (not a map, or missing name/path) is
+     * simply skipped rather than thrown on — {@code WorkflowValidator} is where a malformed
+     * {@code artifacts:} entry becomes an ERROR (inspecting the raw step map, same as its other
+     * shape checks).
+     */
+    private List<ArtifactSpec> parseArtifacts(Object artifactsObj) {
+        if (!(artifactsObj instanceof List<?> list)) {
+            return List.of();
+        }
+        List<ArtifactSpec> result = new ArrayList<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> entry)) continue;
+            String name = textOrNull(entry.get("name"));
+            String path = textOrNull(entry.get("path"));
+            if (name == null || path == null) continue;
+            result.add(new ArtifactSpec(name, path));
+        }
+        return result;
     }
 
     /**

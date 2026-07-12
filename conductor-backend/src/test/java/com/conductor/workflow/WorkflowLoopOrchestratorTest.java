@@ -36,6 +36,7 @@ class WorkflowLoopOrchestratorTest {
     @Mock LogRedactionService logRedactionService;
     @Mock SelfHostedJobDispatcher selfHostedJobDispatcher;
     @Mock UpstreamOutputsResolver upstreamOutputsResolver;
+    @Mock com.conductor.service.WorkflowArtifactService artifactService;
 
     WorkflowJobOrchestrator orchestrator;
     ConditionEvaluator conditionEvaluator = new ConditionEvaluator();
@@ -45,7 +46,7 @@ class WorkflowLoopOrchestratorTest {
     @BeforeEach
     void setUp() {
         RuntimeContextBuilder contextBuilder = new RuntimeContextBuilder(
-                secretsService, stepRunRepository, jobRunRepository, objectMapper);
+                secretsService, stepRunRepository, jobRunRepository, objectMapper, artifactService);
         orchestrator = new WorkflowJobOrchestrator(
                 jobRunRepository, stepRunRepository, runRepository, workflowRepository,
                 engine, conditionEvaluator, interpolator, contextBuilder,

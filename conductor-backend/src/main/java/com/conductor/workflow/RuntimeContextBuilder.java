@@ -7,6 +7,7 @@ import com.conductor.entity.WorkflowStepRun;
 import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.service.WorkflowArtifactService;
 import com.conductor.service.WorkflowSecretsService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,15 +33,18 @@ public class RuntimeContextBuilder {
     private final WorkflowStepRunRepository stepRunRepository;
     private final WorkflowJobRunRepository jobRunRepository;
     private final ObjectMapper objectMapper;
+    private final WorkflowArtifactService artifactService;
 
     public RuntimeContextBuilder(WorkflowSecretsService secretsService,
                                   WorkflowStepRunRepository stepRunRepository,
                                   WorkflowJobRunRepository jobRunRepository,
-                                  ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper,
+                                  WorkflowArtifactService artifactService) {
         this.secretsService = secretsService;
         this.stepRunRepository = stepRunRepository;
         this.jobRunRepository = jobRunRepository;
         this.objectMapper = objectMapper;
+        this.artifactService = artifactService;
     }
 
     /**
@@ -96,8 +100,18 @@ public class RuntimeContextBuilder {
 
         Map<String, String> inputs = parseInputs(eventPayload);
 
+        Map<String, Map<String, String>> jobArtifacts = new HashMap<>();
+        if (needs != null) {
+            for (String needJobId : needs) {
+                Map<String, String> artifacts = artifactService.resolveUploadedArtifacts(run.getId(), needJobId);
+                if (!artifacts.isEmpty()) {
+                    jobArtifacts.put(needJobId, artifacts);
+                }
+            }
+        }
+
         return new RuntimeContext(eventPayload, secrets, stepOutputs, upstreamJobOutputs, loopIteration,
-                jobResults, stepResults, inputs);
+                jobResults, stepResults, inputs, jobArtifacts);
     }
 
     /** Load secrets once for the project — call this once per job, not per step */

@@ -1,6 +1,7 @@
 package com.conductor.workflow.model;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -17,15 +18,19 @@ import java.util.Map;
  * @param ifCondition       the step's {@code if:} expression, or null
  * @param continueOnError   parsed {@code continue-on-error:} (consumed starting Phase 3)
  * @param with              the step's {@code with:} block, or an empty map if absent
+ * @param artifacts         the step's declared {@code artifacts:} list (docker/claude-code steps
+ *                          only — enforced by {@code WorkflowValidator}, not here), or empty if absent
  * @param raw               the step's full source map, verbatim, for fields not modeled above
  *                          (e.g. {@code outputs:}, {@code url:}, kestra's {@code namespace:}/{@code
  *                          flow_id:}, which stay executor-specific rather than promoted to fields here)
  */
 public record StepSpec(String id, String name, String type, String ifCondition,
-                        boolean continueOnError, Map<String, Object> with, Map<String, Object> raw) {
+                        boolean continueOnError, Map<String, Object> with,
+                        List<ArtifactSpec> artifacts, Map<String, Object> raw) {
 
     public StepSpec {
         with = Copies.map(with);
+        artifacts = Copies.list(artifacts);
         raw = Copies.map(raw);
     }
 

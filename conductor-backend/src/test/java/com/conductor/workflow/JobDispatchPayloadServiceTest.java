@@ -40,6 +40,7 @@ class JobDispatchPayloadServiceTest {
     @Mock private RunTokenService runTokenService;
     @Mock private ProjectSettingsRepository projectSettingsRepository;
     @Mock private UpstreamOutputsResolver upstreamOutputsResolver;
+    @Mock private com.conductor.service.WorkflowArtifactService artifactService;
 
     private JobDispatchPayloadService service;
 
@@ -48,7 +49,7 @@ class JobDispatchPayloadServiceTest {
         service = new JobDispatchPayloadService(runRepository, jobRunRepository, stepRunRepository,
                 contextBuilder, new WorkflowInterpolator(), runTokenService, projectSettingsRepository,
                 new ObjectMapper(), upstreamOutputsResolver, "http://localhost:8080",
-                new com.conductor.workflow.model.WorkflowYamlParser());
+                new com.conductor.workflow.model.WorkflowYamlParser(), artifactService);
     }
 
     private WorkflowRun runWithYaml(String yaml) {

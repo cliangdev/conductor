@@ -122,6 +122,10 @@ public class WorkflowValidator {
         // Cycle detection and condition target tracking
         Map<String, List<String>> needsGraph = new HashMap<>();
         Set<String> conditionTargets = new HashSet<>();
+        // jobId -> artifact names its steps declare producing; name -> job id, to catch a duplicate
+        // artifact name declared by two different jobs anywhere in the run graph.
+        Map<String, Set<String>> jobProducedArtifacts = new HashMap<>();
+        Map<String, String> artifactNameOwner = new HashMap<>();
 
         for (JobSpec job : jobs.values()) {
             needsGraph.put(job.id(), job.needs());
@@ -143,7 +147,16 @@ public class WorkflowValidator {
             }
 
             validateLoop(job, errors);
-            validateSteps(job, jobs, runsOnVal, runtimeTargetNames, conditionTargets, errors, warnings);
+            Set<String> produced = new HashSet<>();
+            validateSteps(job, jobs, runsOnVal, runtimeTargetNames, conditionTargets, errors, warnings, produced);
+            for (String artifactName : produced) {
+                String owner = artifactNameOwner.putIfAbsent(artifactName, job.id());
+                if (owner != null) {
+                    errors.add("Duplicate artifact name '" + artifactName + "' produced by both job '"
+                            + owner + "' and job '" + job.id() + "' — artifact names must be unique across the run");
+                }
+            }
+            jobProducedArtifacts.put(job.id(), produced);
         }
 
         // Validate condition targets not in regular needs
@@ -151,6 +164,18 @@ public class WorkflowValidator {
             for (String need : job.needs()) {
                 if (conditionTargets.contains(need)) {
                     errors.add("job " + need + " is a condition target and cannot appear in needs of job " + job.id());
+                }
+            }
+        }
+
+        // Validate consumes: — each name must be produced by one of this job's needs.
+        for (JobSpec job : jobs.values()) {
+            for (String consumedName : job.consumes()) {
+                boolean producedByNeed = job.needs().stream()
+                        .anyMatch(needJobId -> jobProducedArtifacts.getOrDefault(needJobId, Set.of()).contains(consumedName));
+                if (!producedByNeed) {
+                    errors.add("job '" + job.id() + "' consumes artifact '" + consumedName
+                            + "' which is not produced by any job in its needs");
                 }
             }
         }
@@ -178,7 +203,7 @@ public class WorkflowValidator {
 
     private void validateSteps(JobSpec job, Map<String, JobSpec> jobs, Object runsOnVal,
                                Set<String> runtimeTargetNames, Set<String> conditionTargets,
-                               List<String> errors, List<String> warnings) {
+                               List<String> errors, List<String> warnings, Set<String> producedArtifacts) {
         List<StepSpec> steps = job.steps();
         for (int i = 0; i < steps.size(); i++) {
             StepSpec step = steps.get(i);
@@ -216,6 +241,60 @@ public class WorkflowValidator {
                 case "action" -> validateActionStep(step, errors, warnings);
                 default -> { /* http, docker: no extra config checks today */ }
             }
+
+            validateStepArtifacts(step, job.id(), resolvedType, runsOnVal, errors, producedArtifacts);
+        }
+    }
+
+    private static final java.util.regex.Pattern ARTIFACT_NAME_PATTERN =
+            java.util.regex.Pattern.compile("^[a-z0-9_-]{1,160}$");
+
+    /**
+     * Validates a step's {@code artifacts:} list (docker/claude-code steps only). A {@code docker}
+     * step also needs {@code runs-on: self-hosted} — the conductor-hosted worker-VM docker path
+     * (WorkerVmClient) doesn't implement artifact upload/download yet; {@code claude-code} steps have
+     * no such restriction since both the self-hosted daemon and the Cloud Run path support it.
+     */
+    private void validateStepArtifacts(StepSpec step, String jobId, String resolvedType, Object runsOnVal,
+                                        List<String> errors, Set<String> producedArtifacts) {
+        Object artifactsRaw = step.raw().get("artifacts");
+        if (artifactsRaw == null) {
+            return;
+        }
+        boolean allowedType = "docker".equals(resolvedType) || CLAUDE_CODE_TYPE.equals(resolvedType);
+        if (!allowedType) {
+            errors.add("'artifacts:' is only supported on docker and claude-code steps (job '" + jobId
+                    + "', step type '" + resolvedType + "')");
+            return;
+        }
+        if ("docker".equals(resolvedType) && !"self-hosted".equals(runsOnVal)) {
+            errors.add("artifacts on conductor-hosted docker steps not yet supported in job '" + jobId
+                    + "' — docker steps need 'runs-on: self-hosted' to declare artifacts");
+        }
+        if (!(artifactsRaw instanceof List<?> list)) {
+            errors.add("job '" + jobId + "': step 'artifacts:' must be a list");
+            return;
+        }
+        for (Object entry : list) {
+            if (!(entry instanceof Map<?, ?> entryMap)) {
+                errors.add("job '" + jobId + "': each 'artifacts:' entry must be a map with name/path");
+                continue;
+            }
+            Object nameObj = entryMap.get("name");
+            Object pathObj = entryMap.get("path");
+            if (nameObj == null || nameObj.toString().isBlank()) {
+                errors.add("job '" + jobId + "': artifacts entry missing required field: name");
+                continue;
+            }
+            String artifactName = nameObj.toString();
+            if (!ARTIFACT_NAME_PATTERN.matcher(artifactName).matches()) {
+                errors.add("job '" + jobId + "': artifact name '" + artifactName
+                        + "' must match ^[a-z0-9_-]{1,160}$");
+            }
+            if (pathObj == null || pathObj.toString().isBlank()) {
+                errors.add("job '" + jobId + "': artifact '" + artifactName + "' missing required field: path");
+            }
+            producedArtifacts.add(artifactName);
         }
     }
 

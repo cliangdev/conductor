@@ -17,14 +17,18 @@ import java.util.Map;
  * @param ifCondition  the job's {@code if:} expression, or null
  * @param loop         the job's {@code loop:} block, or null if absent
  * @param steps        all steps in declaration order, including a trailing {@code condition} step
+ * @param consumes     artifact names this job consumes from its {@code needs} (via
+ *                     {@code ${{ needs.JOB.artifacts.NAME }}}), normalized to a list (empty if none) —
+ *                     {@code WorkflowValidator} checks each name is actually produced by a needed job
  * @param raw          the job's full source map, verbatim
  */
 public record JobSpec(String id, List<String> needs, String runsOn, String ifCondition,
-                       LoopSpec loop, List<StepSpec> steps, Map<String, Object> raw) {
+                       LoopSpec loop, List<StepSpec> steps, List<String> consumes, Map<String, Object> raw) {
 
     public JobSpec {
         needs = Copies.list(needs);
         steps = Copies.list(steps);
+        consumes = Copies.list(consumes);
         raw = Copies.map(raw);
     }
 

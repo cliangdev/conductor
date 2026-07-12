@@ -82,6 +82,77 @@ paths:
         "401":
           description: Missing or invalid run token
 
+  /workflow-runs/{runId}/artifacts:
+    post:
+      tags: [workflow-internal]
+      summary: Declare a workflow-step artifact and mint its upload URL
+      description: >
+        Creates (or reuses, on a step retry) a PENDING artifact row and returns a URL the caller PUTs
+        the raw file bytes to directly. On GCS this is a signed PUT URL; on the local profile
+        (no signed-upload mechanism) it is the internal passthrough URL
+        `PUT /internal/v1/workflow-runs/{runId}/artifacts/{artifactId}/content`.
+      operationId: createWorkflowArtifact
+      security:
+        - runToken: []
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkflowArtifactRequest"
+      responses:
+        "201":
+          description: Artifact declared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateWorkflowArtifactResponse"
+        "401":
+          description: Missing or invalid run token
+    get:
+      tags: [workflow-internal]
+      summary: Resolve a named artifact's download URL
+      description: >
+        Only resolves artifacts that have been confirmed UPLOADED (see the complete endpoint below);
+        an artifact that doesn't exist, or is still PENDING, resolves to an empty `downloadUrl`.
+      operationId: resolveWorkflowArtifact
+      security:
+        - runToken: []
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resolved (downloadUrl is empty if the artifact isn't UPLOADED)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResolveWorkflowArtifactResponse"
+        "401":
+          description: Missing or invalid run token
+
+  /workflow-runs/{runId}/artifacts/{artifactId}/complete:
+    post:
+      tags: [workflow-internal]
+      summary: Confirm an artifact upload finished
+      operationId: completeWorkflowArtifact
+      security:
+        - runToken: []
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/ArtifactId"
+      responses:
+        "200":
+          description: Marked UPLOADED (idempotent; unknown artifactId is a no-op)
+        "401":
+          description: Missing or invalid run token
+
   /workflow-runs/{runId}/steps/{workerJobId}/complete:
     post:
       tags: [workflow-internal]
@@ -114,6 +185,12 @@ components:
         type: string
     WorkerJobId:
       name: workerJobId
+      in: path
+      required: true
+      schema:
+        type: string
+    ArtifactId:
+      name: artifactId
       in: path
       required: true
       schema:
@@ -168,3 +245,34 @@ components:
           type: object
           additionalProperties:
             type: string
+    CreateWorkflowArtifactRequest:
+      type: object
+      required: [jobId, name]
+      properties:
+        jobId:
+          type: string
+        name:
+          type: string
+          description: "Artifact name, matching the step's declared artifacts[].name ([a-z0-9_-]{1,160})"
+        contentType:
+          type: string
+          nullable: true
+        sizeBytes:
+          type: integer
+          format: int64
+          nullable: true
+    CreateWorkflowArtifactResponse:
+      type: object
+      required: [artifactId, uploadUrl]
+      properties:
+        artifactId:
+          type: string
+        uploadUrl:
+          type: string
+    ResolveWorkflowArtifactResponse:
+      type: object
+      required: [downloadUrl]
+      properties:
+        downloadUrl:
+          type: string
+          description: Empty string if the artifact doesn't exist or isn't UPLOADED yet

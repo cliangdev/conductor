@@ -7,6 +7,8 @@ import com.conductor.entity.WorkflowJobStatus;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.exception.ConflictException;
+import com.conductor.generated.model.ConsumedArtifactDto;
+import com.conductor.generated.model.DispatchArtifactDto;
 import com.conductor.generated.model.JobDispatchCallbacksDto;
 import com.conductor.generated.model.JobDispatchPayloadDto;
 import com.conductor.generated.model.JobDispatchStepDto;
@@ -14,6 +16,8 @@ import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.service.WorkflowArtifactService;
+import com.conductor.workflow.model.ArtifactSpec;
 import com.conductor.workflow.model.JobSpec;
 import com.conductor.workflow.model.StepSpec;
 import com.conductor.workflow.model.WorkflowSpec;
@@ -51,6 +55,7 @@ public class JobDispatchPayloadService {
     private final ObjectMapper objectMapper;
     private final UpstreamOutputsResolver upstreamOutputsResolver;
     private final WorkflowYamlParser yamlParser;
+    private final WorkflowArtifactService artifactService;
     private final String backendBaseUrl;
 
     public JobDispatchPayloadService(WorkflowRunRepository runRepository,
@@ -63,7 +68,8 @@ public class JobDispatchPayloadService {
                                       ObjectMapper objectMapper,
                                       UpstreamOutputsResolver upstreamOutputsResolver,
                                       @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl,
-                                      WorkflowYamlParser yamlParser) {
+                                      WorkflowYamlParser yamlParser,
+                                      WorkflowArtifactService artifactService) {
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
@@ -75,6 +81,7 @@ public class JobDispatchPayloadService {
         this.upstreamOutputsResolver = upstreamOutputsResolver;
         this.backendBaseUrl = backendBaseUrl;
         this.yamlParser = yamlParser;
+        this.artifactService = artifactService;
     }
 
     @Transactional(readOnly = true)
@@ -130,7 +137,29 @@ public class JobDispatchPayloadService {
         dto.setSteps(stepDtos);
         dto.setRunToken(runToken);
         dto.setCallbacks(callbacks);
+
+        boolean anyStepProducesArtifacts = steps.stream().anyMatch(s -> !s.artifacts().isEmpty());
+        if (anyStepProducesArtifacts) {
+            dto.setArtifactsUrl(backendBaseUrl + "/internal/v1/workflow-runs/" + runId + "/artifacts");
+        }
+        List<ConsumedArtifactDto> consumedArtifacts = resolveConsumedArtifacts(runId, jobDef);
+        if (!consumedArtifacts.isEmpty()) {
+            dto.setConsumedArtifacts(consumedArtifacts);
+        }
         return dto;
+    }
+
+    private List<ConsumedArtifactDto> resolveConsumedArtifacts(String runId, JobSpec jobDef) {
+        List<ConsumedArtifactDto> result = new ArrayList<>();
+        for (String name : jobDef.consumes()) {
+            artifactService.resolveDownloadUrl(runId, name).ifPresent(downloadUrl -> {
+                ConsumedArtifactDto dto = new ConsumedArtifactDto();
+                dto.setName(name);
+                dto.setDownloadUrl(downloadUrl);
+                result.add(dto);
+            });
+        }
+        return result;
     }
 
     private JobDispatchStepDto buildStepDto(String jobRunId, int index, StepSpec stepDef, RuntimeContext ctx) {
@@ -175,6 +204,17 @@ public class JobDispatchPayloadService {
         Object envVal = stepDef.raw().get("env");
         if (envVal instanceof Map) {
             dto.setEnv(interpolateStringMap(castStringObjectMap(envVal), ctx));
+        }
+
+        if (!stepDef.artifacts().isEmpty()) {
+            List<DispatchArtifactDto> artifactDtos = new ArrayList<>();
+            for (ArtifactSpec artifact : stepDef.artifacts()) {
+                DispatchArtifactDto artifactDto = new DispatchArtifactDto();
+                artifactDto.setName(artifact.name());
+                artifactDto.setPath(artifact.path());
+                artifactDtos.add(artifactDto);
+            }
+            dto.setArtifacts(artifactDtos);
         }
 
         return dto;

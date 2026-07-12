@@ -23,6 +23,8 @@ public class RuntimeContext {
     private final Map<String, String> stepResults;
     /** dispatch-time input name → value, from a manual dispatch's {@code inputs} */
     private final Map<String, String> inputs;
+    /** jobId (one of the current job's needs) → (artifact name → signed download URL), UPLOADED-only */
+    private final Map<String, Map<String, String>> jobArtifacts;
 
     public RuntimeContext(Map<String, Object> eventPayload,
                           Map<String, String> secrets,
@@ -48,6 +50,19 @@ public class RuntimeContext {
                           Map<String, String> jobResults,
                           Map<String, String> stepResults,
                           Map<String, String> inputs) {
+        this(eventPayload, secrets, stepOutputs, jobOutputs, loopIteration, jobResults, stepResults, inputs,
+                Collections.emptyMap());
+    }
+
+    public RuntimeContext(Map<String, Object> eventPayload,
+                          Map<String, String> secrets,
+                          Map<String, Map<String, String>> stepOutputs,
+                          Map<String, Map<String, String>> jobOutputs,
+                          int loopIteration,
+                          Map<String, String> jobResults,
+                          Map<String, String> stepResults,
+                          Map<String, String> inputs,
+                          Map<String, Map<String, String>> jobArtifacts) {
         this.eventPayload = eventPayload != null ? eventPayload : Collections.emptyMap();
         this.secrets = secrets != null ? secrets : Collections.emptyMap();
         this.stepOutputs = stepOutputs != null ? stepOutputs : Collections.emptyMap();
@@ -56,6 +71,7 @@ public class RuntimeContext {
         this.jobResults = jobResults != null ? jobResults : Collections.emptyMap();
         this.stepResults = stepResults != null ? stepResults : Collections.emptyMap();
         this.inputs = inputs != null ? inputs : Collections.emptyMap();
+        this.jobArtifacts = jobArtifacts != null ? jobArtifacts : Collections.emptyMap();
     }
 
     public Map<String, Object> getEventPayload() { return eventPayload; }
@@ -66,4 +82,5 @@ public class RuntimeContext {
     public Map<String, String> getJobResults() { return jobResults; }
     public Map<String, String> getStepResults() { return stepResults; }
     public Map<String, String> getInputs() { return inputs; }
+    public Map<String, Map<String, String>> getJobArtifacts() { return jobArtifacts; }
 }
