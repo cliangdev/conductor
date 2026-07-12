@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -48,6 +49,10 @@ public class DiscordActionConnector implements ActionConnector {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
+    // @Autowired is load-bearing: with TWO constructors and no annotation, Spring falls back to a
+    // (nonexistent) no-arg constructor and the context fails AT DEPLOY only — @Profile("!local")
+    // beans are never instantiated by tests. Took down the 2026-07-12 preview deploy.
+    @Autowired
     public DiscordActionConnector(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
         this.restTemplate = ConnectorHttp.restTemplate();
