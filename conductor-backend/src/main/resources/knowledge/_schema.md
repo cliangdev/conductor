@@ -64,6 +64,52 @@ raise the gap in your run summary instead.
 
 Use lowercase, hyphenated filenames (e.g. `product/features/knowledge-center.md`).
 
+## Body templates
+
+Every page's body follows its type's template below — stable, predictable structure so readers (human
+or agent) always know where to look. Keep every section; write "None yet." rather than dropping one.
+Diagrams are Mermaid in a fenced ` ```mermaid ` block (the UI renders them natively).
+
+### `architecture` (diagram-first, C4-inspired)
+
+```markdown
+## Purpose
+One paragraph: what this component/service exists to do.
+
+## Diagram
+A Mermaid `flowchart` of the key components and their interactions — 5–10 boxes max, C4
+container/component altitude. Every box is labeled with name + role ("Scheduler<br/>(claims batches)");
+every arrow is labeled with the interaction ("dispatches run"). Zoom out, not in: if it needs more than
+10 boxes, split into linked child pages.
+
+## Components
+One bullet per box in the diagram: name — responsibility, key classes/paths.
+
+## Interactions
+The non-obvious flows: ordering, transactions, failure handling.
+
+## Key decisions
+Bullets linking to /decisions/*.md pages where they exist.
+```
+
+### `feature`
+
+`## What it does` (user-visible behavior) · `## How it works` (mechanics, link architecture pages) ·
+`## Status` (shipped/in-progress + timestamp) · `## Related` (links).
+
+### `decision` (ADR-style)
+
+`## Context` · `## Decision` · `## Alternatives considered` · `## Consequences`. Add
+`status: proposed|accepted|superseded` to frontmatter.
+
+### `person` / `meeting` / `metric` / `integration`
+
+`person`: `## Role` · `## Working on` · `## Notes`.
+`meeting`: `## Attendees` · `## Outcomes` · `## Action items`.
+`metric`: `## Definition` · `## Current` (value + timestamp) · `## Source of truth` (link the system;
+the wiki stores the narrative, never a shadow ledger).
+`integration`: `## What it connects` · `## Setup` · `## Behavior`.
+
 ## Create vs. edit
 
 - **Edit in place** when a source is an update, correction, or additional detail about something a

@@ -27,7 +27,7 @@ Three layers, each with a different mutability:
 |---|---|---|
 | Sources inbox (`knowledge_sources`) | Immutable, append-only | Raw inbound material — a Work Item status change, a merged PR, a manual note. Never edited, only claimed and marked processed. |
 | Wiki pages (`knowledge_pages`) | Agent-owned, versioned | Markdown + YAML frontmatter, one file per page, `path` is identity. The librarian creates and edits these; the format is referred to in code as **OKF** (Markdown body + YAML frontmatter — no separate spec, just the convention this codebase follows). |
-| `_schema.md` | Agent-authored style guide | A wiki page like any other, but read by the librarian as its own instructions: frontmatter contract, page-type taxonomy, path layout, create-vs-edit heuristics. Seeded on enable, then it's just another page an operator or the librarian can evolve. |
+| `_schema.md` | Agent-authored style guide | A wiki page like any other, but read by the librarian as its own instructions: frontmatter contract, page-type taxonomy, path layout, per-type body templates (stable section structure per type; `architecture` pages are diagram-first with a C4-style Mermaid flowchart), create-vs-edit heuristics. Seeded on enable, then it's just another page an operator or the librarian can evolve. |
 
 This is deliberately **not RAG** (retrieval over raw source chunks at query time). Sources are filed once,
 at ingestion time, into durable, editable pages that get more accurate as the librarian revises them —
