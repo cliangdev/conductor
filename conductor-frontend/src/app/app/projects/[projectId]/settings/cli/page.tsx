@@ -3,10 +3,12 @@
 export const dynamic = 'force-dynamic'
 
 import { useEffect, useRef, useState } from 'react'
+import { useParams } from 'next/navigation'
 import { ChevronDownIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { settingsBreadcrumbs } from '@/lib/navigation'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -458,6 +460,7 @@ function AnchorNav() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function CliPage() {
+  const { projectId } = useParams<{ projectId: string }>()
   const [manifest, setManifest] = useState<CliManifest | null>(null)
   const [loadError, setLoadError] = useState(false)
 
@@ -485,6 +488,7 @@ export default function CliPage() {
       <PageHeader
         title="CLI"
         description="Install and configure the Conductor CLI and Claude Code integration."
+        breadcrumbs={settingsBreadcrumbs(projectId, 'settings-cli')}
         actions={
           version ? (
             <Badge variant="outline" className="font-mono text-xs">

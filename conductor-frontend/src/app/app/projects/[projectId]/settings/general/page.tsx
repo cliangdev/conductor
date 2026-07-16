@@ -13,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiDelete, apiPatch, apiErrorMessage } from '@/lib/api'
+import { settingsBreadcrumbs } from '@/lib/navigation'
 import { PageHeader } from '@/components/layout/PageHeader'
 import type { Project } from '@/types'
 
@@ -94,7 +95,10 @@ export default function GeneralSettingsPage() {
   return (
     <div className="space-y-10">
       <div>
-        <PageHeader title="General" />
+        <PageHeader
+          title="General"
+          breadcrumbs={settingsBreadcrumbs(projectId, 'settings-general')}
+        />
 
         <form onSubmit={handleSave} className="space-y-4">
           <div>

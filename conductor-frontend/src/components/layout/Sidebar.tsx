@@ -3,28 +3,19 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
-  BellIcon,
-  BookOpenIcon,
-  BotIcon,
   CheckIcon,
-  ChevronLeftIcon,
   ChevronRightIcon,
   ChevronsUpDownIcon,
   FileTextIcon,
   FolderIcon,
-  GitBranchIcon,
-  KeyIcon,
-  LibraryIcon,
-  LockIcon,
   LogOutIcon,
-  MoreHorizontalIcon,
+  PanelLeftCloseIcon,
+  PanelLeftIcon,
   PlusIcon,
-  PuzzleIcon,
+  SearchIcon,
   SettingsIcon,
-  SlidersHorizontalIcon,
-  TerminalIcon,
-  UsersIcon,
 } from 'lucide-react'
+import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 import { CreateWorkspaceDialog } from '@/components/layout/CreateWorkspaceDialog'
 import {
@@ -35,14 +26,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { ShortcutKbd, useModKeyLabel } from '@/components/ui/shortcut-kbd'
 import { useSidebar } from '@/contexts/SidebarContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useEditorChrome } from '@/contexts/EditorChromeContext'
-import { fetchSidebarWorkflows, getSidebarCacheEntry, humanizeId, isLifecycleWorkflow, pluralizeNoun, workItemListPath } from '@/lib/workflows'
+import { humanizeId, useSidebarWorkNav, workItemListPath, groupByArea } from '@/lib/workflows'
+import { AUTOMATION_NAV, SETTINGS_NAV, WORKSPACE_NAV, useCurrentWorkspace, workspaceHomePath } from '@/lib/navigation'
+import { THEME_OPTIONS } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 import type { Project } from '@/types'
-import type { WorkflowDefinitionDto } from '@/types/workflow'
 
 // ─── Primitives ───────────────────────────────────────────────────────────────
 
@@ -140,7 +134,7 @@ function WorkspaceSwitcher({
 
   function selectWorkspace(workspace: Project) {
     setActiveProject(workspace)
-    router.push(`/app/projects/${workspace.id}/engineering/issues`)
+    router.push(workspaceHomePath(workspace.id))
     onNavigate?.()
   }
 
@@ -196,11 +190,33 @@ function WorkspaceSwitcher({
   )
 }
 
-// ─── User / Account footer ────────────────────────────────────────────────────
+// ─── Search / Command palette launcher ────────────────────────────────────────
 
-function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarSearchButton() {
+  const { setPaletteOpen } = useSidebar()
+  const modKey = useModKeyLabel()
+  return (
+    <button
+      type="button"
+      onClick={() => setPaletteOpen(true)}
+      className="flex items-center gap-2 w-full rounded-md border border-sidebar-border bg-background px-2.5 py-1.5 text-left text-sm text-muted-foreground hover:border-border-strong hover:text-foreground transition-colors"
+    >
+      <SearchIcon className="h-3.5 w-3.5 shrink-0" />
+      <span className="flex-1">Search…</span>
+      <ShortcutKbd className="hidden sm:inline-flex">{modKey}</ShortcutKbd>
+    </button>
+  )
+}
+
+// ─── User / Account menu ───────────────────────────────────────────────────────
+//
+// Shared by the expanded footer and the collapsed rail (item 10) so sign-out and theme switching
+// stay reachable regardless of sidebar width — only the trigger's appearance differs.
+
+function UserAccountMenu({ collapsed = false, onNavigate }: { collapsed?: boolean; onNavigate?: () => void }) {
   const router = useRouter()
   const { user, signOut } = useAuth()
+  const { theme, setTheme } = useTheme()
 
   const initials = user?.name
     ? user.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
@@ -213,35 +229,62 @@ function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
   }
 
   return (
-    <div className="border-t border-sidebar-border">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        {collapsed ? (
+          <button
+            type="button"
+            aria-label="Account menu"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+          >
+            <Avatar className="h-6 w-6">
+              <AvatarImage src={user?.avatarUrl ?? undefined} alt={user?.name ?? 'User'} />
+              <AvatarFallback className="text-[10px] font-semibold">{initials}</AvatarFallback>
+            </Avatar>
+          </button>
+        ) : (
           <button className="w-full flex items-center gap-2.5 px-3 py-3 hover:bg-sidebar-hover transition-colors text-left">
-            {user?.avatarUrl
-              ? <img src={user.avatarUrl} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover" />
-              : <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">{initials}</span>
-            }
+            <Avatar className="h-7 w-7 shrink-0">
+              <AvatarImage src={user?.avatarUrl ?? undefined} alt={user?.name ?? 'User'} />
+              <AvatarFallback className="text-xs font-semibold">{initials}</AvatarFallback>
+            </Avatar>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-foreground truncate leading-tight">
                 {user?.name ?? 'Account'}
               </p>
             </div>
-            <MoreHorizontalIcon className="h-4 w-4 text-muted-foreground shrink-0 opacity-60" />
+            <ChevronsUpDownIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0 opacity-60" />
           </button>
-        </DropdownMenuTrigger>
+        )}
+      </DropdownMenuTrigger>
 
-        <DropdownMenuContent align="start" side="top" className="w-56 mb-1">
-          <DropdownMenuLabel className="font-normal">
-            <p className="text-xs font-medium text-foreground truncate">{user?.name ?? 'Account'}</p>
-            {user?.email && <p className="text-xs text-muted-foreground truncate">{user.email}</p>}
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={handleSignOut} className="text-destructive focus:text-destructive">
-            <LogOutIcon className="h-4 w-4 mr-2" />
-            Sign out
+      <DropdownMenuContent align="start" side={collapsed ? 'right' : 'top'} className="w-56 mb-1">
+        <DropdownMenuLabel className="font-normal">
+          <p className="text-xs font-medium text-foreground truncate">{user?.name ?? 'Account'}</p>
+          {user?.email && <p className="text-xs text-muted-foreground truncate">{user.email}</p>}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
+          <DropdownMenuItem key={value} onSelect={() => setTheme(value)} className="flex items-center gap-2">
+            <Icon className="h-4 w-4" />
+            <span className="flex-1">{label}</span>
+            {theme === value && <CheckIcon className="h-3.5 w-3.5" />}
           </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={handleSignOut} className="text-destructive focus:text-destructive">
+          <LogOutIcon className="h-4 w-4 mr-2" />
+          Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function UserFooter({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <div className="border-t border-sidebar-border">
+      <UserAccountMenu onNavigate={onNavigate} />
     </div>
   )
 }
@@ -266,75 +309,18 @@ function NavSkeleton() {
   )
 }
 
-/** A sidebar nav entry derived from a sidebar-enabled lifecycle Workflow. */
-interface WorkNavEntry {
-  slug: string
-  label: string
-  noun: string
-  area: string
-  createdAt: string
-}
-
-/**
- * Map sidebar-enabled lifecycle Workflows to nav entries, stably ordered by creation time. Reads the
- * first-class `slug`/`noun`/`area` fields the server now exposes — never the raw statechart `definition`.
- */
-function toWorkNav(workflows: WorkflowDefinitionDto[]): WorkNavEntry[] {
-  return workflows
-    .filter(isLifecycleWorkflow)
-    .map((wf) => ({
-      slug: wf.slug ?? wf.name,
-      label: pluralizeNoun(wf.noun ?? wf.name),
-      noun: wf.noun ?? wf.name,
-      area: wf.area ?? 'WORK',
-      createdAt: wf.createdAt,
-    }))
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-}
-
-/** Group nav entries by area slug, preserving first-seen (creation) order of areas and entries. */
-function groupByArea(entries: WorkNavEntry[]): [string, WorkNavEntry[]][] {
-  const groups = new Map<string, WorkNavEntry[]>()
-  for (const e of entries) {
-    const list = groups.get(e.area) ?? []
-    list.push(e)
-    groups.set(e.area, list)
-  }
-  return [...groups.entries()]
-}
-
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
-  const { projects, activeProject } = useProject()
+  const { projects } = useProject()
   const { accessToken } = useAuth()
-
-  // Determine current workspace from URL path
-  const projectIdFromPath = pathname.match(/\/app\/projects\/([^/]+)/)?.[1]
-  const currentWorkspace = projects.find((p) => p.id === projectIdFromPath) ?? activeProject
+  const currentWorkspace = useCurrentWorkspace()
 
   // Dynamic Work nav: one entry per sidebar-enabled, published lifecycle Workflow, grouped by area.
-  // Hydrates synchronously from the module cache (pre-seeded from localStorage) so nav appears
-  // instantly on revisit, then revalidates in the background via fetchSidebarWorkflows.
-  const [workNav, setWorkNav] = useState<WorkNavEntry[]>(() => {
-    if (!projectIdFromPath) return []
-    const cached = getSidebarCacheEntry(projectIdFromPath)
-    return cached ? toWorkNav(cached) : []
-  })
-  const [navLoading, setNavLoading] = useState(workNav.length === 0)
-
-  useEffect(() => {
-    if (!projectIdFromPath || !accessToken) return
-    let cancelled = false
-    fetchSidebarWorkflows(projectIdFromPath, accessToken)
-      .then((wfs) => {
-        if (!cancelled) {
-          setWorkNav(toWorkNav(wfs))
-          setNavLoading(false)
-        }
-      })
-      .catch(() => { if (!cancelled) setNavLoading(false) })
-    return () => { cancelled = true }
-  }, [projectIdFromPath, accessToken])
+  // Shared with the CommandPalette via the useSidebarWorkNav hook. Scoped strictly to the URL's
+  // project segment (not the activeProject fallback above) so it doesn't fetch a workflow list
+  // while on project-less routes like the workspace picker.
+  const projectIdFromPath = pathname.match(/\/app\/projects\/([^/]+)/)?.[1]
+  const { entries: workNav, loading: navLoading } = useSidebarWorkNav(projectIdFromPath, accessToken)
 
   return (
     <div className="flex flex-col h-full">
@@ -345,6 +331,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           currentWorkspace={currentWorkspace}
           onNavigate={onNavigate}
         />
+        <div className="px-2 pb-2">
+          <SidebarSearchButton />
+        </div>
       </div>
 
       {/* Scrollable nav */}
@@ -378,45 +367,20 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
             <SectionLabel>Workspace</SectionLabel>
             <div className="space-y-0.5 mb-4">
-              <NavItem
-                href={`/app/projects/${currentWorkspace.id}/docs`}
-                icon={<BookOpenIcon className="h-4 w-4" />}
-                onNavigate={onNavigate}
-              >
-                Docs
-              </NavItem>
-              <NavItem
-                href={`/app/projects/${currentWorkspace.id}/knowledge`}
-                icon={<LibraryIcon className="h-4 w-4" />}
-                onNavigate={onNavigate}
-              >
-                Knowledge
-              </NavItem>
+              {WORKSPACE_NAV.map(({ key, label, icon: Icon, path }) => (
+                <NavItem key={key} href={path(currentWorkspace.id)} icon={<Icon className="h-4 w-4" />} onNavigate={onNavigate}>
+                  {label}
+                </NavItem>
+              ))}
             </div>
 
             <SectionLabel>Automation</SectionLabel>
             <div className="space-y-0.5 mb-4">
-              <NavItem
-                href={`/app/projects/${currentWorkspace.id}/workflows`}
-                icon={<GitBranchIcon className="h-4 w-4" />}
-                onNavigate={onNavigate}
-              >
-                Workflows
-              </NavItem>
-              <NavItem
-                href={`/app/projects/${currentWorkspace.id}/agents`}
-                icon={<BotIcon className="h-4 w-4" />}
-                onNavigate={onNavigate}
-              >
-                Agents
-              </NavItem>
-              <NavItem
-                href={`/app/projects/${currentWorkspace.id}/integrations`}
-                icon={<PuzzleIcon className="h-4 w-4" />}
-                onNavigate={onNavigate}
-              >
-                Integrations
-              </NavItem>
+              {AUTOMATION_NAV.map(({ key, label, icon: Icon, path }) => (
+                <NavItem key={key} href={path(currentWorkspace.id)} icon={<Icon className="h-4 w-4" />} onNavigate={onNavigate}>
+                  {label}
+                </NavItem>
+              ))}
             </div>
 
             <div className="space-y-0.5">
@@ -427,48 +391,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 onNavigate={onNavigate}
                 subLinks={
                   <>
-                    <NavItem
-                      href={`/app/projects/${currentWorkspace.id}/settings/general`}
-                      icon={<SlidersHorizontalIcon className="h-4 w-4" />}
-                      onNavigate={onNavigate}
-                    >
-                      General
-                    </NavItem>
-                    <NavItem
-                      href={`/app/projects/${currentWorkspace.id}/settings/members`}
-                      icon={<UsersIcon className="h-4 w-4" />}
-                      onNavigate={onNavigate}
-                    >
-                      Members &amp; Roles
-                    </NavItem>
-                    <NavItem
-                      href={`/app/projects/${currentWorkspace.id}/settings/api-keys`}
-                      icon={<KeyIcon className="h-4 w-4" />}
-                      onNavigate={onNavigate}
-                    >
-                      API Keys
-                    </NavItem>
-                    <NavItem
-                      href={`/app/projects/${currentWorkspace.id}/settings/secrets`}
-                      icon={<LockIcon className="h-4 w-4" />}
-                      onNavigate={onNavigate}
-                    >
-                      Secrets
-                    </NavItem>
-                    <NavItem
-                      href={`/app/projects/${currentWorkspace.id}/settings/notifications`}
-                      icon={<BellIcon className="h-4 w-4" />}
-                      onNavigate={onNavigate}
-                    >
-                      Notifications
-                    </NavItem>
-                    <NavItem
-                      href={`/app/projects/${currentWorkspace.id}/settings/cli`}
-                      icon={<TerminalIcon className="h-4 w-4" />}
-                      onNavigate={onNavigate}
-                    >
-                      CLI
-                    </NavItem>
+                    {SETTINGS_NAV.map(({ key, label, icon: Icon, path }) => (
+                      <NavItem key={key} href={path(currentWorkspace.id)} icon={<Icon className="h-4 w-4" />} onNavigate={onNavigate}>
+                        {label}
+                      </NavItem>
+                    ))}
                   </>
                 }
               />
@@ -486,7 +413,15 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 // ─── Sidebar Shell ────────────────────────────────────────────────────────────
 
 export function Sidebar() {
-  const { isOpen, closeSidebar, sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed } = useSidebar()
+  const {
+    isOpen,
+    closeSidebar,
+    sidebarWidth,
+    setSidebarWidth,
+    sidebarCollapsed,
+    setSidebarCollapsed,
+    setPaletteOpen,
+  } = useSidebar()
   const { fullscreen } = useEditorChrome()
 
   function startResize(e: React.MouseEvent) {
@@ -519,15 +454,27 @@ export function Sidebar() {
     <>
       {/* Desktop sidebar */}
       {sidebarCollapsed ? (
-        <aside className="hidden md:flex w-4 shrink-0 border-r border-sidebar-border bg-sidebar-bg items-center justify-center">
+        <aside className="hidden md:flex w-10 shrink-0 border-r border-sidebar-border bg-sidebar-bg flex-col items-center py-2 gap-1">
           <button
             type="button"
             onClick={() => setSidebarCollapsed(false)}
             title="Expand navigation"
-            className="h-full w-full flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+            aria-label="Expand navigation"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
           >
-            <ChevronRightIcon className="h-3.5 w-3.5" />
+            <PanelLeftIcon className="h-4 w-4" />
           </button>
+          <button
+            type="button"
+            onClick={() => setPaletteOpen(true)}
+            title="Search"
+            aria-label="Search"
+            className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+          >
+            <SearchIcon className="h-4 w-4" />
+          </button>
+          <div className="flex-1" />
+          <UserAccountMenu collapsed />
         </aside>
       ) : (
         <aside className="hidden md:flex shrink-0 border-r border-sidebar-border bg-sidebar-bg">
@@ -539,14 +486,15 @@ export function Sidebar() {
               onMouseDown={startResize}
             />
           </div>
-          {/* Collapse strip */}
+          {/* Collapse rail */}
           <button
             type="button"
             onClick={() => setSidebarCollapsed(true)}
             title="Collapse navigation"
-            className="w-4 shrink-0 flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+            aria-label="Collapse navigation"
+            className="w-6 shrink-0 flex items-start justify-center pt-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
           >
-            <ChevronLeftIcon className="h-3.5 w-3.5" />
+            <PanelLeftCloseIcon className="h-4 w-4" />
           </button>
         </aside>
       )}

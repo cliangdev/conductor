@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiPost, apiErrorMessage } from '@/lib/api';
 import { WorkflowDefinitionDto } from '@/types/workflow';
+import { PageContainer } from '@/components/layout/PageContainer';
+import { PageHeader } from '@/components/layout/PageHeader';
 import WorkflowEditorLayout from '@/components/workflow/WorkflowEditorLayout';
 
 const DEFAULT_YAML = `name: my-workflow
@@ -50,17 +52,22 @@ export default function NewWorkflowPage() {
   };
 
   return (
-    <WorkflowEditorLayout
-      title="New Workflow"
-      breadcrumbs={[
-        { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },
-        { label: 'New' },
-      ]}
-      initialYaml={DEFAULT_YAML}
-      onSave={handleSave}
-      onDiscard={handleDiscard}
-      saving={saving}
-      error={error}
-    />
+    <PageContainer>
+      <PageHeader
+        title="New workflow"
+        breadcrumbs={[
+          { label: 'Workflows', href: `/app/projects/${projectId}/workflows` },
+          { label: 'New' },
+        ]}
+      />
+      <WorkflowEditorLayout
+        embedded
+        initialYaml={DEFAULT_YAML}
+        onSave={handleSave}
+        onDiscard={handleDiscard}
+        saving={saving}
+        error={error}
+      />
+    </PageContainer>
   );
 }

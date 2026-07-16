@@ -10,6 +10,8 @@ interface SidebarContextValue {
   setSidebarWidth: (w: number) => void
   sidebarCollapsed: boolean
   setSidebarCollapsed: (v: boolean) => void
+  paletteOpen: boolean
+  setPaletteOpen: (v: boolean) => void
 }
 
 const SidebarContext = createContext<SidebarContextValue | null>(null)
@@ -18,6 +20,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(false)
   const [sidebarWidth, setSidebarWidthState] = useState(240)
   const [sidebarCollapsed, setSidebarCollapsedState] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
 
   useEffect(() => {
     const stored = localStorage.getItem('sidebar_width')
@@ -46,7 +49,19 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <SidebarContext.Provider value={{ isOpen, toggleSidebar, closeSidebar, sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed }}>
+    <SidebarContext.Provider
+      value={{
+        isOpen,
+        toggleSidebar,
+        closeSidebar,
+        sidebarWidth,
+        setSidebarWidth,
+        sidebarCollapsed,
+        setSidebarCollapsed,
+        paletteOpen,
+        setPaletteOpen,
+      }}
+    >
       {children}
     </SidebarContext.Provider>
   )

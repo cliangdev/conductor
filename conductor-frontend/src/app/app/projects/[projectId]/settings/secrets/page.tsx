@@ -21,6 +21,7 @@ import {
   updateWorkflowSecret,
   type WorkflowSecretKey,
 } from '@/lib/api'
+import { settingsBreadcrumbs } from '@/lib/navigation'
 import { PageHeader } from '@/components/layout/PageHeader'
 
 const KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/
@@ -140,6 +141,7 @@ export default function WorkflowSecretsPage() {
         title="Secrets"
         description="Values workflow YAML can reference by key (e.g. ${{ secrets.DISCORD_WEBHOOK_URL }}). Values are write-only — once set, they're never shown again."
         actions={canManage && <Button size="sm" onClick={openAdd}>Add secret</Button>}
+        breadcrumbs={settingsBreadcrumbs(projectId, 'settings-secrets')}
       />
 
       {loading ? (

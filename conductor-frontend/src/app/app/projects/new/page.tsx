@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { apiPost } from '@/lib/api'
+import { workspaceHomePath } from '@/lib/navigation'
 import type { Project } from '@/types'
 
 const NAME_MAX_LENGTH = 100
@@ -62,7 +63,7 @@ export default function NewWorkspacePage() {
 
       addProject(project)
       setActiveProject(project)
-      router.push(`/app/projects/${project.id}/engineering/issues`)
+      router.push(workspaceHomePath(project.id))
     } catch {
       setServerError('Failed to create workspace. Please try again.')
     } finally {

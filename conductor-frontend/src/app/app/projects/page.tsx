@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useProject } from '@/contexts/ProjectContext'
+import { workspaceHomePath } from '@/lib/navigation'
 
 export default function ProjectsPage() {
   const router = useRouter()
@@ -19,7 +20,7 @@ export default function ProjectsPage() {
     if (projects.length === 0) return
 
     const target = activeProject ?? projects[0]
-    router.replace(`/app/projects/${target.id}/engineering/issues`)
+    router.replace(workspaceHomePath(target.id))
   }, [loading, projects, activeProject])
 
   if (loading) {

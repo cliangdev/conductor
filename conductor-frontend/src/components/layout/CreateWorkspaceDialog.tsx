@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { apiPost } from '@/lib/api'
+import { workspaceHomePath } from '@/lib/navigation'
 import type { Project } from '@/types'
 
 interface CreateWorkspaceDialogProps {
@@ -38,7 +39,7 @@ export function CreateWorkspaceDialog({ open, onClose }: CreateWorkspaceDialogPr
       addProject(project)
       setActiveProject(project)
       handleClose()
-      router.push(`/app/projects/${project.id}/engineering/issues`)
+      router.push(workspaceHomePath(project.id))
     } catch {
       setError('Failed to create workspace.')
     } finally {

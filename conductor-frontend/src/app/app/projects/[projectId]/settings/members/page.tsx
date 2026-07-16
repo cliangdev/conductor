@@ -17,6 +17,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiDelete, apiGet, apiPatch, apiPost, apiErrorMessage } from '@/lib/api'
+import { settingsBreadcrumbs } from '@/lib/navigation'
 import type { Invite, Member, MemberRole } from '@/types'
 
 const INVITE_ROLES: MemberRole[] = ['CREATOR', 'REVIEWER']
@@ -184,6 +185,7 @@ export default function MembersPage() {
             </Button>
           )
         }
+        breadcrumbs={settingsBreadcrumbs(projectId, 'settings-members')}
       />
 
       {membersLoading && (

@@ -351,6 +351,77 @@ export function getSidebarCacheEntry(projectId: string): WorkflowDefinitionDto[]
   return sidebarListCache.get(projectId)
 }
 
+/** A sidebar nav entry derived from a sidebar-enabled lifecycle Workflow. */
+export interface WorkNavEntry {
+  slug: string
+  label: string
+  noun: string
+  area: string
+  createdAt: string
+}
+
+/**
+ * Map sidebar-enabled lifecycle Workflows to nav entries, stably ordered by creation time. Reads the
+ * first-class `slug`/`noun`/`area` fields the server now exposes — never the raw statechart `definition`.
+ */
+export function toWorkNav(workflows: WorkflowDefinitionDto[]): WorkNavEntry[] {
+  return workflows
+    .filter(isLifecycleWorkflow)
+    .map((wf) => ({
+      slug: wf.slug ?? wf.name,
+      label: pluralizeNoun(wf.noun ?? wf.name),
+      noun: wf.noun ?? wf.name,
+      area: wf.area ?? 'WORK',
+      createdAt: wf.createdAt,
+    }))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+}
+
+/** Group nav entries by area slug, preserving first-seen (creation) order of areas and entries. */
+export function groupByArea(entries: WorkNavEntry[]): [string, WorkNavEntry[]][] {
+  const groups = new Map<string, WorkNavEntry[]>()
+  for (const e of entries) {
+    const list = groups.get(e.area) ?? []
+    list.push(e)
+    groups.set(e.area, list)
+  }
+  return [...groups.entries()]
+}
+
+/**
+ * React hook: the dynamic Work nav — one entry per sidebar-enabled, published lifecycle Workflow for
+ * a project. Shared by the Sidebar and the CommandPalette so both read the exact same list. Hydrates
+ * synchronously from the module cache (pre-seeded from localStorage) so nav appears instantly on
+ * revisit, then revalidates in the background via {@link fetchSidebarWorkflows}.
+ */
+export function useSidebarWorkNav(
+  projectId: string | undefined,
+  token: string | null | undefined,
+): { entries: WorkNavEntry[]; loading: boolean } {
+  const [entries, setEntries] = useState<WorkNavEntry[]>(() => {
+    if (!projectId) return []
+    const cached = getSidebarCacheEntry(projectId)
+    return cached ? toWorkNav(cached) : []
+  })
+  const [loading, setLoading] = useState(entries.length === 0)
+
+  useEffect(() => {
+    if (!projectId || !token) return
+    let cancelled = false
+    fetchSidebarWorkflows(projectId, token)
+      .then((wfs) => {
+        if (!cancelled) {
+          setEntries(toWorkNav(wfs))
+          setLoading(false)
+        }
+      })
+      .catch(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [projectId, token])
+
+  return { entries, loading }
+}
+
 /** Invalidate the sidebar cache for a project (call after publishing or deleting a workflow). */
 export function invalidateSidebarCache(projectId: string): void {
   sidebarListCache.delete(projectId)

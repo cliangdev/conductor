@@ -1,58 +1,39 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 
-const mockPush = vi.fn()
-const mockSignOut = vi.fn()
+const mockToggleSidebar = vi.fn()
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: mockPush }),
-}))
-
-vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({
-    user: { name: 'Cal L', email: 'cal@example.com', avatarUrl: null },
-    signOut: mockSignOut,
-  }),
+  usePathname: () => '/app/projects/proj-1/engineering/issues',
 }))
 
 vi.mock('@/contexts/SidebarContext', () => ({
-  useSidebar: () => ({ toggleSidebar: vi.fn() }),
+  useSidebar: () => ({ toggleSidebar: mockToggleSidebar }),
 }))
 
-vi.mock('@/components/ui/ThemeToggle', () => ({
-  ThemeToggle: () => null,
-}))
-
-vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuItem: ({ children, onSelect, className }: { children: React.ReactNode; onSelect?: () => void; className?: string }) => (
-    <div role="menuitem" className={className} onClick={onSelect}>{children}</div>
-  ),
-  DropdownMenuSeparator: () => <hr />,
+vi.mock('@/contexts/ProjectContext', () => ({
+  useProject: () => ({
+    projects: [{ id: 'proj-1', name: 'Test Workspace' }],
+    activeProject: { id: 'proj-1', name: 'Test Workspace' },
+  }),
 }))
 
 import { Navbar } from './Navbar'
 
-describe('Navbar user dropdown', () => {
-  it('does not show an API Keys link in the dropdown', () => {
+describe('Navbar (mobile bar)', () => {
+  it('renders the hamburger button and toggles the sidebar', () => {
     render(<Navbar />)
-    expect(screen.queryByRole('link', { name: /api keys/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /open menu/i }))
+    expect(mockToggleSidebar).toHaveBeenCalled()
   })
 
-  it('shows the Sign out option', () => {
+  it('shows the current workspace name as the mobile title', () => {
     render(<Navbar />)
-    expect(screen.getByText(/sign out/i)).toBeInTheDocument()
+    expect(screen.getByText('Test Workspace')).toBeInTheDocument()
   })
 
-  it('calls signOut and redirects to /login when Sign out is clicked', async () => {
-    mockSignOut.mockResolvedValue(undefined)
+  it('does not render a user menu (owned by the Sidebar footer)', () => {
     render(<Navbar />)
-    fireEvent.click(screen.getByText(/sign out/i))
-    await vi.waitFor(() => {
-      expect(mockSignOut).toHaveBeenCalled()
-      expect(mockPush).toHaveBeenCalledWith('/login')
-    })
+    expect(screen.queryByText(/sign out/i)).not.toBeInTheDocument()
   })
 })

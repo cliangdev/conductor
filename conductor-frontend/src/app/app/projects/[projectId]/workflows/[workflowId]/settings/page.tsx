@@ -102,7 +102,6 @@ export default function WorkflowSettingsPage() {
 
       <WorkflowEditorLayout
         embedded
-        title="Edit workflow"
         initialYaml={workflow.yaml ?? ''}
         initialName={workflow.name}
         onSave={handleSave}
