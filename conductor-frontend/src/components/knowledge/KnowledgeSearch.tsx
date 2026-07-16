@@ -10,9 +10,10 @@ interface KnowledgeSearchProps {
   onResultSelect: (path: string) => void
 }
 
-/** Strips ts_headline's <b>/</b> markers (and any other tags, defensively) back to plain text. */
+/** Strips ts_headline's <b>/</b> markers back to plain text — the only markup the backend's
+ *  snippet generator emits. Rendered as a React text node, so no HTML interpretation either way. */
 function stripHighlightTags(text: string): string {
-  return text.replace(/<[^>]+>/g, '')
+  return text.replaceAll('<b>', '').replaceAll('</b>', '')
 }
 
 function highlightMatch(text: string, query: string): React.ReactNode {
