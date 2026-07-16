@@ -6579,7 +6579,7 @@ components:
 
     KnowledgeSourceStatus:
       type: string
-      enum: [PENDING, PROCESSING, PROCESSED, FAILED, DEAD]
+      enum: [PENDING, PROCESSING, PROCESSED, DEAD]
 
     KnowledgeOrigin:
       type: object

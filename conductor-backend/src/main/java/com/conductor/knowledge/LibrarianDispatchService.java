@@ -97,7 +97,10 @@ public class LibrarianDispatchService {
         try {
             return objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
-            return "{}";
+            // A "{}" fallback would dispatch a librarian run with no sourceIds and strand the batch
+            // in PROCESSING until the sweep; failing loudly lets the scheduler's per-project
+            // try/catch log it and the sweep retry with the payload intact.
+            throw new IllegalStateException("Failed to serialize knowledge-librarian dispatch payload", e);
         }
     }
 

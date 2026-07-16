@@ -8,6 +8,5 @@ public enum KnowledgeSourceStatus {
     PENDING,
     PROCESSING,
     PROCESSED,
-    FAILED,
     DEAD
 }

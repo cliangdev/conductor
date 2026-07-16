@@ -106,8 +106,7 @@ frontend settings page for it; toggle it via `PATCH /api/v1/projects/{projectId}
    batch is released straight back to `PENDING` instead of being dispatched into a void.
 
 Source lifecycle: `PENDING → PROCESSING → PROCESSED` (success) or `PENDING → PROCESSING → PENDING`
-(retried, backoff) `→ … → DEAD` (exhausted). A `FAILED` status is defined on the enum but not currently
-produced by this pipeline — reserved for a future explicit-failure path.
+(retried, backoff) `→ … → DEAD` (exhausted).
 
 ---
 
