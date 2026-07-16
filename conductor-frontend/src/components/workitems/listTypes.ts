@@ -2,6 +2,7 @@
 // useWorkItemListState hook all import from here instead of each redeclaring the same fields).
 
 import type { MemberRole } from '@/types'
+import type { Verdict } from '@/components/reviews/verdict'
 
 export interface IssueAssignee {
   userId: string
@@ -13,7 +14,7 @@ export interface IssueReviewer {
   userId: string
   name: string
   avatarUrl?: string
-  reviewVerdict?: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'
+  reviewVerdict?: Verdict
 }
 
 export interface Issue {

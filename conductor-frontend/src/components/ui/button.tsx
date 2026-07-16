@@ -13,6 +13,10 @@ const buttonVariants = cva(
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
         ghost: 'hover:bg-accent hover:text-accent-foreground',
         link: 'text-primary underline-offset-4 hover:underline',
+        /** The one "positive/approve" action treatment (e.g. ReviewBar's Approve) — status-done with
+         * its paired foreground token, which flips to dark text in the dark theme where status-done
+         * itself is a light green. */
+        success: 'bg-status-done text-status-done-foreground hover:bg-status-done/90',
       },
       size: {
         default: 'h-10 px-4 py-2',

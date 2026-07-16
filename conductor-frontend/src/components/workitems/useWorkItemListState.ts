@@ -44,9 +44,10 @@ function isInteractiveContextOpen(): boolean {
  * `@radix-ui/react-dropdown-menu`'s trigger implementation) — a plain `el.click()`, which is what a
  * programmatic keyboard shortcut or command-palette action would normally reach for, never
  * satisfies that listener and silently no-ops. Dispatching a real `pointerdown` first opens the
- * trigger exactly as a mouse click would.
+ * trigger exactly as a mouse click would. Exported so other palette-action registrants (e.g. the Work
+ * Item detail page's "Change status"/"Assign" commands) can reuse it instead of re-deriving it.
  */
-function openMenuTrigger(el: HTMLButtonElement | null | undefined) {
+export function openMenuTrigger(el: HTMLButtonElement | null | undefined) {
   if (!el) return
   el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
   el.click()

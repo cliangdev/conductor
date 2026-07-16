@@ -66,7 +66,10 @@ const config: Config = {
           approved: 'hsl(var(--status-approved))',
           progress: 'hsl(var(--status-progress))',
           'code-review': 'hsl(var(--status-code-review))',
-          done: 'hsl(var(--status-done))',
+          done: {
+            DEFAULT: 'hsl(var(--status-done))',
+            foreground: 'hsl(var(--status-done-foreground))',
+          },
           closed: 'hsl(var(--status-closed))',
           failed: 'hsl(var(--status-failed))',
         },

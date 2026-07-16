@@ -50,6 +50,7 @@
     --status-progress: 40 88% 33%;
     --status-code-review: 257 56% 57%;
     --status-done: 150 71% 32%;
+    --status-done-foreground: 0 0% 100%;
     --status-closed: 216 10% 61%;
     --status-failed: 0 60% 52%;
     --sidebar-bg: 220 16% 96%;
@@ -93,6 +94,9 @@
     --status-progress: 40 68% 54%;
     --status-code-review: 259 70% 72%;
     --status-done: 146 48% 53%;
+    /* Dark theme's status-done is a light green — pair it with dark text instead of the usual white
+       foreground (which would fail contrast against a chip this light). */
+    --status-done-foreground: 150 40% 10%;
     --status-closed: 216 8% 53%;
     --status-failed: 0 69% 65%;
     --sidebar-bg: 213 15% 12%;

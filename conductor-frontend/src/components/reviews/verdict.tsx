@@ -1,16 +1,18 @@
 import { CheckCircle2, RefreshCw, MessageCircle, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export type ReviewVerdict = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'
+// The one Verdict type — imported everywhere a review outcome is represented (list rows, the detail
+// properties panel, the batch review bar) instead of each surface redeclaring the same literal union.
+export type Verdict = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'
 
-const VERDICT_LABELS: Record<ReviewVerdict, string> = {
+const VERDICT_LABELS: Record<Verdict, string> = {
   APPROVED: 'Approved',
   CHANGES_REQUESTED: 'Changes requested',
   COMMENTED: 'Commented',
 }
 
 interface VerdictIconProps {
-  verdict?: ReviewVerdict
+  verdict?: Verdict
   className?: string
 }
 

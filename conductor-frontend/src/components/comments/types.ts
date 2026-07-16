@@ -21,3 +21,15 @@ export interface Comment {
   createdAt: string
   replies: CommentReply[]
 }
+
+/**
+ * A comment drafted while a batch review is in progress (COND-22 review mode) — held client-side and
+ * not yet posted. Persisted to localStorage (keyed by Work Item) so a refresh doesn't lose drafts;
+ * flushed to the real comments API only when the reviewer submits their verdict.
+ */
+export interface PendingCommentDraft {
+  localId: string
+  documentId: string
+  lineNumber: number
+  content: string
+}

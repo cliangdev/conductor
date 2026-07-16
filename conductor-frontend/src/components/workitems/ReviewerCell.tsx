@@ -14,11 +14,11 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
 import type { IssueReviewer, Member } from '@/components/workitems/listTypes'
-import type { ReviewVerdict } from '@/components/reviews/verdict'
+import type { Verdict } from '@/components/reviews/verdict'
 
 // Verdict → ring color, mirroring VerdictIcon's palette (components/reviews/verdict.tsx) so a
 // reviewer's avatar ring and its icon elsewhere in the app always agree on what each verdict means.
-const VERDICT_RING: Record<ReviewVerdict | 'pending', string> = {
+const VERDICT_RING: Record<Verdict | 'pending', string> = {
   APPROVED: 'ring-status-done',
   CHANGES_REQUESTED: 'ring-status-progress',
   COMMENTED: 'ring-status-review',
@@ -27,7 +27,7 @@ const VERDICT_RING: Record<ReviewVerdict | 'pending', string> = {
 
 // Verdict isn't color-only: this text pairs with each avatar's title/aria-label so the ring's
 // meaning survives for screen readers and colorblind users too.
-const VERDICT_LABEL: Record<ReviewVerdict | 'pending', string> = {
+const VERDICT_LABEL: Record<Verdict | 'pending', string> = {
   APPROVED: 'Approved',
   CHANGES_REQUESTED: 'Changes requested',
   COMMENTED: 'Commented',

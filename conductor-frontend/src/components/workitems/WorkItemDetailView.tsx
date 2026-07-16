@@ -4,78 +4,50 @@
 // /{area}/{nouns}/{displayId} route. It is keyed by the Work Item UUID
 // (all sub-resource fetches use the canonical /api/v2/.../work-items/{workItemId}/... endpoints); the
 // bound Workflow slug arrives as a prop (no more useParams/DEFAULT_WORKFLOW_SLUG fallback).
+//
+// Redesigned (design-system.md) to join the shared page chrome: PageContainer/PageHeader, a
+// document-tabs + Activity reading column, and a right properties panel. Review is the GitHub-style
+// batch model — see ReviewBar and the pending-comment state below.
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
-import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
+import { Modal } from '@/components/ui/modal'
 import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSkeleton'
-import { toastError } from '@/components/ui/toast'
-import { ExternalLink } from 'lucide-react'
+import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
+import { ActivityTab } from '@/components/workitems/ActivityTab'
+import { toastError, toastSuccess } from '@/components/ui/toast'
+import { ExternalLink, FileText, FileX2 } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
-import { ReviewSubmissionForm } from '@/components/reviews/ReviewSubmissionForm'
-import { ReviewersSummaryPanel } from '@/components/reviews/ReviewersSummaryPanel'
-import { StatusDropdown } from '@/components/issues/StatusDropdown'
-import { TaskProgressPanel } from '@/components/issues/TaskProgressPanel'
+import { ReviewBar } from '@/components/reviews/ReviewBar'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { HtmlViewer } from '@/components/markdown/HtmlViewer'
-import { Breadcrumb, type Crumb } from '@/components/layout/PageHeader'
+import { PageContainer } from '@/components/layout/PageContainer'
+import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
+import { registerPaletteActions } from '@/components/layout/CommandPalette'
+import { openMenuTrigger } from '@/components/workitems/useWorkItemListState'
+import { timeAgo } from '@/lib/format'
+import { readPersistedJSON, writePersistedJSON, removePersisted } from '@/lib/persisted'
+import { cn } from '@/lib/utils'
 import {
   humanizeId,
   pluralizeNoun,
   reviewGateForStatus,
   statusHasReviewGate,
+  statusMeta,
   useWorkflowView,
   workItemListPath,
 } from '@/lib/workflows'
-import type { Comment } from '@/components/comments/types'
+import type { Comment, PendingCommentDraft } from '@/components/comments/types'
 import type { WorkItemAsset } from '@/types/workItem'
+import type { DetailDocument, DetailIssue, DetailReview, DetailReviewer } from '@/components/workitems/detailTypes'
+import type { Member } from '@/components/workitems/listTypes'
+import type { Verdict } from '@/components/reviews/verdict'
 import type { MemberRole } from '@/types'
 
-interface Issue {
-  id: string
-  title: string
-  type: string
-  status: string
-  description?: string
-  displayId?: string
-  /** Bound Workflow slug; the page passes the authoritative slug as a prop. */
-  workflow?: string
-}
-
-interface Document {
-  id: string
-  filename: string
-  contentType: string
-  content?: string
-  storageUrl?: string
-  storageUrlExpiresAt?: string
-}
-
-interface Reviewer {
-  userId: string
-  name: string
-  email: string
-  avatarUrl?: string
-  reviewVerdict?: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'
-}
-
-interface Review {
-  reviewerId: string
-  name: string
-  avatarUrl?: string
-  verdict: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'
-  body?: string
-  submittedAt: string
-}
-
-interface Member {
-  userId: string
-  role: MemberRole
-  name?: string
-  email?: string
-}
-
-function isMarkdown(doc: Document): boolean {
+function isMarkdown(doc: DetailDocument): boolean {
   if (doc.filename.endsWith('.html') || doc.filename.endsWith('.htm')) return false
   return (
     doc.contentType === 'text/markdown' ||
@@ -84,7 +56,7 @@ function isMarkdown(doc: Document): boolean {
   )
 }
 
-function isHtml(doc: Document): boolean {
+function isHtml(doc: DetailDocument): boolean {
   return (
     doc.contentType === 'text/html' ||
     doc.filename.endsWith('.html') ||
@@ -92,17 +64,95 @@ function isHtml(doc: Document): boolean {
   )
 }
 
-function isExpiringSoon(doc: Document): boolean {
+function isExpiringSoon(doc: DetailDocument): boolean {
   if (!doc.storageUrlExpiresAt) return false
   const expiresAt = new Date(doc.storageUrlExpiresAt).getTime()
   return expiresAt - Date.now() < 60_000
 }
 
-type MobileTab = 'documents' | 'content'
+// Scoped to both the Work Item and the signed-in user — a shared browser (or a handoff between
+// accounts) must never surface one reviewer's drafted comments to another. No migration/cleanup of
+// the old unscoped key is needed: it simply stops being read, and stays silently orphaned.
+function reviewDraftKey(workItemId: string, userId: string): string {
+  return `wi_review_${workItemId}_${userId}`
+}
+
+interface ReviewDraft {
+  /** Bumped if the persisted shape ever changes — readPersistedJSON's validator rejects a mismatch
+   * (or a pre-versioning draft) instead of handing back a shape the rest of this file assumes. */
+  version: 1
+  active: boolean
+  pending: PendingCommentDraft[]
+}
+
+function isPendingCommentDraft(v: unknown): v is PendingCommentDraft {
+  if (!v || typeof v !== 'object') return false
+  const d = v as Record<string, unknown>
+  return (
+    typeof d.localId === 'string' &&
+    typeof d.documentId === 'string' &&
+    typeof d.lineNumber === 'number' &&
+    typeof d.content === 'string'
+  )
+}
+
+function isValidReviewDraft(v: unknown): v is ReviewDraft {
+  if (!v || typeof v !== 'object') return false
+  const d = v as Record<string, unknown>
+  return (
+    d.version === 1 &&
+    typeof d.active === 'boolean' &&
+    Array.isArray(d.pending) &&
+    d.pending.every(isPendingCommentDraft)
+  )
+}
+
+const EMPTY_REVIEW_DRAFT: ReviewDraft = { version: 1, active: false, pending: [] }
+
+function persistReviewDraft(draftKey: string, active: boolean, pending: PendingCommentDraft[]) {
+  if (active || pending.length > 0) {
+    writePersistedJSON<ReviewDraft>(draftKey, { version: 1, active, pending })
+  } else {
+    removePersisted(draftKey)
+  }
+}
+
+/** Drops drafts whose document was removed, or whose line number has fallen past the document's
+ * current length (edited out from under the draft) — checked both at hydration and just before
+ * submit so a stale draft can never silently post against a line that no longer means what it did
+ * when the comment was drafted. */
+function dropStaleDrafts(
+  pending: PendingCommentDraft[],
+  docs: DetailDocument[]
+): { valid: PendingCommentDraft[]; droppedCount: number } {
+  const docsById = new Map(docs.map((d) => [d.id, d]))
+  const valid = pending.filter((p) => {
+    const doc = docsById.get(p.documentId)
+    if (!doc) return false
+    if (typeof doc.content !== 'string') return true // not loaded — can't check line count, keep it
+    return p.lineNumber >= 1 && p.lineNumber <= doc.content.split('\n').length
+  })
+  return { valid, droppedCount: pending.length - valid.length }
+}
+
+let pendingIdCounter = 0
+function nextPendingId(): string {
+  pendingIdCounter += 1
+  return `pending-${Date.now()}-${pendingIdCounter}`
+}
+
+const TAB_CLASSES =
+  'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap'
+
+// ARIA tabs pattern ids — the same tab id (a document id, 'activity', or 'details') derives both the
+// tab button's id and the panel it controls, so the two stay in sync without a second id map.
+function tabButtonId(tabId: string): string {
+  return `wi-tab-${tabId}`
+}
 
 /**
  * Work Item detail view, keyed by the Work Item UUID. The bound Workflow slug is passed in (drives the
- * status badge, the review panels, and the breadcrumb trail).
+ * status badge, the review bar, and the breadcrumb trail).
  */
 export function WorkItemDetailView({
   projectId,
@@ -117,30 +167,41 @@ export function WorkItemDetailView({
   const issueId = workItemId
   const { accessToken, user } = useAuth()
 
-  const [issue, setIssue] = useState<Issue | null>(null)
-  const [documents, setDocuments] = useState<Document[]>([])
+  const [issue, setIssue] = useState<DetailIssue | null>(null)
+  const [documents, setDocuments] = useState<DetailDocument[]>([])
   const [assets, setAssets] = useState<WorkItemAsset[]>([])
-  const [reviewers, setReviewers] = useState<Reviewer[]>([])
-  const [reviews, setReviews] = useState<Review[]>([])
+  const [reviewers, setReviewers] = useState<DetailReviewer[]>([])
+  const [reviews, setReviews] = useState<DetailReview[]>([])
   const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
   const [allMembers, setAllMembers] = useState<Member[]>([])
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<string>('')
   const [comments, setComments] = useState<Comment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<MobileTab>('documents')
-  const [assignDropdownOpen, setAssignDropdownOpen] = useState(false)
-  const [assigning, setAssigning] = useState(false)
-  const assignDropdownRef = useRef<HTMLDivElement>(null)
+
+  // ── Batch review mode (COND-22) ────────────────────────────────────────────
+  const [reviewMode, setReviewMode] = useState(false)
+  const [pendingComments, setPendingComments] = useState<PendingCommentDraft[]>([])
+  const [reviewSubmitting, setReviewSubmitting] = useState(false)
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
+
+  const statusTriggerRef = useRef<HTMLButtonElement>(null)
+  const assigneeTriggerRef = useRef<HTMLButtonElement>(null)
+  const hydratedDraftRef = useRef(false)
+
+  // Scoped to this Work Item + the signed-in user; null until the user is known, which the hydration
+  // effect below waits on rather than reading (and thus scoping) a draft too early.
+  const draftKey = user?.id ? reviewDraftKey(issueId, user.id) : null
 
   // Display metadata for the Work Item's Workflow (resolved by the slug prop). Drives the status badge,
-  // whether the review panels are shown, and the breadcrumb area/noun.
+  // whether the review bar is offered, and the breadcrumb area/noun.
   const workflowSlug = slug
   const workflowView = useWorkflowView(projectId, workflowSlug, accessToken)
 
   const fetchDocuments = useCallback(async () => {
     if (!accessToken) return
-    const docs = await apiGet<Document[]>(
+    const docs = await apiGet<DetailDocument[]>(
       `/api/v2/projects/${projectId}/work-items/${issueId}/documents`,
       accessToken
     )
@@ -167,7 +228,7 @@ export function WorkItemDetailView({
 
   const fetchReviewers = useCallback(async () => {
     if (!accessToken) return
-    const data = await apiGet<Reviewer[]>(
+    const data = await apiGet<DetailReviewer[]>(
       `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers`,
       accessToken
     )
@@ -177,7 +238,7 @@ export function WorkItemDetailView({
   const fetchReviews = useCallback(async () => {
     if (!accessToken) return
     try {
-      const data = await apiGet<Review[]>(
+      const data = await apiGet<DetailReview[]>(
         `/api/v2/projects/${projectId}/work-items/${issueId}/reviews`,
         accessToken
       )
@@ -206,8 +267,8 @@ export function WorkItemDetailView({
     async function fetchAll() {
       try {
         const [issueData, reviewerData] = await Promise.all([
-          apiGet<Issue>(`/api/v2/projects/${projectId}/work-items/${issueId}`, accessToken!),
-          apiGet<Reviewer[]>(
+          apiGet<DetailIssue>(`/api/v2/projects/${projectId}/work-items/${issueId}`, accessToken!),
+          apiGet<DetailReviewer[]>(
             `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers`,
             accessToken!
           ),
@@ -245,34 +306,90 @@ export function WorkItemDetailView({
     fetchDocuments().catch(() => {})
   }, [documents, fetchDocuments])
 
+  // Default the active tab to the initially-selected document, once — doesn't fight the user's own
+  // later tab clicks (activeTab is only empty before the first load).
+  useEffect(() => {
+    if (!activeTab && selectedDocId) setActiveTab(selectedDocId)
+  }, [activeTab, selectedDocId])
+
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null
 
-  function handleDocClick(doc: Document) {
+  function selectDocument(doc: DetailDocument) {
     if (isMarkdown(doc) || isHtml(doc)) {
       setSelectedDocId(doc.id)
-      setActiveTab('content')
+      setActiveTab(doc.id)
     } else if (doc.storageUrl) {
       window.open(doc.storageUrl, '_blank', 'noopener,noreferrer')
     }
   }
 
+  // ── Document tabs: roving tabindex + ArrowLeft/Right (WAI-ARIA tabs pattern) ────────────────────
+  const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>())
+
+  function activateTab(tabId: string) {
+    const doc = documents.find((d) => d.id === tabId)
+    if (doc) selectDocument(doc)
+    else setActiveTab(tabId)
+  }
+
+  function handleTabKeyDown(e: React.KeyboardEvent, tabIds: string[], currentId: string) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    const idx = tabIds.indexOf(currentId)
+    const delta = e.key === 'ArrowRight' ? 1 : -1
+    const nextId = tabIds[(idx + delta + tabIds.length) % tabIds.length]
+    tabButtonRefs.current.get(nextId)?.focus()
+    activateTab(nextId)
+  }
+
   const isAssignedReviewer = reviewers.some((r) => r.userId === user?.id)
-  const currentUserReview = reviews.find((r) => r.reviewerId === user?.id)
   const canManage = userRole === 'CREATOR' || userRole === 'ADMIN'
 
   // Review is only relevant when the current status has an outgoing review-gated transition. When it
-  // doesn't, both review panels (and the assign-reviewer affordance) are hidden.
+  // doesn't, the review bar and the assign-reviewer affordance are both hidden.
   const reviewActive = issue ? statusHasReviewGate(workflowView, issue.status) : false
   const reviewOutcomes = issue
     ? reviewGateForStatus(workflowView, issue.status)?.reviewOutcomes
     : undefined
 
   const assignedIds = new Set(reviewers.map((r) => r.userId))
-  const assignableMembers = allMembers.filter(
+  const assignableReviewers = allMembers.filter(
     (m) => m.role === 'REVIEWER' && !assignedIds.has(m.userId)
   )
 
-  async function handleUnassign(userId: string) {
+  // Hydrate any in-progress review draft for this Work Item + user (localStorage) once the data
+  // needed to judge it has actually loaded — a page refresh mid-review doesn't lose pending comments,
+  // but a draft that no longer applies (the Work Item moved on, the user lost their reviewer seat) is
+  // discarded with a toast instead of silently restored, and drafts on a document that changed or
+  // disappeared are dropped rather than counted invisibly. Runs once per mount. Mutation call sites
+  // elsewhere persist directly rather than watching this state reactively, so there's no race with
+  // this one-time read.
+  useEffect(() => {
+    if (hydratedDraftRef.current) return
+    if (loading || !workflowView || !draftKey) return
+    hydratedDraftRef.current = true
+
+    const draft = readPersistedJSON<ReviewDraft>(draftKey, EMPTY_REVIEW_DRAFT, isValidReviewDraft)
+    if (!draft.active && draft.pending.length === 0) return
+
+    if (!(isAssignedReviewer && reviewActive)) {
+      removePersisted(draftKey)
+      toastError('Review draft discarded — the work item moved on')
+      return
+    }
+
+    const { valid, droppedCount } = dropStaleDrafts(draft.pending, documents)
+    if (droppedCount > 0) {
+      toastError(
+        `${droppedCount} draft comment${droppedCount !== 1 ? 's' : ''} discarded — the referenced document changed`
+      )
+    }
+    setReviewMode(draft.active)
+    setPendingComments(valid)
+    persistReviewDraft(draftKey, draft.active, valid)
+  }, [loading, workflowView, draftKey, isAssignedReviewer, reviewActive, documents])
+
+  async function handleUnassignReviewer(userId: string) {
     if (!accessToken) return
     try {
       await apiDelete(
@@ -285,9 +402,8 @@ export function WorkItemDetailView({
     }
   }
 
-  async function handleAssign(userId: string) {
-    if (!accessToken || assigning) return
-    setAssigning(true)
+  async function handleAssignReviewer(userId: string) {
+    if (!accessToken) return
     try {
       await apiPost(
         `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers`,
@@ -295,24 +411,156 @@ export function WorkItemDetailView({
         accessToken
       )
       await fetchReviewers()
-      setAssignDropdownOpen(false)
     } catch (err) {
       toastError(apiErrorMessage(err, 'Failed to add reviewer'))
-    } finally {
-      setAssigning(false)
     }
   }
 
-  useEffect(() => {
-    if (!assignDropdownOpen) return
-    function handleClickOutside(e: MouseEvent) {
-      if (assignDropdownRef.current && !assignDropdownRef.current.contains(e.target as Node)) {
-        setAssignDropdownOpen(false)
-      }
+  // ── Batch review mode actions ───────────────────────────────────────────────
+
+  function startReview() {
+    setReviewMode(true)
+    if (draftKey) persistReviewDraft(draftKey, true, pendingComments)
+  }
+
+  function addPendingComment(documentId: string, lineNumber: number, content: string) {
+    const next = [...pendingComments, { localId: nextPendingId(), documentId, lineNumber, content }]
+    setPendingComments(next)
+    if (draftKey) persistReviewDraft(draftKey, reviewMode, next)
+  }
+
+  function editPendingComment(localId: string, content: string) {
+    const next = pendingComments.map((p) => (p.localId === localId ? { ...p, content } : p))
+    setPendingComments(next)
+    if (draftKey) persistReviewDraft(draftKey, reviewMode, next)
+  }
+
+  function removePendingComment(localId: string) {
+    const next = pendingComments.filter((p) => p.localId !== localId)
+    setPendingComments(next)
+    if (draftKey) persistReviewDraft(draftKey, reviewMode, next)
+  }
+
+  function discardReview() {
+    setReviewMode(false)
+    setPendingComments([])
+    if (draftKey) removePersisted(draftKey)
+    setCancelConfirmOpen(false)
+  }
+
+  function handleCancelReview() {
+    if (pendingComments.length > 0) {
+      setCancelConfirmOpen(true)
+    } else {
+      discardReview()
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [assignDropdownOpen])
+  }
+
+  async function handleSubmitReview(verdict: Verdict, summary: string) {
+    if (!accessToken) return
+    setReviewSubmitting(true)
+    try {
+      // Drop drafts whose document changed out from under them before posting anything — a stale
+      // draft should never silently count toward (or block) the batch.
+      const { valid: toSubmit, droppedCount } = dropStaleDrafts(pendingComments, documents)
+      if (droppedCount > 0) {
+        setPendingComments(toSubmit)
+        if (draftKey) persistReviewDraft(draftKey, true, toSubmit)
+        toastError(
+          `${droppedCount} draft comment${droppedCount !== 1 ? 's' : ''} discarded — the referenced document changed`
+        )
+      }
+
+      const results = await Promise.allSettled(
+        toSubmit.map((p) =>
+          apiPost(
+            `/api/v2/projects/${projectId}/work-items/${issueId}/comments`,
+            { documentId: p.documentId, content: p.content, lineNumber: p.lineNumber },
+            accessToken
+          )
+        )
+      )
+      const succeeded = toSubmit.filter((_, i) => results[i].status === 'fulfilled')
+      const failed = toSubmit.filter((_, i) => results[i].status === 'rejected')
+
+      // Whatever posted is gone for good — clear it from pending (and the persisted draft) and pull
+      // the fresh comments so they show up, regardless of what the verdict POST below does. Otherwise
+      // a retry after a failed verdict POST would re-post everything that already succeeded.
+      if (succeeded.length > 0) {
+        setPendingComments(failed)
+        if (draftKey) persistReviewDraft(draftKey, true, failed)
+        await fetchComments()
+      }
+
+      if (failed.length > 0) {
+        toastError(
+          `${failed.length} of ${toSubmit.length} comment${toSubmit.length !== 1 ? 's' : ''} failed to post — they're still pending`
+        )
+        return
+      }
+
+      await apiPost(
+        `/api/v2/projects/${projectId}/work-items/${issueId}/reviews`,
+        { verdict, body: summary || undefined },
+        accessToken
+      )
+      setPendingComments([])
+      setReviewMode(false)
+      if (draftKey) removePersisted(draftKey)
+      toastSuccess('Review submitted')
+      await Promise.all([fetchReviewers(), fetchReviews()])
+    } catch (err) {
+      toastError(apiErrorMessage(err, 'Failed to submit review'))
+    } finally {
+      setReviewSubmitting(false)
+    }
+  }
+
+  // ── Command palette integration ──────────────────────────────────────────────
+  // On mobile the properties panel (where both triggers live) is hidden unless the Details tab is
+  // active — switch to it first so the trigger is actually visible/interactive before opening it. A
+  // rAF gives the tab-switch re-render (and the CSS `hidden` → `block` flip) a chance to land before
+  // openMenuTrigger dispatches its pointerdown. Desktop already shows the panel regardless of tab, so
+  // this is a no-op there beyond the (harmless) tab-state change.
+  function openPanelTrigger(ref: React.RefObject<HTMLButtonElement | null>) {
+    setActiveTab('details')
+    requestAnimationFrame(() => openMenuTrigger(ref.current))
+  }
+
+  useEffect(() => {
+    if (!issue) return
+    // Both triggers live in the properties panel; a REVIEWER only ever sees a read-only status
+    // indicator and no AssigneeCell at all (see WorkItemPropertiesPanel), so neither action has a
+    // live target to open for that role.
+    const canChangeStatusOrAssign = userRole !== 'REVIEWER'
+    return registerPaletteActions({
+      group: 'Work item',
+      actions: [
+        ...(canChangeStatusOrAssign
+          ? [
+              {
+                id: 'wi-change-status',
+                label: 'Change status',
+                perform: () => openPanelTrigger(statusTriggerRef),
+              },
+              {
+                id: 'wi-assign',
+                label: 'Assign',
+                perform: () => openPanelTrigger(assigneeTriggerRef),
+              },
+            ]
+          : []),
+        ...(reviewActive && isAssignedReviewer && !reviewMode
+          ? [{ id: 'wi-start-review', label: 'Start review', perform: startReview }]
+          : []),
+      ],
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issue, userRole, reviewActive, isAssignedReviewer, reviewMode])
+
+  const creatorName = issue?.createdBy
+    ? allMembers.find((m) => m.userId === issue.createdBy)?.name
+    : undefined
 
   if (loading) {
     return <WorkItemDetailSkeleton />
@@ -320,14 +568,15 @@ export function WorkItemDetailView({
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64 text-destructive">Error: {error}</div>
+      <PageContainer>
+        <div className="flex items-center justify-center h-64 text-destructive">Error: {error}</div>
+      </PageContainer>
     )
   }
 
   if (!issue) return null
 
   // Breadcrumb trail: area (non-link) › pluralized noun (link to the Workflow list) › this Work Item's id.
-  // Sourced from the WorkflowView, which now carries `area`; crumbs that have no source are skipped.
   const crumbs: Crumb[] = []
   if (workflowView?.area) crumbs.push({ label: humanizeId(workflowView.area) })
   if (workflowView?.noun) {
@@ -338,229 +587,219 @@ export function WorkItemDetailView({
   }
   crumbs.push({ label: issue.displayId ?? issue.title })
 
-  const sidebar = (
-    <aside className="w-full md:w-72 border-r border-border bg-sidebar-bg flex flex-col shrink-0 overflow-y-auto">
-      <div className="px-4 py-3 border-b border-border">
-        <span className="text-xs font-semibold text-foreground-subtle uppercase tracking-wide">
-          Documents
-        </span>
-      </div>
-      {documents.length === 0 ? (
-        <div className="px-4 py-6 text-sm text-muted-foreground text-center">
-          No documents attached yet
-        </div>
-      ) : (
-        <ul className="py-2">
-          {documents.map((doc) => (
-            <li key={doc.id}>
-              <button
-                onClick={() => handleDocClick(doc)}
-                className={`w-full text-left px-4 py-2 text-sm truncate transition-colors ${
-                  selectedDocId === doc.id
-                    ? 'bg-sidebar-active text-sidebar-active-text font-medium'
-                    : 'text-foreground hover:bg-sidebar-hover'
-                }`}
-                title={doc.filename}
-              >
-                {doc.filename}
-                {!isMarkdown(doc) && !isHtml(doc) && (
-                  <span className="ml-1 text-xs text-muted-foreground">(binary)</span>
-                )}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+  const byline = creatorName
+    ? `Created by ${creatorName}${issue.updatedAt ? ` · updated ${timeAgo(issue.updatedAt)}` : ''}`
+    : issue.updatedAt
+      ? `Updated ${timeAgo(issue.updatedAt)}`
+      : undefined
 
-      <TaskProgressPanel issueId={issueId} projectId={projectId} />
+  let mainContent: React.ReactNode
+  if (activeTab === 'activity') {
+    mainContent = <ActivityTab comments={comments} reviews={reviews} />
+  } else if (documents.length === 0) {
+    mainContent = (
+      <EmptyState
+        icon={FileX2}
+        title="No documents attached yet"
+        description="Work Items are authored by agents — documents will show up here once created."
+      />
+    )
+  } else if (selectedDoc && isMarkdown(selectedDoc) && selectedDoc.content) {
+    mainContent = (
+      <CommentableDocument
+        content={selectedDoc.content}
+        documentId={selectedDoc.id}
+        issueId={issueId}
+        projectId={projectId}
+        comments={comments.filter((c) => c.documentId === selectedDoc.id)}
+        onCommentAdded={fetchComments}
+        token={accessToken!}
+        currentUserId={user?.id ?? ''}
+        onDocumentNavigate={(filename) => {
+          const target = documents.find((d) => d.filename === filename)
+          if (target) selectDocument(target)
+        }}
+        reviewMode={reviewMode}
+        pendingComments={pendingComments}
+        onAddPendingComment={(lineNumber, text) => addPendingComment(selectedDoc.id, lineNumber, text)}
+        onEditPendingComment={editPendingComment}
+        onRemovePendingComment={removePendingComment}
+      />
+    )
+  } else if (selectedDoc && isMarkdown(selectedDoc) && !selectedDoc.content) {
+    mainContent = <p className="text-sm text-muted-foreground">Document content is empty.</p>
+  } else if (selectedDoc && isHtml(selectedDoc) && selectedDoc.content) {
+    mainContent = <HtmlViewer content={selectedDoc.content} />
+  } else if (selectedDoc && isHtml(selectedDoc) && !selectedDoc.content) {
+    mainContent = <p className="text-sm text-muted-foreground">Document content is empty.</p>
+  } else {
+    mainContent = <p className="text-sm text-muted-foreground">Select a document to view its contents.</p>
+  }
 
-      {reviewActive && (isAssignedReviewer || userRole === 'REVIEWER') && (
-        <div className="mt-auto border-t border-border p-4">
-          <ReviewSubmissionForm
-            projectId={projectId}
-            issueId={issueId}
-            token={accessToken!}
-            isAssignedReviewer={isAssignedReviewer}
-            existingVerdict={currentUserReview?.verdict}
-            existingBody={currentUserReview?.body}
-            reviewOutcomes={reviewOutcomes}
-            onReviewSubmitted={async () => {
-              await Promise.all([fetchReviewers(), fetchReviews()])
-            }}
-          />
-        </div>
-      )}
-    </aside>
-  )
+  // All tab ids in DOM order (roving tabindex + Arrow key navigation walk this array). 'details' is
+  // a mobile-only alias that reveals the properties panel rather than changing the main content, so
+  // the main content panel's aria-labelledby tracks the last content-bearing tab instead of it.
+  const tabIds = [...documents.map((d) => d.id), 'activity', 'details']
+  const contentTabId = activeTab === 'details' || activeTab === '' ? (selectedDocId ?? 'activity') : activeTab
 
-  const mainContent = (
-    <main className="flex-1 overflow-y-auto p-4 md:p-6">
-      {documents.length === 0 ? (
-        <div className="flex items-center justify-center h-full text-muted-foreground">
-          No documents attached yet
-        </div>
-      ) : selectedDoc && isMarkdown(selectedDoc) && selectedDoc.content ? (
-        <CommentableDocument
-          content={selectedDoc.content}
-          documentId={selectedDoc.id}
-          issueId={issueId}
-          projectId={projectId}
-          comments={comments.filter((c) => c.documentId === selectedDoc.id)}
-          onCommentAdded={fetchComments}
-          token={accessToken!}
-          currentUserId={user?.id ?? ''}
-          onDocumentNavigate={(filename) => {
-            const target = documents.find((d) => d.filename === filename)
-            if (target) {
-              setSelectedDocId(target.id)
-              setActiveTab('content')
-            }
-          }}
-        />
-      ) : selectedDoc && isMarkdown(selectedDoc) && !selectedDoc.content ? (
-        <div className="text-muted-foreground text-sm">Document content is empty.</div>
-      ) : selectedDoc && isHtml(selectedDoc) && selectedDoc.content ? (
-        <HtmlViewer content={selectedDoc.content} />
-      ) : selectedDoc && isHtml(selectedDoc) && !selectedDoc.content ? (
-        <div className="text-muted-foreground text-sm">Document content is empty.</div>
-      ) : (
-        <div className="text-muted-foreground text-sm">
-          Select a document from the sidebar to view its contents.
-        </div>
-      )}
-    </main>
+  const headerActions = reviewActive && isAssignedReviewer && (
+    reviewMode ? (
+      <span className="text-sm text-muted-foreground">Reviewing…</span>
+    ) : (
+      <Button size="sm" onClick={startReview}>
+        Start review
+      </Button>
+    )
   )
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="border-b border-border bg-background px-4 sm:px-6 lg:px-8 py-4 shrink-0">
-        <Breadcrumb items={crumbs} className="mb-2" />
-        <div className="flex items-start gap-3 flex-wrap">
-          {issue.displayId && (
-            <span className="font-mono text-xs text-muted-foreground self-center shrink-0">
-              {issue.displayId}
-            </span>
+    <PageContainer>
+      <PageHeader
+        breadcrumbs={crumbs}
+        title={issue.title}
+        status={<StatusBadge status={issue.status} {...statusMeta(workflowView, issue.status)} />}
+        description={byline}
+        actions={headerActions || undefined}
+      />
+
+      {/* Document tabs + Activity (+ Details on mobile) */}
+      <div
+        role="tablist"
+        aria-label="Work item content"
+        className="flex items-center gap-1 border-b border-border mb-4 overflow-x-auto overflow-y-hidden"
+      >
+        {documents.map((doc) => {
+          const binary = !isMarkdown(doc) && !isHtml(doc)
+          const active = activeTab === doc.id
+          return (
+            <button
+              key={doc.id}
+              id={tabButtonId(doc.id)}
+              ref={(el) => {
+                if (el) tabButtonRefs.current.set(doc.id, el)
+                else tabButtonRefs.current.delete(doc.id)
+              }}
+              role="tab"
+              aria-selected={active}
+              aria-controls="wi-tabpanel-main"
+              tabIndex={active ? 0 : -1}
+              onClick={() => selectDocument(doc)}
+              onKeyDown={(e) => handleTabKeyDown(e, tabIds, doc.id)}
+              className={cn(TAB_CLASSES, active ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
+              title={doc.filename}
+            >
+              <FileText className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate max-w-[10rem]">{doc.filename}</span>
+              {binary && <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />}
+            </button>
+          )
+        })}
+        <button
+          id={tabButtonId('activity')}
+          ref={(el) => {
+            if (el) tabButtonRefs.current.set('activity', el)
+            else tabButtonRefs.current.delete('activity')
+          }}
+          role="tab"
+          aria-selected={activeTab === 'activity'}
+          aria-controls="wi-tabpanel-main"
+          tabIndex={activeTab === 'activity' ? 0 : -1}
+          onClick={() => setActiveTab('activity')}
+          onKeyDown={(e) => handleTabKeyDown(e, tabIds, 'activity')}
+          className={cn(TAB_CLASSES, activeTab === 'activity' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
+        >
+          Activity
+        </button>
+        <button
+          id={tabButtonId('details')}
+          ref={(el) => {
+            if (el) tabButtonRefs.current.set('details', el)
+            else tabButtonRefs.current.delete('details')
+          }}
+          role="tab"
+          aria-selected={activeTab === 'details'}
+          aria-controls="wi-tabpanel-details"
+          tabIndex={activeTab === 'details' ? 0 : -1}
+          onClick={() => setActiveTab('details')}
+          onKeyDown={(e) => handleTabKeyDown(e, tabIds, 'details')}
+          className={cn(TAB_CLASSES, 'md:hidden', activeTab === 'details' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
+        >
+          Details
+        </button>
+      </div>
+
+      <div className="flex gap-6 items-start">
+        <div
+          id="wi-tabpanel-main"
+          role="tabpanel"
+          aria-labelledby={tabButtonId(contentTabId)}
+          className={cn('flex-1 min-w-0', activeTab === 'details' ? 'hidden md:block' : 'block')}
+        >
+          <div className="max-w-[45rem] mx-auto">{mainContent}</div>
+        </div>
+
+        <aside
+          id="wi-tabpanel-details"
+          role="tabpanel"
+          aria-labelledby={tabButtonId('details')}
+          className={cn(
+            'w-full md:w-64 md:shrink-0 border-border md:border-l md:pl-6',
+            activeTab === 'details' ? 'block' : 'hidden md:block'
           )}
-          <h1 className="text-xl sm:text-2xl font-semibold text-foreground flex-1 min-w-0">
-            {issue.title}
-          </h1>
-          <div className="flex items-center gap-2 shrink-0">
-            <Badge variant="outline">{issue.type}</Badge>
-            <StatusDropdown
-              projectId={projectId}
-              issueId={issueId}
-              currentStatus={issue.status}
-              userRole={userRole}
-              token={accessToken!}
-              workflowSlug={workflowSlug}
-              onStatusChanged={(s) => setIssue((prev) => prev ? { ...prev, status: s } : prev)}
-            />
-            {assets
-              .filter((a) => a.kind === 'link')
-              .map((asset) => {
-                const isPr = asset.type === 'github_pr'
-                return (
-                  <a
-                    key={asset.id}
-                    href={asset.ref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    {isPr ? 'View PR' : asset.label || asset.type}
-                  </a>
-                )
-              })}
+        >
+          <WorkItemPropertiesPanel
+            projectId={projectId}
+            issueId={issueId}
+            status={issue.status}
+            userRole={userRole}
+            token={accessToken!}
+            workflowSlug={workflowSlug}
+            onStatusChanged={(s) => setIssue((prev) => (prev ? { ...prev, status: s } : prev))}
+            statusTriggerRef={statusTriggerRef}
+            assignee={issue.assignee}
+            members={allMembers}
+            onAssigneeChanged={(a) => setIssue((prev) => (prev ? { ...prev, assignee: a } : prev))}
+            assigneeTriggerRef={assigneeTriggerRef}
+            reviewActive={reviewActive}
+            reviewers={reviewers}
+            reviews={reviews}
+            canManage={canManage}
+            assignableReviewers={assignableReviewers}
+            onAssignReviewer={handleAssignReviewer}
+            onUnassignReviewer={handleUnassignReviewer}
+            assets={assets}
+          />
+        </aside>
+      </div>
+
+      {reviewMode && (
+        <ReviewBar
+          pendingCount={pendingComments.length}
+          reviewOutcomes={reviewOutcomes}
+          submitting={reviewSubmitting}
+          onSubmit={handleSubmitReview}
+          onCancel={handleCancelReview}
+        />
+      )}
+
+      <Modal
+        open={cancelConfirmOpen}
+        onOpenChange={setCancelConfirmOpen}
+        title="Discard pending comments?"
+        description={`You have ${pendingComments.length} unsaved comment${pendingComments.length !== 1 ? 's' : ''} that will be lost.`}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setCancelConfirmOpen(false)}>
+              Keep reviewing
+            </Button>
+            <Button variant="destructive" size="sm" onClick={discardReview}>
+              Discard
+            </Button>
           </div>
-        </div>
-        {reviewActive && (
-        <div className="flex items-start gap-3 flex-wrap">
-          <div className="flex-1 min-w-0">
-            <ReviewersSummaryPanel
-              reviewers={reviewers}
-              canManage={canManage}
-              onUnassign={handleUnassign}
-              reviews={reviews}
-            />
-          </div>
-          {canManage && (
-            <div className="relative shrink-0 mt-3" ref={assignDropdownRef}>
-              <button
-                onClick={() => setAssignDropdownOpen((prev) => !prev)}
-                className="px-2 py-1 text-xs border border-border rounded bg-background text-foreground hover:bg-muted transition-colors"
-              >
-                + Assign Reviewer
-              </button>
-              {assignDropdownOpen && (
-                <div className="absolute right-0 top-full mt-1 z-50 w-56 bg-background border border-border rounded shadow-md">
-                  {assignableMembers.length === 0 ? (
-                    <div className="px-3 py-2 text-xs text-muted-foreground">
-                      No reviewers available to assign
-                    </div>
-                  ) : (
-                    <ul className="py-1">
-                      {assignableMembers.map((m) => (
-                        <li key={m.userId}>
-                          <button
-                            onClick={() => handleAssign(m.userId)}
-                            disabled={assigning}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50"
-                          >
-                            <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground shrink-0">
-                              {(m.name ?? m.email ?? '?').charAt(0).toUpperCase()}
-                            </div>
-                            <div className="flex flex-col items-start min-w-0">
-                              <span className="truncate max-w-full">{m.name ?? m.email}</span>
-                              {m.name && m.email && (
-                                <span className="text-xs text-muted-foreground truncate max-w-full">
-                                  {m.email}
-                                </span>
-                              )}
-                            </div>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        )}
-      </div>
-
-      {/* Mobile tab bar */}
-      <div className="md:hidden flex border-b border-border bg-background shrink-0">
-        {(['documents', 'content'] as MobileTab[]).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-2.5 text-sm font-medium transition-colors capitalize ${
-              activeTab === tab
-                ? 'text-primary border-b-2 border-primary'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {tab === 'documents' ? 'Documents' : 'Content'}
-          </button>
-        ))}
-      </div>
-
-      {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar: visible on desktop always; on mobile only when documents tab active */}
-        <div className={`${activeTab === 'documents' ? 'flex' : 'hidden'} md:flex w-full md:w-auto`}>
-          {sidebar}
-        </div>
-
-        {/* Main: visible on desktop always; on mobile only when content tab active */}
-        <div className={`${activeTab === 'content' ? 'flex' : 'hidden'} md:flex flex-1 overflow-hidden`}>
-          {mainContent}
-        </div>
-      </div>
-    </div>
+        }
+      >
+        <p className="text-sm text-muted-foreground">This can&apos;t be undone.</p>
+      </Modal>
+    </PageContainer>
   )
 }

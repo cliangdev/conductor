@@ -92,7 +92,7 @@ export function TaskProgressPanel({ issueId, projectId }: TaskProgressPanelProps
           className="flex items-center justify-between w-full group"
           aria-expanded={expanded}
         >
-          <span className="text-xs font-semibold text-foreground-subtle uppercase tracking-wide">
+          <span className="text-[11.5px] font-semibold text-muted-foreground uppercase tracking-wide">
             Implementation Progress
           </span>
           {expanded ? (
@@ -134,7 +134,7 @@ export function TaskProgressPanel({ issueId, projectId }: TaskProgressPanelProps
                           {epicCompleted}/{epicTotal}
                         </span>
                         {allEpicDone && (
-                          <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                          <CheckCircle2 className="h-3.5 w-3.5 text-status-done" />
                         )}
                       </div>
                     </div>
@@ -143,7 +143,7 @@ export function TaskProgressPanel({ issueId, projectId }: TaskProgressPanelProps
                       {epic.tasks.map((task) => (
                         <li key={task.id} className="flex items-center gap-2">
                           {task.status === 'COMPLETED' ? (
-                            <CheckSquare2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
+                            <CheckSquare2 className="h-3.5 w-3.5 text-status-done shrink-0" />
                           ) : (
                             <Square className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                           )}
