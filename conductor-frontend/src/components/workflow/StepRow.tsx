@@ -1,16 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 import { WorkflowStepRunDto } from '@/types/workflow';
+import { StatusBadge } from '@/components/ui/status-badge';
 import { WorkflowLogStream } from './WorkflowLogStream';
-
-const STATUS_COLORS: Record<string, string> = {
-  SUCCESS: 'text-green-600',
-  FAILED:  'text-red-600',
-  RUNNING: 'text-yellow-600',
-  SKIPPED: 'text-gray-400',
-  PENDING: 'text-gray-400',
-};
 
 const MAX_LOG_DISPLAY = 10_000;
 const MAX_OUTPUT_VALUE_DISPLAY = 400;
@@ -57,7 +51,7 @@ function ConditionDetail({ step }: { step: WorkflowStepRunDto }) {
       {result !== undefined && (
         <div>
           <span className="font-medium text-muted-foreground">Result: </span>
-          <span className={result ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+          <span className={result ? 'text-status-done font-semibold' : 'text-status-failed font-semibold'}>
             {result ? 'true' : 'false'}
           </span>
         </div>
@@ -123,18 +117,20 @@ export function StepRow({ step, runId }: StepRowProps) {
           setExpanded(e => !e);
         }}
       >
-        <span className={`text-sm font-medium ${STATUS_COLORS[step.status] ?? ''}`}>
-          {step.status}
-        </span>
+        <StatusBadge status={step.status} />
         <span className="text-sm flex-1">{displayStepName(step)}</span>
         <span className="text-xs text-muted-foreground">{step.stepType}</span>
         {hasExpandableContent && (
-          <span className="text-xs text-muted-foreground">{expanded ? '▲' : '▼'}</span>
+          expanded ? (
+            <ChevronUpIcon className="h-3.5 w-3.5 text-muted-foreground" />
+          ) : (
+            <ChevronDownIcon className="h-3.5 w-3.5 text-muted-foreground" />
+          )
         )}
       </button>
 
       {step.errorReason && (
-        <p className="mt-1 text-xs text-red-600">{step.errorReason}</p>
+        <p className="mt-1 text-xs text-status-failed">{step.errorReason}</p>
       )}
 
       {expanded && (
@@ -149,7 +145,7 @@ export function StepRow({ step, runId }: StepRowProps) {
             finalLog && (
               <div>
                 {isTruncated && (
-                  <p className="text-xs text-amber-600 mb-1">
+                  <p className="text-xs text-status-progress mb-1">
                     [truncated — showing last 10,000 characters]
                   </p>
                 )}

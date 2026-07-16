@@ -4,8 +4,12 @@
 // is controlled — the parent owns the StatechartDefinition and persists it (POST/PUT); the backend
 // re-validates on save/publish, so this editor only shapes the document and offers light guidance.
 
-import { useState } from 'react'
+import { cloneElement, isValidElement, useId, useState } from 'react'
+import { ChevronRightIcon, XIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
+import { Label } from '@/components/ui/label'
 import {
   CATEGORY_OPTIONS,
   DEFAULT_VIEW_OPTIONS,
@@ -27,11 +31,6 @@ import {
 } from '@/lib/workflowDefinition'
 import type { ReviewOutcome, WorkflowStatusCategory } from '@/types/workItem'
 
-const inputCls =
-  'w-full px-3 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring'
-const selectCls =
-  'px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring'
-
 function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <section className="border border-border rounded-lg p-4 space-y-3">
@@ -45,11 +44,19 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  const generatedId = useId()
+  // Associate the label with its control via htmlFor/id — cloning in an id only when the
+  // child (an Input/Select) doesn't already carry one of its own.
+  const control = isValidElement<{ id?: string }>(children)
+    ? cloneElement(children, { id: children.props.id ?? generatedId })
+    : children
   return (
-    <label className="block">
-      <span className="block text-xs font-medium text-muted-foreground mb-1">{label}</span>
-      {children}
-    </label>
+    <div>
+      <Label htmlFor={generatedId} className="text-xs font-medium text-muted-foreground mb-1">
+        {label}
+      </Label>
+      {control}
+    </div>
   )
 }
 
@@ -75,7 +82,7 @@ function TagInput({ values, onChange }: { values: string[]; onChange: (next: str
             className="text-muted-foreground hover:text-destructive"
             aria-label={`Remove ${v}`}
           >
-            ×
+            <XIcon className="h-3 w-3" />
           </button>
         </span>
       ))}
@@ -156,8 +163,7 @@ export function StatechartEditor({
       <Section title="Workflow" hint="Identity and display settings for this Workflow's Work Items.">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Slug (UPPER_SNAKE, stable id)">
-            <input
-              className={inputCls}
+            <Input
               value={value.id}
               disabled={!creating}
               placeholder="E.G. CONTENT_REVIEW"
@@ -165,24 +171,21 @@ export function StatechartEditor({
             />
           </Field>
           <Field label="Area (nav grouping slug)">
-            <input
-              className={inputCls}
+            <Input
               value={value.area}
               placeholder="E.G. MARKETING"
               onChange={(e) => update({ area: e.target.value.toUpperCase() })}
             />
           </Field>
           <Field label="Noun (what a Work Item is called)">
-            <input
-              className={inputCls}
+            <Input
               value={value.noun}
               placeholder="E.g. Post"
               onChange={(e) => update({ noun: e.target.value })}
             />
           </Field>
           <Field label="Default view">
-            <select
-              className={`${selectCls} w-full`}
+            <Select
               value={value.default_view}
               onChange={(e) => update({ default_view: e.target.value as DefaultView })}
             >
@@ -191,7 +194,7 @@ export function StatechartEditor({
                   {o.label}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
         </div>
 
@@ -221,15 +224,13 @@ export function StatechartEditor({
         {value.metric && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pl-6">
             <Field label="Metric name">
-              <input
-                className={inputCls}
+              <Input
                 value={value.metric.name}
                 onChange={(e) => update({ metric: { ...value.metric!, name: e.target.value } })}
               />
             </Field>
             <Field label="Unit (optional)">
-              <input
-                className={inputCls}
+              <Input
                 value={value.metric.unit ?? ''}
                 onChange={(e) =>
                   update({ metric: { ...value.metric!, unit: e.target.value || undefined } })
@@ -237,8 +238,7 @@ export function StatechartEditor({
               />
             </Field>
             <Field label="Direction">
-              <select
-                className={`${selectCls} w-full`}
+              <Select
                 value={value.metric.direction}
                 onChange={(e) =>
                   update({ metric: { ...value.metric!, direction: e.target.value as MetricDirection } })
@@ -249,7 +249,7 @@ export function StatechartEditor({
                     {d.replace(/_/g, ' ')}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
           </div>
         )}
@@ -263,20 +263,20 @@ export function StatechartEditor({
         <div className="space-y-2">
           {value.statuses.map((s, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2">
-              <input
-                className={`${inputCls} flex-1 min-w-[120px]`}
+              <Input
+                className="flex-1 min-w-[120px]"
                 value={s.id}
                 placeholder="STATUS_ID"
                 onChange={(e) => updateStatus(i, { id: e.target.value.toUpperCase() })}
               />
-              <input
-                className={`${inputCls} flex-1 min-w-[120px]`}
+              <Input
+                className="flex-1 min-w-[120px]"
                 value={s.label ?? ''}
                 placeholder="Label"
                 onChange={(e) => updateStatus(i, { label: e.target.value || undefined })}
               />
-              <select
-                className={selectCls}
+              <Select
+                className="w-auto"
                 value={s.category}
                 onChange={(e) =>
                   updateStatus(i, {
@@ -290,7 +290,7 @@ export function StatechartEditor({
                     {c.label}
                   </option>
                 ))}
-              </select>
+              </Select>
               <label className="flex items-center gap-1 text-xs text-muted-foreground" title="Initial status">
                 <input type="radio" name="initial-status" checked={!!s.initial} onChange={() => setInitial(i)} />
                 initial
@@ -332,8 +332,8 @@ export function StatechartEditor({
           {value.transitions.map((t, i) => (
             <div key={i} className="border border-border rounded-md p-3 space-y-2.5">
               <div className="flex flex-wrap items-center gap-2">
-                <select
-                  className={selectCls}
+                <Select
+                  className="w-auto"
                   value={t.from}
                   onChange={(e) => updateTransition(i, { from: e.target.value })}
                 >
@@ -343,10 +343,10 @@ export function StatechartEditor({
                       {id}
                     </option>
                   ))}
-                </select>
-                <span className="text-muted-foreground">→</span>
-                <select
-                  className={selectCls}
+                </Select>
+                <ChevronRightIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <Select
+                  className="w-auto"
                   value={t.to}
                   onChange={(e) => updateTransition(i, { to: e.target.value })}
                 >
@@ -356,9 +356,9 @@ export function StatechartEditor({
                       {id}
                     </option>
                   ))}
-                </select>
-                <input
-                  className={`${inputCls} flex-1 min-w-[140px]`}
+                </Select>
+                <Input
+                  className="flex-1 min-w-[140px]"
                   value={t.label}
                   placeholder="Action label (e.g. Submit for review)"
                   onChange={(e) => updateTransition(i, { label: e.target.value })}
@@ -390,8 +390,8 @@ export function StatechartEditor({
                 </label>
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   Trigger
-                  <select
-                    className={selectCls}
+                  <Select
+                    className="w-auto"
                     value={t.trigger ?? ''}
                     onChange={(e) =>
                       updateTransition(i, {
@@ -401,7 +401,7 @@ export function StatechartEditor({
                   >
                     <option value="">none (human-driven)</option>
                     <option value="pr_merged">pr_merged</option>
-                  </select>
+                  </Select>
                 </label>
               </div>
 
@@ -422,8 +422,8 @@ export function StatechartEditor({
                   </div>
                   <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     Reviewer role
-                    <select
-                      className={selectCls}
+                    <Select
+                      className="w-auto"
                       value={t.reviewerRole ?? ''}
                       onChange={(e) =>
                         updateTransition(i, {
@@ -437,7 +437,7 @@ export function StatechartEditor({
                           {r}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </label>
                 </div>
               )}
@@ -446,8 +446,8 @@ export function StatechartEditor({
               <div className="space-y-2">
                 {(t.steps ?? []).map((step, si) => (
                   <div key={si} className="flex flex-wrap items-center gap-2 pl-4 border-l-2 border-border">
-                    <select
-                      className={selectCls}
+                    <Select
+                      className="w-auto"
                       value={step.kind}
                       onChange={(e) => updateStep(i, si, { kind: e.target.value as StepKind })}
                     >
@@ -456,9 +456,9 @@ export function StatechartEditor({
                           {k}
                         </option>
                       ))}
-                    </select>
-                    <select
-                      className={selectCls}
+                    </Select>
+                    <Select
+                      className="w-auto"
                       value={step.mode}
                       onChange={(e) => updateStep(i, si, { mode: e.target.value as StepMode })}
                     >
@@ -467,10 +467,10 @@ export function StatechartEditor({
                           {m}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                     {step.kind === 'skill' && (
-                      <select
-                        className={selectCls}
+                      <Select
+                        className="w-auto"
                         value={step.skill ?? ''}
                         onChange={(e) => updateStep(i, si, { skill: e.target.value || undefined })}
                       >
@@ -480,7 +480,7 @@ export function StatechartEditor({
                             {s}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     )}
                     <button
                       type="button"

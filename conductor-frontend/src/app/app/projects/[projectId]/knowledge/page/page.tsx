@@ -12,6 +12,8 @@ import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { KnowledgeHistoryPanel } from '@/components/knowledge/KnowledgeHistoryPanel'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { KnowledgePageSkeleton } from '@/components/knowledge/KnowledgePageSkeleton'
+import { Alert } from '@/components/ui/alert'
 
 export const dynamic = 'force-dynamic'
 
@@ -63,14 +65,14 @@ function KnowledgePageContent() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>
-    )
+    return <KnowledgePageSkeleton />
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center h-64 text-destructive">Error: {error}</div>
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <Alert variant="destructive">{error}</Alert>
+      </div>
     )
   }
 
@@ -136,7 +138,7 @@ function KnowledgePageContent() {
 
 export default function KnowledgePageRoute() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>}>
+    <Suspense fallback={<KnowledgePageSkeleton lines={2} />}>
       <KnowledgePageContent />
     </Suspense>
   )

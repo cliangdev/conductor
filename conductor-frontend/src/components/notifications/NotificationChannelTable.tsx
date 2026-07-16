@@ -1,6 +1,6 @@
 'use client'
 
-import { Badge } from '@/components/ui/badge'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { EVENT_TYPE_DESCRIPTIONS, type NotificationChannelResponse } from '@/hooks/useNotifications'
 
 interface NotificationChannelTableProps {
@@ -57,11 +57,10 @@ export function NotificationChannelTable({
                 </span>
               </td>
               <td className="py-3 pr-4">
-                {channel.enabled ? (
-                  <Badge className="bg-green-100 text-green-700 border-green-200">Enabled</Badge>
-                ) : (
-                  <Badge variant="secondary">Disabled</Badge>
-                )}
+                <StatusBadge
+                  status={channel.enabled ? 'done' : 'draft'}
+                  label={channel.enabled ? 'Enabled' : 'Disabled'}
+                />
               </td>
               <td className="py-3">
                 <div className="flex items-center gap-2">

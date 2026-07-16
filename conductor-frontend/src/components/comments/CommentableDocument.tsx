@@ -6,7 +6,7 @@ import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { CommentThread } from './CommentThread'
 import { NewCommentForm } from './NewCommentForm'
 import type { Comment } from './types'
-import { MessageSquarePlus, MessageSquare } from 'lucide-react'
+import { MessageSquarePlus, MessageSquare, XIcon } from 'lucide-react'
 
 interface Props {
   content: string
@@ -102,9 +102,9 @@ export function CommentableDocument({
                 </p>
                 <button
                   onClick={() => setPopover(null)}
-                  className="text-muted-foreground hover:text-foreground text-xs"
+                  className="text-muted-foreground hover:text-foreground"
                 >
-                  ✕
+                  <XIcon className="h-3.5 w-3.5" />
                 </button>
               </div>
               <div className="flex flex-col gap-3 max-h-96 overflow-y-auto">

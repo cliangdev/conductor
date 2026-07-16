@@ -4,15 +4,20 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api';
-import { BanIcon, CheckCircleIcon } from 'lucide-react';
+import { BanIcon, CheckCircleIcon, GitBranchIcon, PlayIcon } from 'lucide-react';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
 import { isLifecycleWorkflow, disableWorkflow, enableWorkflow, invalidateSidebarCache } from '@/lib/workflows';
+import { timeAgo } from '@/lib/format';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TriggerBadges } from '@/components/workflow/TriggerBadges';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Switch } from '@/components/ui/switch';
 import { Modal } from '@/components/ui/modal';
+import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
 import { useToast } from '@/components/ui/toast';
 import { RowActionsMenu } from '@/components/ui/RowActionsMenu';
 import {
@@ -23,38 +28,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Can } from '@/components/auth/Can';
 
-const STATUS_COLORS: Record<string, string> = {
-  SUCCESS: 'bg-green-100 text-green-800',
-  FAILED: 'bg-red-100 text-red-800',
-  RUNNING: 'bg-yellow-100 text-yellow-800',
-  PENDING: 'bg-gray-100 text-gray-600',
-  CANCELLED: 'bg-gray-100 text-gray-600',
-};
-
-const STATUS_ICONS: Record<string, string> = {
-  SUCCESS: '✓',
-  FAILED: '✗',
-  RUNNING: '◎',
-  PENDING: '○',
-  CANCELLED: '○',
-};
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
 function EnabledIndicator({ enabled }: { enabled: boolean }) {
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs ${enabled ? 'text-green-600' : 'text-muted-foreground'}`}>
-      <span className={`inline-block w-1.5 h-1.5 rounded-full ${enabled ? 'bg-green-500' : 'bg-gray-400'}`} />
-      {enabled ? 'Enabled' : 'Disabled'}
-    </span>
-  );
+  return <StatusBadge status={enabled ? 'done' : 'draft'} label={enabled ? 'Enabled' : 'Disabled'} />;
 }
 
 /** Lifecycle vs automation via the authoritative server-derived `kind` (never the `definition` shape). */
@@ -127,13 +102,17 @@ export default function WorkflowsPage() {
 
   const handleToggleEnabled = async (workflow: WorkflowDefinitionDto) => {
     if (!accessToken) return;
-    const updated = await apiPatch<WorkflowDefinitionDto>(
-      `/api/v1/projects/${projectId}/workflows/${workflow.id}/enabled`,
-      { enabled: !workflow.enabled },
-      accessToken
-    );
-    if (!updated) return;
-    setWorkflows(prev => prev.map(w => (w.id === updated.id ? updated : w)));
+    try {
+      const updated = await apiPatch<WorkflowDefinitionDto>(
+        `/api/v1/projects/${projectId}/workflows/${workflow.id}/enabled`,
+        { enabled: !workflow.enabled },
+        accessToken
+      );
+      if (!updated) return;
+      setWorkflows(prev => prev.map(w => (w.id === updated.id ? updated : w)));
+    } catch (e) {
+      showToast(apiErrorMessage(e, `Couldn't ${workflow.enabled ? 'disable' : 'enable'} workflow — try again.`), 'error');
+    }
   };
 
   const handleDisable = async (workflow: WorkflowDefinitionDto) => {
@@ -196,7 +175,9 @@ export default function WorkflowsPage() {
     return (
       <PageContainer>
         <PageHeader title="Workflows" description="Work Item lifecycles and run automations." actions={newWorkflowAction} />
-        <div className="text-muted-foreground">Loading...</div>
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+        </div>
       </PageContainer>
     );
 
@@ -219,6 +200,13 @@ export default function WorkflowsPage() {
               </tr>
             </thead>
             <tbody>
+              {lifecycle.length === 0 && (
+                <tr>
+                  <td colSpan={5}>
+                    <EmptyState icon={GitBranchIcon} title="No lifecycle workflows yet" />
+                  </td>
+                </tr>
+              )}
               {lifecycle.map(wf => {
                 const noun = (wf.definition as { noun?: string } | null | undefined)?.noun;
                 const hasWorkItems = (wf.workItemCount ?? 0) > 0;
@@ -275,8 +263,8 @@ export default function WorkflowsPage() {
       <section>
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-2">Automation</h2>
         {automation.length === 0 ? (
-          <div className="bg-card rounded-lg border border-border p-8 text-center">
-            <p className="text-muted-foreground text-sm">No automation workflows yet.</p>
+          <div className="bg-card rounded-lg border border-border">
+            <EmptyState icon={PlayIcon} title="No automation workflows yet" />
           </div>
         ) : (
           <div className="border rounded-lg overflow-x-auto">
@@ -303,9 +291,7 @@ export default function WorkflowsPage() {
                       <td className="p-3">
                         {lastRun ? (
                           <div className="flex items-center gap-1.5">
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[lastRun.status] ?? ''}`}>
-                              {STATUS_ICONS[lastRun.status]} {lastRun.status}
-                            </span>
+                            <StatusBadge status={lastRun.status} />
                             <span className="text-xs text-muted-foreground">{timeAgo(lastRun.startedAt)}</span>
                           </div>
                         ) : (
@@ -317,17 +303,11 @@ export default function WorkflowsPage() {
                       </td>
                       <td className="p-3" onClick={e => e.stopPropagation()}>
                         <Can do="workflow.manage" fallback={<EnabledIndicator enabled={workflow.enabled} />}>
-                          <button
-                            onClick={() => handleToggleEnabled(workflow)}
+                          <Switch
+                            checked={workflow.enabled}
+                            onCheckedChange={() => handleToggleEnabled(workflow)}
                             aria-label={workflow.enabled ? 'Disable workflow' : 'Enable workflow'}
-                            className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
-                              workflow.enabled ? 'bg-green-500' : 'bg-gray-300'
-                            }`}
-                          >
-                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                              workflow.enabled ? 'translate-x-5' : 'translate-x-1'
-                            }`} />
-                          </button>
+                          />
                         </Can>
                       </td>
                       <td className="p-3 text-right" onClick={e => e.stopPropagation()}>
@@ -336,9 +316,9 @@ export default function WorkflowsPage() {
                             <button
                               onClick={() => handleRun(workflow)}
                               disabled={!workflow.enabled || runningId === workflow.id}
-                              className="text-sm font-medium text-primary hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                              className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
                             >
-                              {runningId === workflow.id ? 'Starting…' : '▶ Run'}
+                              {runningId === workflow.id ? 'Starting…' : (<><PlayIcon className="h-3.5 w-3.5" /> Run</>)}
                             </button>
                           </Can>
                           <Can do="workflow.manage">

@@ -97,12 +97,12 @@ export function WorkflowVersionHistory({
             v.changeSummary.statusesRemoved.length > 0 ? (
               <div className="mt-1.5 text-xs space-y-0.5">
                 {v.changeSummary.statusesAdded.length > 0 && (
-                  <div className="text-green-600 dark:text-green-400">
+                  <div className="text-status-done">
                     + {v.changeSummary.statusesAdded.join(', ')}
                   </div>
                 )}
                 {v.changeSummary.statusesRemoved.length > 0 && (
-                  <div className="text-red-500 dark:text-red-400">
+                  <div className="text-status-failed">
                     − {v.changeSummary.statusesRemoved.join(', ')}
                   </div>
                 )}

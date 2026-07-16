@@ -9,6 +9,8 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
+import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSkeleton'
+import { toastError } from '@/components/ui/toast'
 import { ExternalLink } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { ReviewSubmissionForm } from '@/components/reviews/ReviewSubmissionForm'
@@ -227,7 +229,7 @@ export function WorkItemDetailView({
           // Default to REVIEWER
         }
       } catch (err) {
-        setError(apiErrorMessage(err, 'Failed to load issue'))
+        setError(apiErrorMessage(err, 'Failed to load work item'))
       } finally {
         setLoading(false)
       }
@@ -278,8 +280,8 @@ export function WorkItemDetailView({
         accessToken
       )
       await fetchReviewers()
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      toastError(apiErrorMessage(err, 'Failed to remove reviewer'))
     }
   }
 
@@ -294,8 +296,8 @@ export function WorkItemDetailView({
       )
       await fetchReviewers()
       setAssignDropdownOpen(false)
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      toastError(apiErrorMessage(err, 'Failed to add reviewer'))
     } finally {
       setAssigning(false)
     }
@@ -313,11 +315,7 @@ export function WorkItemDetailView({
   }, [assignDropdownOpen])
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground">
-        Loading issue...
-      </div>
-    )
+    return <WorkItemDetailSkeleton />
   }
 
   if (error) {

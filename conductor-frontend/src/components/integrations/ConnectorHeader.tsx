@@ -1,26 +1,12 @@
 import { ExternalLink } from 'lucide-react';
+import { StatusBadge } from '@/components/ui/status-badge';
 
 type HealthStatus = 'HEALTHY' | 'DEGRADED' | 'SETUP_REQUIRED' | null;
 
-const PILL: Record<
-  Exclude<HealthStatus, null>,
-  { label: string; text: string; dot: string }
-> = {
-  HEALTHY: {
-    label: 'Connected',
-    text: 'text-green-600 dark:text-green-400',
-    dot: 'bg-green-500',
-  },
-  DEGRADED: {
-    label: 'Degraded',
-    text: 'text-yellow-600 dark:text-yellow-400',
-    dot: 'bg-yellow-500',
-  },
-  SETUP_REQUIRED: {
-    label: 'Setup required',
-    text: 'text-muted-foreground',
-    dot: 'bg-muted-foreground',
-  },
+const HEALTH_STATUS: Record<Exclude<HealthStatus, null>, { status: string; label: string }> = {
+  HEALTHY: { status: 'done', label: 'Connected' },
+  DEGRADED: { status: 'in_progress', label: 'Degraded' },
+  SETUP_REQUIRED: { status: 'in_progress', label: 'Setup required' },
 };
 
 /**
@@ -44,7 +30,7 @@ export function ConnectorHeader({
   onRefresh: () => void;
   refreshing: boolean;
 }) {
-  const pill = status ? PILL[status] : null;
+  const health = status ? HEALTH_STATUS[status] : null;
   return (
     <div className="mb-6 flex items-start justify-between">
       <div>
@@ -52,12 +38,7 @@ export function ConnectorHeader({
         {subtitle && <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>}
       </div>
       <div className="flex items-center gap-2">
-        {pill && (
-          <span className={`inline-flex items-center gap-1 text-xs font-medium ${pill.text}`}>
-            <span className={`h-1.5 w-1.5 rounded-full inline-block ${pill.dot}`} />
-            {pill.label}
-          </span>
-        )}
+        {health && <StatusBadge status={health.status} label={health.label} />}
         <a
           href={externalUrl}
           target="_blank"

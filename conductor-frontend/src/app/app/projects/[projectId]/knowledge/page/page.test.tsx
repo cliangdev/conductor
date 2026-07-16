@@ -71,7 +71,7 @@ describe('Knowledge page view', () => {
     getKnowledgePageBehavior = () => Promise.reject(new Error('boom'))
     render(<KnowledgePageRoute />)
 
-    expect(await screen.findByText(/error/i)).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent(/failed to load page/i)
   })
 
   it('opens the history panel when History is clicked', async () => {

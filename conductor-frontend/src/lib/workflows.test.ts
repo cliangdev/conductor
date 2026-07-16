@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   categoriesForView,
-  categoryVariant,
   humanizeId,
   isLifecycleWorkflow,
   pluralizeNoun,
   resolveWorkflowByAreaNoun,
   reviewGateForStatus,
   statusHasReviewGate,
+  statusHue,
   statusMeta,
   workItemDetailPath,
   workItemListPath,
@@ -45,15 +45,6 @@ describe('humanizeId', () => {
   it('title-cases an UPPER_SNAKE id', () => {
     expect(humanizeId('READY_FOR_DEVELOPMENT')).toBe('Ready For Development')
     expect(humanizeId('DRAFT')).toBe('Draft')
-  })
-})
-
-describe('categoryVariant', () => {
-  it('maps each category to one Badge variant (open→grey, in_progress→blue, terminal→green)', () => {
-    expect(categoryVariant('open')).toBe('status-draft')
-    expect(categoryVariant('in_progress')).toBe('status-review')
-    expect(categoryVariant('terminal')).toBe('status-done')
-    expect(categoryVariant('something-else')).toBe('status-draft')
   })
 })
 
@@ -153,6 +144,33 @@ describe('resolveWorkflowByAreaNoun', () => {
   it('returns undefined when no workflow matches the area/noun pair', async () => {
     (apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([wf({})])
     expect(await resolveWorkflowByAreaNoun('proj-c', 'marketing', 'campaigns', 'token')).toBeUndefined()
+  })
+})
+
+describe('statusHue', () => {
+  it('resolves well-known status ids to their canonical hue', () => {
+    expect(statusHue('done')).toBe('green')
+    expect(statusHue('closed')).toBe('slate')
+    expect(statusHue('code_review')).toBe('violet')
+    expect(statusHue('loop_exhausted')).toBe('amber')
+    expect(statusHue('cancelled')).toBe('slate')
+  })
+
+  it('normalizes case, underscores, and hyphens before lookup', () => {
+    expect(statusHue('IN_REVIEW')).toBe('blue')
+    expect(statusHue('in-review')).toBe('blue')
+    expect(statusHue('In Review')).toBe('blue')
+  })
+
+  it('falls back to the category bucket for an unrecognized status id', () => {
+    expect(statusHue('SOME_CUSTOM_STATUS', 'open')).toBe('gray')
+    expect(statusHue('SOME_CUSTOM_STATUS', 'in_progress')).toBe('amber')
+    expect(statusHue('SOME_CUSTOM_STATUS', 'terminal')).toBe('green')
+  })
+
+  it('falls back to gray when neither the status nor the category is recognized', () => {
+    expect(statusHue('SOME_CUSTOM_STATUS')).toBe('gray')
+    expect(statusHue('SOME_CUSTOM_STATUS', 'not_a_category')).toBe('gray')
   })
 })
 

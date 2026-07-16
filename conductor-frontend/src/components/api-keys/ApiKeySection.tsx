@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { apiDelete, apiGet, apiPost } from '@/lib/api'
 import type { UserApiKey, CreateApiKeyResponse } from '@/types'
@@ -71,12 +72,14 @@ export function ApiKeySection({ accessToken }: { accessToken: string | null }) {
   return (
     <div className="space-y-3">
       {newKey && (
-        <div className="rounded-md border border-yellow-500/50 bg-yellow-50 dark:bg-yellow-950/20 p-3 space-y-2">
-          <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-            Copy this key &mdash; it won&apos;t be shown again
-          </p>
-          <CodeBlock code={newKey} />
-        </div>
+        <Alert variant="warning">
+          <div className="space-y-2">
+            <p className="text-sm font-medium">
+              Copy this key &mdash; it won&apos;t be shown again
+            </p>
+            <CodeBlock code={newKey} />
+          </div>
+        </Alert>
       )}
 
       {keys.length === 0 && !newKey ? (

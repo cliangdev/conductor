@@ -1,3 +1,6 @@
+import { XIcon } from 'lucide-react'
+import { VerdictIcon } from './verdict'
+
 interface Reviewer {
   userId: string
   name: string
@@ -20,17 +23,6 @@ interface ReviewersSummaryPanelProps {
   canManage?: boolean
   onUnassign?: (userId: string) => void
   reviews?: Review[]
-}
-
-const VERDICT_ICONS: Record<string, string> = {
-  APPROVED: '✅',
-  CHANGES_REQUESTED: '🔄',
-  COMMENTED: '💬',
-}
-
-function verdictIcon(verdict?: string): string {
-  if (!verdict) return '⏳'
-  return VERDICT_ICONS[verdict] ?? '⏳'
 }
 
 export function ReviewersSummaryPanel({
@@ -71,7 +63,7 @@ export function ReviewersSummaryPanel({
                   {r.name.charAt(0).toUpperCase()}
                 </div>
               )}
-              <span className="text-sm">{verdictIcon(r.reviewVerdict)}</span>
+              <VerdictIcon verdict={r.reviewVerdict} />
               {review?.body && (
                 <span
                   className="text-xs text-muted-foreground truncate max-w-[80px]"
@@ -83,11 +75,11 @@ export function ReviewersSummaryPanel({
               {canManage && onUnassign && (
                 <button
                   onClick={() => onUnassign(r.userId)}
-                  className="px-1 text-xs text-destructive hover:text-destructive leading-none"
+                  className="p-0.5 text-destructive hover:text-destructive leading-none"
                   title={`Unassign ${r.name}`}
                   aria-label={`Unassign ${r.name}`}
                 >
-                  ×
+                  <XIcon className="h-3 w-3" />
                 </button>
               )}
             </div>

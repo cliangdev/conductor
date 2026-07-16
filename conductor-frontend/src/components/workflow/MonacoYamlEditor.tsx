@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useRef } from 'react';
+import { useTheme } from 'next-themes';
 
 const Editor = dynamic(() => import('@monaco-editor/react').then(m => m.default), {
   ssr: false,
@@ -16,6 +17,7 @@ interface MonacoYamlEditorProps {
 
 export default function MonacoYamlEditor({ value, onChange, height = '100%' }: MonacoYamlEditorProps) {
   const monacoRef = useRef<unknown>(null);
+  const { resolvedTheme } = useTheme();
 
   function handleEditorWillMount(monaco: unknown) {
     monacoRef.current = monaco;
@@ -36,7 +38,8 @@ export default function MonacoYamlEditor({ value, onChange, height = '100%' }: M
         wordWrap: 'on',
         tabSize: 2,
       }}
-      theme="vs-dark"
+      // resolvedTheme is undefined pre-mount; default to dark (vs-dark) rather than flashing light.
+      theme={resolvedTheme === 'light' ? 'vs' : 'vs-dark'}
     />
   );
 }

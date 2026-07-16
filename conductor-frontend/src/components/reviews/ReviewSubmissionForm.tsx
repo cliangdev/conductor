@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { apiPost, apiErrorMessage } from '@/lib/api'
+import { VerdictIcon } from './verdict'
 import type { ReviewOutcome } from '@/types/workItem'
 
 type Verdict = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'
@@ -22,10 +23,10 @@ interface ReviewSubmissionFormProps {
   onReviewSubmitted: () => void
 }
 
-const VERDICT_OPTIONS: { value: Verdict; label: string; icon: string; outcome: ReviewOutcome }[] = [
-  { value: 'APPROVED', label: 'Approve', icon: '✅', outcome: 'approve' },
-  { value: 'CHANGES_REQUESTED', label: 'Request Changes', icon: '🔄', outcome: 'request_changes' },
-  { value: 'COMMENTED', label: 'Comment', icon: '💬', outcome: 'comment' },
+const VERDICT_OPTIONS: { value: Verdict; label: string; outcome: ReviewOutcome }[] = [
+  { value: 'APPROVED', label: 'Approve', outcome: 'approve' },
+  { value: 'CHANGES_REQUESTED', label: 'Request Changes', outcome: 'request_changes' },
+  { value: 'COMMENTED', label: 'Comment', outcome: 'comment' },
 ]
 
 export function ReviewSubmissionForm({
@@ -86,7 +87,7 @@ export function ReviewSubmissionForm({
                 : 'border-border bg-muted text-muted-foreground hover:bg-muted/80'
             } disabled:opacity-50 disabled:cursor-not-allowed`}
           >
-            <span>{option.icon}</span>
+            <VerdictIcon verdict={option.value} />
             <span>{option.label}</span>
           </button>
         ))}

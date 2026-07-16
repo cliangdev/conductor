@@ -5,9 +5,12 @@ import { X, ArrowLeft, RotateCcw } from 'lucide-react'
 import { listVersions, getDocVersion, restoreVersion } from '@/lib/docs-api'
 import type { DocVersion, ProjectDoc } from '@/lib/docs-api'
 import { apiErrorMessage } from '@/lib/api'
+import { timeAgo } from '@/lib/format'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
+import { HistoryListSkeleton } from '@/components/ui/history-list-skeleton'
+import { Badge } from '@/components/ui/badge'
 
 export interface DocHistoryPanelProps {
   projectId: string
@@ -15,17 +18,6 @@ export interface DocHistoryPanelProps {
   token: string
   onClose: () => void
   onRestored: (updatedDoc: ProjectDoc) => void
-}
-
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`
-  const days = Math.floor(hrs / 24)
-  return `${days} day${days === 1 ? '' : 's'} ago`
 }
 
 export function DocHistoryPanel({
@@ -105,7 +97,7 @@ export function DocHistoryPanel({
           </Button>
         </div>
 
-        <div className="shrink-0 flex items-center gap-2 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">
+        <div className="shrink-0 flex items-center gap-2 bg-status-progress/10 border-b border-status-progress/30 px-4 py-2 text-sm text-status-progress">
           <span>You are viewing version v{viewingVersion.versionNumber} (not current)</span>
         </div>
 
@@ -117,12 +109,12 @@ export function DocHistoryPanel({
   }
 
   return (
-    <div className="absolute top-0 right-0 bottom-0 z-10 w-56 flex flex-col bg-zinc-900 border-l border-zinc-700 shadow-xl">
-      <div className="flex items-center justify-between px-3 py-3 border-b border-zinc-700 shrink-0">
-        <span className="text-sm font-semibold text-zinc-100">Version History</span>
+    <div className="absolute top-0 right-0 bottom-0 z-10 w-56 flex flex-col bg-surface-raised border-l border-border shadow-xl">
+      <div className="flex items-center justify-between px-3 py-3 border-b border-border shrink-0">
+        <span className="text-sm font-semibold text-foreground">Version History</span>
         <button
           onClick={onClose}
-          className="text-zinc-400 hover:text-zinc-100 transition-colors rounded p-0.5"
+          className="text-foreground-subtle hover:text-foreground transition-colors rounded p-0.5"
           aria-label="Close history panel"
         >
           <X className="h-4 w-4" />
@@ -130,48 +122,42 @@ export function DocHistoryPanel({
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {loading && (
-          <p className="px-3 py-4 text-xs text-zinc-400">Loading...</p>
-        )}
+        {loading && <HistoryListSkeleton />}
         {error && (
-          <p className="px-3 py-4 text-xs text-red-400">{error}</p>
+          <p className="px-3 py-4 text-xs text-status-failed">{error}</p>
         )}
         {!loading && !error && versions.length === 0 && (
-          <p className="px-3 py-4 text-xs text-zinc-400">No versions yet.</p>
+          <p className="px-3 py-4 text-xs text-foreground-subtle">No versions yet.</p>
         )}
         {!loading && !error && versions.map((version) => {
           const isCurrent = version.versionNumber === maxVersionNumber
           return (
             <div
               key={version.id}
-              className="px-3 py-2.5 border-b border-zinc-800 last:border-0"
+              className="px-3 py-2.5 border-b border-border last:border-0"
             >
               <div className="flex items-center gap-1.5 mb-0.5">
-                <span className="text-xs font-bold text-purple-400">
+                <span className="text-xs font-bold text-status-code-review">
                   v{version.versionNumber}
                 </span>
-                {isCurrent && (
-                  <span className="text-[10px] px-1 py-0.5 rounded bg-purple-900/60 text-purple-300 font-medium leading-none">
-                    Current
-                  </span>
-                )}
+                {isCurrent && <Badge variant="status-code-review">Current</Badge>}
               </div>
-              <p className="text-xs text-zinc-300 truncate">{version.authorName}</p>
-              <p className="text-[11px] text-zinc-500 mt-0.5">{formatRelativeTime(version.createdAt)}</p>
+              <p className="text-xs text-foreground-muted truncate">{version.authorName}</p>
+              <p className="text-[11px] text-foreground-subtle mt-0.5">{timeAgo(version.createdAt)}</p>
               {!isCurrent && (
                 <div className="flex items-center gap-2 mt-1.5">
                   <button
                     onClick={() => handleView(version)}
                     disabled={loadingVersion}
-                    className="text-[11px] text-zinc-400 hover:text-zinc-100 transition-colors disabled:opacity-50"
+                    className="text-[11px] text-foreground-subtle hover:text-foreground transition-colors disabled:opacity-50"
                   >
                     {loadingVersion ? 'Loading…' : 'View'}
                   </button>
-                  <span className="text-zinc-600 text-[11px]">·</span>
+                  <span className="text-foreground-subtle text-[11px]">·</span>
                   <button
                     onClick={() => handleRestore(version)}
                     disabled={restoring}
-                    className="text-[11px] text-zinc-400 hover:text-zinc-100 transition-colors disabled:opacity-50"
+                    className="text-[11px] text-foreground-subtle hover:text-foreground transition-colors disabled:opacity-50"
                   >
                     Restore
                   </button>

@@ -10,6 +10,7 @@ import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet } from '@/lib/api'
 import { useWorkflowByAreaNoun } from '@/lib/workflows'
+import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSkeleton'
 import { WorkItemDetailView } from '@/components/workitems/WorkItemDetailView'
 
 export const dynamic = 'force-dynamic'
@@ -61,11 +62,7 @@ export default function WorkItemAreaNounDetailPage() {
   }, [projectId, displayId, accessToken])
 
   if (state === 'loading' || workflowStatus === 'loading') {
-    return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground">
-        Loading {displayId}…
-      </div>
-    )
+    return <WorkItemDetailSkeleton />
   }
 
   if (state === 'notfound' || !workItemId || workflowStatus === 'notfound' || !workflow) {

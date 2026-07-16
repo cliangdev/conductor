@@ -4,6 +4,9 @@ export const dynamic = 'force-dynamic'
 
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import { PartyPopper } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiPost, apiErrorMessage, type ApiError } from '@/lib/api'
 
@@ -73,23 +76,27 @@ export default function AcceptInvitePage() {
   }, [authLoading, user, accessToken, token, router])
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="max-w-md w-full text-center">
         {pageState.status === 'loading' && (
-          <div>
-            <p className="text-gray-600 text-lg">Accepting your invite…</p>
+          <div className="flex flex-col items-center gap-3">
+            <Skeleton className="h-12 w-12 rounded-lg" />
+            <Skeleton className="h-4 w-48" />
+            <p className="sr-only">Accepting your invite…</p>
           </div>
         )}
 
         {pageState.status === 'success' && (
           <div>
-            <div className="text-4xl mb-4">🎉</div>
-            <h1 className="text-2xl font-bold text-gray-900">
+            <div className="flex items-center justify-center w-16 h-16 rounded-lg bg-muted mx-auto mb-6">
+              <PartyPopper className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <h1 className="text-2xl font-bold text-foreground">
               You&apos;ve joined {pageState.projectName}
             </h1>
-            <p className="mt-2 text-gray-500">
+            <p className="mt-2 text-muted-foreground">
               You&apos;ve been added as a{' '}
-              <span className="font-medium">{pageState.role.charAt(0) + pageState.role.slice(1).toLowerCase()}</span>
+              <span className="font-medium text-foreground">{pageState.role.charAt(0) + pageState.role.slice(1).toLowerCase()}</span>
               . Redirecting you now…
             </p>
           </div>
@@ -97,14 +104,11 @@ export default function AcceptInvitePage() {
 
         {pageState.status === 'error' && (
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Unable to accept invite</h1>
-            <p className="mt-2 text-gray-500" role="alert">{pageState.message}</p>
-            <button
-              onClick={() => router.push('/app')}
-              className="mt-6 inline-flex items-center px-4 py-2 rounded-md bg-primary text-white text-sm font-medium hover:bg-primary/90 transition-colors"
-            >
+            <h1 className="text-2xl font-bold text-foreground">Unable to accept invite</h1>
+            <p className="mt-2 text-muted-foreground" role="alert">{pageState.message}</p>
+            <Button className="mt-6" onClick={() => router.push('/app')}>
               Go to app
-            </button>
+            </Button>
           </div>
         )}
       </div>

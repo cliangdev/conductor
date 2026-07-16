@@ -6,6 +6,8 @@ import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { FolderPlusIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useProject } from '@/contexts/ProjectContext'
 
 export default function ProjectsPage() {
@@ -20,22 +22,30 @@ export default function ProjectsPage() {
     router.replace(`/app/projects/${target.id}/engineering/issues`)
   }, [loading, projects, activeProject])
 
-  if (loading) return null
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[calc(100vh-3.5rem)] gap-3 px-4">
+        <Skeleton className="h-16 w-16 rounded-lg" />
+        <Skeleton className="h-6 w-64" />
+        <Skeleton className="h-4 w-80" />
+      </div>
+    )
+  }
 
   if (projects.length > 0) return null
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[calc(100vh-3.5rem)] text-center px-4">
-      <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-muted mb-6">
-        <FolderPlusIcon className="w-8 h-8 text-muted-foreground" />
-      </div>
-      <h1 className="text-2xl font-semibold text-foreground mb-2">Create your first workspace</h1>
-      <p className="text-muted-foreground max-w-sm mb-8">
-        A workspace keeps your PRDs, issues, and reviews together for the whole team.
-      </p>
-      <Button size="lg" onClick={() => router.push('/app/projects/new')}>
-        Create workspace
-      </Button>
+    <div className="flex items-center justify-center min-h-[calc(100vh-3.5rem)] px-4">
+      <EmptyState
+        icon={FolderPlusIcon}
+        title="Create your first workspace"
+        description="A workspace keeps your PRDs, issues, and reviews together for the whole team."
+        action={
+          <Button size="lg" onClick={() => router.push('/app/projects/new')}>
+            Create workspace
+          </Button>
+        }
+      />
     </div>
   )
 }

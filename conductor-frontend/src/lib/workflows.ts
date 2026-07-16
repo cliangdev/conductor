@@ -10,7 +10,6 @@
 import pluralize from 'pluralize'
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost, apiPut } from '@/lib/api'
-import type { BadgeProps } from '@/components/ui/badge'
 import type {
   WorkflowView,
   WorkflowStatusCategory,
@@ -184,6 +183,57 @@ export function humanizeId(id: string): string {
     .replace(/_/g, ' ')
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+// ── Status hue resolution (domain knowledge: which status/category maps to which color) ────
+
+export type StatusHue = 'gray' | 'blue' | 'amber' | 'violet' | 'teal' | 'green' | 'slate' | 'red'
+
+// Well-known status ids, normalized (lowercased, non-alphanumerics stripped) before lookup
+// so "in_review", "in-review", "IN REVIEW" all resolve the same way.
+const WELL_KNOWN_HUES: Record<string, StatusHue> = {
+  draft: 'gray',
+  backlog: 'gray',
+  pending: 'gray',
+  inreview: 'blue',
+  review: 'blue',
+  running: 'blue',
+  inprogress: 'amber',
+  codereview: 'violet',
+  approved: 'teal',
+  done: 'green',
+  succeeded: 'green',
+  success: 'green',
+  closed: 'slate',
+  skipped: 'slate',
+  cancelled: 'slate',
+  failed: 'red',
+  error: 'red',
+  loopexhausted: 'amber',
+}
+
+// Fallback when the status id itself isn't recognized — keyed by workflow/lifecycle category.
+const CATEGORY_HUES: Record<string, StatusHue> = {
+  open: 'gray',
+  inprogress: 'amber',
+  terminal: 'green',
+}
+
+function normalizeStatusId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
+/** Resolve a status (and optional fallback category) to one of the 8 canonical status hues. */
+export function statusHue(status: string, category?: string): StatusHue {
+  const known = WELL_KNOWN_HUES[normalizeStatusId(status)]
+  if (known) return known
+  return categoryHue(category)
+}
+
+/** Resolve a category bucket (open/in_progress/terminal) to its hue, defaulting to gray. */
+export function categoryHue(category?: string): StatusHue {
+  const fromCategory = category ? CATEGORY_HUES[normalizeStatusId(category)] : undefined
+  return fromCategory ?? 'gray'
 }
 
 /** Pluralize a Workflow noun for page titles and nav labels, e.g. "Issue" → "Issues", "Story" → "Stories". */
@@ -403,26 +453,6 @@ export function statusMeta(
     label: status?.label ?? humanizeId(statusId),
     category: status?.category ?? 'open',
   }
-}
-
-type StatusBadgeVariant = NonNullable<BadgeProps['variant']>
-
-/**
- * The one category → color mapping. open → neutral/grey, in_progress → blue, terminal → green.
- * Returns a Badge variant; {@link categoryColor} returns the same palette as raw classes for the
- * non-Badge diagram nodes.
- */
-export function categoryVariant(category: string): StatusBadgeVariant {
-  if (category === 'in_progress') return 'status-review' // blue
-  if (category === 'terminal') return 'status-done' // green
-  return 'status-draft' // open + unknown → neutral grey
-}
-
-/** Raw tailwind classes for the same palette, for contexts that don't use <Badge> (e.g. the diagram). */
-export function categoryColor(category: string): string {
-  if (category === 'in_progress') return 'bg-status-review/10 text-status-review border-status-review/30'
-  if (category === 'terminal') return 'bg-status-done/10 text-status-done border-status-done/30'
-  return 'bg-status-draft/10 text-status-draft border-status-draft/30'
 }
 
 /** True when the given status has an outgoing transition that is review-gated (drives review panels). */

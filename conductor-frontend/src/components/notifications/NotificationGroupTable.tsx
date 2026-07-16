@@ -73,7 +73,7 @@ function GroupRow({
             <span className={cn(
               'text-xs px-1.5 py-0.5 rounded font-medium',
               group.enabled
-                ? 'bg-green-500/15 text-green-600 dark:text-green-400'
+                ? 'bg-status-done/15 text-status-done'
                 : 'bg-muted text-muted-foreground'
             )}>
               {group.enabled ? 'Enabled' : 'Disabled'}
@@ -119,7 +119,7 @@ function GroupRow({
             <div key={event.eventType} className="flex items-center gap-2">
               <span className={cn(
                 'h-1.5 w-1.5 rounded-full shrink-0',
-                event.enabled ? 'bg-green-500' : 'bg-muted-foreground/30'
+                event.enabled ? 'bg-status-done' : 'bg-muted-foreground/30'
               )} />
               <span className={cn(
                 'text-xs',

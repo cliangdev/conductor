@@ -6,6 +6,8 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
@@ -96,16 +98,14 @@ export default function GeneralSettingsPage() {
 
         <form onSubmit={handleSave} className="space-y-4">
           <div>
-            <label htmlFor="workspace-name" className="block text-sm font-medium text-foreground mb-1">
-              Workspace name
-            </label>
-            <input
+            <Label htmlFor="workspace-name">Workspace name</Label>
+            <Input
               id="workspace-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               disabled={!isAdmin}
-              className="w-full max-w-sm rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60"
+              className="max-w-sm"
             />
             {!isAdmin && (
               <p className="mt-1 text-xs text-muted-foreground">Only admins can rename this workspace.</p>

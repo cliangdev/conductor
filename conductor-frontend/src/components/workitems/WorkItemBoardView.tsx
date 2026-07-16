@@ -1,13 +1,15 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import { MessageSquare } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { statusHueClasses } from '@/components/ui/status-badge'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import {
   categoriesForView,
-  categoryColor,
   humanizeId,
   pluralizeNoun,
+  statusHue,
   workItemDetailPath,
 } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
@@ -87,12 +89,14 @@ export function WorkItemBoardView({
         {columns.map((col) => {
           const colIssues = byStatus.get(col.id) ?? []
           const colLabel = col.label ?? humanizeId(col.id)
-          const colorCls = categoryColor(col.category)
+          const hueClasses = statusHueClasses(statusHue(col.id, col.category))
 
           return (
             <div key={col.id} className="w-72 shrink-0 flex flex-col">
               {/* Column header */}
-              <div className={`flex items-center justify-between px-3 py-2 rounded-t-lg border border-b-0 ${colorCls}`}>
+              <div
+                className={`flex items-center justify-between px-3 py-2 rounded-t-lg border border-b-0 border-border ${hueClasses.bg} ${hueClasses.text}`}
+              >
                 <span className="text-xs font-semibold uppercase tracking-wider truncate">
                   {colLabel}
                 </span>
@@ -134,8 +138,9 @@ export function WorkItemBoardView({
                             <Avatar name={issue.assignee.name} avatarUrl={issue.assignee.avatarUrl} />
                           )}
                           {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 && (
-                            <span className="text-xs text-muted-foreground">
-                              💬{issue.unresolvedCommentCount}
+                            <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
+                              <MessageSquare className="h-3 w-3" />
+                              {issue.unresolvedCommentCount}
                             </span>
                           )}
                           <StatusDropdown

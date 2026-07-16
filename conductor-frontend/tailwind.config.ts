@@ -17,6 +17,7 @@ const config: Config = {
         surface: {
           DEFAULT: 'hsl(var(--surface))',
           raised: 'hsl(var(--surface-raised))',
+          3: 'hsl(var(--surface-3))',
         },
         card: {
           DEFAULT: 'hsl(var(--card))',
@@ -29,7 +30,9 @@ const config: Config = {
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',
+          hover: 'hsl(var(--primary-hover))',
         },
+        'accent-soft': 'hsl(var(--accent-soft))',
         secondary: {
           DEFAULT: 'hsl(var(--secondary))',
           foreground: 'hsl(var(--secondary-foreground))',
@@ -44,6 +47,7 @@ const config: Config = {
         },
         destructive: {
           DEFAULT: 'hsl(var(--destructive))',
+          foreground: 'hsl(var(--destructive-foreground))',
         },
         border: 'hsl(var(--border))',
         'border-strong': 'hsl(var(--border-strong))',
@@ -64,12 +68,13 @@ const config: Config = {
           'code-review': 'hsl(var(--status-code-review))',
           done: 'hsl(var(--status-done))',
           closed: 'hsl(var(--status-closed))',
+          failed: 'hsl(var(--status-failed))',
         },
       },
       borderRadius: {
         lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        md: 'calc(var(--radius) - 3px)',
+        sm: 'calc(var(--radius) - 6px)',
       },
     },
   },

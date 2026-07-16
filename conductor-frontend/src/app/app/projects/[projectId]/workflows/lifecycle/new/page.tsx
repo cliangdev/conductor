@@ -16,6 +16,9 @@ import type { WorkflowValidationWarning } from '@/types/workflow'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
+import { Alert } from '@/components/ui/alert'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { StatechartEditor } from '@/components/workflow/lifecycle/StatechartEditor'
 import { StatechartDiagram } from '@/components/workflow/lifecycle/StatechartDiagram'
 
@@ -87,20 +90,21 @@ export default function NewLifecycleWorkflowPage() {
       />
 
       {warnings.length > 0 && (
-        <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+        <Alert variant="warning" className="mb-4">
           <p className="font-medium mb-1">Saved with warnings:</p>
           <ul className="list-disc pl-5">
             {warnings.map((w, i) => (
               <li key={i}>{w.message}</li>
             ))}
           </ul>
-        </div>
+        </Alert>
       )}
 
       <div className="mb-4">
-        <label className="block text-xs font-medium text-muted-foreground mb-1">Workflow name</label>
-        <input
-          className="w-full max-w-md px-3 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        <Label htmlFor="workflow-name" className="text-xs text-muted-foreground">Workflow name</Label>
+        <Input
+          id="workflow-name"
+          className="max-w-md"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Content Review"

@@ -7,31 +7,9 @@ import { apiGet } from '@/lib/api';
 import { WorkflowRunDto } from '@/types/workflow';
 import WorkflowDiagram from '@/components/workflow/WorkflowDiagram';
 import { useWorkflow } from '@/contexts/WorkflowContext';
-
-const STATUS_COLORS: Record<string, string> = {
-  SUCCESS: 'bg-green-100 text-green-800',
-  FAILED: 'bg-red-100 text-red-800',
-  RUNNING: 'bg-yellow-100 text-yellow-800',
-  PENDING: 'bg-gray-100 text-gray-600',
-  CANCELLED: 'bg-gray-100 text-gray-600',
-};
-
-const STATUS_ICONS: Record<string, string> = {
-  SUCCESS: '✓',
-  FAILED: '✗',
-  RUNNING: '◎',
-  PENDING: '○',
-  CANCELLED: '○',
-};
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { timeAgo, formatDuration } from '@/lib/format';
 
 function computeStats(runs: WorkflowRunDto[]) {
   if (runs.length === 0) return null;
@@ -49,17 +27,11 @@ function computeStats(runs: WorkflowRunDto[]) {
       )
     : null;
 
-  const avgDurationStr = avgDurationSeconds !== null
-    ? avgDurationSeconds < 60
-      ? `${avgDurationSeconds}s`
-      : `${Math.floor(avgDurationSeconds / 60)}m ${avgDurationSeconds % 60}s`
-    : null;
-
   return {
     lastRun: runs[0],
     successRate,
     totalRuns: runs.length,
-    avgDuration: avgDurationStr,
+    avgDuration: avgDurationSeconds !== null ? formatDuration(avgDurationSeconds) : null,
   };
 }
 
@@ -76,7 +48,14 @@ export default function WorkflowOverviewPage() {
       .catch(() => {});
   }, [projectId, workflowId, accessToken]);
 
-  if (!workflow) return <div className="text-muted-foreground">Loading…</div>;
+  if (!workflow) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-4">
+        <Skeleton className="h-40 rounded-lg" />
+        <Skeleton className="h-[280px] rounded-lg" />
+      </div>
+    );
+  }
 
   const stats = computeStats(runs);
 
@@ -89,9 +68,7 @@ export default function WorkflowOverviewPage() {
             <div>
               <p className="text-xs text-muted-foreground mb-1">Last run</p>
               <div className="flex items-center gap-1.5">
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[stats.lastRun.status] ?? ''}`}>
-                  {STATUS_ICONS[stats.lastRun.status]} {stats.lastRun.status}
-                </span>
+                <StatusBadge status={stats.lastRun.status} />
                 <span className="text-xs text-muted-foreground">{timeAgo(stats.lastRun.startedAt)}</span>
               </div>
             </div>

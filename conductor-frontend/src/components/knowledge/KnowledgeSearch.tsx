@@ -25,7 +25,7 @@ function highlightMatch(text: string, query: string): React.ReactNode {
   return (
     <>
       {text.slice(0, index)}
-      <mark className="bg-yellow-200 text-inherit rounded-sm">{text.slice(index, index + query.length)}</mark>
+      <mark className="bg-status-progress/30 text-inherit rounded-sm">{text.slice(index, index + query.length)}</mark>
       {text.slice(index + query.length)}
     </>
   )
@@ -102,7 +102,7 @@ export function KnowledgeSearch({ projectId, token, onResultSelect }: KnowledgeS
                     <p className="font-medium truncate flex-1">
                       {highlightMatch(hit.title ?? hit.path, query)}
                     </p>
-                    <span className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
                       {hit.type}
                     </span>
                   </div>

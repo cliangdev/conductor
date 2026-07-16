@@ -6,8 +6,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet } from '@/lib/api';
 import { WorkflowRunDetailDto, WorkflowJobRunDto } from '@/types/workflow';
 import dynamic from 'next/dynamic';
+import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { StepRow } from '@/components/workflow/StepRow';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { formatElapsed } from '@/lib/format';
 
 const WorkflowDiagram = dynamic(() => import('@/components/workflow/WorkflowDiagram'), { ssr: false });
 
@@ -17,34 +22,6 @@ interface JobRunStatus {
   status: JobStatus;
   iteration?: number;
   maxIterations?: number;
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  SUCCESS:       'bg-green-100 text-green-800',
-  FAILED:        'bg-red-100 text-red-800',
-  RUNNING:       'bg-yellow-100 text-yellow-800',
-  PENDING:       'bg-gray-100 text-gray-600',
-  SKIPPED:       'bg-gray-100 text-gray-400',
-  CANCELLED:     'bg-gray-100 text-gray-600',
-  LOOP_EXHAUSTED:'bg-orange-100 text-orange-700',
-};
-
-const STATUS_ICONS: Record<string, string> = {
-  SUCCESS: '✓',
-  FAILED: '✗',
-  RUNNING: '⟳',
-  SKIPPED: '—',
-  PENDING: '○',
-  LOOP_EXHAUSTED: '↺',
-};
-
-function formatDuration(startedAt?: string, completedAt?: string): string {
-  if (!startedAt) return '—';
-  const start = new Date(startedAt).getTime();
-  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
-  const seconds = Math.floor((end - start) / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function parseMaxIterations(workflowYaml: string, jobId: string): number | undefined {
@@ -97,7 +74,17 @@ export default function RunDetailPage() {
     });
   };
 
-  if (!run) return <PageHeader title="Run Detail" />;
+  if (!run) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Run Detail" />
+        <Skeleton className="h-64 rounded-lg" />
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 rounded-lg" />)}
+        </div>
+      </div>
+    );
+  }
 
   // Build jobRunData from run.jobs (use latest iteration per jobId)
   const jobRunData: Record<string, JobRunStatus> = {};
@@ -136,12 +123,8 @@ export default function RunDetailPage() {
       <PageHeader
         className="mb-0"
         title="Run Detail"
-        status={
-          <span className={`inline-flex items-center px-2 py-0.5 rounded text-sm font-medium ${STATUS_COLORS[run.status] ?? ''}`}>
-            {run.status}
-          </span>
-        }
-        description={`Trigger: ${run.triggerType} · Duration: ${formatDuration(run.startedAt, run.completedAt)}`}
+        status={<StatusBadge status={run.status} />}
+        description={`Trigger: ${run.triggerType} · Duration: ${formatElapsed(run.startedAt, run.completedAt)}`}
       />
 
       <div className="border rounded-lg bg-muted/20 h-64">
@@ -191,20 +174,21 @@ function JobGroupRow({
         className="w-full flex items-center gap-3 p-3 hover:bg-muted/25 text-left"
         onClick={onToggle}
       >
-        <span className="text-lg">{STATUS_ICONS[latest.status] ?? '?'}</span>
         <span className="font-medium flex-1">{jobId}</span>
         {isLoop && (
-          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-orange-100 text-orange-700">
+          <Badge variant="status-progress">
             {(latest.iteration ?? 0) + 1}/{maxIterations ?? '?'}
-          </span>
+          </Badge>
         )}
-        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[latest.status] ?? ''}`}>
-          {latest.status}
-        </span>
+        <StatusBadge status={latest.status} />
         <span className="text-sm text-muted-foreground">
-          {formatDuration(latest.startedAt, latest.completedAt)}
+          {formatElapsed(latest.startedAt, latest.completedAt)}
         </span>
-        <span className="text-muted-foreground">{expanded ? '▲' : '▼'}</span>
+        {expanded ? (
+          <ChevronUpIcon className="h-4 w-4 text-muted-foreground" />
+        ) : (
+          <ChevronDownIcon className="h-4 w-4 text-muted-foreground" />
+        )}
       </button>
       {expanded && (
         <div className="border-t divide-y">

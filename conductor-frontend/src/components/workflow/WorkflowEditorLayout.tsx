@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Breadcrumb, type Crumb } from '@/components/layout/PageHeader';
 
 const MonacoYamlEditor = dynamic(() => import('./MonacoYamlEditor'), { ssr: false });
@@ -60,8 +61,7 @@ export default function WorkflowEditorLayout({
       {/* Name input — only shown for new workflows (no initialName) */}
       {!initialName && (
         <div className="px-4 py-2 border-b">
-          <input
-            className="w-full px-3 py-1.5 text-sm border rounded-md bg-background"
+          <Input
             placeholder="Workflow name (or set in YAML)"
             value={name}
             onChange={e => setName(e.target.value)}

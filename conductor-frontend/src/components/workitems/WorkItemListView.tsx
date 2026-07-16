@@ -8,10 +8,13 @@
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboardIcon, ListIcon } from 'lucide-react'
+import { ChevronDown, Check, LayoutDashboardIcon, ListIcon, MessageSquare } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
+import { StatusBadge } from '@/components/ui/status-badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { toastError } from '@/components/ui/toast'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,11 +24,11 @@ import {
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
+import { VerdictIcon } from '@/components/reviews/verdict'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
 import {
   categoriesForView,
-  categoryVariant,
   fetchMembersCached,
   getMembersCacheEntry,
   humanizeId,
@@ -79,17 +82,6 @@ interface Member {
 
 type View = 'active' | 'done' | 'all'
 
-const VERDICT_ICONS: Record<string, string> = {
-  APPROVED: '✅',
-  CHANGES_REQUESTED: '🔄',
-  COMMENTED: '💬',
-}
-
-function verdictIcon(verdict?: string): string {
-  if (!verdict) return '⏳'
-  return VERDICT_ICONS[verdict] ?? '⏳'
-}
-
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString(undefined, {
     year: 'numeric',
@@ -98,8 +90,18 @@ function formatDate(dateStr: string): string {
   })
 }
 
-function UserAvatar({ name, avatarUrl, size = 6 }: { name: string; avatarUrl?: string | null; size?: number }) {
-  const cls = `w-${size} h-${size} rounded-full`
+type AvatarSize = 4 | 5 | 6
+
+// Static lookup, not an interpolated `w-${size}` string — Tailwind can't see a template class at
+// build time and would drop it.
+const AVATAR_SIZE_CLASSES: Record<AvatarSize, string> = {
+  4: 'w-4 h-4',
+  5: 'w-5 h-5',
+  6: 'w-6 h-6',
+}
+
+function UserAvatar({ name, avatarUrl, size = 6 }: { name: string; avatarUrl?: string | null; size?: AvatarSize }) {
+  const cls = `${AVATAR_SIZE_CLASSES[size]} rounded-full`
   if (avatarUrl) {
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={avatarUrl} alt={name} className={`${cls} border border-border object-cover`} title={name} />
@@ -138,8 +140,8 @@ function AssigneeCell({
         token
       )
       onChanged(member ? { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl } : null)
-    } catch {
-      // silently ignore
+    } catch (err) {
+      toastError(apiErrorMessage(err, 'Failed to update assignee'))
     } finally {
       setSaving(false)
     }
@@ -158,7 +160,7 @@ function AssigneeCell({
             ) : (
               <span className="text-muted-foreground">Unassigned</span>
             )}
-            <span className="text-xs opacity-60">▼</span>
+            <ChevronDown className="h-3 w-3 opacity-60" />
           </Badge>
         </button>
       </DropdownMenuTrigger>
@@ -182,7 +184,7 @@ function AssigneeCell({
           >
             <UserAvatar name={m.name} avatarUrl={m.avatarUrl} size={5} />
             <span className="truncate flex-1">{m.name}</span>
-            {assignee?.userId === m.userId && <span className="text-primary text-xs">✓</span>}
+            {assignee?.userId === m.userId && <Check className="h-3.5 w-3.5 text-primary" />}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
@@ -228,8 +230,10 @@ function ReviewerCell({
         )
         onChanged([...reviewers, { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl ?? undefined }])
       }
-    } catch {
-      // silently ignore
+    } catch (err) {
+      toastError(
+        apiErrorMessage(err, assignedIds.has(member.userId) ? 'Failed to remove reviewer' : 'Failed to add reviewer')
+      )
     } finally {
       setSaving(null)
     }
@@ -242,7 +246,7 @@ function ReviewerCell({
       {reviewers.map((r) => (
         <span key={r.userId} className="flex items-center gap-0.5">
           <UserAvatar name={r.name} avatarUrl={r.avatarUrl} size={4} />
-          <span className="text-xs">{verdictIcon(r.reviewVerdict)}</span>
+          <VerdictIcon verdict={r.reviewVerdict} />
         </span>
       ))}
     </span>
@@ -254,7 +258,7 @@ function ReviewerCell({
         <button className="focus:outline-none">
           <Badge variant="outline" className="cursor-pointer hover:opacity-80 transition-opacity gap-1 font-normal">
             {triggerLabel}
-            <span className="text-xs opacity-60">▼</span>
+            <ChevronDown className="h-3 w-3 opacity-60" />
           </Badge>
         </button>
       </DropdownMenuTrigger>
@@ -274,7 +278,9 @@ function ReviewerCell({
                 onClick={() => toggleReviewer(m)}
                 className="cursor-pointer gap-2"
               >
-                <span className="text-sm w-4 shrink-0">{assigned ? '✓' : ''}</span>
+                <span className="w-4 shrink-0 flex items-center justify-center">
+                  {assigned && <Check className="h-3.5 w-3.5" />}
+                </span>
                 <UserAvatar name={m.name} avatarUrl={m.avatarUrl} size={5} />
                 <span className="truncate flex-1">{m.name}</span>
               </DropdownMenuItem>
@@ -477,7 +483,7 @@ export function WorkItemListView({
         <PageHeader title={title} />
         <div className="space-y-2 mt-2">
           {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="h-10 rounded-md bg-muted animate-pulse" style={{ opacity: 1 - i * 0.1 }} />
+            <Skeleton key={i} className="h-10" style={{ opacity: 1 - i * 0.1 }} />
           ))}
         </div>
       </PageContainer>
@@ -684,9 +690,12 @@ export function WorkItemListView({
                   {(() => {
                     const meta = statusMeta(workflowView, issue.status)
                     return (
-                      <Badge variant={categoryVariant(meta.category)} className="shrink-0">
-                        {meta.label}
-                      </Badge>
+                      <StatusBadge
+                        status={issue.status}
+                        category={meta.category}
+                        label={meta.label}
+                        className="shrink-0"
+                      />
                     )
                   })()}
                 </div>
@@ -702,12 +711,13 @@ export function WorkItemListView({
                     {(issue.reviewers ?? []).map((r) => (
                       <div key={r.userId} className="flex items-center gap-0.5">
                         <UserAvatar name={r.name} avatarUrl={r.avatarUrl} size={4} />
-                        <span className="text-xs">{verdictIcon(r.reviewVerdict)}</span>
+                        <VerdictIcon verdict={r.reviewVerdict} />
                       </div>
                     ))}
                     {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 && (
                       <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
-                        💬 {issue.unresolvedCommentCount}
+                        <MessageSquare className="h-3 w-3" />
+                        {issue.unresolvedCommentCount}
                       </span>
                     )}
                   </div>
@@ -797,7 +807,8 @@ export function WorkItemListView({
                     <td className="px-4 py-3">
                       {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 ? (
                         <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
-                          💬 {issue.unresolvedCommentCount}
+                          <MessageSquare className="h-3 w-3" />
+                          {issue.unresolvedCommentCount}
                         </span>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>

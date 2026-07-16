@@ -12,12 +12,16 @@ import { ServiceAccountKeyField } from '@/components/integrations/ServiceAccount
 import { usePermissions } from '@/contexts/PermissionsContext';
 import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
-import { PuzzleIcon, CheckCircleIcon } from 'lucide-react';
+import { PuzzleIcon, CheckCircleIcon, ChevronRightIcon } from 'lucide-react';
 import { ConnectorIcon } from '@/components/integrations/ConnectorIcon';
+import { ConnectorCard } from '@/components/integrations/ConnectorCard';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { Tabs } from '@/components/ui/tabs';
 import { Can } from '@/components/auth/Can';
 
@@ -248,9 +252,10 @@ export default function IntegrationsPage() {
               </p>
               <button
                 onClick={() => setActiveTab('browse')}
-                className="text-sm font-medium text-primary hover:underline"
+                className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
               >
-                Browse available integrations →
+                Browse available integrations
+                <ChevronRightIcon className="h-3.5 w-3.5" />
               </button>
             </div>
           ) : (
@@ -308,55 +313,45 @@ export default function IntegrationsPage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {items.map((item) =>
                   usesDetailPage(item) ? (
-                    <Link
+                    <ConnectorCard
                       key={item.connectorId}
+                      icon={<Icon item={item} />}
+                      name={item.name}
+                      description={item.description}
                       href={`/app/projects/${projectId}/integrations/${item.connectorId}`}
-                      className="bg-card rounded-lg border border-border p-4 flex items-center gap-4 hover:border-primary/50 transition-colors"
-                    >
-                      <Icon item={item} />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm text-foreground">{item.name}</div>
-                        <div className="text-xs text-muted-foreground truncate">{item.description}</div>
-                      </div>
-                      {item.connected ? (
-                        <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium flex-shrink-0">
-                          <CheckCircleIcon className="h-3.5 w-3.5" />
-                          {!item.singleInstance && item.connections.length > 0
-                            ? `${item.connections.length} connected`
-                            : 'Connected'}
-                        </span>
-                      ) : (
-                        <span className="text-xs font-medium text-primary flex-shrink-0">Manage</span>
-                      )}
-                    </Link>
-                  ) : canMutate ? (
-                    <button
-                      key={item.connectorId}
-                      onClick={() =>
-                        item.authType === 'OAUTH2' ? handleOAuth(item) : openConnectModal(item)
+                      trailing={
+                        item.connected ? (
+                          <span className="flex items-center gap-1 text-xs text-status-done font-medium flex-shrink-0">
+                            <CheckCircleIcon className="h-3.5 w-3.5" />
+                            {!item.singleInstance && item.connections.length > 0
+                              ? `${item.connections.length} connected`
+                              : 'Connected'}
+                          </span>
+                        ) : (
+                          <span className="text-xs font-medium text-primary flex-shrink-0">Manage</span>
+                        )
                       }
-                      className="bg-card rounded-lg border border-border p-4 flex items-center gap-4 text-left hover:border-primary/50 transition-colors cursor-pointer w-full"
-                    >
-                      <Icon item={item} />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm text-foreground">{item.name}</div>
-                        <div className="text-xs text-muted-foreground truncate">{item.description}</div>
-                      </div>
-                      <span className="text-xs font-medium text-primary flex-shrink-0">
-                        {item.authType === 'OAUTH2' ? 'Authorize' : 'Add'}
-                      </span>
-                    </button>
-                  ) : (
-                    <div
+                    />
+                  ) : canMutate ? (
+                    <ConnectorCard
                       key={item.connectorId}
-                      className="bg-card rounded-lg border border-border p-4 flex items-center gap-4"
-                    >
-                      <Icon item={item} />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm text-foreground">{item.name}</div>
-                        <div className="text-xs text-muted-foreground truncate">{item.description}</div>
-                      </div>
-                    </div>
+                      icon={<Icon item={item} />}
+                      name={item.name}
+                      description={item.description}
+                      onClick={() => (item.authType === 'OAUTH2' ? handleOAuth(item) : openConnectModal(item))}
+                      trailing={
+                        <span className="text-xs font-medium text-primary flex-shrink-0">
+                          {item.authType === 'OAUTH2' ? 'Authorize' : 'Add'}
+                        </span>
+                      }
+                    />
+                  ) : (
+                    <ConnectorCard
+                      key={item.connectorId}
+                      icon={<Icon item={item} />}
+                      name={item.name}
+                      description={item.description}
+                    />
                   )
                 )}
               </div>
@@ -395,30 +390,25 @@ export default function IntegrationsPage() {
                     />
                   ) : field.type === 'SELECT' ? (
                     <>
-                      <label className="block text-sm font-medium text-foreground mb-1">
-                        {field.label}
-                      </label>
+                      <Label>{field.label}</Label>
                       {/* No connector currently ships enumerated options for the backend to send;
                           this is a structural placeholder ready for that data. */}
-                      <select
+                      <Select
                         value={formValues[field.key] || ''}
                         onChange={(e) =>
                           setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))
                         }
                         required={field.required}
-                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                       >
                         <option value="" disabled>
                           {field.hint || 'Select…'}
                         </option>
-                      </select>
+                      </Select>
                     </>
                   ) : (
                     <>
-                      <label className="block text-sm font-medium text-foreground mb-1">
-                        {field.label}
-                      </label>
-                      <input
+                      <Label>{field.label}</Label>
+                      <Input
                         type={field.secret ? 'password' : 'text'}
                         value={formValues[field.key] || ''}
                         onChange={(e) =>
@@ -426,7 +416,6 @@ export default function IntegrationsPage() {
                         }
                         placeholder={field.hint || ''}
                         required={field.required}
-                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                       />
                     </>
                   )}

@@ -5,6 +5,9 @@ import { Handle, Position, type Node, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { FlowCanvas } from '@/components/workflow/FlowCanvas';
+import { statusHueClasses } from '@/components/ui/status-badge';
+import { statusHue } from '@/lib/workflows';
+import { Alert } from '@/components/ui/alert';
 
 // ── Node dimensions ────────────────────────────────────────────────────────────
 const TRIGGER_W = 160;
@@ -17,44 +20,49 @@ const CONDITION_H = 60;
 // ── Status colours ─────────────────────────────────────────────────────────────
 type JobStatus = 'SUCCESS' | 'FAILED' | 'RUNNING' | 'SKIPPED' | 'PENDING' | 'LOOP_EXHAUSTED';
 
-const statusStyles: Record<JobStatus, string> = {
-  SUCCESS:       'bg-green-500 text-white border-green-600',
-  FAILED:        'bg-red-500 text-white border-red-600',
-  RUNNING:       'bg-yellow-400 text-gray-900 border-yellow-500',
-  SKIPPED:       'bg-gray-300 text-gray-600 border-gray-400',
-  PENDING:       'bg-gray-100 text-gray-500 border-gray-300',
-  LOOP_EXHAUSTED:'bg-orange-400 text-white border-orange-500',
-};
+const ALL_JOB_STATUSES: JobStatus[] = ['SUCCESS', 'FAILED', 'RUNNING', 'SKIPPED', 'PENDING', 'LOOP_EXHAUSTED'];
+
+// Built once at module load rather than re-running the statusHue/statusHueClasses pipeline on every render.
+const NODE_STATUS_CLASSES: Record<JobStatus, string> = Object.fromEntries(
+  ALL_JOB_STATUSES.map((status) => {
+    const c = statusHueClasses(statusHue(status));
+    return [status, `${c.bg} ${c.text} ${c.border}`];
+  }),
+) as Record<JobStatus, string>;
+
+function nodeStatusClasses(status?: JobStatus): string {
+  return NODE_STATUS_CLASSES[status ?? 'PENDING'];
+}
 
 // ── Custom node: Trigger ───────────────────────────────────────────────────────
 function TriggerNode({ data }: { data: { label: string } }) {
   return (
-    <div className="px-4 py-2 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-300 text-xs font-semibold text-center shadow-sm whitespace-pre-line leading-tight">
+    <div className="px-4 py-2 rounded-full bg-accent-soft text-primary border border-primary/30 text-xs font-semibold text-center shadow-sm whitespace-pre-line leading-tight">
       {data.label}
-      <Handle type="source" position={Position.Bottom} className="!bg-indigo-400" />
+      <Handle type="source" position={Position.Bottom} className="!bg-primary" />
     </div>
   );
 }
 
 // ── Custom node: Job ───────────────────────────────────────────────────────────
 function JobNode({ data }: { data: { label: string; stepInfo: string; status?: JobStatus } }) {
-  const style = statusStyles[data.status ?? 'PENDING'];
+  const style = nodeStatusClasses(data.status);
   return (
     <div className={`rounded-lg border px-3 py-2 text-xs shadow-sm flex flex-col gap-0.5 ${style}`}
          style={{ width: JOB_W }}>
-      <Handle type="target" position={Position.Top} className="!bg-gray-400" />
+      <Handle type="target" position={Position.Top} className="!bg-foreground-subtle" />
       <span className="font-semibold truncate">{data.label}</span>
       {data.stepInfo && (
         <span className="opacity-75 truncate">{data.stepInfo}</span>
       )}
-      <Handle type="source" position={Position.Bottom} className="!bg-gray-400" />
+      <Handle type="source" position={Position.Bottom} className="!bg-foreground-subtle" />
     </div>
   );
 }
 
 // ── Custom node: Condition (diamond shape) ─────────────────────────────────────
 function ConditionNode({ data }: { data: { label: string; status?: JobStatus } }) {
-  const style = statusStyles[data.status ?? 'PENDING'];
+  const style = nodeStatusClasses(data.status);
   return (
     <div className="relative flex items-center justify-center" style={{ width: CONDITION_W, height: CONDITION_H }}>
       <div
@@ -65,9 +73,9 @@ function ConditionNode({ data }: { data: { label: string; status?: JobStatus } }
             style={{ fontSize: 10 }}>
         {data.label}
       </span>
-      <Handle type="target" position={Position.Top} className="!bg-gray-400" />
-      <Handle type="source" position={Position.Bottom} id="true" className="!bg-green-400" style={{ left: '25%' }} />
-      <Handle type="source" position={Position.Bottom} id="false" className="!bg-red-400" style={{ left: '75%' }} />
+      <Handle type="target" position={Position.Top} className="!bg-foreground-subtle" />
+      <Handle type="source" position={Position.Bottom} id="true" className="!bg-status-done" style={{ left: '25%' }} />
+      <Handle type="source" position={Position.Bottom} id="false" className="!bg-status-failed" style={{ left: '75%' }} />
     </div>
   );
 }
@@ -206,7 +214,7 @@ function buildFlowGraph(
           id: `${jobId}->self-loop`,
           source: jobId,
           target: jobId,
-          label: '↺ loop',
+          label: 'loop',
           type: 'default',
           style: { strokeDasharray: '4 2' },
         });
@@ -285,8 +293,8 @@ export default function WorkflowDiagram({ yaml, jobStatuses, jobRunData }: Workf
 
   if (result.error) {
     return (
-      <div className="flex items-center justify-center h-full p-4 text-sm text-amber-600 bg-amber-50 rounded">
-        {result.error}
+      <div className="flex items-center justify-center h-full p-4">
+        <Alert variant="warning">{result.error}</Alert>
       </div>
     );
   }
@@ -295,7 +303,7 @@ export default function WorkflowDiagram({ yaml, jobStatuses, jobRunData }: Workf
 
   if (!nodes.length) {
     return (
-      <div className="flex items-center justify-center h-full p-4 text-sm text-gray-400">
+      <div className="flex items-center justify-center h-full p-4 text-sm text-muted-foreground">
         No workflow defined yet
       </div>
     );
