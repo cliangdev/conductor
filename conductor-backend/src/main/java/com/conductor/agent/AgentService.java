@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * CRUD for user-managed named {@link Agent}s. Validates {@code provider} against the
@@ -104,6 +105,7 @@ public class AgentService {
         agent.setProvider(input.provider());
         agent.setModel(blankToNull(input.model()));
         agent.setSystemPrompt(blankToNull(input.systemPrompt()));
+        validateConfig(input.config());
         agent.setConfigJson(writeJson(input.config(), "{}"));
         agent.setToolIds(writeJson(input.toolIds(), "[]"));
         agent.setState(validateState(input.state(), "DRAFT"));
@@ -140,6 +142,7 @@ public class AgentService {
             agent.setSystemPrompt(blankToNull(input.systemPrompt()));
         }
         if (input.config() != null) {
+            validateConfig(input.config());
             agent.setConfigJson(writeJson(input.config(), "{}"));
         }
         if (input.toolIds() != null) {
@@ -158,6 +161,23 @@ public class AgentService {
     }
 
     // ---- helpers ----
+
+    /**
+     * A per-agent {@code runtime} pin ({@code "api"}/{@code "claude-code"} — mirrors
+     * {@code com.conductor.workflow.AgentRuntimeResolver}'s constants, duplicated here rather than
+     * imported so the agent package never depends on the workflow package) is the only recognized key
+     * this layer restricts; every other {@code configJson} key (maxToolTurns, maxTokens, temperature)
+     * is opaque here and validated where it's consumed ({@link com.conductor.agent.run.AgentExecutionService}).
+     */
+    private static final Set<String> VALID_RUNTIMES = Set.of("api", "claude-code");
+
+    private void validateConfig(Map<String, Object> config) {
+        if (config == null) return;
+        Object runtime = config.get("runtime");
+        if (runtime != null && !VALID_RUNTIMES.contains(runtime.toString())) {
+            throw new BusinessException("Invalid agent runtime: " + runtime + " (expected one of " + VALID_RUNTIMES + ")");
+        }
+    }
 
     private Agent requireAgent(String projectId, String agentId) {
         Agent agent = repository.findById(agentId)

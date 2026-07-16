@@ -408,6 +408,23 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 
 The agent must be created first under **Settings → Agents** (persona, model provider, tool bindings) and a provider API key configured for the project. A run that ends in any non-`SUCCEEDED` state fails the step.
 
+##### Runtimes
+
+An agent's *definition* (system prompt, tools, guardrails) is decoupled from the *runtime* that executes it — the workflow step never declares a runtime; it's resolved fresh on every run:
+
+1. The agent's `runtime` config key, if set (`Settings → Agents` → the agent's config, or via `POST/PATCH` on the agent) — `"api"` or `"claude-code"`.
+2. Otherwise auto-detected from the project's credentials: a **Claude Code (subscription)** credential (**Integrations → Google Cloud**) wins over an API key when both are configured, since it gets the full Claude Code tool-calling loop rather than just a single-model ReAct loop.
+3. If neither credential is configured, the step fails with a message naming both options.
+
+| Runtime | What it is | Guardrails |
+|---|---|---|
+| `api` | The in-process ReAct loop against the agent's model provider (e.g. Anthropic API key under provider `claude`) — same engine `agent: <slug>` always used before runtimes existed. | `maxToolTurns` ↔ the loop's tool-call cap; `maxTokens`/`temperature` are **api-only** (no Claude Code equivalent). |
+| `claude-code` | A headless Claude Code container (subscription OAuth), same mechanics as a raw [`claude-code`](#claude-code--run-claude-code-headlessly) step. The agent's `systemPrompt` is prepended to the step's `task` as one prompt (the container has no separate system-prompt channel). | `maxToolTurns` ↔ `--max-turns`. |
+
+**Tool mapping (claude-code runtime only).** Each of the agent's bound tool ids must map to a Claude Code `--allowedTools` name (typically an MCP tool the Conductor MCP server also exposes) — any bound tool with no such mapping fails the step immediately with `AGENT_TOOL_NOT_AVAILABLE_ON_CLAUDE_CODE: <toolId>` rather than silently running with fewer tools than configured. An agent with no tools runs with no `--allowedTools` restriction.
+
+**`runs-on` interaction.** The `api` runtime ignores `runs-on` entirely (it's an in-process call, not a container). The `claude-code` runtime uses the job's `runs-on` the same way a raw `claude-code` step does — except an agent step's job commonly has no container-capable `runs-on` at all (agent steps predate runtimes and were written assuming Conductor-hosted execution), so if the job's `runs-on` doesn't resolve to a container target, the runtime defaults to the builtin `cloud-run` target rather than requiring every agent-step job to add `runs-on: cloud-run` just to pick this runtime.
+
 #### `claude-code` — Run Claude Code headlessly
 
 Hands a prompt to **Claude Code running headlessly** (`claude -p`) inside the Conductor runner image, optionally with tool access to the Conductor MCP server, and exposes its answer as step outputs. Unlike `agent`, this runs the actual Claude Code CLI — full tool-calling agent loop, not just a single model call — so it can read the input files it's given, use `Read`/`Glob`/MCP tools, and write a Conductor document directly.
@@ -491,7 +508,7 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 - **`runs-on: self-hosted`**: run `claude setup-token` on the daemon host, then `conductor config set-claude-code-oauth-token <token>` to store it in `~/.conductor/config.json`. The token never leaves the machine or transits Conductor's backend — the daemon injects it directly into the container.
 - **`runs-on: cloud-run`** and **`runs-on: <runtime-target>`**: run `claude setup-token` and paste the result as the project's **Claude Code (subscription)** credential (**Integrations → Google Cloud**, KMS-encrypted, write-only — never returned by the API, resolved at runtime, never in the YAML). This is a distinct credential from the `claude` provider the `agent` step uses.
 
-All three are billed against the token owner's Claude Pro/Max plan, not metered API usage. Per Anthropic's guidance, subscription auth is meant for an individual's own automation, not shared/production/metered use — for that, use the **`agent`** step instead (direct API calls against a per-project Anthropic API key), not a containerized `claude-code` step.
+All three are billed against the token owner's Claude Pro/Max plan, not metered API usage. Per Anthropic's guidance, subscription auth is meant for an individual's own automation, not shared/production/metered use — for that, use the **`agent`** step's **`api`** runtime instead (direct API calls against a per-project Anthropic API key), not a containerized `claude-code` step. Note that an `agent` step can *also* run on the `claude-code` runtime (subscription auth, same as this step) when that's what the agent's config or the project's credentials resolve to — see [Runtimes](#agent--run-an-ai-agent) under the `agent` step above.
 
 #### `action` — Call a connector's outbound action
 
@@ -1006,11 +1023,16 @@ Two ship today, both seeded the first time a project turns on the **Knowledge Ce
 | `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input | Operator-triggered, once, to seed the wiki from an existing GitHub codebase. |
 
 Both are ordinary workflows once created — visible and re-editable in the workflow list like any other —
-just authored by Conductor instead of a person. Both run as `claude-code` steps on `runs-on: cloud-run`
-with `conductor_mcp: true`, so they need the project's **Claude Code (subscription)** credential and an
-active **project API key**, same as any `claude-code` step using `conductor_mcp` (see
-[Auth & runtime targets](#claude-code--run-claude-code-headlessly)); `knowledge-bootstrap` additionally
-needs a `GITHUB_TOKEN` workflow secret to bootstrap from a private repo.
+just authored by Conductor instead of a person. `knowledge-librarian` is a thin `uses: agent` step
+dispatching to the seeded `knowledge-librarian` Agent (see [`docs/knowledge.md`](knowledge.md)) — its
+runtime resolves per the [Runtimes](#agent--run-an-ai-agent) rules, so either the project's
+**Claude Code (subscription)** credential or a `claude` API key works (subscription preferred when both
+are configured); the `claude-code` runtime additionally needs an active **project API key**, since the
+agent's knowledge tools always map to Conductor MCP tools on that runtime. `knowledge-bootstrap` remains
+a raw `claude-code` step on `runs-on: cloud-run` with `conductor_mcp: true`, so it needs the project's
+**Claude Code (subscription)** credential and an active **project API key** — same as any `claude-code`
+step using `conductor_mcp` (see [Auth & runtime targets](#claude-code--run-claude-code-headlessly)) —
+plus a `GITHUB_TOKEN` workflow secret to bootstrap from a private repo.
 
 See [`docs/knowledge.md`](knowledge.md) for the full Knowledge Center domain model — ingestion envelope,
 page format, and pipeline these workflows are part of.

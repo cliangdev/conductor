@@ -86,8 +86,11 @@ public class AgentExecutionService {
 
     /**
      * Resolve an agent by slug (then id) within a project and run it. This is the facade the workflow
-     * {@code agent} step uses, so the workflow package depends only on this service plus the
-     * request/result records — never on agent persistence — and the agent is loaded exactly once.
+     * {@code agent} step's {@code api} runtime uses, so the workflow package depends only on this
+     * service plus the request/result records — never on agent persistence — and the agent is loaded
+     * exactly once. Note: this re-resolves the {@link Agent} independently of {@link #resolveDefinition}
+     * — callers that already hold an {@link AgentDefinition} (e.g. the runtime resolver step) still pass
+     * through this same slug-then-id lookup rather than reusing their in-hand definition.
      */
     public AgentRunResult run(String projectId, String agentRef, String task,
                               Map<String, Object> context, Map<String, Object> outputSchema) {
@@ -95,6 +98,21 @@ public class AgentExecutionService {
                 .or(() -> agentRepository.findById(agentRef).filter(a -> projectId.equals(a.getProjectId())))
                 .orElseThrow(() -> new EntityNotFoundException("Agent not found: " + agentRef));
         return runForAgent(agent, new AgentRunRequest(agent.getId(), task, context, outputSchema));
+    }
+
+    /**
+     * Resolve an agent by slug (then id) within a project and return its definition — the engine-
+     * agnostic shape ({@code runtime} included) the workflow {@code agent} step's runtime resolver and
+     * runtimes need, without exposing agent persistence (the {@link Agent} entity) to the workflow
+     * package.
+     */
+    public AgentDefinition resolveDefinition(String projectId, String agentRef) {
+        Agent agent = agentRepository.findByProjectIdAndSlug(projectId, agentRef)
+                .or(() -> agentRepository.findById(agentRef).filter(a -> projectId.equals(a.getProjectId())))
+                .orElseThrow(() -> new EntityNotFoundException("Agent not found: " + agentRef));
+        AgentConfig cfg = parseConfig(agent.getConfigJson());
+        return new AgentDefinition(agent.getId(), agent.getSlug(), agent.getProvider(), agent.getModel(),
+                agent.getSystemPrompt(), parseToolIds(agent.getToolIds()), cfg.maxToolTurns(), cfg.runtime());
     }
 
     private AgentRunResult runForAgent(Agent agent, AgentRunRequest request) {
@@ -271,7 +289,9 @@ public class AgentExecutionService {
         Integer maxToolTurns = asInt(cfg.get("maxToolTurns"), DEFAULT_MAX_TOOL_TURNS);
         Integer maxTokens = asInt(cfg.get("maxTokens"), DEFAULT_MAX_TOKENS);
         Double temperature = asDouble(cfg.get("temperature"));
-        return new AgentConfig(Math.max(1, maxToolTurns), maxTokens, temperature);
+        Object runtimeVal = cfg.get("runtime");
+        String runtime = runtimeVal instanceof String s && !s.isBlank() ? s : null;
+        return new AgentConfig(Math.max(1, maxToolTurns), maxTokens, temperature, runtime);
     }
 
     private List<String> parseToolIds(String toolIdsJson) {
@@ -357,5 +377,22 @@ public class AgentExecutionService {
     }
 
     /** Parsed generation guardrails from {@code Agent.configJson}. */
-    private record AgentConfig(int maxToolTurns, int maxTokens, Double temperature) {}
+    private record AgentConfig(int maxToolTurns, int maxTokens, Double temperature, String runtime) {}
+
+    /**
+     * Engine-agnostic view of a resolved {@link Agent} — the shape the workflow {@code agent} step's
+     * runtime resolver and {@code AgentStepRuntime} implementations need, without exposing the entity
+     * (agent persistence) to the workflow package. {@code runtime} is the explicit {@code
+     * configJson.runtime} pin ({@code "api"}/{@code "claude-code"}), or {@code null} for auto-resolution
+     * (see {@code AgentRuntimeResolver}).
+     */
+    public record AgentDefinition(
+            String id,
+            String slug,
+            String provider,
+            String model,
+            String systemPrompt,
+            List<String> toolIds,
+            Integer maxToolTurns,
+            String runtime) {}
 }

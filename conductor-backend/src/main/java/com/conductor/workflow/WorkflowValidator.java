@@ -441,6 +441,15 @@ public class WorkflowValidator {
         if (agent == null || agent.toString().isBlank()) {
             errors.add("agent step missing required field: with.agent");
         }
+
+        // Runtime-agnostic: the agent step's with.timeout_minutes is honored by whichever runtime the
+        // agent resolves to at execution time (AgentRuntimeResolver) — validated here the same way as
+        // claude-code's own timeout_minutes, regardless of which runtime ends up applying it.
+        Object timeoutMinutes = step.with().get("timeout_minutes");
+        if (timeoutMinutes != null && (!(timeoutMinutes instanceof Number)
+                || ((Number) timeoutMinutes).intValue() < 1 || ((Number) timeoutMinutes).intValue() > 120)) {
+            errors.add("agent step with.timeout_minutes must be an integer between 1 and 120");
+        }
     }
 
     /**

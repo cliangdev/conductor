@@ -144,27 +144,44 @@ Source lifecycle: `PENDING → PROCESSING → PROCESSED` (success) or `PENDING �
 
 ## System workflows
 
-Two automation workflows are provisioned automatically — the first time a project's `knowledge_enabled`
-flips `false → true` — by `KnowledgeWorkflowProvisioner`, from the YAML templates in
-`conductor-backend/src/main/resources/knowledge/`. They're identified purely by reserved workflow name (no
-schema-level "system" flag); re-enabling is idempotent (upsert-if-missing). See
-[`docs/workflows.md`](workflows.md#system-managed-workflows) for how they fit the general workflow model.
+Two automation workflows, plus the librarian's `Agent` definition, are provisioned automatically — the
+first time a project's `knowledge_enabled` flips `false → true` — by `KnowledgeWorkflowProvisioner`, from
+the YAML templates in `conductor-backend/src/main/resources/knowledge/`. They're identified purely by
+reserved workflow name / agent slug (no schema-level "system" flag); re-enabling is idempotent
+(upsert-if-missing). See [`docs/workflows.md`](workflows.md#system-managed-workflows) for how they fit the
+general workflow model.
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
-| `knowledge-librarian` | `workflow_dispatch`, fired programmatically by `LibrarianDispatchService` — never by a human | Files one batch of claimed sources into pages. `concurrency: single`. |
-| `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input (`owner/repo`) | Operator-triggered once, to seed the wiki (`engineering/architecture/*.md`, `product/features/*.md`) from an existing codebase by cloning and reading it. |
+| `knowledge-librarian` | `workflow_dispatch`, fired programmatically by `LibrarianDispatchService` — never by a human | A thin `uses: agent` step dispatching to the seeded `knowledge-librarian` Agent, filing one batch of claimed sources into pages. `concurrency: single`. |
+| `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input (`owner/repo`) | Operator-triggered once, to seed the wiki (`engineering/architecture/*.md`, `product/features/*.md`) from an existing codebase by cloning and reading it. A raw `claude-code` step (no agent involved). |
 
-Both run a `claude-code` step on `runs-on: cloud-run` with `conductor_mcp: true`. **Operator prerequisites**
-before either can run:
+**The librarian is an `Agent` definition, not a hardcoded prompt.** `KnowledgeWorkflowProvisioner` seeds a
+project-scoped `knowledge-librarian` Agent (slug `knowledge-librarian`, provider `claude`, the filing
+procedure from `knowledge/librarian-system-prompt.md` as its system prompt, bound to the four
+`knowledge:*` tools — see [MCP tools](#mcp-tools) — with `configJson: {"maxToolTurns": 40}`) the same way
+it seeds the workflow YAML. The system prompt, model, and tool bindings are all editable afterward under
+**Settings → Agents**, same as any other agent — evolving the librarian's behavior no longer requires a
+backend change. Its **runtime** (which engine actually executes a run) is decoupled from this definition
+entirely and resolves fresh on every dispatch — see
+[Runtimes](workflows.md#agent--run-an-ai-agent) in the workflows doc: an explicit `runtime` key in the
+agent's `configJson` pins it, otherwise it auto-detects from the project's credentials (a Claude Code
+subscription credential is preferred over a `claude` API key when both are configured). Switching which
+runtime the librarian runs on is therefore a Settings change, not a workflow edit.
 
-- The project's **Claude Code (subscription)** credential (**Integrations → Google Cloud**) — required for
-  any `cloud-run` `claude-code` step.
-- An active **project API key** (**Settings → API Keys**) — required for `conductor_mcp: true` on
-  `cloud-run`.
-- `knowledge-bootstrap` only: a **`GITHUB_TOKEN`** workflow secret (**Settings → Workflows → Secrets**) with
-  read access to the target repo, for cloning a private repo. Unset works fine for a public repo (the token
-  segment interpolates to empty and `git clone` proceeds unauthenticated).
+**Operator prerequisites** before either workflow can run — either credential option works for the
+librarian; `knowledge-bootstrap` is subscription-only:
+
+- **`knowledge-librarian`**: either the project's **Claude Code (subscription)** credential (**Integrations
+  → Google Cloud**) or a `claude` provider API key (**Settings → Agents**) — subscription preferred when
+  both are configured. If it resolves to the `claude-code` runtime, an active **project API key**
+  (**Settings → API Keys**) is also needed, since the agent's knowledge tools map to Conductor MCP tools on
+  that runtime.
+- **`knowledge-bootstrap`**: the project's **Claude Code (subscription)** credential (subscription-only —
+  it's a raw `claude-code` step) and an active **project API key** (`conductor_mcp: true`), plus a
+  **`GITHUB_TOKEN`** workflow secret (**Settings → Workflows → Secrets**) with read access to the target
+  repo, for cloning a private repo. Unset works fine for a public repo (the token segment interpolates to
+  empty and `git clone` proceeds unauthenticated).
 
 ---
 
@@ -180,6 +197,12 @@ and available to any Claude Code session with the Conductor MCP server configure
 | `search_knowledge` | Full-text search over pages — path, type, title, description, snippet, rank. Orientation before reading. |
 | `read_knowledge_pages` | Fetch full page content by path. `["index.md"]`/`["log.md"]` return the virtual orientation pages. Returned `version` feeds `baseVersion` on the next write. |
 | `write_knowledge_pages` | Atomic batch create/update/delete; `writes` may be empty when `sourceIds` is set, to ack a batch that needs no page changes. A stale write returns a structured `{conflict: true, conflicts: [...]}` result instead of throwing, per [MCP tool guidelines](mcp-tool-guidelines.md) — merge and retry once. |
+
+The same four operations back an `agent`-tool source (`knowledge:read_knowledge_pages`, etc. —
+`KnowledgeToolProvider`) so any project agent, not just the librarian, can be bound to them under
+**Settings → Agents**. Bare tool names match across both surfaces on purpose — one system prompt works
+whether the agent runs the `api` runtime (calling this provider directly) or the `claude-code` runtime
+(calling the equivalent `mcp__conductor__*` MCP tool). Both are gated on `knowledge_enabled`.
 
 ---
 

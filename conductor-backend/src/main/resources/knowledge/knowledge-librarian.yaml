@@ -12,47 +12,16 @@ concurrency: single
 
 jobs:
   file:
-    runs-on: cloud-run
     steps:
       - id: librarian
-        uses: claude-code
+        uses: agent
         with:
-          conductor_mcp: true
-          allowed_tools: "mcp__conductor__read_knowledge_pages,mcp__conductor__read_knowledge_sources,mcp__conductor__search_knowledge,mcp__conductor__write_knowledge_pages"
-          max_turns: 40
+          agent: knowledge-librarian
           timeout_minutes: 20
-          prompt: |
-            You are the Knowledge Center librarian for this Conductor project. Your job is to file a
-            batch of newly-ingested sources into the project's wiki (a bundle of versioned Markdown
-            pages with YAML frontmatter).
-
-            Batch to file — knowledge-inbox source ids (comma-separated): ${{ event.sourceIds }}
+          task: |
+            File the following batch of knowledge-inbox sources into the wiki.
+            Source ids (comma-separated): ${{ event.sourceIds }}
             Project id: ${{ event.projectId }}
-
-            Steps:
-            1. Read `_schema.md` via read_knowledge_pages(["_schema.md"]) — it defines the frontmatter
-               contract, page-type taxonomy, path layout, and create-vs-edit heuristics. Follow it
-               exactly.
-            2. Read `index.md` via read_knowledge_pages(["index.md"]) to see what pages already exist,
-               so you can decide which sources update an existing page vs. create a new one.
-            3. Read the batch's sources with read_knowledge_sources — pass the id list from
-               "${{ event.sourceIds }}" split on commas.
-            4. For each source, use search_knowledge and read_knowledge_pages to find any existing
-               page(s) it should update (same entity, e.g. the same feature, decision, or person).
-               Prefer editing an existing page over creating a near-duplicate one.
-            5. Draft the resulting page content (frontmatter + body) per `_schema.md`'s conventions —
-               set `sources` and `confidence` in frontmatter per its guidance, and link related pages
-               with bundle-absolute links (`/dir/page.md`).
-            6. Write every resulting page in ONE write_knowledge_pages call, passing `sourceIds` set to
-               the full batch of source ids from "${{ event.sourceIds }}" — this atomically marks them
-               PROCESSED. Pass `baseVersion` for every page you are updating (from step 2/4's reads); a
-               `{conflict: true}` result means another writer beat you to it — re-read that page and
-               retry once with the returned currentVersion.
-            7. If a source genuinely doesn't warrant any wiki change (e.g. pure noise), still include
-               it in the same single write_knowledge_pages call's `sourceIds`, so it isn't left stuck
-               forever. If NO source in the batch warrants any wiki change, call write_knowledge_pages
-               with `writes: []` and `sourceIds` set to the full batch — this acks the batch as
-               "no wiki change needed" without writing any pages.
 
             Return a short JSON summary: {"pagesWritten": <int>, "sourcesFiled": <int>}.
           output_schema:

@@ -23,4 +23,17 @@ public interface AgentToolProvider {
 
     /** Resolve one tool by its namespaced id for the given project, if this source owns it. */
     Optional<AgentTool> resolve(String projectId, String toolId);
+
+    /**
+     * The name a {@code claude-code}-runtime agent step must pass in its Claude Code
+     * {@code --allowedTools} list to grant this tool — typically an MCP tool name
+     * ({@code mcp__conductor__<bareName>}) for a tool this source also exposes over the Conductor MCP
+     * server. Empty by default: a source that has no Claude Code equivalent (e.g. an HTTP tool defined
+     * only for the in-process ReAct loop) makes its tools unusable on that runtime, which
+     * {@code ClaudeCodeAgentStepRuntime} treats as a fail-fast configuration error rather than silently
+     * dropping the tool.
+     */
+    default Optional<String> claudeCodeToolName(String toolId) {
+        return Optional.empty();
+    }
 }

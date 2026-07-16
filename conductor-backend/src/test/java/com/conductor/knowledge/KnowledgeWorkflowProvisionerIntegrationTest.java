@@ -1,5 +1,7 @@
 package com.conductor.knowledge;
 
+import com.conductor.agent.Agent;
+import com.conductor.agent.AgentRepository;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinition;
@@ -36,6 +38,8 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
     private ProjectRepository projectRepository;
     @Autowired
     private UserRepository userRepository;
+    @Autowired
+    private AgentRepository agentRepository;
 
     private String projectId;
 
@@ -74,6 +78,27 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
     }
 
     @Test
+    void provisionSeedsLibrarianAgentWithExpectedFields() {
+        provisioner.provision(projectId);
+
+        Optional<Agent> agent = agentRepository.findByProjectIdAndSlug(
+                projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG);
+        assertThat(agent).isPresent();
+        Agent librarian = agent.get();
+        assertThat(librarian.getProvider()).isEqualTo("claude");
+        assertThat(librarian.getModel()).isNull();
+        assertThat(librarian.getState()).isEqualTo("ACTIVE");
+        assertThat(librarian.getSystemPrompt()).contains("Knowledge Center librarian");
+        assertThat(librarian.getToolIds()).contains("knowledge:read_knowledge_pages")
+                .contains("knowledge:read_knowledge_sources")
+                .contains("knowledge:search_knowledge")
+                .contains("knowledge:write_knowledge_pages");
+        assertThat(librarian.getConfigJson()).contains("\"maxToolTurns\"").contains("40");
+        // No runtime key -- resolved at execution time (auto-detect), never pinned by the seed.
+        assertThat(librarian.getConfigJson()).doesNotContain("runtime");
+    }
+
+    @Test
     void provisionIsIdempotentOnDoubleEnable() {
         provisioner.provision(projectId);
         provisioner.provision(projectId);
@@ -88,5 +113,10 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         Optional<KnowledgePage> schemaPage = pageRepository.findByProjectIdAndPath(projectId, "_schema.md");
         assertThat(schemaPage).isPresent();
         assertThat(schemaPage.get().getVersion()).isEqualTo(1);
+
+        // Still exactly one librarian agent -- the second provision() call is a no-op on an existing slug.
+        List<Agent> agents = agentRepository.findByProjectId(projectId);
+        assertThat(agents).extracting(Agent::getSlug)
+                .containsExactly(KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG);
     }
 }

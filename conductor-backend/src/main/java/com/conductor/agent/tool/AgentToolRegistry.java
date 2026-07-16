@@ -80,6 +80,18 @@ public class AgentToolRegistry {
         return tools;
     }
 
+    /**
+     * The Claude Code {@code --allowedTools} name for a namespaced tool id, routed to its owning
+     * source the same way {@link #resolve} is. Empty when the id's source is unknown, or the owning
+     * source has no Claude Code equivalent for it (see {@link AgentToolProvider#claudeCodeToolName}).
+     */
+    public Optional<String> claudeCodeToolName(String toolId) {
+        String sourceId = sourceOf(toolId);
+        if (sourceId == null) return Optional.empty();
+        AgentToolProvider provider = bySource.get(sourceId);
+        return provider == null ? Optional.empty() : provider.claudeCodeToolName(toolId);
+    }
+
     private String sourceOf(String toolId) {
         if (toolId == null) return null;
         int idx = toolId.indexOf(':');
