@@ -13,6 +13,7 @@ creates and edits them; humans and other agents read them.
 - [The pipeline](#the-pipeline)
 - [Page model](#page-model)
 - [System workflows](#system-workflows)
+- [Retention](#retention)
 - [MCP tools](#mcp-tools)
 - [REST endpoints](#rest-endpoints)
 - [Roadmap](#roadmap)
@@ -25,7 +26,7 @@ Three layers, each with a different mutability:
 
 | Layer | Mutability | What it is |
 |---|---|---|
-| Sources inbox (`knowledge_sources`) | Immutable, append-only | Raw inbound material — a Work Item status change, a merged PR, a manual note. Never edited, only claimed and marked processed. |
+| Sources inbox (`knowledge_sources`) | Immutable, append-only | Raw inbound material — a Work Item status change, a merged PR, a manual note. Never edited, only claimed, marked processed, and eventually [retired by retention](#retention) once it's served its purpose. |
 | Wiki pages (`knowledge_pages`) | Agent-owned, versioned | Markdown + YAML frontmatter, one file per page, `path` is identity. The librarian creates and edits these; the format is referred to in code as **OKF** (Markdown body + YAML frontmatter — no separate spec, just the convention this codebase follows). |
 | `_schema.md` | Agent-authored style guide | A wiki page like any other, but read by the librarian as its own instructions: frontmatter contract, page-type taxonomy, path layout, per-type body templates (stable section structure per type; `architecture` pages are diagram-first with a C4-style Mermaid flowchart), create-vs-edit heuristics. Seeded on enable, then it's just another page an operator or the librarian can evolve. |
 
@@ -182,6 +183,39 @@ librarian; `knowledge-bootstrap` is subscription-only:
   **`GITHUB_TOKEN`** workflow secret (**Settings → Workflows → Secrets**) with read access to the target
   repo, for cloning a private repo. Unset works fine for a public repo (the token segment interpolates to
   empty and `git clone` proceeds unauthenticated).
+
+---
+
+## Retention
+
+The ingestion inbox (`knowledge_sources`) is append-only by design (see [Concept](#concept)), but that
+doesn't mean it grows forever: once a source's payload has served its purpose, keeping the raw content
+around indefinitely is pure bloat -- the compounded wiki pages are the durable record, not the inbox.
+`KnowledgeRetentionService` runs an hourly sweep with two independent, batch-bounded passes:
+
+| Sweep | Scope | Effect |
+|---|---|---|
+| **Compact** | `PROCESSED` sources older than `processed-days` (default **30**) | Deletes any offloaded GCS object (`payload_uri`) *first*; only once that succeeds does it null the inline `payload` column and `payload_uri`, then stamp `purged_at`. The row itself -- id, type, ref, metadata, status, timestamps -- is kept, since `knowledge_revision_sources` still references it by id and the wiki's [Log view](#page-model) surfaces source refs by id. Only the (potentially large) payload content is reclaimed. |
+| **Delete** | `DEAD` sources older than `dead-days` (default **90**) | Same GCS-first rule, then hard-deletes the row entirely. A `DEAD` source exhausted every retry ([the pipeline](#the-pipeline)'s sweep) without ever being marked `PROCESSED` -- `markProcessed` flips a source's status in the very same transaction as the page write that would reference it -- so by construction nothing downstream ever references a `DEAD` source. |
+
+Each pass processes at most one batch (100 rows) per tick and commits each row's compaction/deletion in
+its own transaction, so a large backlog never holds a long-running transaction or blocks the hourly tick.
+**A failed GCS delete skips the row entirely** rather than nulling `payload_uri` anyway -- the row is left
+untouched and retried on the next hourly tick, so `payload_uri` is never cleared unless the object it
+points at is confirmed gone. The alternative (purge the row regardless) would leave that object sitting
+in the bucket with nothing left to ever reference or clean it up.
+
+**Configuration** (both accept a day count):
+
+| Property | Env var | Default |
+|---|---|---|
+| `conductor.knowledge.retention.processed-days` | `KNOWLEDGE_RETENTION_PROCESSED_DAYS` | `30` |
+| `conductor.knowledge.retention.dead-days` | `KNOWLEDGE_RETENTION_DEAD_DAYS` | `90` |
+
+**Visibility.** `purgedAt` is exposed on every source read surface -- the `GET /sources` REST endpoint's
+`KnowledgeSourceDto`, and the `read_knowledge_sources` MCP tool / agent tool's result -- so a caller can
+tell whether a `PROCESSED` source's payload is still available (`purgedAt: null`) or has already been
+compacted (`purgedAt` set; `payload`/`payloadOffloaded` will read back empty).
 
 ---
 

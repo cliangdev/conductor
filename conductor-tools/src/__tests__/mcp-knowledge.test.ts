@@ -82,6 +82,18 @@ describe('knowledge MCP tools', () => {
     expect(result).toEqual([{ sourceId: 's1' }, { sourceId: 's2' }])
   })
 
+  it('read_knowledge_sources passes purgedAt through untouched for a retention-compacted source', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { sourceId: 's1', payload: null, purgedAt: '2026-06-01T00:00:00Z' },
+      { sourceId: 's2', payload: 'still here', purgedAt: null },
+    ])
+    const result = await readKnowledgeSources({ ids: ['s1', 's2'] }, config)
+    expect(result).toEqual([
+      { sourceId: 's1', payload: null, purgedAt: '2026-06-01T00:00:00Z' },
+      { sourceId: 's2', payload: 'still here', purgedAt: null },
+    ])
+  })
+
   it('search_knowledge GETs the search resource with q required and optional filters', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([{ path: 'a.md', rank: 0.9 }])
     await searchKnowledge({ q: 'deploy' }, config)

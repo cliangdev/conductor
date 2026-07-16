@@ -24,6 +24,7 @@ public record KnowledgeSourceView(
         OffsetDateTime receivedAt,
         KnowledgeSourceStatus status,
         int attempts,
-        String errorMessage
+        String errorMessage,
+        OffsetDateTime purgedAt
 ) {
 }

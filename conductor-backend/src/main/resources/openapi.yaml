@@ -6688,6 +6688,13 @@ components:
         errorMessage:
           type: string
           nullable: true
+        purgedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            Set once KnowledgeRetentionService has compacted this source's payload (nulled the inline
+            column and/or deleted the offloaded GCS object). Null means the payload is still intact.
 
     KnowledgePageWrite:
       type: object

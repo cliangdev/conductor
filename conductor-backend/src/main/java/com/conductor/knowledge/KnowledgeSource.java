@@ -88,6 +88,12 @@ public class KnowledgeSource {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
+    /** Set by {@code KnowledgeRetentionService} when this row's payload has been compacted (inline
+     *  {@code payload} nulled and any offloaded GCS object deleted) -- independent of a DEAD row's
+     *  later hard deletion. Null means "not yet compacted". */
+    @Column(name = "purged_at")
+    private OffsetDateTime purgedAt;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -154,4 +160,7 @@ public class KnowledgeSource {
 
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+
+    public OffsetDateTime getPurgedAt() { return purgedAt; }
+    public void setPurgedAt(OffsetDateTime purgedAt) { this.purgedAt = purgedAt; }
 }

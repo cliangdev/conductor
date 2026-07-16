@@ -211,6 +211,7 @@ public class KnowledgeController implements KnowledgeApi {
         dto.setStatus(KnowledgeSourceStatus.valueOf(v.status().name()));
         dto.setAttempts(v.attempts());
         dto.setErrorMessage(v.errorMessage());
+        dto.setPurgedAt(v.purgedAt());
         return dto;
     }
 

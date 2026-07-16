@@ -204,7 +204,7 @@ class KnowledgeControllerTest {
         when(ingestionService.getSources(eq(PROJECT_ID), any()))
                 .thenReturn(List.of(new KnowledgeSourceView("src-1", PROJECT_ID, "manual_note", null, null,
                         null, "hello", false, null, null, null, null,
-                        com.conductor.knowledge.KnowledgeSourceStatus.PENDING, 0, null)));
+                        com.conductor.knowledge.KnowledgeSourceStatus.PENDING, 0, null, null)));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources?ids=src-1")
                         .header("Authorization", "Bearer valid-token"))

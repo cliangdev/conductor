@@ -63,12 +63,15 @@ class GcpStorageServiceTest {
     }
 
     @Test
-    void delete_whenStorageThrows_doesNotPropagateException() {
+    void delete_whenStorageThrows_propagatesException() {
+        // Contract: a real backend failure must reach the caller so it can keep its stored
+        // reference and retry, instead of orphaning the object (see StorageService#delete).
         String gcsPath = "uploads/project-1/file.pdf";
         doThrow(new RuntimeException("GCS error")).when(storage).delete(any(BlobId.class));
 
-        assertThatCode(() -> gcpStorageService.delete(gcsPath))
-                .doesNotThrowAnyException();
+        assertThatThrownBy(() -> gcpStorageService.delete(gcsPath))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("GCS error");
     }
 
     @Test

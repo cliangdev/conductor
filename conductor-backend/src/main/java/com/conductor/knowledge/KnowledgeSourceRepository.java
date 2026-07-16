@@ -1,5 +1,6 @@
 package com.conductor.knowledge;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -60,4 +61,14 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
             + "AND s.status IN (com.conductor.knowledge.KnowledgeSourceStatus.PENDING, "
             + "com.conductor.knowledge.KnowledgeSourceStatus.PROCESSING)")
     int markProcessed(@Param("projectId") String projectId, @Param("ids") Collection<String> ids);
+
+    // ---- retention (KnowledgeRetentionService) ----
+
+    /** Oldest-first batch of PROCESSED sources old enough to compact and not yet purged. */
+    List<KnowledgeSource> findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+            KnowledgeSourceStatus status, OffsetDateTime cutoff, Pageable pageable);
+
+    /** Oldest-first batch of DEAD sources old enough to hard-delete. */
+    List<KnowledgeSource> findByStatusAndReceivedAtBeforeOrderByReceivedAtAsc(
+            KnowledgeSourceStatus status, OffsetDateTime cutoff, Pageable pageable);
 }

@@ -82,11 +82,10 @@ public class GcpStorageService implements StorageService {
     }
 
     public void delete(String gcsPath) {
-        try {
-            storage.delete(BlobId.of(bucketName, gcsPath));
-        } catch (Exception e) {
-            log.warn("Failed to delete GCS object '{}': {}", gcsPath, e.getMessage());
-        }
+        // Returns false when the object doesn't exist — that's success for an idempotent delete.
+        // Real failures (auth, network) throw StorageException and propagate per the interface
+        // contract, so callers keep their reference and retry instead of orphaning the object.
+        storage.delete(BlobId.of(bucketName, gcsPath));
     }
 
     public String generateSignedUrl(String gcsPath, int expiryMinutes) {

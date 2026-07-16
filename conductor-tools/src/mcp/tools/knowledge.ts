@@ -50,6 +50,12 @@ export async function submitKnowledgeSource(
   )
 }
 
+/**
+ * Fetch inbox sources by id. A returned source with `payload: null` and `purgedAt` set means the
+ * backend's hourly retention sweep already compacted it (its payload — and any offloaded GCS object —
+ * has been reclaimed once it aged past the processed-sources retention window); that's not the same as
+ * an empty/missing source. `purgedAt: null` means the payload is still intact.
+ */
 export async function readKnowledgeSources(
   params: { ids: string[] },
   config: Config

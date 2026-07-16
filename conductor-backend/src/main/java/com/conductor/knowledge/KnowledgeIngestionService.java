@@ -127,7 +127,8 @@ public class KnowledgeIngestionService {
         return new KnowledgeSourceView(
                 s.getId(), s.getProjectId(), s.getSourceType(), s.getSourceRef(), s.getTitle(),
                 s.getContentType(), payload, offloaded, s.getMetadata(), toOrigin(s.getOrigin()),
-                s.getOccurredAt(), s.getReceivedAt(), s.getStatus(), s.getAttempts(), s.getErrorMessage());
+                s.getOccurredAt(), s.getReceivedAt(), s.getStatus(), s.getAttempts(), s.getErrorMessage(),
+                s.getPurgedAt());
     }
 
     private void validate(KnowledgeSubmission submission) {
