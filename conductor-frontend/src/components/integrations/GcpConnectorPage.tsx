@@ -8,7 +8,7 @@ import { useCan } from '@/contexts/PermissionsContext';
 import { listConnections, createConnection, deleteConnection, apiErrorMessage } from '@/lib/api';
 import type { ConnectionSummary } from '@/lib/api';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
-import { ConnectorIcon } from './ConnectorIcon';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { ServiceAccountKeyField } from './ServiceAccountKeyField';
 import RuntimeTargetsPanel from './RuntimeTargetsPanel';
 import ClaudeCodeCredentialPanel from './ClaudeCodeCredentialPanel';
@@ -117,14 +117,10 @@ export default function GcpConnectorPage({ projectId }: { projectId: string }) {
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="flex items-center gap-3 mb-1">
-        <ConnectorIcon connectorId={CONNECTOR_ID} iconLabel="GCP" className="h-8 w-8" />
-        <h1 className="text-2xl font-bold text-foreground">Google Cloud</h1>
-      </div>
-      <p className="text-sm text-muted-foreground mb-6">
-        Infrastructure · Service account — run claude-code workflow steps as Cloud Run jobs in your own
-        GCP project.
-      </p>
+      <PageHeader
+        title="Google Cloud"
+        description="Infrastructure · Service account — run claude-code workflow steps as Cloud Run jobs in your own GCP project."
+      />
 
       {loading ? (
         <div className="animate-pulse h-32 bg-muted rounded-lg" />

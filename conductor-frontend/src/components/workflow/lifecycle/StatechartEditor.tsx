@@ -5,11 +5,12 @@
 // re-validates on save/publish, so this editor only shapes the document and offers light guidance.
 
 import { cloneElement, isValidElement, useId, useState } from 'react'
-import { ChevronRightIcon, XIcon } from 'lucide-react'
+import { ChevronRightIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/utils'
 import {
   CATEGORY_OPTIONS,
   DEFAULT_VIEW_OPTIONS,
@@ -102,6 +103,51 @@ function TagInput({ values, onChange }: { values: string[]; onChange: (next: str
     </div>
   )
 }
+
+/** 11.5px caps column-header row, shared by the statuses/transitions/steps tables so their rows all
+ *  align under the same grid template. */
+function ColumnHeaderRow({ gridCols, columns }: { gridCols: string; columns: string[] }) {
+  return (
+    <div className={cn('grid gap-2 px-1', gridCols)} aria-hidden="true">
+      {columns.map((label, i) => (
+        <span key={i} className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground truncate">
+          {label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** Icon-only ghost remove action — replaces the old "Remove"/"Remove step" text links. */
+function RemoveButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+    >
+      <Trash2Icon className="h-3.5 w-3.5" />
+    </Button>
+  )
+}
+
+/** Outline "+ Add …" action — replaces the old bare "+ Add step" text link. */
+function AddButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <Button type="button" variant="outline" size="sm" onClick={onClick} className="gap-1.5">
+      <PlusIcon className="h-3.5 w-3.5" />
+      {label}
+    </Button>
+  )
+}
+
+const STATUS_GRID = 'grid-cols-[1fr_1fr_9rem_4.5rem_5rem_2.5rem] min-w-[34rem]'
+const TRANSITION_GRID = 'grid-cols-[8rem_1.25rem_8rem_1fr_2.5rem] min-w-[26rem]'
+const STEP_GRID = 'grid-cols-[7rem_7rem_1fr_2.5rem] min-w-[20rem]'
 
 export function StatechartEditor({
   value,
@@ -260,44 +306,58 @@ export function StatechartEditor({
         title="Statuses"
         hint="Exactly one initial, at least one terminal, and every status must reach a terminal."
       >
-        <div className="space-y-2">
+        <div className="overflow-x-auto">
+        <div className="space-y-1.5">
+          {value.statuses.length > 0 && (
+            <ColumnHeaderRow gridCols={STATUS_GRID} columns={['Status ID', 'Label', 'Category', 'Initial', 'Terminal', '']} />
+          )}
           {value.statuses.map((s, i) => (
-            <div key={i} className="flex flex-wrap items-center gap-2">
+            <div key={i} className={cn('grid gap-2 items-center', STATUS_GRID)}>
               <Input
-                className="flex-1 min-w-[120px]"
+                aria-label="Status ID"
                 value={s.id}
                 placeholder="STATUS_ID"
+                className="min-w-0"
                 onChange={(e) => updateStatus(i, { id: e.target.value.toUpperCase() })}
               />
               <Input
-                className="flex-1 min-w-[120px]"
+                aria-label="Label"
                 value={s.label ?? ''}
                 placeholder="Label"
+                className="min-w-0"
                 onChange={(e) => updateStatus(i, { label: e.target.value || undefined })}
               />
-              <Select
-                className="w-auto"
-                value={s.category}
-                onChange={(e) =>
-                  updateStatus(i, {
-                    category: e.target.value as WorkflowStatusCategory,
-                    terminal: e.target.value === 'terminal' ? s.terminal : false,
-                  })
-                }
-              >
-                {CATEGORY_OPTIONS.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.label}
-                  </option>
-                ))}
-              </Select>
-              <label className="flex items-center gap-1 text-xs text-muted-foreground" title="Initial status">
-                <input type="radio" name="initial-status" checked={!!s.initial} onChange={() => setInitial(i)} />
-                initial
-              </label>
-              <label className="flex items-center gap-1 text-xs text-muted-foreground" title="Terminal (end) status">
+              <div className="min-w-0">
+                <Select
+                  aria-label="Category"
+                  value={s.category}
+                  onChange={(e) =>
+                    updateStatus(i, {
+                      category: e.target.value as WorkflowStatusCategory,
+                      terminal: e.target.value === 'terminal' ? s.terminal : false,
+                    })
+                  }
+                >
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="flex items-center justify-center" title="Initial status">
+                <input
+                  type="radio"
+                  name="initial-status"
+                  aria-label={`Set ${s.id || `status ${i + 1}`} as the initial status`}
+                  checked={!!s.initial}
+                  onChange={() => setInitial(i)}
+                />
+              </div>
+              <div className="flex items-center justify-center" title="Terminal (end) status">
                 <input
                   type="checkbox"
+                  aria-label={`Mark ${s.id || `status ${i + 1}`} as terminal`}
                   checked={!!s.terminal}
                   onChange={(e) =>
                     updateStatus(i, {
@@ -306,21 +366,13 @@ export function StatechartEditor({
                     })
                   }
                 />
-                terminal
-              </label>
-              <button
-                type="button"
-                onClick={() => removeStatus(i)}
-                className="text-xs text-destructive hover:underline"
-              >
-                Remove
-              </button>
+              </div>
+              <RemoveButton label={`Remove status ${s.id || i + 1}`} onClick={() => removeStatus(i)} />
             </div>
           ))}
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={addStatus}>
-          + Add status
-        </Button>
+        </div>
+        <AddButton label="Add status" onClick={addStatus} />
       </Section>
 
       {/* ── Transitions ── */}
@@ -330,46 +382,46 @@ export function StatechartEditor({
       >
         <div className="space-y-3">
           {value.transitions.map((t, i) => (
-            <div key={i} className="border border-border rounded-md p-3 space-y-2.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <Select
-                  className="w-auto"
-                  value={t.from}
-                  onChange={(e) => updateTransition(i, { from: e.target.value })}
-                >
-                  <option value="">from…</option>
-                  {statusIds.map((id) => (
-                    <option key={id} value={id}>
-                      {id}
-                    </option>
-                  ))}
-                </Select>
-                <ChevronRightIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <Select
-                  className="w-auto"
-                  value={t.to}
-                  onChange={(e) => updateTransition(i, { to: e.target.value })}
-                >
-                  <option value="">to…</option>
-                  {statusIds.map((id) => (
-                    <option key={id} value={id}>
-                      {id}
-                    </option>
-                  ))}
-                </Select>
+            <div key={i} className="border border-border rounded-md p-3 space-y-2.5 overflow-x-auto">
+              <ColumnHeaderRow gridCols={TRANSITION_GRID} columns={['From', '', 'To', 'Label', '']} />
+              <div className={cn('grid gap-2 items-center', TRANSITION_GRID)}>
+                <div className="min-w-0">
+                  <Select
+                    aria-label="From status"
+                    value={t.from}
+                    onChange={(e) => updateTransition(i, { from: e.target.value })}
+                  >
+                    <option value="">from…</option>
+                    {statusIds.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <ChevronRightIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0 justify-self-center" />
+                <div className="min-w-0">
+                  <Select
+                    aria-label="To status"
+                    value={t.to}
+                    onChange={(e) => updateTransition(i, { to: e.target.value })}
+                  >
+                    <option value="">to…</option>
+                    {statusIds.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
                 <Input
-                  className="flex-1 min-w-[140px]"
+                  aria-label="Action label"
                   value={t.label}
                   placeholder="Action label (e.g. Submit for review)"
+                  className="min-w-0"
                   onChange={(e) => updateTransition(i, { label: e.target.value })}
                 />
-                <button
-                  type="button"
-                  onClick={() => removeTransition(i)}
-                  className="text-xs text-destructive hover:underline"
-                >
-                  Remove
-                </button>
+                <RemoveButton label={`Remove transition ${i + 1}`} onClick={() => removeTransition(i)} />
               </div>
 
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -443,68 +495,65 @@ export function StatechartEditor({
               )}
 
               {/* Steps */}
-              <div className="space-y-2">
+              <div className="space-y-1.5 pl-4 border-l-2 border-border">
+                {(t.steps ?? []).length > 0 && (
+                  <ColumnHeaderRow gridCols={STEP_GRID} columns={['Kind', 'Mode', 'Skill', '']} />
+                )}
                 {(t.steps ?? []).map((step, si) => (
-                  <div key={si} className="flex flex-wrap items-center gap-2 pl-4 border-l-2 border-border">
-                    <Select
-                      className="w-auto"
-                      value={step.kind}
-                      onChange={(e) => updateStep(i, si, { kind: e.target.value as StepKind })}
-                    >
-                      {STEP_KIND_OPTIONS.map((k) => (
-                        <option key={k} value={k}>
-                          {k}
-                        </option>
-                      ))}
-                    </Select>
-                    <Select
-                      className="w-auto"
-                      value={step.mode}
-                      onChange={(e) => updateStep(i, si, { mode: e.target.value as StepMode })}
-                    >
-                      {STEP_MODE_OPTIONS.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </Select>
-                    {step.kind === 'skill' && (
+                  <div key={si} className={cn('grid gap-2 items-center', STEP_GRID)}>
+                    <div className="min-w-0">
                       <Select
-                        className="w-auto"
-                        value={step.skill ?? ''}
-                        onChange={(e) => updateStep(i, si, { skill: e.target.value || undefined })}
+                        aria-label="Step kind"
+                        value={step.kind}
+                        onChange={(e) => updateStep(i, si, { kind: e.target.value as StepKind })}
                       >
-                        <option value="">pick a skill…</option>
-                        {SKILL_OPTIONS.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
+                        {STEP_KIND_OPTIONS.map((k) => (
+                          <option key={k} value={k}>
+                            {k}
                           </option>
                         ))}
                       </Select>
+                    </div>
+                    <div className="min-w-0">
+                      <Select
+                        aria-label="Step mode"
+                        value={step.mode}
+                        onChange={(e) => updateStep(i, si, { mode: e.target.value as StepMode })}
+                      >
+                        {STEP_MODE_OPTIONS.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                    {step.kind === 'skill' ? (
+                      <div className="min-w-0">
+                        <Select
+                          aria-label="Skill"
+                          value={step.skill ?? ''}
+                          onChange={(e) => updateStep(i, si, { skill: e.target.value || undefined })}
+                        >
+                          <option value="">pick a skill…</option>
+                          {SKILL_OPTIONS.map((s) => (
+                            <option key={s} value={s}>
+                              {s}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                    ) : (
+                      <span aria-hidden="true" />
                     )}
-                    <button
-                      type="button"
-                      onClick={() => removeStep(i, si)}
-                      className="text-xs text-destructive hover:underline"
-                    >
-                      Remove step
-                    </button>
+                    <RemoveButton label={`Remove step ${si + 1}`} onClick={() => removeStep(i, si)} />
                   </div>
                 ))}
-                <button
-                  type="button"
-                  onClick={() => addStep(i)}
-                  className="text-xs text-primary hover:underline pl-4"
-                >
-                  + Add step
-                </button>
+                <AddButton label="Add step" onClick={() => addStep(i)} />
               </div>
             </div>
           ))}
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={addTransition}>
-          + Add transition
-        </Button>
+        <AddButton label="Add transition" onClick={addTransition} />
       </Section>
     </div>
   )

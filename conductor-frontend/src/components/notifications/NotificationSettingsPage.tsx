@@ -10,6 +10,9 @@ import {
   type NotificationTestResponse,
 } from '@/hooks/useNotifications'
 import { useToast } from '@/components/ui/toast'
+import { Button } from '@/components/ui/button'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
+import { Skeleton } from '@/components/ui/skeleton'
 import { NotificationGroupTable } from './NotificationGroupTable'
 import { GroupChannelConfigModal } from './GroupChannelConfigModal'
 
@@ -25,6 +28,8 @@ export function NotificationSettingsPage({ projectId, accessToken }: Notificatio
   const [showModal, setShowModal] = useState(false)
   const [editingGroup, setEditingGroup] = useState<NotificationGroupResponse | undefined>(undefined)
   const [testingGroup, setTestingGroup] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   function handleAdd() {
     setEditingGroup(undefined)
@@ -41,17 +46,25 @@ export function NotificationSettingsPage({ projectId, accessToken }: Notificatio
     setEditingGroup(undefined)
   }
 
-  async function handleDelete(channelGroup: string) {
-    if (!confirm(`Remove notification channel for "${channelGroup}"?`)) return
+  function handleDelete(channelGroup: string) {
+    setDeleteTarget(channelGroup)
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
     try {
       await apiDelete(
-        `/api/v1/projects/${projectId}/notifications/groups/${channelGroup}`,
+        `/api/v1/projects/${projectId}/notifications/groups/${deleteTarget}`,
         accessToken
       )
       showToast('Notification channel removed.')
+      setDeleteTarget(null)
       refetch()
     } catch {
       showToast('Failed to remove channel. Please try again.', 'error')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -107,7 +120,7 @@ export function NotificationSettingsPage({ projectId, accessToken }: Notificatio
       </div>
 
       {loading && (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <Skeleton className="h-24 w-full" />
       )}
       {error && (
         <p className="text-sm text-destructive" role="alert">{error}</p>
@@ -129,6 +142,19 @@ export function NotificationSettingsPage({ projectId, accessToken }: Notificatio
         existingGroup={editingGroup}
         availableGroups={availableGroups}
       />
+
+      <ConfirmModal
+        open={deleteTarget !== null}
+        title="Remove notification channel?"
+        description={deleteTarget ? `This removes the channel configured for "${deleteTarget}".` : undefined}
+        confirmLabel="Remove"
+        busyLabel="Removing…"
+        busy={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      >
+        <p className="text-sm text-muted-foreground">You can add it again later.</p>
+      </ConfirmModal>
     </section>
   )
 }

@@ -82,7 +82,7 @@ Beyond the existing `Button`/`Badge`/`Avatar`/`DropdownMenu`/`Tabs`/`Toast`:
 ## Page chrome patterns
 
 - **Work Items are authored by agents** (Conductor skill / MCP tools), not in the UI — intentionally no create/edit forms. The UI is the review, triage, and approval surface; its primary actions are review verdicts, status transitions, and assignment.
-- **Every route** uses `PageContainer` + `PageHeader` (breadcrumb · title · status chip · actions). Detail pages included — no full-bleed exceptions; no duplicate breadcrumb-plus-H1 stacks.
+- **Every route** uses `PageContainer` + `PageHeader` (breadcrumb · title · status chip · actions). Detail pages included — no full-bleed exceptions; no duplicate breadcrumb-plus-H1 stacks. Exception: the Knowledge page detail view (`knowledge/page/page.tsx`) deliberately uses a Notion-style icon+title header instead of `PageHeader` — approved, not a review finding.
 - **Shell:** sidebar owns workspace switcher, search/⌘K, nav sections, and the single user menu. No top navbar.
 - **List views:** grouped single-line rows (status ring · mono ID · title · type tag · right-aligned meta), removable filter pills, explicit sort.
 - **Detail views:** reading column + right properties panel (status, assignee, reviewers with per-person verdict icons, links). Review uses the batch model: pending comments → one verdict (Approve / Request changes / Comment).

@@ -17,7 +17,7 @@ function CopyButton({ text }: { text: string }) {
       onClick={handleCopy}
       className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
     >
-      {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+      {copied ? <Check className="h-3 w-3 text-status-done" /> : <Copy className="h-3 w-3" />}
       {copied ? 'Copied' : 'Copy'}
     </button>
   );

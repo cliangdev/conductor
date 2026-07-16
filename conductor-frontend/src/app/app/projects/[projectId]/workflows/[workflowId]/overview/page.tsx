@@ -91,11 +91,11 @@ export default function WorkflowOverviewPage() {
         )}
       </div>
 
-      <div className="border rounded-lg overflow-hidden" style={{ height: 280 }}>
-        <div className="px-4 pt-3 pb-2 border-b bg-muted/30">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workflow Diagram</p>
+      <div className="flex flex-col h-[280px] border border-border rounded-lg overflow-hidden">
+        <div className="shrink-0 px-4 py-2.5 border-b border-border bg-muted">
+          <p className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Workflow Diagram</p>
         </div>
-        <div className="h-[calc(100%-36px)]">
+        <div className="flex-1 min-h-0">
           <WorkflowDiagram yaml={workflow.yaml ?? ''} />
         </div>
       </div>

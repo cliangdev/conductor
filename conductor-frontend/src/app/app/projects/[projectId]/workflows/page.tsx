@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api';
 import { BanIcon, CheckCircleIcon, GitBranchIcon, PlayIcon } from 'lucide-react';
@@ -11,13 +11,15 @@ import { timeAgo } from '@/lib/format';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TriggerBadges } from '@/components/workflow/TriggerBadges';
+import { WorkflowStatusBadge } from '@/components/workflow/WorkflowStatusBadge';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Switch } from '@/components/ui/switch';
-import { Modal } from '@/components/ui/modal';
+import { ConfirmModal } from '@/components/ui/confirm-modal';
+import { Tabs, type TabItem } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Card } from '@/components/ui/card';
 import { useToast } from '@/components/ui/toast';
 import { RowActionsMenu } from '@/components/ui/RowActionsMenu';
 import {
@@ -27,6 +29,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Can } from '@/components/auth/Can';
+
+type WorkflowTab = 'automation' | 'lifecycle';
+
+const THEAD_CELL = 'text-left px-3 py-2 text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground';
 
 function EnabledIndicator({ enabled }: { enabled: boolean }) {
   return <StatusBadge status={enabled ? 'done' : 'draft'} label={enabled ? 'Enabled' : 'Disabled'} />;
@@ -40,10 +46,12 @@ function statusCount(wf: WorkflowDefinitionDto): number {
   return Array.isArray(statuses) ? statuses.length : 0;
 }
 
-export default function WorkflowsPage() {
+function WorkflowsPageContent() {
   const { projectId } = useParams<{ projectId: string }>();
   const { accessToken } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { showToast } = useToast();
   const [workflows, setWorkflows] = useState<WorkflowDefinitionDto[]>([]);
   const [lastRuns, setLastRuns] = useState<Record<string, WorkflowRunDto | null>>({});
@@ -52,6 +60,18 @@ export default function WorkflowsPage() {
   const [deleteTarget, setDeleteTarget] = useState<WorkflowDefinitionDto | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [disableTarget, setDisableTarget] = useState<WorkflowDefinitionDto | null>(null);
+  const [disabling, setDisabling] = useState(false);
+
+  const tab: WorkflowTab = searchParams.get('tab') === 'lifecycle' ? 'lifecycle' : 'automation';
+
+  function setTab(next: WorkflowTab) {
+    if (next === tab) return;
+    const sp = new URLSearchParams(searchParams.toString());
+    if (next === 'automation') sp.delete('tab');
+    else sp.set('tab', next);
+    const qs = sp.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname);
+  }
 
   useEffect(() => {
     if (!accessToken) return;
@@ -139,6 +159,17 @@ export default function WorkflowsPage() {
     }
   };
 
+  const confirmDisable = async () => {
+    if (!disableTarget) return;
+    setDisabling(true);
+    try {
+      await handleDisable(disableTarget);
+      setDisableTarget(null);
+    } finally {
+      setDisabling(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!accessToken || !deleteTarget) return;
     setDeleting(true);
@@ -181,114 +212,62 @@ export default function WorkflowsPage() {
       </PageContainer>
     );
 
+  const tabItems: TabItem[] = [
+    { value: 'automation', label: 'Automation', count: automation.length },
+    { value: 'lifecycle', label: 'Lifecycle', count: lifecycle.length },
+  ];
+
   return (
     <PageContainer>
       <PageHeader title="Workflows" description="Work Item lifecycles and run automations." actions={newWorkflowAction} />
 
-      {/* ── Lifecycle (statechart) workflows ── */}
-      <section className="mb-8">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-2">Lifecycle</h2>
-        <div className="border rounded-lg overflow-x-auto">
-          <table className="w-full min-w-[560px]">
-            <thead className="bg-muted/50">
-              <tr>
-                <th className="text-left p-3 font-medium">Name</th>
-                <th className="text-left p-3 font-medium">Noun</th>
-                <th className="text-left p-3 font-medium">State</th>
-                <th className="text-left p-3 font-medium">Statuses</th>
-                <th className="p-3 font-medium w-12" />
-              </tr>
-            </thead>
-            <tbody>
-              {lifecycle.length === 0 && (
-                <tr>
-                  <td colSpan={5}>
-                    <EmptyState icon={GitBranchIcon} title="No lifecycle workflows yet" />
-                  </td>
-                </tr>
-              )}
-              {lifecycle.map(wf => {
-                const noun = (wf.definition as { noun?: string } | null | undefined)?.noun;
-                const hasWorkItems = (wf.workItemCount ?? 0) > 0;
-                const stateVariant =
-                  wf.state === 'PUBLISHED' ? 'status-done' : wf.state === 'DISABLED' ? 'secondary' : 'status-draft';
-                const extraItems =
-                  wf.state === 'PUBLISHED' && hasWorkItems
-                    ? [{
-                        label: 'Disable',
-                        icon: <BanIcon className="h-4 w-4" />,
-                        onSelect: () => setDisableTarget(wf),
-                      }]
-                    : wf.state === 'DISABLED'
-                      ? [{
-                          label: 'Enable',
-                          icon: <CheckCircleIcon className="h-4 w-4" />,
-                          onSelect: () => handleEnable(wf),
-                        }]
-                      : [];
-                // Delete is hidden whenever Work Items are bound (Disable/Enable govern the lifecycle instead).
-                const canDelete = !hasWorkItems;
-                return (
-                  <tr
-                    key={wf.id}
-                    className="border-t hover:bg-muted/25 cursor-pointer"
-                    onClick={() => router.push(`/app/projects/${projectId}/workflows/lifecycle/${wf.id}`)}
-                  >
-                    <td className="p-3 font-medium">{wf.name}</td>
-                    <td className="p-3 text-muted-foreground">{noun ?? '—'}</td>
-                    <td className="p-3">
-                      <Badge variant={stateVariant}>
-                        {wf.state ?? 'DRAFT'}
-                      </Badge>
-                    </td>
-                    <td className="p-3 text-muted-foreground">{statusCount(wf)}</td>
-                    <td className="p-3 text-right" onClick={e => e.stopPropagation()}>
-                      <Can do="workflow.manage">
-                        <RowActionsMenu
-                          onEdit={() => router.push(`/app/projects/${projectId}/workflows/lifecycle/${wf.id}`)}
-                          onDelete={canDelete ? () => setDeleteTarget(wf) : undefined}
-                          extraItems={extraItems}
-                        />
-                      </Can>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <Tabs
+        items={tabItems}
+        value={tab}
+        onValueChange={(v) => setTab(v as WorkflowTab)}
+        ariaLabel="Workflows view"
+        className="mb-4 -mx-1 px-1"
+      />
 
-      {/* ── Automation (YAML) workflows ── */}
-      <section>
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-2">Automation</h2>
-        {automation.length === 0 ? (
-          <div className="bg-card rounded-lg border border-border">
-            <EmptyState icon={PlayIcon} title="No automation workflows yet" />
-          </div>
+      {tab === 'automation' ? (
+        automation.length === 0 ? (
+          <Card>
+            <EmptyState
+              icon={PlayIcon}
+              title="No automation workflows yet"
+              description="Automations run on a schedule, webhook, or event trigger."
+              action={
+                <Can do="workflow.manage">
+                  <Button size="sm" onClick={() => router.push(`/app/projects/${projectId}/workflows/new`)}>
+                    New workflow
+                  </Button>
+                </Can>
+              }
+            />
+          </Card>
         ) : (
-          <div className="border rounded-lg overflow-x-auto">
+          <Card className="overflow-x-auto">
             <table className="w-full min-w-[680px]">
-              <thead className="bg-muted/50">
+              <thead className="bg-muted border-b border-border">
                 <tr>
-                  <th className="text-left p-3 font-medium">Name</th>
-                  <th className="text-left p-3 font-medium">Last Run</th>
-                  <th className="text-left p-3 font-medium">Triggers</th>
-                  <th className="text-left p-3 font-medium">Enabled</th>
-                  <th className="p-3 font-medium w-28" />
+                  <th className={THEAD_CELL}>Name</th>
+                  <th className={THEAD_CELL}>Last Run</th>
+                  <th className={THEAD_CELL}>Triggers</th>
+                  <th className={THEAD_CELL}>Enabled</th>
+                  <th className={`${THEAD_CELL} w-28`} />
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-border">
                 {automation.map(workflow => {
                   const lastRun = lastRuns[workflow.id];
                   return (
                     <tr
                       key={workflow.id}
-                      className="border-t hover:bg-muted/25 cursor-pointer"
+                      className="h-[38px] hover:bg-muted cursor-pointer transition-colors"
                       onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/overview`)}
                     >
-                      <td className="p-3 font-medium">{workflow.name}</td>
-                      <td className="p-3">
+                      <td className="px-3 py-2 text-sm font-medium text-foreground">{workflow.name}</td>
+                      <td className="px-3 py-2">
                         {lastRun ? (
                           <div className="flex items-center gap-1.5">
                             <StatusBadge status={lastRun.status} />
@@ -298,10 +277,10 @@ export default function WorkflowsPage() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="p-3">
+                      <td className="px-3 py-2">
                         <TriggerBadges yaml={workflow.yaml ?? ''} />
                       </td>
-                      <td className="p-3" onClick={e => e.stopPropagation()}>
+                      <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                         <Can do="workflow.manage" fallback={<EnabledIndicator enabled={workflow.enabled} />}>
                           <Switch
                             checked={workflow.enabled}
@@ -310,7 +289,7 @@ export default function WorkflowsPage() {
                           />
                         </Can>
                       </td>
-                      <td className="p-3 text-right" onClick={e => e.stopPropagation()}>
+                      <td className="px-3 py-2 text-right" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1">
                           <Can do="workflow.run">
                             <button
@@ -334,51 +313,132 @@ export default function WorkflowsPage() {
                 })}
               </tbody>
             </table>
-          </div>
-        )}
-      </section>
+          </Card>
+        )
+      ) : (
+        lifecycle.length === 0 ? (
+          <Card>
+            <EmptyState
+              icon={GitBranchIcon}
+              title="No lifecycle workflows yet"
+              description="Lifecycle workflows define a Work Item type's statuses and allowed transitions."
+              action={
+                <Can do="workflow.manage">
+                  <Button size="sm" onClick={() => router.push(`/app/projects/${projectId}/workflows/lifecycle/new`)}>
+                    New workflow
+                  </Button>
+                </Can>
+              }
+            />
+          </Card>
+        ) : (
+          <Card className="overflow-x-auto">
+            <table className="w-full min-w-[560px]">
+              <thead className="bg-muted border-b border-border">
+                <tr>
+                  <th className={THEAD_CELL}>Name</th>
+                  <th className={THEAD_CELL}>Noun</th>
+                  <th className={THEAD_CELL}>State</th>
+                  <th className={THEAD_CELL}>Statuses</th>
+                  <th className={`${THEAD_CELL} w-12`} />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {lifecycle.map(wf => {
+                  const noun = (wf.definition as { noun?: string } | null | undefined)?.noun;
+                  const hasWorkItems = (wf.workItemCount ?? 0) > 0;
+                  const extraItems =
+                    wf.state === 'PUBLISHED' && hasWorkItems
+                      ? [{
+                          label: 'Disable',
+                          icon: <BanIcon className="h-4 w-4" />,
+                          onSelect: () => setDisableTarget(wf),
+                        }]
+                      : wf.state === 'DISABLED'
+                        ? [{
+                            label: 'Enable',
+                            icon: <CheckCircleIcon className="h-4 w-4" />,
+                            onSelect: () => handleEnable(wf),
+                          }]
+                        : [];
+                  // Delete is hidden whenever Work Items are bound (Disable/Enable govern the lifecycle instead).
+                  const canDelete = !hasWorkItems;
+                  return (
+                    <tr
+                      key={wf.id}
+                      className="h-[38px] hover:bg-muted cursor-pointer transition-colors"
+                      onClick={() => router.push(`/app/projects/${projectId}/workflows/lifecycle/${wf.id}`)}
+                    >
+                      <td className="px-3 py-2 text-sm font-medium text-foreground">{wf.name}</td>
+                      <td className="px-3 py-2 text-sm text-muted-foreground">{noun ?? '—'}</td>
+                      <td className="px-3 py-2">
+                        <WorkflowStatusBadge workflow={wf} />
+                      </td>
+                      <td className="px-3 py-2 text-sm text-muted-foreground">{statusCount(wf)}</td>
+                      <td className="px-3 py-2 text-right" onClick={e => e.stopPropagation()}>
+                        <Can do="workflow.manage">
+                          <RowActionsMenu
+                            onEdit={() => router.push(`/app/projects/${projectId}/workflows/lifecycle/${wf.id}`)}
+                            onDelete={canDelete ? () => setDeleteTarget(wf) : undefined}
+                            extraItems={extraItems}
+                          />
+                        </Can>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+        )
+      )}
 
-      <Modal
+      <ConfirmModal
         open={!!deleteTarget}
-        onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}
         title="Delete workflow"
+        confirmLabel="Delete workflow"
+        busyLabel="Deleting…"
+        busy={deleting}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
       >
         <p className="text-sm text-foreground">
           Permanently delete <strong>{deleteTarget?.name}</strong>? Its run history will be removed and this cannot be undone.
         </p>
-        <div className="flex gap-3 mt-4">
-          <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
-            {deleting ? 'Deleting…' : 'Delete workflow'}
-          </Button>
-          <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
-            Cancel
-          </Button>
-        </div>
-      </Modal>
+      </ConfirmModal>
 
-      <Modal
+      <ConfirmModal
         open={!!disableTarget}
-        onOpenChange={(o) => { if (!o) setDisableTarget(null); }}
         title="Disable workflow"
+        confirmLabel="Disable workflow"
+        busyLabel="Disabling…"
+        destructive={false}
+        busy={disabling}
+        onConfirm={confirmDisable}
+        onCancel={() => setDisableTarget(null)}
       >
         <p className="text-sm text-foreground">
           Work items using <strong>{disableTarget?.name}</strong> will keep their current version.
           No new work items can use this workflow while it is disabled.
         </p>
-        <div className="flex gap-3 mt-4">
-          <Button
-            onClick={async () => {
-              if (disableTarget) await handleDisable(disableTarget);
-              setDisableTarget(null);
-            }}
-          >
-            Disable workflow
-          </Button>
-          <Button variant="outline" onClick={() => setDisableTarget(null)}>
-            Cancel
-          </Button>
-        </div>
-      </Modal>
+      </ConfirmModal>
     </PageContainer>
+  );
+}
+
+export default function WorkflowsPage() {
+  return (
+    <Suspense
+      fallback={
+        <PageContainer>
+          <PageHeader title="Workflows" description="Work Item lifecycles and run automations." />
+          <div className="space-y-2">
+            {[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+          </div>
+        </PageContainer>
+      }
+    >
+      <WorkflowsPageContent />
+    </Suspense>
   );
 }

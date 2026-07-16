@@ -17,6 +17,7 @@ import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { toastError } from '@/components/ui/toast'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import { PageContainer } from '@/components/layout/PageContainer'
@@ -296,10 +297,10 @@ export function WorkItemListView({
     )
   }
 
-  const tabs: { id: ListView; label: string; count: number }[] = [
-    { id: 'active', label: 'Active', count: counts.active },
-    { id: 'done', label: 'Done', count: counts.done },
-    { id: 'all', label: 'All', count: counts.all },
+  const tabItems: TabItem[] = [
+    { value: 'active', label: 'Active', count: counts.active },
+    { value: 'done', label: 'Done', count: counts.done },
+    { value: 'all', label: 'All', count: counts.all },
   ]
 
   // Breadcrumb trail: area (non-link) › this Workflow's pluralized noun (current page). The area is
@@ -313,42 +314,16 @@ export function WorkItemListView({
       <PageHeader title={title} breadcrumbs={crumbs} />
 
       {/* View tabs + display mode toggle */}
-      <div
-        role="tablist"
-        aria-label={`${title} view`}
-        className="flex items-center gap-1 border-b border-border mb-4 -mx-1 px-1 overflow-x-auto overflow-y-hidden"
-      >
-        {tabs.map((t) => {
-          const selected = t.id === view
-          return (
-            <button
-              key={t.id}
-              role="tab"
-              type="button"
-              aria-selected={selected}
-              onClick={() => setView(t.id)}
-              className={
-                'relative px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors ' +
-                (selected ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')
-              }
-            >
-              <span className="inline-flex items-center gap-1.5">
-                {t.label}
-                <span
-                  className={
-                    'inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-xs font-medium ' +
-                    (selected ? 'bg-foreground/10 text-foreground' : 'bg-muted text-muted-foreground')
-                  }
-                >
-                  {t.count}
-                </span>
-              </span>
-              {selected && <span aria-hidden="true" className="absolute left-0 right-0 -bottom-px h-0.5 bg-primary rounded-full" />}
-            </button>
-          )
-        })}
+      <div className="flex items-center border-b border-border mb-4 -mx-1 px-1">
+        <Tabs
+          items={tabItems}
+          value={view}
+          onValueChange={(v) => setView(v as ListView)}
+          ariaLabel={`${title} view`}
+          className="flex-1 min-w-0 border-b-0"
+        />
 
-        {/* Spacer + List/Board toggle pushed to the right */}
+        {/* List/Board toggle pushed to the right */}
         <div className="ml-auto flex items-center gap-0.5 pb-px shrink-0">
           <button
             type="button"

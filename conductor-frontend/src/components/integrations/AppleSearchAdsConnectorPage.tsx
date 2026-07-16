@@ -9,6 +9,7 @@ import {
   apiErrorMessage,
   type ConnectionDataResponse,
 } from '@/lib/api';
+import { Alert } from '@/components/ui/alert';
 import {
   ComposedChart,
   Line,
@@ -253,7 +254,7 @@ export default function AppleSearchAdsConnectorPage({ projectId }: { projectId: 
                 <Bar yAxisId="left" dataKey="newDownloads" name="New downloads"
                   fill="hsl(var(--primary))" radius={[2, 2, 0, 0]} maxBarSize={18} />
                 <Line yAxisId="right" type="monotone" dataKey="localSpend" name="Spend"
-                  stroke="#f59e0b" strokeWidth={2} dot={false} />
+                  stroke="hsl(var(--status-progress))" strokeWidth={2} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -344,7 +345,7 @@ export default function AppleSearchAdsConnectorPage({ projectId }: { projectId: 
         </p>
       )}
       {response.errorMessage && (
-        <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">{response.errorMessage}</p>
+        <Alert variant="warning" className="mt-1 text-xs">{response.errorMessage}</Alert>
       )}
       {response.fetchedAt && (
         <p className="text-xs text-muted-foreground mt-2">

@@ -12,6 +12,10 @@ import {
   type ConnectionDataResponse,
 } from '@/lib/api';
 import { ExternalLink } from 'lucide-react';
+import { Alert } from '@/components/ui/alert';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { ConnectorHeader } from './ConnectorHeader';
+import { toastError } from '@/components/ui/toast';
 
 interface ServiceCost {
   service: string;
@@ -105,7 +109,7 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
       );
       window.location.href = result.authorizationUrl;
     } catch (e) {
-      console.error('OAuth initiation failed', e);
+      toastError(apiErrorMessage(e, 'Could not start the Google authorization. Please try again.'));
       setAuthorizing(false);
     }
   };
@@ -123,7 +127,7 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
       );
       await loadData();
     } catch (e) {
-      console.error('Config save failed', e);
+      toastError(apiErrorMessage(e, 'Failed to save configuration'));
     } finally {
       setSaving(false);
     }
@@ -151,21 +155,21 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
 
     return (
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-6 flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">GCP Billing</h1>
-            <p className="text-sm text-muted-foreground mt-1">Finance · Google Cloud</p>
-          </div>
-          <a
-            href="https://console.cloud.google.com/billing"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
-          >
-            <ExternalLink className="h-3 w-3" />
-            Open GCP Console
-          </a>
-        </div>
+        <PageHeader
+          title="GCP Billing"
+          description="Finance · Google Cloud"
+          actions={
+            <a
+              href="https://console.cloud.google.com/billing"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Open GCP Console
+            </a>
+          }
+        />
 
         {!oauthConnected ? (
           /* Step 1: OAuth */
@@ -183,8 +187,9 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
               </div>
               <p className="text-xs text-muted-foreground ml-7">
                 In GCP Console, go to Billing → Billing export → BigQuery export and enable Standard export.{' '}
-                <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                  Open GCP Console →
+                <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-primary hover:underline">
+                  Open GCP Console
+                  <ExternalLink className="h-3 w-3" />
                 </a>
               </p>
             </div>
@@ -258,9 +263,7 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
               </div>
             </div>
             {errorBanner && (
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
-                <p className="text-xs text-yellow-700 dark:text-yellow-400">{errorBanner}</p>
-              </div>
+              <Alert variant="warning" className="text-xs">{errorBanner}</Alert>
             )}
             <button
               onClick={handleSaveConfig}
@@ -283,50 +286,21 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">GCP Billing</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Finance · {period ?? 'Current month'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {health === 'DEGRADED' && (
-            <span className="inline-flex items-center gap-1 text-xs text-yellow-600 dark:text-yellow-400 font-medium">
-              <span className="h-1.5 w-1.5 rounded-full bg-yellow-500 inline-block" />
-              Degraded
-            </span>
-          )}
-          {health === 'HEALTHY' && (
-            <span className="inline-flex items-center gap-1 text-xs text-green-600 dark:text-green-400 font-medium">
-              <span className="h-1.5 w-1.5 rounded-full bg-green-500 inline-block" />
-              Connected
-            </span>
-          )}
-          <a
-            href="https://console.cloud.google.com/billing"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
-          >
-            <ExternalLink className="h-3 w-3" />
-            Open GCP Console
-          </a>
-          <button
-            onClick={() => loadData(true)}
-            disabled={refreshing}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
-          >
-            {refreshing ? 'Refreshing…' : 'Refresh'}
-          </button>
-        </div>
-      </div>
+      <ConnectorHeader
+        title="GCP Billing"
+        subtitle={`Finance · ${period ?? 'Current month'}`}
+        status={health ?? null}
+        externalUrl="https://console.cloud.google.com/billing"
+        externalLabel="Open GCP Console"
+        onRefresh={() => loadData(true)}
+        refreshing={refreshing}
+      />
 
       {errorBanner && (
-        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3 mb-4">
-          <p className="text-xs font-medium text-yellow-800 dark:text-yellow-300">Live fetch failed</p>
-          <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-0.5 break-words">{errorBanner}</p>
-        </div>
+        <Alert variant="warning" className="mb-4 text-xs">
+          <p className="font-medium">Live fetch failed</p>
+          <p className="mt-0.5 break-words">{errorBanner}</p>
+        </Alert>
       )}
 
       {/* Summary */}
@@ -340,7 +314,7 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
             <div className="text-sm text-muted-foreground">Total this month</div>
           </div>
           {momDelta !== undefined && momDelta !== null && (
-            <div className={`text-sm font-medium pb-0.5 ${momDelta >= 0 ? 'text-red-500' : 'text-green-500'}`}>
+            <div className={`text-sm font-medium pb-0.5 ${momDelta >= 0 ? 'text-status-failed' : 'text-status-done'}`}>
               {momDelta >= 0 ? '+' : ''}{momDelta.toFixed(1)}% MoM
             </div>
           )}

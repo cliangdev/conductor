@@ -14,7 +14,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
-import { Modal } from '@/components/ui/modal'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSkeleton'
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
@@ -662,7 +662,11 @@ export function WorkItemDetailView({
         actions={headerActions || undefined}
       />
 
-      {/* Document tabs + Activity (+ Details on mobile) */}
+      {/* Document tabs + Activity (+ Details on mobile). TODO: not migrated to the shared <Tabs>
+          primitive (src/components/ui/tabs.tsx) — the tab set is dynamic (one per document, plus
+          Activity, plus a mobile-only Details tab with its own tabpanel/aria-controls), and the
+          "Details" tab reveals a second panel rather than swapping the same one, which the primitive
+          doesn't model. Revisit if Tabs grows multi-panel support. */}
       <div
         role="tablist"
         aria-label="Work item content"
@@ -782,24 +786,17 @@ export function WorkItemDetailView({
         />
       )}
 
-      <Modal
+      <ConfirmModal
         open={cancelConfirmOpen}
-        onOpenChange={setCancelConfirmOpen}
         title="Discard pending comments?"
         description={`You have ${pendingComments.length} unsaved comment${pendingComments.length !== 1 ? 's' : ''} that will be lost.`}
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setCancelConfirmOpen(false)}>
-              Keep reviewing
-            </Button>
-            <Button variant="destructive" size="sm" onClick={discardReview}>
-              Discard
-            </Button>
-          </div>
-        }
+        cancelLabel="Keep reviewing"
+        confirmLabel="Discard"
+        onConfirm={discardReview}
+        onCancel={() => setCancelConfirmOpen(false)}
       >
         <p className="text-sm text-muted-foreground">This can&apos;t be undone.</p>
-      </Modal>
+      </ConfirmModal>
     </PageContainer>
   )
 }

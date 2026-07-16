@@ -3,14 +3,16 @@
 import { Suspense, useEffect, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronLeft, History } from 'lucide-react'
+import { History } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getKnowledgePage } from '@/lib/knowledge-api'
-import type { KnowledgePageView } from '@/lib/knowledge-api'
+import { getKnowledgePage, listKnowledgeRevisions } from '@/lib/knowledge-api'
+import type { KnowledgePageRevisionView, KnowledgePageView } from '@/lib/knowledge-api'
 import { apiErrorMessage } from '@/lib/api'
+import { timeAgo } from '@/lib/format'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { KnowledgeHistoryPanel } from '@/components/knowledge/KnowledgeHistoryPanel'
-import { Badge } from '@/components/ui/badge'
+import { KnowledgeTypeIcon } from '@/components/knowledge/KnowledgeTypeIcon'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { Button } from '@/components/ui/button'
 import { KnowledgePageSkeleton } from '@/components/knowledge/KnowledgePageSkeleton'
 import { Alert } from '@/components/ui/alert'
@@ -30,6 +32,7 @@ function KnowledgePageContent() {
   const path = searchParams.get('path') ?? ''
 
   const [page, setPage] = useState<KnowledgePageView | null>(null)
+  const [latestRevision, setLatestRevision] = useState<KnowledgePageRevisionView | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notFound, setNotFound] = useState(false)
@@ -37,19 +40,37 @@ function KnowledgePageContent() {
 
   useEffect(() => {
     if (!accessToken || !path) return
+    let cancelled = false
     setLoading(true)
     setNotFound(false)
     setError(null)
+    setLatestRevision(null)
     getKnowledgePage(projectId, path, accessToken)
       .then((result) => {
+        if (cancelled) return
         if (!result) {
           setNotFound(true)
           return
         }
         setPage(result)
       })
-      .catch((err) => setError(apiErrorMessage(err, 'Failed to load page')))
-      .finally(() => setLoading(false))
+      .catch((err) => {
+        if (!cancelled) setError(apiErrorMessage(err, 'Failed to load page'))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    // Best-effort — the revised-at line is a nice-to-have, not worth failing the page over.
+    listKnowledgeRevisions(projectId, path, accessToken)
+      .then((revs) => {
+        if (!cancelled) setLatestRevision(revs[0] ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setLatestRevision(null)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [accessToken, projectId, path])
 
   function handleWikiLink(target: string) {
@@ -91,30 +112,36 @@ function KnowledgePageContent() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="border-b border-border bg-background px-4 sm:px-6 lg:px-8 py-4 shrink-0">
-        <div className="max-w-4xl mx-auto flex items-center gap-3">
-          <Link
-            href={`/app/projects/${projectId}/knowledge`}
-            className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-            title="Back to knowledge index"
-          >
-            <ChevronLeft className="h-5 w-5" />
-          </Link>
-          <h1 className="text-xl sm:text-2xl font-semibold text-foreground flex-1 min-w-0 truncate">
-            {page.title ?? page.path}
-          </h1>
-          <Badge variant="outline" className="shrink-0">{page.type}</Badge>
-          <Button variant="outline" size="sm" onClick={() => setShowHistory(true)}>
-            <History className="h-3.5 w-3.5 mr-1.5" />
-            History
-          </Button>
+        <div className="max-w-[45rem] mx-auto">
+          <p className="text-xs text-muted-foreground truncate mb-2">{page.path}</p>
+          <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <KnowledgeTypeIcon type={page.type} className="h-4.5 w-4.5" />
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-xl font-[650] tracking-[-0.015em] text-foreground truncate">
+                  {page.title ?? page.path}
+                </h1>
+                <StatusBadge status={page.type} />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                Maintained by Librarian
+                {latestRevision && ` · revised ${timeAgo(latestRevision.createdAt)}`}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setShowHistory(true)} className="shrink-0">
+              <History className="h-3.5 w-3.5 mr-1.5" />
+              History
+            </Button>
+          </div>
         </div>
-        <p className="max-w-4xl mx-auto mt-1 pl-8 text-xs text-muted-foreground truncate">{page.path}</p>
       </div>
 
       {/* Content */}
       <div className="flex-1 relative overflow-hidden">
         <div className="h-full overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="max-w-4xl mx-auto">
+          <div className="max-w-[45rem] mx-auto">
             {page.content ? (
               <MarkdownRenderer content={page.content} onWikiLink={handleWikiLink} basePath={dirOf(page.path)} />
             ) : (

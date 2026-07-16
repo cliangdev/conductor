@@ -98,7 +98,7 @@ export default function KnowledgeIndexPage() {
 
   return (
     <div className="h-full overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-[45rem] mx-auto">
         <MarkdownRenderer content={page!.content ?? ''} onWikiLink={handleWikiLink} basePath="" />
       </div>
     </div>

@@ -13,6 +13,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'rec
 import { ExternalLink } from 'lucide-react';
 import { ConnectorHeader } from './ConnectorHeader';
 import { StatCard } from './StatCard';
+import { Alert } from '@/components/ui/alert';
 import { formatDuration, formatPercent } from '@/lib/format';
 
 interface IntegrationData {
@@ -181,12 +182,12 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
       </div>
 
       {data?.queryErrors && data.queryErrors.length > 0 && (
-        <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 mb-6 text-xs text-yellow-700 dark:text-yellow-400">
+        <Alert variant="warning" className="mb-6 text-xs">
           <p className="font-medium mb-1">Some metrics could not be loaded:</p>
           <ul className="list-disc list-inside space-y-0.5">
             {data.queryErrors.map((e, i) => <li key={i}>{e}</li>)}
           </ul>
-        </div>
+        </Alert>
       )}
 
       <div className="bg-card rounded-lg border border-border p-6 mb-6">
@@ -232,7 +233,7 @@ export default function PostHogConnectorPage({ projectId }: { projectId: string 
           </p>
         )}
         {response.errorMessage && (
-          <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">{response.errorMessage}</p>
+          <Alert variant="warning" className="mt-2 text-xs">{response.errorMessage}</Alert>
         )}
       </div>
 

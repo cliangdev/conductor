@@ -1,11 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { vi } from 'vitest'
-import type { KnowledgePageView } from '@/lib/knowledge-api'
+import type { KnowledgePageRevisionView, KnowledgePageView } from '@/lib/knowledge-api'
 
-// Plain (non-vi.fn) stub so rejected-promise paths aren't flagged as unhandled.
-let getKnowledgePageBehavior: () => Promise<KnowledgePageView | null> = () =>
+// Plain (non-vi.fn) stubs so rejected-promise paths aren't flagged as unhandled.
+let getKnowledgePageBehavior: (projectId: string, path: string) => Promise<KnowledgePageView | null> = () =>
   Promise.resolve(basePage())
+let listKnowledgeRevisionsBehavior: (
+  projectId: string,
+  path: string
+) => Promise<KnowledgePageRevisionView[]> = () => Promise.resolve([])
 
 const push = vi.fn()
 const searchParams = new URLSearchParams({ path: 'engineering/architecture.md' })
@@ -21,7 +25,14 @@ vi.mock('@/contexts/AuthContext', () => ({
 }))
 
 vi.mock('@/lib/knowledge-api', () => ({
-  getKnowledgePage: (...args: unknown[]) => getKnowledgePageBehavior.call(null, ...(args as [])),
+  getKnowledgePage: (...args: unknown[]) => getKnowledgePageBehavior.call(null, ...(args as [string, string])),
+  listKnowledgeRevisions: (...args: unknown[]) =>
+    listKnowledgeRevisionsBehavior.call(null, ...(args as [string, string])),
+}))
+
+vi.mock('@/lib/format', () => ({
+  // Identity-ish stub so the two revisions in the race test are distinguishable in the DOM.
+  timeAgo: (iso: string) => `ts:${iso}`,
 }))
 
 vi.mock('@/components/markdown/MarkdownRenderer', () => ({
@@ -49,15 +60,28 @@ describe('Knowledge page view', () => {
   beforeEach(() => {
     push.mockClear()
     getKnowledgePageBehavior = () => Promise.resolve(basePage())
+    listKnowledgeRevisionsBehavior = () => Promise.resolve([])
   })
 
   it('renders the title, type badge, path, and markdown content', async () => {
     render(<KnowledgePageRoute />)
 
     expect(await screen.findByText('Architecture')).toBeInTheDocument()
-    expect(screen.getByText('component')).toBeInTheDocument()
+    // StatusBadge humanizes the raw `type` string ("component" → "Component").
+    expect(screen.getByText('Component')).toBeInTheDocument()
     expect(screen.getByText('engineering/architecture.md')).toBeInTheDocument()
+    expect(screen.getByText(/maintained by librarian/i)).toBeInTheDocument()
     expect(screen.getByTestId('markdown')).toHaveTextContent('Some body text.')
+  })
+
+  it('shows the revised-at line once the latest revision loads', async () => {
+    listKnowledgeRevisionsBehavior = () =>
+      Promise.resolve([
+        { version: 3, changeKind: 'UPDATE', createdAt: new Date().toISOString(), actor: { kind: 'agent', id: 'knowledge-librarian' } },
+      ])
+    render(<KnowledgePageRoute />)
+
+    expect(await screen.findByText(/maintained by librarian · revised/i)).toBeInTheDocument()
   })
 
   it('shows a not-found message when the page does not exist', async () => {
@@ -80,5 +104,43 @@ describe('Knowledge page view', () => {
     fireEvent.click(historyButton)
 
     await waitFor(() => expect(screen.getByTestId('history-panel')).toBeInTheDocument())
+  })
+
+  it('ignores a stale revisions response from the previously-viewed page after navigating away', async () => {
+    // Simulates quick navigation A -> B where A's revisions request resolves after B's.
+    function deferred<T>() {
+      let resolve!: (value: T) => void
+      const promise = new Promise<T>((res) => {
+        resolve = res
+      })
+      return { promise, resolve }
+    }
+
+    const pathA = 'engineering/architecture.md'
+    const pathB = 'engineering/other.md'
+    const revisionsA = deferred<KnowledgePageRevisionView[]>()
+    const revisionsB = deferred<KnowledgePageRevisionView[]>()
+
+    getKnowledgePageBehavior = (_projectId, path) => Promise.resolve({ ...basePage(), path })
+    listKnowledgeRevisionsBehavior = (_projectId, path) => (path === pathA ? revisionsA.promise : revisionsB.promise)
+
+    searchParams.set('path', pathA)
+    const { rerender } = render(<KnowledgePageRoute />)
+    await screen.findByText('Architecture')
+
+    // Navigate to page B before A's revisions request has resolved.
+    searchParams.set('path', pathB)
+    rerender(<KnowledgePageRoute />)
+    await waitFor(() => expect(screen.getByText('engineering/other.md')).toBeInTheDocument())
+
+    // B's (later-issued) revisions response lands first, then A's stale one arrives after.
+    revisionsB.resolve([{ version: 5, changeKind: 'UPDATE', createdAt: 'B_TIME' }])
+    await screen.findByText(/ts:B_TIME/)
+    revisionsA.resolve([{ version: 1, changeKind: 'UPDATE', createdAt: 'A_TIME' }])
+
+    // Give the stale A promise a tick to (incorrectly) apply if the guard were missing.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(screen.queryByText(/ts:A_TIME/)).not.toBeInTheDocument()
+    expect(screen.getByText(/ts:B_TIME/)).toBeInTheDocument()
   })
 })

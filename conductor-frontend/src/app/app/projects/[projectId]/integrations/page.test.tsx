@@ -84,7 +84,7 @@ describe('IntegrationsPage — JSON field (gcp connector)', () => {
   it('renders a textarea for a JSON-typed field and blocks connect on invalid JSON', async () => {
     render(<IntegrationsPage />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Browse' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'Browse' }))
     fireEvent.click(await screen.findByRole('button', { name: /add/i }))
 
     const modal = await screen.findByTestId('modal')
@@ -106,7 +106,7 @@ describe('IntegrationsPage — JSON field (gcp connector)', () => {
     })
     render(<IntegrationsPage />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Browse' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'Browse' }))
     fireEvent.click(await screen.findByRole('button', { name: /add/i }))
 
     const modal = await screen.findByTestId('modal')

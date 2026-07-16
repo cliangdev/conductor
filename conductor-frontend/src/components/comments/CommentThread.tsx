@@ -4,8 +4,7 @@ import { useState } from 'react'
 import { XIcon } from 'lucide-react'
 import { apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api'
 import { toastError } from '@/components/ui/toast'
-import { Modal } from '@/components/ui/modal'
-import { Button } from '@/components/ui/button'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { Badge } from '@/components/ui/badge'
 import { NewCommentForm } from './NewCommentForm'
 import type { Comment } from './types'
@@ -206,26 +205,18 @@ export function CommentThread({
         </div>
       )}
 
-      <Modal
+      <ConfirmModal
         open={confirmDeleteOpen}
-        onOpenChange={setConfirmDeleteOpen}
         title="Delete comment?"
         description="This can't be undone."
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => setConfirmDeleteOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" size="sm" onClick={handleDelete}>
-              Delete
-            </Button>
-          </div>
-        }
+        confirmLabel="Delete"
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmDeleteOpen(false)}
       >
         <p className="text-sm text-muted-foreground">
           {comment.content.length > 120 ? `${comment.content.slice(0, 120)}…` : comment.content}
         </p>
-      </Modal>
+      </ConfirmModal>
     </div>
   )
 }

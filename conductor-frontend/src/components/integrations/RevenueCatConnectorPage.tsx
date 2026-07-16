@@ -15,6 +15,7 @@ import {
 import { ExternalLink } from 'lucide-react';
 import { StatCard } from './StatCard';
 import { ConnectorHeader } from './ConnectorHeader';
+import { Alert } from '@/components/ui/alert';
 import { formatUsd } from '@/lib/format';
 
 interface SeriesPoint {
@@ -295,7 +296,7 @@ export default function RevenueCatConnectorPage({ projectId }: { projectId: stri
           </p>
         )}
         {response.errorMessage && (
-          <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">{response.errorMessage}</p>
+          <Alert variant="warning" className="mt-2 text-xs">{response.errorMessage}</Alert>
         )}
       </div>
 
