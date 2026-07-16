@@ -4,29 +4,26 @@
 // list — title, status filter, and type filter all derive from the bound Workflow's view metadata, and
 // the Work Items are fetched scoped to the slug (GET /issues?workflow=<slug>). It is mounted at the
 // canonical /{projectId}/{area}/{noun} route (e.g. /engineering/issues).
+//
+// Redesigned (design-system.md) as a Linear-style grouped row list — see WorkItemRow/WorkItemGroup for
+// row anatomy, useWorkItemListState for filter/sort/selection/keyboard state.
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronDown, Check, LayoutDashboardIcon, ListIcon, MessageSquare } from 'lucide-react'
+import { CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, MessageSquare, SearchX } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet, apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api'
+import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
-import { StatusBadge } from '@/components/ui/status-badge'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
 import { toastError } from '@/components/ui/toast'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  DropdownMenuLabel,
-} from '@/components/ui/dropdown-menu'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
-import { VerdictIcon } from '@/components/reviews/verdict'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
+import { VerdictIcon } from '@/components/reviews/verdict'
+import { timeAgo } from '@/lib/format'
+import { readPersisted, readPersistedFlag, writePersisted } from '@/lib/persisted'
 import {
   categoriesForView,
   fetchMembersCached,
@@ -38,263 +35,26 @@ import {
   workItemDetailPath,
 } from '@/lib/workflows'
 import { WorkItemBoardView } from '@/components/workitems/WorkItemBoardView'
+import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
+import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
+import { ListToolbar } from '@/components/workitems/ListToolbar'
+import { BulkActionBar } from '@/components/workitems/BulkActionBar'
+import { UserAvatar } from '@/components/workitems/UserAvatar'
+import { useWorkItemListState } from '@/components/workitems/useWorkItemListState'
+import type {
+  IssueAssignee,
+  IssueReviewer,
+  IssueWithReviewers,
+  ListView,
+  Member,
+} from '@/components/workitems/listTypes'
 import type { MemberRole } from '@/types'
 
 type DisplayMode = 'list' | 'board'
 
-interface IssueAssignee {
-  userId: string
-  name: string
-  avatarUrl?: string | null
-}
-
-interface Issue {
-  id: string
-  title: string
-  type: string
-  status: string
-  updatedAt: string
-  unresolvedCommentCount?: number
-  displayId?: string
-  sequenceNumber?: number
-  assignee?: IssueAssignee | null
-  workflow?: string
-}
-
-interface IssueReviewer {
-  userId: string
-  name: string
-  avatarUrl?: string
-  reviewVerdict?: 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'
-}
-
-interface IssueWithReviewers extends Issue {
-  reviewers?: IssueReviewer[]
-}
-
-interface Member {
-  userId: string
-  name: string
-  email: string
-  avatarUrl?: string | null
-  role: MemberRole
-}
-
-type View = 'active' | 'done' | 'all'
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  })
-}
-
-type AvatarSize = 4 | 5 | 6
-
-// Static lookup, not an interpolated `w-${size}` string — Tailwind can't see a template class at
-// build time and would drop it.
-const AVATAR_SIZE_CLASSES: Record<AvatarSize, string> = {
-  4: 'w-4 h-4',
-  5: 'w-5 h-5',
-  6: 'w-6 h-6',
-}
-
-function UserAvatar({ name, avatarUrl, size = 6 }: { name: string; avatarUrl?: string | null; size?: AvatarSize }) {
-  const cls = `${AVATAR_SIZE_CLASSES[size]} rounded-full`
-  if (avatarUrl) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={avatarUrl} alt={name} className={`${cls} border border-border object-cover`} title={name} />
-  }
-  return (
-    <div className={`${cls} bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground border border-border`} title={name}>
-      {name.charAt(0).toUpperCase()}
-    </div>
-  )
-}
-
-// Dropdown for assigning a member to an issue
-function AssigneeCell({
-  issueId,
-  projectId,
-  assignee,
-  members,
-  token,
-  onChanged,
-}: {
-  issueId: string
-  projectId: string
-  assignee?: IssueAssignee | null
-  members: Member[]
-  token: string
-  onChanged: (assignee: IssueAssignee | null) => void
-}) {
-  const [saving, setSaving] = useState(false)
-
-  async function handleSelect(member: Member | null) {
-    setSaving(true)
-    try {
-      await apiPatch(
-        `/api/v2/projects/${projectId}/work-items/${issueId}`,
-        { assigneeId: member ? member.userId : '' },
-        token
-      )
-      onChanged(member ? { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl } : null)
-    } catch (err) {
-      toastError(apiErrorMessage(err, 'Failed to update assignee'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button disabled={saving} className="focus:outline-none">
-          <Badge variant="outline" className="cursor-pointer hover:opacity-80 transition-opacity gap-1.5 font-normal">
-            {assignee ? (
-              <>
-                <UserAvatar name={assignee.name} avatarUrl={assignee.avatarUrl} size={4} />
-                <span className="max-w-[72px] truncate">{assignee.name}</span>
-              </>
-            ) : (
-              <span className="text-muted-foreground">Unassigned</span>
-            )}
-            <ChevronDown className="h-3 w-3 opacity-60" />
-          </Badge>
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-52">
-        {assignee && (
-          <>
-            <DropdownMenuItem
-              onClick={() => handleSelect(null)}
-              className="cursor-pointer text-destructive focus:text-destructive"
-            >
-              Unassign
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-          </>
-        )}
-        {members.map((m) => (
-          <DropdownMenuItem
-            key={m.userId}
-            onClick={() => handleSelect(m)}
-            className="cursor-pointer gap-2"
-          >
-            <UserAvatar name={m.name} avatarUrl={m.avatarUrl} size={5} />
-            <span className="truncate flex-1">{m.name}</span>
-            {assignee?.userId === m.userId && <Check className="h-3.5 w-3.5 text-primary" />}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-// Dropdown for managing issue reviewers inline
-function ReviewerCell({
-  issueId,
-  projectId,
-  reviewers,
-  members,
-  token,
-  onChanged,
-}: {
-  issueId: string
-  projectId: string
-  reviewers: IssueReviewer[]
-  members: Member[]
-  token: string
-  onChanged: (reviewers: IssueReviewer[]) => void
-}) {
-  const [saving, setSaving] = useState<string | null>(null)
-
-  const reviewerMembers = members.filter((m) => m.role === 'REVIEWER')
-  const assignedIds = new Set(reviewers.map((r) => r.userId))
-
-  async function toggleReviewer(member: Member) {
-    setSaving(member.userId)
-    try {
-      if (assignedIds.has(member.userId)) {
-        await apiDelete(
-          `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers/${member.userId}`,
-          token
-        )
-        onChanged(reviewers.filter((r) => r.userId !== member.userId))
-      } else {
-        await apiPost(
-          `/api/v2/projects/${projectId}/work-items/${issueId}/reviewers`,
-          { userId: member.userId },
-          token
-        )
-        onChanged([...reviewers, { userId: member.userId, name: member.name, avatarUrl: member.avatarUrl ?? undefined }])
-      }
-    } catch (err) {
-      toastError(
-        apiErrorMessage(err, assignedIds.has(member.userId) ? 'Failed to remove reviewer' : 'Failed to add reviewer')
-      )
-    } finally {
-      setSaving(null)
-    }
-  }
-
-  const triggerLabel = reviewers.length === 0 ? (
-    <span className="text-muted-foreground">No reviewers</span>
-  ) : (
-    <span className="flex items-center gap-0.5">
-      {reviewers.map((r) => (
-        <span key={r.userId} className="flex items-center gap-0.5">
-          <UserAvatar name={r.name} avatarUrl={r.avatarUrl} size={4} />
-          <VerdictIcon verdict={r.reviewVerdict} />
-        </span>
-      ))}
-    </span>
-  )
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button className="focus:outline-none">
-          <Badge variant="outline" className="cursor-pointer hover:opacity-80 transition-opacity gap-1 font-normal">
-            {triggerLabel}
-            <ChevronDown className="h-3 w-3 opacity-60" />
-          </Badge>
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-52">
-        <DropdownMenuLabel className="text-xs text-muted-foreground font-medium">Reviewers</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {reviewerMembers.length === 0 ? (
-          <DropdownMenuItem disabled>No reviewer-role members</DropdownMenuItem>
-        ) : (
-          reviewerMembers.map((m) => {
-            const assigned = assignedIds.has(m.userId)
-            const isSaving = saving === m.userId
-            return (
-              <DropdownMenuItem
-                key={m.userId}
-                disabled={isSaving}
-                onClick={() => toggleReviewer(m)}
-                className="cursor-pointer gap-2"
-              >
-                <span className="w-4 shrink-0 flex items-center justify-center">
-                  {assigned && <Check className="h-3.5 w-3.5" />}
-                </span>
-                <UserAvatar name={m.name} avatarUrl={m.avatarUrl} size={5} />
-                <span className="truncate flex-1">{m.name}</span>
-              </DropdownMenuItem>
-            )
-          })
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 /**
- * The list (table/card) view of a Workflow's Work Items, scoped to one slug. Title, status options, and
- * type options all derive from the Workflow view; the fetch is always workflow-scoped.
+ * The list (grouped rows / board) view of a Workflow's Work Items, scoped to one slug. Title, status
+ * options, and type options all derive from the Workflow view; the fetch is always workflow-scoped.
  */
 export function WorkItemListView({
   projectId,
@@ -311,7 +71,7 @@ export function WorkItemListView({
   const searchParams = useSearchParams()
 
   const viewParam = searchParams.get('view')
-  const view: View = viewParam === 'done' || viewParam === 'all' ? viewParam : 'active'
+  const view: ListView = viewParam === 'done' || viewParam === 'all' ? viewParam : 'active'
 
   // Display mode: list (default) or board. Priority: URL param > explicit localStorage > workflow defaultView.
   const modeKey = `wv_mode_${projectId}_${slug}`
@@ -319,19 +79,13 @@ export function WorkItemListView({
   const [mode, setMode] = useState<DisplayMode>(() => {
     const p = searchParams.get('mode')
     if (p === 'board' || p === 'list') return p
-    try {
-      const stored = localStorage.getItem(modeKey)
-      if (stored === 'board' || stored === 'list') return stored
-    } catch { /* */ }
-    return 'list'
+    return readPersisted<DisplayMode>(modeKey, (v): v is DisplayMode => v === 'board' || v === 'list', 'list')
   })
 
   function setDisplayMode(next: DisplayMode) {
     setMode(next)
-    try {
-      localStorage.setItem(modeKey, next)
-      localStorage.setItem(modeExplicitKey, '1')
-    } catch { /* */ }
+    writePersisted(modeKey, next)
+    writePersisted(modeExplicitKey, '1')
   }
 
   const [issues, setIssues] = useState<IssueWithReviewers[]>([])
@@ -343,13 +97,15 @@ export function WorkItemListView({
     const cached = getMembersCacheEntry(projectId)
     return cached?.find((m) => m.userId === user?.id)?.role ?? 'REVIEWER'
   })
+  // REVIEWERs can't mutate Work Items — gates the assignee control, bulk selection, and the palette's
+  // Selection group. Computed here (not after the loading/error early returns) since it feeds the
+  // useWorkItemListState hook call below, and hooks can't follow a conditional return.
+  const canEdit = userRole !== 'REVIEWER'
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [typeFilter, setTypeFilter] = useState<string>('All')
-  const [statusFilter, setStatusFilter] = useState<string>('All')
 
-  // The bound Workflow's display metadata — the single source of status labels/categories and the
-  // allowed status/type option lists.
+  // The bound Workflow's display metadata — the single source of status labels/colors/categories and
+  // the allowed status/type option lists.
   const workflowView = useWorkflowView(projectId, slug, accessToken)
 
   // Apply workflow's defaultView once it loads — only if no URL param or explicit user preference.
@@ -358,18 +114,15 @@ export function WorkItemListView({
     if (!wfDefault || (wfDefault !== 'list' && wfDefault !== 'board')) return
     const p = searchParams.get('mode')
     if (p === 'board' || p === 'list') return
-    try {
-      const explicit = localStorage.getItem(modeExplicitKey)
-      if (explicit) return
-    } catch { /* */ }
+    if (readPersistedFlag(modeExplicitKey)) return
     setMode(wfDefault)
   }, [workflowView?.defaultView, modeExplicitKey, searchParams])
 
   const title = pluralizeNoun(noun)
+  const lowerNoun = title.toLowerCase()
 
-  function setView(next: View) {
+  function setView(next: ListView) {
     if (next === view) return
-    setStatusFilter('All')
     const sp = new URLSearchParams(searchParams.toString())
     if (next === 'active') sp.delete('view')
     else sp.set('view', next)
@@ -377,64 +130,62 @@ export function WorkItemListView({
     router.replace(qs ? `${pathname}?${qs}` : pathname)
   }
 
-  useEffect(() => {
+  const loadIssues = useCallback(async () => {
     if (!accessToken) return
+    try {
+      const [issueData, memberData] = await Promise.all([
+        // Always workflow-scoped — this page renders exactly one Workflow's Work Items.
+        apiGet<IssueWithReviewers[]>(`/api/v2/projects/${projectId}/work-items?workflow=${slug}`, accessToken),
+        // Shared cache: deduplicates the concurrent fetch from PermissionsContext.
+        fetchMembersCached(projectId, accessToken),
+      ])
+      setIssues(issueData)
+      setMembers(memberData)
+      const currentMember = memberData.find((m) => m.userId === user?.id)
+      if (currentMember) setUserRole(currentMember.role)
+      // Show the list immediately — reviewer cells fill in after the second round.
+      setLoading(false)
 
-    async function fetchAll() {
-      try {
-        const [issueData, memberData] = await Promise.all([
-          // Always workflow-scoped — this page renders exactly one Workflow's Work Items.
-          apiGet<IssueWithReviewers[]>(`/api/v2/projects/${projectId}/work-items?workflow=${slug}`, accessToken!),
-          // Shared cache: deduplicates the concurrent fetch from PermissionsContext.
-          fetchMembersCached(projectId, accessToken!),
-        ])
-        setIssues(issueData)
-        setMembers(memberData)
-        const currentMember = memberData.find((m) => m.userId === user?.id)
-        if (currentMember) setUserRole(currentMember.role)
-        // Show the table immediately — reviewer cells fill in after the second round.
-        setLoading(false)
-
-        // Fetch reviewers for all issues in parallel (second round, non-blocking)
-        const reviewerResults = await Promise.allSettled(
-          issueData.map((issue) =>
-            apiGet<IssueReviewer[]>(
-              `/api/v2/projects/${projectId}/work-items/${issue.id}/reviewers`,
-              accessToken!
-            )
-          )
+      // Fetch reviewers for all issues in parallel (second round, non-blocking)
+      const reviewerResults = await Promise.allSettled(
+        issueData.map((issue) =>
+          apiGet<IssueReviewer[]>(`/api/v2/projects/${projectId}/work-items/${issue.id}/reviewers`, accessToken)
         )
-        setIssues(issueData.map((issue, i) => ({
+      )
+      setIssues(
+        issueData.map((issue, i) => ({
           ...issue,
           reviewers: reviewerResults[i].status === 'fulfilled' ? reviewerResults[i].value : [],
-        })))
-      } catch (err) {
-        setError(apiErrorMessage(err, `Failed to load ${title.toLowerCase()}`))
-        setLoading(false)
-      }
+        }))
+      )
+    } catch (err) {
+      setError(apiErrorMessage(err, `Failed to load ${title.toLowerCase()}`))
+      setLoading(false)
     }
-
-    fetchAll()
   }, [accessToken, projectId, slug, user?.id, title])
 
+  useEffect(() => {
+    void loadIssues()
+  }, [loadIssues])
+
   function updateIssueStatus(issueId: string, newStatus: string) {
-    setIssues((prev) => prev.map((i) => i.id === issueId ? { ...i, status: newStatus } : i))
+    setIssues((prev) => prev.map((i) => (i.id === issueId ? { ...i, status: newStatus } : i)))
   }
 
   function updateIssueAssignee(issueId: string, assignee: IssueAssignee | null) {
-    setIssues((prev) => prev.map((i) => i.id === issueId ? { ...i, assignee } : i))
+    setIssues((prev) => prev.map((i) => (i.id === issueId ? { ...i, assignee } : i)))
   }
 
   function updateIssueReviewers(issueId: string, reviewers: IssueReviewer[]) {
-    setIssues((prev) => prev.map((i) => i.id === issueId ? { ...i, reviewers } : i))
+    setIssues((prev) => prev.map((i) => (i.id === issueId ? { ...i, reviewers } : i)))
   }
 
   // The status's lane category (open | in_progress | terminal), resolved via the bound Workflow.
-  function categoryOf(issue: Issue): string {
+  function categoryOf(issue: IssueWithReviewers): string {
     return statusMeta(workflowView, issue.status).category
   }
 
-  function isInView(issue: Issue, target: View): boolean {
+  function isInView(issue: IssueWithReviewers, target: ListView): boolean {
     if (target === 'all') return true
     return (categoriesForView(target) as string[]).includes(categoryOf(issue))
   }
@@ -449,21 +200,15 @@ export function WorkItemListView({
 
   const issuesInView = issues.filter((issue) => isInView(issue, view))
 
-  const filteredIssues = issuesInView.filter((issue) => {
-    if (typeFilter !== 'All' && issue.type !== typeFilter) return false
-    if (statusFilter !== 'All' && issue.status !== statusFilter) return false
-    return true
-  })
-
-  // Type filter: the Workflow's allowed types (falling back to the types that actually appear on Work
-  // Items until the view loads).
+  // Type filter options: the Workflow's allowed types (falling back to the types that actually appear
+  // on Work Items until the view loads).
   const typeSet = new Set<string>()
   for (const t of workflowView?.types ?? []) typeSet.add(t)
   if (typeSet.size === 0) for (const i of issues) typeSet.add(i.type)
-  const typeOptions = ['All', ...typeSet]
+  const typeOptions = [...typeSet]
 
-  // Status filter: the Workflow's statuses whose category belongs to the active tab, labelled via the
-  // Workflow view. Value is the status id; the visible text is its label.
+  // Status filter options: the Workflow's statuses whose category belongs to the active tab, labelled
+  // via the Workflow view.
   const statusCats = categoriesForView(view) as string[]
   const statusOptions: { id: string; label: string }[] = []
   const seenStatus = new Set<string>()
@@ -474,18 +219,70 @@ export function WorkItemListView({
     }
   }
 
-  const statusFilterValue =
-    statusFilter === 'All' || statusOptions.some((o) => o.id === statusFilter) ? statusFilter : 'All'
+  const detailArea = workflowView?.area ?? slug
+
+  const bulkStatusTriggerRef = useRef<HTMLButtonElement>(null)
+  const bulkAssignTriggerRef = useRef<HTMLButtonElement>(null)
+
+  const listState = useWorkItemListState({
+    storageKeyPrefix: `${projectId}_${slug}`,
+    view,
+    issuesInView,
+    workflowView,
+    canEdit,
+    bulkStatusTriggerRef,
+    bulkAssignTriggerRef,
+  })
+
+  // One shared bulk helper (bulkChangeStatus/bulkAssign were near-identical clones): runs `mutate`
+  // over `ids` concurrently (Promise.allSettled, not sequential awaits — one slow/failing item can't
+  // block the rest), skips items already at the target value, keeps only the failed ids selected on
+  // partial failure (so the user can retry just those), and refetches once at the end either way.
+  async function runBulkMutation(ids: string[], mutate: (id: string) => Promise<unknown>, failureNoun: string) {
+    if (ids.length === 0) {
+      listState.clearSelection()
+      return
+    }
+    listState.setBulkInFlight(true)
+    try {
+      const results = await Promise.allSettled(ids.map((id) => mutate(id)))
+      const failedIds = ids.filter((_, i) => results[i].status === 'rejected')
+      if (failedIds.length > 0) {
+        toastError(`${failedIds.length} of ${ids.length} Work Items failed to update ${failureNoun}`)
+        listState.setSelection(failedIds)
+      } else {
+        listState.clearSelection()
+      }
+      await loadIssues()
+    } finally {
+      listState.setBulkInFlight(false)
+    }
+  }
+
+  async function bulkChangeStatus(newStatus: string) {
+    const ids = [...listState.selected].filter((id) => issues.find((i) => i.id === id)?.status !== newStatus)
+    await runBulkMutation(
+      ids,
+      (id) => apiPatch(`/api/v2/projects/${projectId}/work-items/${id}`, { status: newStatus }, accessToken!),
+      'status'
+    )
+  }
+
+  async function bulkAssign(member: Member | null) {
+    const targetId = member?.userId ?? null
+    const ids = [...listState.selected].filter((id) => (issues.find((i) => i.id === id)?.assignee?.userId ?? null) !== targetId)
+    await runBulkMutation(
+      ids,
+      (id) => apiPatch(`/api/v2/projects/${projectId}/work-items/${id}`, { assigneeId: member ? member.userId : '' }, accessToken!),
+      'assignee'
+    )
+  }
 
   if (loading) {
     return (
       <PageContainer>
         <PageHeader title={title} />
-        <div className="space-y-2 mt-2">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} className="h-10" style={{ opacity: 1 - i * 0.1 }} />
-          ))}
-        </div>
+        <WorkItemListSkeleton />
       </PageContainer>
     )
   }
@@ -499,23 +296,11 @@ export function WorkItemListView({
     )
   }
 
-  const canEdit = userRole !== 'REVIEWER'
-
-  const tabs: { id: View; label: string; count: number }[] = [
+  const tabs: { id: ListView; label: string; count: number }[] = [
     { id: 'active', label: 'Active', count: counts.active },
     { id: 'done', label: 'Done', count: counts.done },
     { id: 'all', label: 'All', count: counts.all },
   ]
-
-  const allStatusLabel = view === 'done' ? 'All done/closed' : view === 'active' ? 'All active' : 'All'
-
-  const filtersAreActive = typeFilter !== 'All' || statusFilterValue !== 'All'
-
-  const lowerNoun = noun.toLowerCase()
-
-  // The Workflow's area drives the workflow-scoped detail URL. The slug (lowercased by the builder) is a
-  // safe fallback until the view loads, since area defaults to the slug for single-Workflow areas.
-  const detailArea = workflowView?.area ?? slug
 
   // Breadcrumb trail: area (non-link) › this Workflow's pluralized noun (current page). The area is
   // sourced from the bound Workflow's view; it is omitted until the view loads or when unset.
@@ -544,9 +329,7 @@ export function WorkItemListView({
               onClick={() => setView(t.id)}
               className={
                 'relative px-3 py-2 text-sm font-medium whitespace-nowrap transition-colors ' +
-                (selected
-                  ? 'text-foreground'
-                  : 'text-muted-foreground hover:text-foreground')
+                (selected ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')
               }
             >
               <span className="inline-flex items-center gap-1.5">
@@ -554,20 +337,13 @@ export function WorkItemListView({
                 <span
                   className={
                     'inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-xs font-medium ' +
-                    (selected
-                      ? 'bg-foreground/10 text-foreground'
-                      : 'bg-muted text-muted-foreground')
+                    (selected ? 'bg-foreground/10 text-foreground' : 'bg-muted text-muted-foreground')
                   }
                 >
                   {t.count}
                 </span>
               </span>
-              {selected && (
-                <span
-                  aria-hidden="true"
-                  className="absolute left-0 right-0 -bottom-px h-0.5 bg-primary rounded-full"
-                />
-              )}
+              {selected && <span aria-hidden="true" className="absolute left-0 right-0 -bottom-px h-0.5 bg-primary rounded-full" />}
             </button>
           )
         })}
@@ -579,9 +355,7 @@ export function WorkItemListView({
             title="List view"
             onClick={() => setDisplayMode('list')}
             className={`p-1.5 rounded transition-colors ${
-              mode === 'list'
-                ? 'text-foreground bg-foreground/8'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+              mode === 'list' ? 'text-foreground bg-foreground/8' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
             }`}
           >
             <ListIcon className="h-4 w-4" />
@@ -591,9 +365,7 @@ export function WorkItemListView({
             title="Board view"
             onClick={() => setDisplayMode('board')}
             className={`p-1.5 rounded transition-colors ${
-              mode === 'board'
-                ? 'text-foreground bg-foreground/8'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+              mode === 'board' ? 'text-foreground bg-foreground/8' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
             }`}
           >
             <LayoutDashboardIcon className="h-4 w-4" />
@@ -601,37 +373,16 @@ export function WorkItemListView({
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-4">
-        <div className="flex items-center gap-2">
-          <label htmlFor="type-filter" className="text-sm text-muted-foreground">Type:</label>
-          <select
-            id="type-filter"
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="border border-border bg-background text-foreground rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            {typeOptions.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <label htmlFor="status-filter" className="text-sm text-muted-foreground">Status:</label>
-          <select
-            id="status-filter"
-            value={statusFilterValue}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="border border-border bg-background text-foreground rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="All">{allStatusLabel}</option>
-            {statusOptions.map((s) => (
-              <option key={s.id} value={s.id}>{s.label}</option>
-            ))}
-          </select>
-        </div>
-      </div>
+      <ListToolbar
+        typeOptions={typeOptions}
+        statusOptions={statusOptions}
+        activeFilters={listState.activeFilters}
+        onAddFilter={listState.addFilter}
+        onRemoveFilter={listState.removeFilter}
+        sortKey={listState.sortKey}
+        onSortChange={listState.setSortKey}
+        showSort={mode === 'list'}
+      />
 
       {mode === 'board' && workflowView ? (
         <WorkItemBoardView
@@ -639,65 +390,90 @@ export function WorkItemListView({
           slug={slug}
           noun={noun}
           workflowView={workflowView}
-          issues={filteredIssues}
+          issues={listState.filteredIssues}
           userRole={userRole}
           accessToken={accessToken!}
           view={view}
           onStatusChanged={updateIssueStatus}
         />
-      ) : filteredIssues.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-48 gap-2 text-muted-foreground border border-dashed border-border rounded-lg">
-          {issuesInView.length === 0 ? (
-            <span>
-              {view === 'done'
-                ? `No completed ${lowerNoun} items yet`
-                : view === 'active'
-                ? `No active ${lowerNoun} items — nice work!`
-                : `No ${lowerNoun} items yet`}
-            </span>
-          ) : (
-            <>
-              <span>No {lowerNoun} items match the current filters</span>
-              {filtersAreActive && (
-                <button
-                  type="button"
-                  onClick={() => { setTypeFilter('All'); setStatusFilter('All') }}
-                  className="text-xs text-primary hover:underline"
-                >
-                  Clear filters
-                </button>
-              )}
-            </>
-          )}
-        </div>
+      ) : issuesInView.length === 0 ? (
+        <EmptyState
+          icon={view === 'done' ? CheckCircle2 : Inbox}
+          title={
+            view === 'done'
+              ? `No completed ${lowerNoun} yet`
+              : view === 'active'
+                ? `No active ${lowerNoun} — nice work!`
+                : `No ${lowerNoun} yet`
+          }
+          description={
+            view === 'all'
+              ? `${title} are created by agents via MCP — they'll show up here once created.`
+              : undefined
+          }
+        />
+      ) : listState.groups.length === 0 ? (
+        <EmptyState
+          icon={SearchX}
+          title={`No ${lowerNoun} match the current filters`}
+          action={
+            <Button variant="link" size="sm" onClick={listState.clearFilters}>
+              Clear filters
+            </Button>
+          }
+        />
       ) : (
         <>
+          {canEdit && listState.selected.size > 0 && (
+            <BulkActionBar
+              count={listState.selected.size}
+              statusOptions={(workflowView?.statuses ?? []).map((s) => ({ id: s.id, label: s.label ?? humanizeId(s.id), category: s.category }))}
+              members={members}
+              onChangeStatus={bulkChangeStatus}
+              onAssign={bulkAssign}
+              disabled={listState.bulkInFlight}
+              statusTriggerRef={bulkStatusTriggerRef}
+              assignTriggerRef={bulkAssignTriggerRef}
+            />
+          )}
+
           {/* Mobile card list */}
           <div className="md:hidden space-y-2">
-            {filteredIssues.map((issue) => (
+            {listState.groups.flatMap((g) => g.items).map((issue) => (
               <Link
                 key={issue.id}
                 href={workItemDetailPath(projectId, detailArea, noun, issue.displayId ?? '')}
                 className="block bg-card border border-border rounded-lg p-4 hover:border-border-strong transition-colors"
               >
                 <div className="flex items-start justify-between gap-2 mb-2">
-                  <div className="flex flex-col gap-0.5">
-                    {issue.displayId && (
-                      <span className="font-mono text-xs text-muted-foreground">{issue.displayId}</span>
-                    )}
-                    <span className="font-medium text-foreground text-sm leading-snug">{issue.title}</span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      {issue.displayId && <span className="font-mono text-xs text-muted-foreground">{issue.displayId}</span>}
+                      <span className="font-medium text-foreground text-sm leading-snug truncate">{issue.title}</span>
+                    </div>
                   </div>
-                  {(() => {
-                    const meta = statusMeta(workflowView, issue.status)
-                    return (
-                      <StatusBadge
-                        status={issue.status}
-                        category={meta.category}
-                        label={meta.label}
-                        className="shrink-0"
+                  <span
+                    onClick={(e) => {
+                      // The status control is the one interactive child inside this card-wide
+                      // anchor — stopPropagation alone doesn't stop the anchor's own default
+                      // navigation, so preventDefault too (same dead-zone bug as the desktop row).
+                      e.stopPropagation()
+                      e.preventDefault()
+                    }}
+                    className="shrink-0"
+                  >
+                    {accessToken && (
+                      <StatusDropdown
+                        projectId={projectId}
+                        issueId={issue.id}
+                        currentStatus={issue.status}
+                        userRole={userRole}
+                        token={accessToken}
+                        workflowSlug={slug}
+                        onStatusChanged={(s) => updateIssueStatus(issue.id, s)}
                       />
-                    )
-                  })()}
+                    )}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant="outline" className="text-xs">{issue.type}</Badge>
@@ -707,12 +483,12 @@ export function WorkItemListView({
                       <span className="text-xs text-muted-foreground">{issue.assignee.name}</span>
                     </div>
                   )}
-                  <div className="flex items-center gap-1 ml-auto">
+                  <div className="flex items-center gap-1.5 ml-auto">
                     {(issue.reviewers ?? []).map((r) => (
-                      <div key={r.userId} className="flex items-center gap-0.5">
+                      <span key={r.userId} className="inline-flex items-center gap-0.5">
                         <UserAvatar name={r.name} avatarUrl={r.avatarUrl} size={4} />
-                        <VerdictIcon verdict={r.reviewVerdict} />
-                      </div>
+                        <VerdictIcon verdict={r.reviewVerdict} className="h-3 w-3" />
+                      </span>
                     ))}
                     {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 && (
                       <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
@@ -721,108 +497,46 @@ export function WorkItemListView({
                       </span>
                     )}
                   </div>
-                  <span className="text-foreground-subtle text-xs w-full">{formatDate(issue.updatedAt)}</span>
+                  <span className="text-foreground-subtle text-xs shrink-0">{timeAgo(issue.updatedAt)}</span>
                 </div>
               </Link>
             ))}
           </div>
 
-          {/* Desktop table */}
-          <div className="hidden md:block border border-border rounded-lg overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-muted border-b border-border">
-                <tr>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">ID</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Title</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Type</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Assignee</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Reviewers</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Comments</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Last Updated</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {filteredIssues.map((issue) => (
-                  <tr
-                    key={issue.id}
-                    onClick={() => router.push(workItemDetailPath(projectId, detailArea, noun, issue.displayId ?? ''))}
-                    className="hover:bg-muted/50 transition-colors cursor-pointer"
-                  >
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      {issue.displayId && (
-                        <span className="font-mono text-xs text-muted-foreground">{issue.displayId}</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-foreground max-w-xs">
-                      <span className="line-clamp-2">{issue.title}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant="outline">{issue.type}</Badge>
-                    </td>
-                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      {accessToken && (
-                        <StatusDropdown
-                          projectId={projectId}
-                          issueId={issue.id}
-                          currentStatus={issue.status}
-                          userRole={userRole}
-                          token={accessToken}
-                          workflowSlug={slug}
-                          onStatusChanged={(s) => updateIssueStatus(issue.id, s)}
-                        />
-                      )}
-                    </td>
-                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      {canEdit && accessToken ? (
-                        <AssigneeCell
-                          issueId={issue.id}
-                          projectId={projectId}
-                          assignee={issue.assignee}
-                          members={members}
-                          token={accessToken}
-                          onChanged={(a) => updateIssueAssignee(issue.id, a)}
-                        />
-                      ) : issue.assignee ? (
-                        <div className="flex items-center gap-1.5">
-                          <UserAvatar name={issue.assignee.name} avatarUrl={issue.assignee.avatarUrl} size={5} />
-                          <span className="text-xs text-foreground hidden lg:block">{issue.assignee.name}</span>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      {accessToken && (
-                        <ReviewerCell
-                          issueId={issue.id}
-                          projectId={projectId}
-                          reviewers={issue.reviewers ?? []}
-                          members={members}
-                          token={accessToken}
-                          onChanged={(r) => updateIssueReviewers(issue.id, r)}
-                        />
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 ? (
-                        <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
-                          <MessageSquare className="h-3 w-3" />
-                          {issue.unresolvedCommentCount}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{formatDate(issue.updatedAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* Desktop grouped row list */}
+          <div
+            data-testid="work-item-list"
+            className="hidden md:block border border-border rounded-lg"
+            onKeyDown={listState.onContainerKeyDown}
+          >
+            {listState.groups.map((group, i) => (
+              <WorkItemGroup
+                key={group.statusId}
+                group={group}
+                projectId={projectId}
+                slug={slug}
+                detailArea={detailArea}
+                noun={noun}
+                userRole={userRole}
+                accessToken={accessToken!}
+                members={members}
+                canEdit={canEdit}
+                selectedIds={listState.selected}
+                tabStopId={listState.tabStopId}
+                roundedTop={i === 0}
+                roundedBottom={i === listState.groups.length - 1}
+                onStatusChanged={updateIssueStatus}
+                onAssigneeChanged={updateIssueAssignee}
+                onReviewersChanged={updateIssueReviewers}
+                onRowFocus={listState.setFocusedId}
+                registerStatusTriggerRef={listState.registerStatusTriggerRef}
+                registerAssigneeTriggerRef={listState.registerAssigneeTriggerRef}
+                registerRowLinkRef={listState.registerRowLinkRef}
+              />
+            ))}
           </div>
         </>
       )}
     </PageContainer>
   )
 }
-

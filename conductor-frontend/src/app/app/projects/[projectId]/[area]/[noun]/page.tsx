@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useWorkflowByAreaNoun } from '@/lib/workflows'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { Skeleton } from '@/components/ui/skeleton'
+import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
 import { WorkItemListView } from '@/components/workitems/WorkItemListView'
 
 export const dynamic = 'force-dynamic'
@@ -24,12 +24,7 @@ export default function WorkItemAreaNounPage() {
   if (status === 'loading') {
     return (
       <PageContainer>
-        <Skeleton className="h-9 w-48 mb-6" />
-        <div className="space-y-2">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <Skeleton key={i} className="h-10" style={{ opacity: 1 - i * 0.1 }} />
-          ))}
-        </div>
+        <WorkItemListSkeleton />
       </PageContainer>
     )
   }

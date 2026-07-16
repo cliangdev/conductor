@@ -5,6 +5,7 @@ import { MessageSquare } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { statusHueClasses } from '@/components/ui/status-badge'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
+import { UserAvatar } from '@/components/workitems/UserAvatar'
 import {
   categoriesForView,
   humanizeId,
@@ -32,18 +33,6 @@ interface BoardIssue {
 }
 
 type BoardView = 'active' | 'done' | 'all'
-
-function Avatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) {
-  if (avatarUrl) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={avatarUrl} alt={name} title={name} className="w-5 h-5 rounded-full border border-border object-cover" />
-  }
-  return (
-    <div className="w-5 h-5 rounded-full bg-muted border border-border flex items-center justify-center text-xs font-medium text-muted-foreground" title={name}>
-      {name.charAt(0).toUpperCase()}
-    </div>
-  )
-}
 
 export function WorkItemBoardView({
   projectId,
@@ -135,7 +124,7 @@ export function WorkItemBoardView({
                         </Badge>
                         <div className="flex items-center gap-1.5 shrink-0">
                           {issue.assignee && (
-                            <Avatar name={issue.assignee.name} avatarUrl={issue.assignee.avatarUrl} />
+                            <UserAvatar name={issue.assignee.name} avatarUrl={issue.assignee.avatarUrl} size={5} />
                           )}
                           {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 && (
                             <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">

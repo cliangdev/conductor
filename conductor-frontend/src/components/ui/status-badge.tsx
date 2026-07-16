@@ -6,58 +6,66 @@ export { statusHue }
 
 // Static class lookup, not interpolated — Tailwind can't see a `` `bg-status-${hue}` `` template
 // at build time and would drop the class.
-const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; border: string }> = {
+const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; border: string; borderStrong: string }> = {
   gray: {
     bg: 'bg-status-draft/10',
     text: 'text-status-draft',
     dot: 'bg-status-draft',
     border: 'border-status-draft/30',
+    borderStrong: 'border-status-draft',
   },
   blue: {
     bg: 'bg-status-review/10',
     text: 'text-status-review',
     dot: 'bg-status-review',
     border: 'border-status-review/30',
+    borderStrong: 'border-status-review',
   },
   amber: {
     bg: 'bg-status-progress/10',
     text: 'text-status-progress',
     dot: 'bg-status-progress',
     border: 'border-status-progress/30',
+    borderStrong: 'border-status-progress',
   },
   violet: {
     bg: 'bg-status-code-review/10',
     text: 'text-status-code-review',
     dot: 'bg-status-code-review',
     border: 'border-status-code-review/30',
+    borderStrong: 'border-status-code-review',
   },
   teal: {
     bg: 'bg-status-approved/10',
     text: 'text-status-approved',
     dot: 'bg-status-approved',
     border: 'border-status-approved/30',
+    borderStrong: 'border-status-approved',
   },
   green: {
     bg: 'bg-status-done/10',
     text: 'text-status-done',
     dot: 'bg-status-done',
     border: 'border-status-done/30',
+    borderStrong: 'border-status-done',
   },
   slate: {
     bg: 'bg-status-closed/10',
     text: 'text-status-closed',
     dot: 'bg-status-closed',
     border: 'border-status-closed/30',
+    borderStrong: 'border-status-closed',
   },
   red: {
     bg: 'bg-status-failed/10',
     text: 'text-status-failed',
     dot: 'bg-status-failed',
     border: 'border-status-failed/30',
+    borderStrong: 'border-status-failed',
   },
 }
 
-/** Static bg/text/dot/border classes for a hue — for non-badge uses (e.g. a status ring on an avatar). */
+/** Static bg/text/dot/border/borderStrong classes for a hue — for non-badge uses (e.g. a status ring on an avatar). */
 export function statusHueClasses(hue: StatusHue) {
   return HUE_CLASSES[hue]
 }
