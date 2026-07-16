@@ -119,7 +119,7 @@ class KnowledgeRetentionServiceTest {
     void compactQueryUsesConfiguredCompactAfterDays() {
         when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.PROCESSED), any(), any())).thenReturn(List.of());
-        when(repository.findByStatusAndReceivedAtBeforeOrderByReceivedAtAsc(
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.DEAD), any(), any())).thenReturn(List.of());
 
         OffsetDateTime before = OffsetDateTime.now().minusDays(COMPACT_AFTER_DAYS).minusSeconds(5);
@@ -139,7 +139,7 @@ class KnowledgeRetentionServiceTest {
         KnowledgeSource src = source("src-5", KnowledgeSourceStatus.DEAD, null, null);
         when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.PROCESSED), any(), any())).thenReturn(List.of());
-        when(repository.findByStatusAndReceivedAtBeforeOrderByReceivedAtAsc(
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.DEAD), any(), any())).thenReturn(List.of(src));
         when(repository.findById("src-5")).thenReturn(Optional.of(src));
 
@@ -153,7 +153,7 @@ class KnowledgeRetentionServiceTest {
         KnowledgeSource src = source("src-6", KnowledgeSourceStatus.DEAD, null, "knowledge-sources/proj-1/src-6");
         when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.PROCESSED), any(), any())).thenReturn(List.of());
-        when(repository.findByStatusAndReceivedAtBeforeOrderByReceivedAtAsc(
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.DEAD), any(), any())).thenReturn(List.of(src));
         when(repository.findById("src-6")).thenReturn(Optional.of(src));
 
@@ -168,7 +168,7 @@ class KnowledgeRetentionServiceTest {
         KnowledgeSource src = source("src-8", KnowledgeSourceStatus.DEAD, null, "knowledge-sources/proj-1/src-8");
         when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.PROCESSED), any(), any())).thenReturn(List.of());
-        when(repository.findByStatusAndReceivedAtBeforeOrderByReceivedAtAsc(
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.DEAD), any(), any())).thenReturn(List.of(src));
         when(repository.findById("src-8")).thenReturn(Optional.of(src));
         org.mockito.Mockito.doThrow(new RuntimeException("bucket unreachable"))
@@ -186,7 +186,7 @@ class KnowledgeRetentionServiceTest {
         KnowledgeSource src = source("src-7", KnowledgeSourceStatus.PENDING, null, null);
         when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.PROCESSED), any(), any())).thenReturn(List.of());
-        when(repository.findByStatusAndReceivedAtBeforeOrderByReceivedAtAsc(
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.DEAD), any(), any())).thenReturn(List.of(src));
         when(repository.findById("src-7")).thenReturn(Optional.of(src));
 
@@ -199,7 +199,7 @@ class KnowledgeRetentionServiceTest {
     void deleteQueryUsesConfiguredDeleteDeadAfterDays() {
         when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.PROCESSED), any(), any())).thenReturn(List.of());
-        when(repository.findByStatusAndReceivedAtBeforeOrderByReceivedAtAsc(
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.DEAD), any(), any())).thenReturn(List.of());
 
         OffsetDateTime before = OffsetDateTime.now().minusDays(DELETE_DEAD_AFTER_DAYS).minusSeconds(5);
@@ -207,7 +207,7 @@ class KnowledgeRetentionServiceTest {
         OffsetDateTime after = OffsetDateTime.now().minusDays(DELETE_DEAD_AFTER_DAYS).plusSeconds(5);
 
         org.mockito.ArgumentCaptor<OffsetDateTime> cutoffCaptor = org.mockito.ArgumentCaptor.forClass(OffsetDateTime.class);
-        verify(repository).findByStatusAndReceivedAtBeforeOrderByReceivedAtAsc(
+        verify(repository).findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.DEAD), cutoffCaptor.capture(), any());
         assertThat(cutoffCaptor.getValue()).isBetween(before, after);
     }

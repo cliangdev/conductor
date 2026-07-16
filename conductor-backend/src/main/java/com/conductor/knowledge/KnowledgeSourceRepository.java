@@ -64,11 +64,19 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
 
     // ---- retention (KnowledgeRetentionService) ----
 
-    /** Oldest-first batch of PROCESSED sources old enough to compact and not yet purged. */
+    /** Oldest-first batch of sources old enough for their retention action and not yet purged --
+     *  PROCESSED rows to compact, DEAD rows to delete (or tombstone, if provenance references them). */
     List<KnowledgeSource> findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
             KnowledgeSourceStatus status, OffsetDateTime cutoff, Pageable pageable);
 
-    /** Oldest-first batch of DEAD sources old enough to hard-delete. */
-    List<KnowledgeSource> findByStatusAndReceivedAtBeforeOrderByReceivedAtAsc(
-            KnowledgeSourceStatus status, OffsetDateTime cutoff, Pageable pageable);
+    /**
+     * True if any page revision's provenance links to this source ({@code knowledge_revision_sources}).
+     * Guards the DEAD hard-delete: a wedged librarian run can link a revision to a source *after* the
+     * stale sweep dead-lettered it ({@code markProcessed} only moves PENDING/PROCESSING rows, so the
+     * status stays DEAD) -- and the join table's {@code ON DELETE CASCADE} would silently erase that
+     * provenance if the row were deleted. Native: the join table has no entity.
+     */
+    @Query(value = "SELECT EXISTS(SELECT 1 FROM knowledge_revision_sources WHERE source_id = :sourceId)",
+            nativeQuery = true)
+    boolean isReferencedByRevision(@Param("sourceId") String sourceId);
 }

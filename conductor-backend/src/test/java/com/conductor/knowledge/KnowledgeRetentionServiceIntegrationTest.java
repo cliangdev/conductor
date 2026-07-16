@@ -215,6 +215,48 @@ class KnowledgeRetentionServiceIntegrationTest extends AbstractNoneWebIntegratio
         assertThat(compacted.getPurgedAt()).isNotNull();
     }
 
+    /**
+     * The DEAD hard-delete's provenance guard. A librarian run that outlives the stale window can link
+     * a revision to a source <em>after</em> the scheduler's sweep dead-lettered it ({@code
+     * markProcessed} only moves PENDING/PROCESSING rows, so the status stays DEAD) — hard-deleting such
+     * a row would cascade away the {@code knowledge_revision_sources} link. The sweep must tombstone it
+     * (compact + purgedAt) instead, and the tombstone must drop out of later sweeps' candidate batches.
+     */
+    @Test
+    void referencedDeadSourceIsTombstonedNotDeleted() {
+        KnowledgeSource source = save(KnowledgeSourceStatus.PENDING,
+                OffsetDateTime.now().minusDays(91), "wedged-run content", null);
+        source.setSourceRef("manual:wedged-note");
+        sourceRepository.save(source);
+
+        PageWrite write = new PageWrite("wedged-provenance.md",
+                "---\ntype: decision\ntitle: Wedged\n---\nBody.", null, false);
+        pageService.batchWrite(projectId, List.of(write), List.of(source.getId()), new Actor("user", "tester", null));
+
+        // Recreate the race's end state: revision link exists, but the source ended up DEAD (the
+        // stale sweep dead-lettered it before the wedged run's write landed).
+        KnowledgeSource linked = sourceRepository.findById(source.getId()).orElseThrow();
+        linked.setStatus(KnowledgeSourceStatus.DEAD);
+        sourceRepository.save(linked);
+
+        KnowledgePage page = pageRepository.findByProjectIdAndPath(projectId, "wedged-provenance.md").orElseThrow();
+        KnowledgePageRevision revision = revisionRepository.findByPage_IdOrderByVersionDesc(page.getId()).get(0);
+
+        retentionService.sweep();
+
+        KnowledgeSource tombstone = sourceRepository.findById(source.getId()).orElseThrow();
+        assertThat(tombstone.getStatus()).isEqualTo(KnowledgeSourceStatus.DEAD);
+        assertThat(tombstone.getPayload()).isNull();
+        assertThat(tombstone.getPurgedAt()).isNotNull();
+        assertThat(revisionRepository.findSourceRefsByRevisionIds(List.of(revision.getId())))
+                .extracting(KnowledgePageRevisionRepository.RevisionSourceRef::getSourceRef)
+                .containsExactly("manual:wedged-note");
+
+        // The tombstone is out of the candidate query now — a second sweep must not delete it either.
+        retentionService.sweep();
+        assertThat(sourceRepository.findById(source.getId())).isPresent();
+    }
+
     @Test
     void sweepIsIdempotentOnAlreadyCompactedSource() {
         KnowledgeSource old = save(KnowledgeSourceStatus.PROCESSED,

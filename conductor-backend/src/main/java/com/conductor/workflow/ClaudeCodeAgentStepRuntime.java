@@ -59,7 +59,13 @@ public class ClaudeCodeAgentStepRuntime implements AgentStepRuntime {
         ClaudeCodeContainerRunner.ClaudeCodeInvocation inv = new ClaudeCodeContainerRunner.ClaudeCodeInvocation(
                 prompt, allowedTools, agent.maxToolTurns(), call.timeoutMinutes(), conductorMcp,
                 call.outputSchema(), "agent");
-        return runner.run(context, inv);
+        try {
+            return runner.run(context, inv);
+        } catch (Exception e) {
+            // SPI contract: never throw. An escaped exception isn't persisted as a FAILED step — the
+            // orchestrator doesn't catch, so the job run would hang RUNNING until stuck-job recovery.
+            return StepResult.failed("Agent run failed: " + e.getMessage(), e.getMessage());
+        }
     }
 
     /** Same {@code ## Context} JSON block {@link AgentExecutionService} appends to the api runtime's

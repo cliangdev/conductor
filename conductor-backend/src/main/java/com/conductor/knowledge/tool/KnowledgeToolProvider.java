@@ -20,7 +20,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,17 +39,17 @@ import java.util.Optional;
  * (and {@link #resolve} nothing) for a project that hasn't turned on the Knowledge Center, mirroring
  * every other knowledge producer's gate.
  *
- * <p>Read tools truncate their JSON result to ~8KB like {@code ConnectorToolProvider}; {@code
- * write_knowledge_pages} does not — truncating a JSON payload the model needs to parse back (the
- * conflict shape) would corrupt it, and write results are small (a handful of {@code {path, version,
- * contentHash}} rows) by nature.
+ * <p>No tool truncates its result — unlike {@code ConnectorToolProvider}'s ~8KB clamp on arbitrary
+ * connector payloads, every result here is JSON the model must parse back in full (page content it
+ * must merge, source payloads it must file, the conflict shape), and a byte-sliced JSON fragment is
+ * strictly worse than a large one. The MCP equivalents never truncate either; the librarian's batch
+ * (≤10 sources × ≤64KB) is the sizing contract on both runtimes.
  */
 @Component
 public class KnowledgeToolProvider implements AgentToolProvider {
 
     private static final Logger log = LoggerFactory.getLogger(KnowledgeToolProvider.class);
     private static final String SOURCE_ID = "knowledge";
-    private static final int MAX_PAYLOAD_BYTES = 8_000;
 
     private static final String READ_PAGES = "read_knowledge_pages";
     private static final String READ_SOURCES = "read_knowledge_sources";
@@ -160,7 +159,7 @@ public class KnowledgeToolProvider implements AgentToolProvider {
             try {
                 List<String> paths = stringList(arguments.get("paths"));
                 List<PageView> pages = pageService.getPages(context.projectId(), paths);
-                return truncate(objectMapper.writeValueAsString(pages));
+                return ToolResult.ok(objectMapper.writeValueAsString(pages));
             } catch (Exception e) {
                 log.warn("KnowledgeToolProvider read_knowledge_pages failed: {}", e.getMessage());
                 return ToolResult.error("read_knowledge_pages failed: " + e.getMessage());
@@ -188,7 +187,7 @@ public class KnowledgeToolProvider implements AgentToolProvider {
             try {
                 List<String> ids = stringList(arguments.get("ids"));
                 List<KnowledgeSourceView> sources = ingestionService.getSources(context.projectId(), ids);
-                return truncate(objectMapper.writeValueAsString(sources));
+                return ToolResult.ok(objectMapper.writeValueAsString(sources));
             } catch (Exception e) {
                 log.warn("KnowledgeToolProvider read_knowledge_sources failed: {}", e.getMessage());
                 return ToolResult.error("read_knowledge_sources failed: " + e.getMessage());
@@ -223,7 +222,7 @@ public class KnowledgeToolProvider implements AgentToolProvider {
                 String pathPrefix = stringArg(arguments.get("pathPrefix"));
                 Integer limit = arguments.get("limit") instanceof Number n ? n.intValue() : null;
                 List<SearchHit> hits = searchService.search(context.projectId(), q, type, pathPrefix, limit);
-                return truncate(objectMapper.writeValueAsString(hits));
+                return ToolResult.ok(objectMapper.writeValueAsString(hits));
             } catch (Exception e) {
                 log.warn("KnowledgeToolProvider search_knowledge failed: {}", e.getMessage());
                 return ToolResult.error("search_knowledge failed: " + e.getMessage());
@@ -343,14 +342,5 @@ public class KnowledgeToolProvider implements AgentToolProvider {
 
     private String stringArg(Object value) {
         return value == null ? null : value.toString();
-    }
-
-    private ToolResult truncate(String json) {
-        byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length <= MAX_PAYLOAD_BYTES) {
-            return ToolResult.ok(json);
-        }
-        String clipped = new String(bytes, 0, MAX_PAYLOAD_BYTES, StandardCharsets.UTF_8) + "\n…[truncated]";
-        return ToolResult.ok(clipped, true);
     }
 }

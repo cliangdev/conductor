@@ -12,6 +12,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -30,8 +32,12 @@ class AgentRuntimeResolverTest {
     }
 
     private AgentExecutionService.AgentDefinition definition(String runtime) {
+        return definition("claude", runtime);
+    }
+
+    private AgentExecutionService.AgentDefinition definition(String provider, String runtime) {
         return new AgentExecutionService.AgentDefinition(
-                "agent-1", "marketing-agent", "claude", null, "sys", List.of(), 8, runtime);
+                "agent-1", "marketing-agent", provider, null, "sys", List.of(), 8, runtime);
     }
 
     @Test
@@ -66,6 +72,18 @@ class AgentRuntimeResolverTest {
         when(credentialService.hasCredential(PROJECT_ID, "claude-code")).thenReturn(true);
         String resolved = resolver.resolve(PROJECT_ID, definition(null));
         assertThat(resolved).isEqualTo("claude-code");
+    }
+
+    @Test
+    void autoNeverPicksClaudeCodeForNonClaudeProviderAgent() {
+        // The container always runs Claude — auto-detect must not silently execute a non-claude
+        // provider agent on a different model family. Its own provider key resolves to api instead.
+        when(credentialService.hasCredential(PROJECT_ID, "gemini")).thenReturn(true);
+
+        String resolved = resolver.resolve(PROJECT_ID, definition("gemini", null));
+
+        assertThat(resolved).isEqualTo("api");
+        verify(credentialService, never()).hasCredential(PROJECT_ID, "claude-code");
     }
 
     @Test

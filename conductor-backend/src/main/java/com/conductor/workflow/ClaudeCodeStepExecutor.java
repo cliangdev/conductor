@@ -48,7 +48,7 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
             maxTurns = n.intValue();
         }
 
-        Integer timeoutMinutes = getIntOrDefault(stepDef, "timeout_minutes");
+        Integer timeoutMinutes = parseIntOrNull(stepDef, "timeout_minutes");
         boolean conductorMcp = getBooleanOrDefault(stepDef, "conductor_mcp", false);
 
         Object outputSchemaObj = stepDef.get("output_schema");
@@ -68,9 +68,9 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         return defaultValue;
     }
 
-    /** Lenient (Number or numeric String) — null when absent/unparseable, matching {@code getIntOrDefault}'s
-     *  previous fallback-to-default semantics (the runner applies the same default when null). */
-    private Integer getIntOrDefault(Map<String, Object> map, String key) {
+    /** Lenient (Number or numeric String) — null when absent/unparseable; the runner applies its own
+     *  default when null. */
+    private Integer parseIntOrNull(Map<String, Object> map, String key) {
         Object val = map.get(key);
         if (val instanceof Number n) return n.intValue();
         if (val instanceof String s) {

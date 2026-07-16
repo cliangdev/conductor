@@ -29,9 +29,12 @@ import java.util.List;
  *       surfaces source refs by id, so only the (potentially large) payload content is reclaimed.</li>
  *   <li><b>Delete</b> -- DEAD sources older than {@link #deleteDeadAfterDays} (default 90): hard-deleted
  *       entirely. A DEAD source exhausted every retry ({@code KnowledgeIngestScheduler}'s sweep) without
- *       ever being marked PROCESSED, so by construction nothing downstream (a page revision's linked
- *       sources) references it -- {@code markProcessed} is what flips a source's status in the very same
- *       transaction as the page write that would reference it.</li>
+ *       ever being marked PROCESSED, so it normally has no downstream references -- but a librarian run
+ *       that outlived the stale window can link a revision to a source <em>after</em> the sweep
+ *       dead-lettered it ({@code markProcessed} only moves PENDING/PROCESSING rows, so the status stays
+ *       DEAD). {@code knowledge_revision_sources}' {@code ON DELETE CASCADE} would silently erase that
+ *       provenance, so each row is checked ({@code isReferencedByRevision}) and a referenced one is
+ *       compacted into a tombstone instead of deleted.</li>
  * </ul>
  *
  * <p>Both passes delete the offloaded GCS object <b>before</b> touching the row. If that delete throws,
@@ -140,8 +143,12 @@ public class KnowledgeRetentionService {
 
     private void deleteDead() {
         OffsetDateTime cutoff = OffsetDateTime.now().minusDays(deleteDeadAfterDays);
-        List<KnowledgeSource> candidates = repository.findByStatusAndReceivedAtBeforeOrderByReceivedAtAsc(
-                KnowledgeSourceStatus.DEAD, cutoff, PageRequest.of(0, BATCH_SIZE));
+        // PurgedAtIsNull: a referenced DEAD source gets compacted into a tombstone instead of deleted
+        // (see deleteInNewTx) -- the purgedAt stamp takes it out of this query so it can't clog the
+        // oldest-first batch on every subsequent tick.
+        List<KnowledgeSource> candidates = repository
+                .findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                        KnowledgeSourceStatus.DEAD, cutoff, PageRequest.of(0, BATCH_SIZE));
         int deleted = 0;
         for (KnowledgeSource source : candidates) {
             try {
@@ -162,8 +169,20 @@ public class KnowledgeRetentionService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void deleteInNewTx(String sourceId) {
         repository.findById(sourceId).ifPresent(source -> {
-            if (source.getStatus() != KnowledgeSourceStatus.DEAD) {
-                return; // raced with something moving it out of DEAD
+            if (source.getStatus() != KnowledgeSourceStatus.DEAD || source.getPurgedAt() != null) {
+                return; // raced with something moving it out of DEAD, or already tombstoned
+            }
+            if (repository.isReferencedByRevision(source.getId())) {
+                // A wedged librarian run linked a revision to this source after the stale sweep
+                // dead-lettered it. Hard-deleting would cascade away that provenance row -- the exact
+                // property compaction exists to protect -- so compact it instead; the tombstone row
+                // (purgedAt set) stops matching the compact query and simply stays.
+                deleteOffloadedPayloadOrThrow(source);
+                source.setPayload(null);
+                source.setPayloadUri(null);
+                source.setPurgedAt(OffsetDateTime.now());
+                repository.save(source);
+                return;
             }
             deleteOffloadedPayloadOrThrow(source);
             repository.delete(source);

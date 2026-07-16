@@ -181,6 +181,18 @@ class ClaudeCodeAgentStepRuntimeTest {
     }
 
     @Test
+    void runnerThrowingBecomesFailedStepResultPerSpiContract() {
+        AgentExecutionService.AgentDefinition agent = definition(List.of(), 8);
+        when(runner.run(any(), any())).thenThrow(new IllegalStateException("KMS decrypt failed"));
+
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null);
+        StepResult result = runtime.run(context(), call);
+
+        assertThat(result.getStatus()).isEqualTo(com.conductor.entity.WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).contains("KMS decrypt failed");
+    }
+
+    @Test
     void delegatesRunnerResultVerbatim() {
         AgentExecutionService.AgentDefinition agent = definition(List.of(), 8);
         StepExecutionContext ctx = context();

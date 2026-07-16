@@ -44,7 +44,12 @@ public class AgentRuntimeResolver {
         if (pinned != null && !pinned.isBlank()) {
             return pinned;
         }
-        if (credentialService.hasCredential(projectId, CLAUDE_CODE_CREDENTIAL_PROVIDER)) {
+        // Auto-detect may only pick the Claude Code container for a claude-provider agent — the
+        // container always runs Claude, so a future non-claude provider agent must never silently
+        // execute on a different model family than its definition names. (An explicit pin still wins
+        // above: that's a deliberate operator choice.)
+        if ("claude".equals(agent.provider())
+                && credentialService.hasCredential(projectId, CLAUDE_CODE_CREDENTIAL_PROVIDER)) {
             return RUNTIME_CLAUDE_CODE;
         }
         if (credentialService.hasCredential(projectId, agent.provider())) {
