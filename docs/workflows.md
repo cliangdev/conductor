@@ -33,6 +33,28 @@ Workflows let you automate work that happens around your Conductor project — r
 
 ## How workflows work
 
+```mermaid
+flowchart LR
+    subgraph Triggers["on: (triggers)"]
+        Manual["workflow_dispatch"]
+        Webhook["webhook"]
+        Status["Work Item<br/>status change"]
+        Cron["schedule (cron)"]
+    end
+
+    Run["Workflow run"]
+    Jobs["Jobs<br/>(needs · loops · conditions · artifacts)"]
+    Steps["Steps<br/>http · docker · kestra · integration<br/>condition · agent · claude-code · action"]
+
+    subgraph Exec["Execution backend"]
+        Hosted["Conductor-hosted<br/>Cloud Run"]
+        BYO["Your Cloud Run<br/>(runs-on: runtime target)"]
+        Self["Self-hosted<br/>conductor-worker + Docker"]
+    end
+
+    Manual & Webhook & Status & Cron --> Run --> Jobs --> Steps --> Exec
+```
+
 ### Workflow file format
 
 Workflows are defined in YAML. Every workflow has two required top-level keys: `on` (triggers) and `jobs`.

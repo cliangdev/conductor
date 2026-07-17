@@ -1,5 +1,10 @@
 # COND-18 Foundation — Epic Breakdown
 
+> **Status: historical planning record.** COND-18 has shipped; this breakdown is kept for context on how
+> the foundation was sequenced. Identifiers below reflect the pre-`work_items`-rename vocabulary — see
+> [`workflow-definition-schema.md`](workflow-definition-schema.md) and [`workflows.md`](workflows.md) for
+> the current contracts.
+
 > COND-18 ("Conductor Workflows — Foundation") is too large for one PR or one `/conductor:implement`
 > run. This breaks it into **7 implementable sub-issues** along the readiness assessment's phases, each
 > sized for a single implement run, with explicit dependencies and the gating contracts each consumes.

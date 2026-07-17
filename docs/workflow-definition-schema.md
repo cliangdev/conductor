@@ -66,9 +66,10 @@ skill (see `engineering-migration.md`).
 engine. They are documented in the PRD's *Future Directions #3* and the architecture's *two bounded contexts
 (DDD)* section, and are intentionally **not** part of the v1 contract.
 
-## The ENGINEERING example — faithful to today
-`examples/engineering.workflow.json` reproduces **today's exact** `IssueService.VALID_TRANSITIONS`
-(verified by an edge-set diff): the linear `DRAFT → … → DONE` spine **plus** `CLOSED` reachable from every
+## The ENGINEERING example — faithful to the legacy behavior
+`examples/engineering.workflow.json` reproduces the exact pre-engine hardcoded transition set (the former
+`IssueService.VALID_TRANSITIONS`, since removed — enforcement now lives in `WorkItemWorkflowService`),
+verified by an edge-set diff: the linear `DRAFT → … → DONE` spine **plus** `CLOSED` reachable from every
 non-terminal status **and** the `IN_REVIEW → DRAFT` back-edge. It binds `conductor:implement` to
 `READY_FOR_DEVELOPMENT → IN_PROGRESS` (advisory). This is the seed for **Phase 1 (Engineering-no-regression)**,
 whose bar is `AC-P0-1.1` — existing issues must transition **identically** after the engine swap.
@@ -91,16 +92,16 @@ gate is bypassed for the system `pr_merged` trigger (the merge is the authority)
 ## Generalization runtime model (Waves 1–6)
 The whole stack now runs on the Workflow definition rather than hardcoded enums:
 
-- **Status/type are Workflow-defined strings.** The `issues.current_status` and `issues.item_type` columns
-  are authoritative (the legacy `status`/`type` PG-enum columns are retained nullable for one release and
-  dropped in a follow-up). A new Work Item's initial status is the chart's `initial` status; `type` is
-  validated against the chart's `types`. The REST surface (`IssueResponse`, `PatchIssueRequest`, list
-  filters) carries plain strings, so any custom Workflow's statuses/types flow end-to-end.
+- **Status/type are Workflow-defined strings.** The `work_items.current_status` and `work_items.item_type`
+  columns (renamed from `issues.*` in `V75`) are authoritative. A new Work Item's initial status is the
+  chart's `initial` status; `type` is validated against the chart's `types`. The v2 REST surface
+  (`WorkItemResponse`, patch requests, list filters — see `openapi-v2.yaml`) carries plain strings, so any
+  custom Workflow's statuses/types flow end-to-end.
 - **Version pinning.** Each publish writes an immutable snapshot to `workflow_definition_versions` and
   advances the version. A Work Item pins `workflow_version` at creation and always resolves that snapshot,
   so re-publishing never changes the rules under an in-flight Work Item. The resolver is DB-snapshot-first
   with a built-in classpath fallback.
-- **Notifications.** Status changes fire a single, Workflow-agnostic `ISSUE_STATUS_CHANGED` event enriched
+- **Notifications.** Status changes fire a single, Workflow-agnostic `WORK_ITEM_STATUS_CHANGED` event enriched
   with `noun`, `toStatus`, `toStatusLabel`, and `toCategory`; the Discord provider formats it generically
   (color by status category). The legacy per-status events were removed.
 - **Read model for the UI.** `GET /projects/{projectId}/workflows/by-slug/{slug}?version=` returns a lean
@@ -123,11 +124,10 @@ hardcoded Issues page remains.
   `version=1`), not just a classpath fallback, so it appears in the workflow list API. Existing projects
   are seeded by Flyway migration `V74__seed_engineering_workflow` (reads the canonical classpath JSON);
   new projects are seeded by `WorkflowSeeder` from `ProjectService.createWorkspace`. Both are idempotent.
-- **Generic Work Item page.** `/app/projects/{projectId}/work/{slug}` resolves the `WorkflowView` and
-  renders Work Items in the `default_view`: `list` (the migrated Issues table — title from `pluralize(noun)`,
-  status/type filters from the view), `board`/`calendar` are placeholders for now. Work Items are always
-  fetched workflow-scoped via `GET /issues?workflow={slug}`. The legacy `/issues` route is a server-side
-  redirect to `/work/ENGINEERING`; the issue detail route (`/issues/{issueId}`) is unchanged.
+- **Generic Work Item pages.** The workflow-scoped routes `/app/projects/{projectId}/{area}/{noun}` (list)
+  and `.../{area}/{noun}/{displayId}` (detail) resolve the `WorkflowView` and render Work Items in the
+  `default_view` — title from `pluralize(noun)`, status/type filters from the view. Work Items are fetched
+  workflow-scoped via the v2 work-items API (`GET .../work-items?workflow={slug}`).
 - **Dynamic sidebar.** The sidebar lists sidebar-enabled, published lifecycle workflows, grouped by
   humanized `area`, labelled `pluralize(noun)`, linking to `/work/{slug}`. It falls back to a static
   Issues entry when none resolve.
