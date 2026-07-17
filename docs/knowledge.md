@@ -72,7 +72,7 @@ frontend settings page for it; toggle it via `PATCH /api/v1/projects/{projectId}
 
 | Producer | `sourceType` | Trigger |
 |---|---|---|
-| REST `POST /knowledge/sources` | caller-supplied | Any authenticated caller (user or project API key) submits directly. |
+| REST `POST /knowledge/sources` | caller-supplied | Any authenticated caller (user, project API key, or a run-scoped workflow MCP token) submits directly. |
 | MCP `submit_knowledge_source` | caller-supplied | Same endpoint, called from Claude Code or a workflow's `claude-code` step. |
 | Work Item status-change event tap (`KnowledgeEventTap`) | `conductor.work_item.status_changed` | Fourth consumer wired into `NotificationDispatcher.dispatch`, alongside workflow/lifecycle triggers. Its own try/catch — an ingestion failure never blocks notification delivery or trigger evaluation. |
 | GitHub `pr_merged` adapter (`GitHubConnector`) | `github.pr_merged` | On a merged PR webhook, submits it as a source regardless of whether it references a Conductor Work Item — this is about the codebase, not one issue. |
@@ -194,16 +194,15 @@ runtime the librarian runs on is therefore an Agents change, not a workflow edit
 **Operator prerequisites** before either workflow can run — either credential option works for the
 librarian; `knowledge-bootstrap` is subscription-only:
 
-- **`knowledge-librarian`**: either the project's **Claude Code (subscription)** credential (**Integrations
-  → Google Cloud**) or a `claude` provider API key (**Automation → Agents**) — subscription preferred when
-  both are configured. If it resolves to the `claude-code` runtime, an active **project API key**
-  (**Settings → API Keys**) is also needed, since the agent's knowledge tools map to Conductor MCP tools on
-  that runtime.
+- **`knowledge-librarian`**: either the project's **Claude Code (subscription)** credential or a `claude`
+  provider API key (**Settings → AI Providers**) — subscription preferred when both are configured. No
+  further setup is needed for the `claude-code` runtime's Conductor MCP access — the backend mints a
+  short-lived, run-scoped token automatically (see [`docs/workflows.md`](workflows.md)).
 - **`knowledge-bootstrap`**: the project's **Claude Code (subscription)** credential (subscription-only —
-  it's a raw `claude-code` step) and an active **project API key** (`conductor_mcp: true`), plus a
-  **`GITHUB_TOKEN`** workflow secret (**Settings → Workflows → Secrets**) with read access to the target
-  repo, for cloning a private repo. Unset works fine for a public repo (the token segment interpolates to
-  empty and `git clone` proceeds unauthenticated).
+  it's a raw `claude-code` step, **Settings → AI Providers**), plus a **`GITHUB_TOKEN`** workflow secret
+  (**Settings → Workflows → Secrets**) with read access to the target repo, for cloning a private repo.
+  Unset works fine for a public repo (the token segment interpolates to empty and `git clone` proceeds
+  unauthenticated).
 
 ---
 
@@ -263,8 +262,9 @@ whether the agent runs the `api` runtime (calling this provider directly) or the
 
 ## REST endpoints
 
-All under `/api/v1/projects/{projectId}/knowledge/`, accepting both a user session (project membership via
-`ProjectSecurityService`) and a project-scoped API key:
+All under `/api/v1/projects/{projectId}/knowledge/`, accepting a user session (project membership via
+`ProjectSecurityService`), a project-scoped API key, or a run-scoped workflow MCP token (both the latter
+are `ProjectScopedPrincipal` — see [`docs/workflows.md`](workflows.md)):
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -281,11 +281,14 @@ All under `/api/v1/projects/{projectId}/knowledge/`, accepting both a user sessi
 
 ## Frontend surfaces
 
-- **Setup checklist.** The Knowledge index page's empty state (admins only) shows a small guidance
-  checklist instead of a bare "Enable Knowledge" button: whether a Claude credential (`claude-code`
-  subscription or a `claude` provider API key) and a project API key are configured. Both rows are
-  informational, not gates — `Enable Knowledge` stays clickable regardless, since the pipeline
-  self-heals (see [System workflows](#system-workflows)).
+- **Connect Claude hint.** The Knowledge index page's empty state (admins only) no longer shows the old
+  multi-row checklist (Claude credential + project API key row) — a single `listProviderCredentialStatuses`
+  call checks Claude connectivity directly (`claude-code` subscription or a `claude` provider API key); the
+  project-API-key row is gone entirely, since Conductor MCP access no longer needs one (see
+  [`docs/workflows.md`](workflows.md)). Connected: just the `Enable Knowledge` action. Not connected: a
+  hint links to **Settings → AI Providers** to connect one. Guidance, not a gate — `Enable Knowledge` stays
+  clickable regardless of connection state, since the pipeline self-heals (see
+  [System workflows](#system-workflows)).
 - **Pipeline strip.** Once the wiki has content, the index page shows a one-line summary above it:
   pending/dead inbox counts (linking to the source list below), the librarian's last run status, and a
   link to the librarian `Agent`. Best-effort and auxiliary — a fetch failure renders nothing rather than
