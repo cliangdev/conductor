@@ -483,7 +483,7 @@ export function listAgentProviders(projectId: string, token: string): Promise<Ag
 /**
  * Credential status for every provider the backend knows about in one call (today: `claude`,
  * `claude-code`) — the read-model backing the "Connect Claude" surface, so it doesn't have to
- * fan out a `getProviderCredentialStatus` call per provider.
+ * fan out a per-provider status call.
  */
 export function listProviderCredentialStatuses(
   projectId: string,
@@ -491,17 +491,6 @@ export function listProviderCredentialStatuses(
 ): Promise<ProviderCredentialStatus[]> {
   return apiGet<ProviderCredentialStatus[]>(
     `/api/v1/projects/${projectId}/agents/providers/credentials`,
-    token,
-  )
-}
-
-export function getProviderCredentialStatus(
-  projectId: string,
-  provider: string,
-  token: string,
-): Promise<ProviderCredentialStatus> {
-  return apiGet<ProviderCredentialStatus>(
-    `/api/v1/projects/${projectId}/agents/providers/${provider}/credential`,
     token,
   )
 }

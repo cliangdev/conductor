@@ -7,7 +7,6 @@ import {
   listAgentTools,
   listAgentProviders,
   setProviderCredential,
-  getProviderCredentialStatus,
   listProviderCredentialStatuses,
   deleteProviderCredential,
 } from './api'
@@ -79,17 +78,14 @@ describe('agent API helpers', () => {
 
   it('credential helpers target the per-provider credential endpoint', async () => {
     const f = stubFetch().mockResolvedValue(okResponse({ provider: 'claude', configured: true }))
-    await getProviderCredentialStatus(P, 'claude', TOK)
     await setProviderCredential(P, 'claude', 'sk-123', TOK)
     await deleteProviderCredential(P, 'claude', TOK)
 
     expect(f.mock.calls[0][0]).toContain(`/api/v1/projects/${P}/agents/providers/claude/credential`)
-    expect(f.mock.calls[0][1]?.method ?? 'GET').toBe('GET')
+    expect(f.mock.calls[0][1]?.method).toBe('PUT')
+    expect(JSON.parse(f.mock.calls[0][1]?.body as string)).toEqual({ apiKey: 'sk-123' })
 
-    expect(f.mock.calls[1][1]?.method).toBe('PUT')
-    expect(JSON.parse(f.mock.calls[1][1]?.body as string)).toEqual({ apiKey: 'sk-123' })
-
-    expect(f.mock.calls[2][1]?.method).toBe('DELETE')
+    expect(f.mock.calls[1][1]?.method).toBe('DELETE')
   })
 
   it('listProviderCredentialStatuses GETs the batched credentials collection', async () => {
