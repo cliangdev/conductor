@@ -6,8 +6,9 @@ import { LibraryIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { useToast } from '@/components/ui/toast'
-import { Button } from '@/components/ui/button'
 import { KnowledgePageSkeleton } from '@/components/knowledge/KnowledgePageSkeleton'
+import { KnowledgeSetupChecklist } from '@/components/knowledge/KnowledgeSetupChecklist'
+import { KnowledgePipelineStrip } from '@/components/knowledge/KnowledgePipelineStrip'
 import { Alert } from '@/components/ui/alert'
 import { getKnowledgeIndex, enableKnowledge } from '@/lib/knowledge-api'
 import type { KnowledgePageView } from '@/lib/knowledge-api'
@@ -85,9 +86,14 @@ export default function KnowledgeIndexPage() {
               Enable Knowledge, or dispatch the bootstrap workflow, to start populating this
               workspace&apos;s knowledge base.
             </p>
-            <Button size="sm" onClick={handleEnable} disabled={enabling}>
-              {enabling ? 'Enabling…' : 'Enable Knowledge'}
-            </Button>
+            {accessToken && (
+              <KnowledgeSetupChecklist
+                projectId={projectId}
+                token={accessToken}
+                onEnable={handleEnable}
+                enabling={enabling}
+              />
+            )}
           </>
         ) : (
           <p className="text-xs max-w-xs">Ask a workspace admin to enable Knowledge for this workspace.</p>
@@ -98,7 +104,8 @@ export default function KnowledgeIndexPage() {
 
   return (
     <div className="h-full overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
-      <div className="max-w-[45rem] mx-auto">
+      <div className="max-w-[45rem] mx-auto space-y-4">
+        {accessToken && <KnowledgePipelineStrip projectId={projectId} token={accessToken} />}
         <MarkdownRenderer content={page!.content ?? ''} onWikiLink={handleWikiLink} basePath="" />
       </div>
     </div>
