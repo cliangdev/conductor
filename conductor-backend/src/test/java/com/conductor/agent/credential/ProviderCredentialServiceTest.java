@@ -14,6 +14,10 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -65,5 +69,50 @@ class ProviderCredentialServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Unknown provider")
                 .hasMessageContaining("not-a-provider");
+    }
+
+    // ---- listStatuses ----
+
+    @Test
+    void listStatuses_noneConfigured_allProvidersUnconfigured() {
+        when(repository.findByProjectId("proj-1")).thenReturn(List.of());
+
+        List<ProviderCredentialService.ProviderCredentialStatusView> result = service.listStatuses("proj-1");
+
+        assertThat(result).containsExactly(
+                new ProviderCredentialService.ProviderCredentialStatusView("claude", false),
+                new ProviderCredentialService.ProviderCredentialStatusView("claude-code", false));
+        verify(repository, times(1)).findByProjectId("proj-1");
+        verify(repository, never()).existsByProjectIdAndProvider(any(), any());
+    }
+
+    @Test
+    void listStatuses_oneConfigured_onlyThatProviderTrue() {
+        when(repository.findByProjectId("proj-1")).thenReturn(List.of(credential("proj-1", "claude")));
+
+        List<ProviderCredentialService.ProviderCredentialStatusView> result = service.listStatuses("proj-1");
+
+        assertThat(result).containsExactly(
+                new ProviderCredentialService.ProviderCredentialStatusView("claude", true),
+                new ProviderCredentialService.ProviderCredentialStatusView("claude-code", false));
+    }
+
+    @Test
+    void listStatuses_bothConfigured_registryProviderFirstThenNonModel() {
+        when(repository.findByProjectId("proj-1"))
+                .thenReturn(List.of(credential("proj-1", "claude"), credential("proj-1", "claude-code")));
+
+        List<ProviderCredentialService.ProviderCredentialStatusView> result = service.listStatuses("proj-1");
+
+        assertThat(result).containsExactly(
+                new ProviderCredentialService.ProviderCredentialStatusView("claude", true),
+                new ProviderCredentialService.ProviderCredentialStatusView("claude-code", true));
+    }
+
+    private ProviderCredential credential(String projectId, String provider) {
+        ProviderCredential credential = new ProviderCredential();
+        credential.setProjectId(projectId);
+        credential.setProvider(provider);
+        return credential;
     }
 }

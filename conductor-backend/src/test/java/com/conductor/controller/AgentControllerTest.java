@@ -1,13 +1,16 @@
 package com.conductor.controller;
 
 import com.conductor.agent.Agent;
+import com.conductor.agent.AgentAvatarDefaults;
 import com.conductor.agent.AgentService;
 import com.conductor.agent.credential.ProviderCredentialService;
+import com.conductor.agent.credential.ProviderCredentialService.ProviderCredentialStatusView;
 import com.conductor.config.SecurityConfig;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectSecurityService;
@@ -31,6 +34,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -54,6 +58,7 @@ class AgentControllerTest {
     @MockitoBean private UserRepository userRepository;
     @MockitoBean private ProjectApiKeyRepository projectApiKeyRepository;
     @MockitoBean private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean private RunTokenService runTokenService;
 
     @BeforeEach
     void setUp() {
@@ -146,6 +151,100 @@ class AgentControllerTest {
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers")
                         .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- listProviderCredentialStatuses ----
+
+    @Test
+    void listProviderCredentialStatuses_happyPath_returnsAllProviderStatuses() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(providerCredentialService.listStatuses(PROJECT_ID)).thenReturn(List.of(
+                new ProviderCredentialStatusView("claude", true),
+                new ProviderCredentialStatusView("claude-code", false)));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/credentials")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].provider").value("claude"))
+                .andExpect(jsonPath("$[0].configured").value(true))
+                .andExpect(jsonPath("$[1].provider").value("claude-code"))
+                .andExpect(jsonPath("$[1].configured").value(false));
+    }
+
+    @Test
+    void listProviderCredentialStatuses_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/credentials")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    // ---- avatar ----
+
+    @Test
+    void createAgent_withoutAvatar_returnsResponseWithDerivedDefaults() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.create(eq(PROJECT_ID), any())).thenReturn(stubAgent());
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Marketer\",\"provider\":\"claude\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.avatarEmoji").value(AgentAvatarDefaults.defaultEmoji("marketer")))
+                .andExpect(jsonPath("$.avatarColor").value(AgentAvatarDefaults.defaultColor("marketer")));
+    }
+
+    @Test
+    void createAgent_withExplicitAvatar_persistedValuesAreReturned() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Agent created = stubAgent();
+        created.setAvatarEmoji("🦉");
+        created.setAvatarColor("teal");
+        when(agentService.create(eq(PROJECT_ID), any())).thenReturn(created);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Marketer\",\"provider\":\"claude\",\"avatarEmoji\":\"🦉\",\"avatarColor\":\"teal\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.avatarEmoji").value("🦉"))
+                .andExpect(jsonPath("$.avatarColor").value("teal"));
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).create(eq(PROJECT_ID), captor.capture());
+        assertThat(captor.getValue().avatarEmoji()).isEqualTo("🦉");
+        assertThat(captor.getValue().avatarColor()).isEqualTo("teal");
+    }
+
+    @Test
+    void updateAgent_avatarFields_passedThroughToService() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"avatarEmoji\":\"🚀\",\"avatarColor\":\"rose\"}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).update(eq(PROJECT_ID), eq("agent-1"), captor.capture());
+        assertThat(captor.getValue().avatarEmoji()).isEqualTo("🚀");
+        assertThat(captor.getValue().avatarColor()).isEqualTo("rose");
+    }
+
+    @Test
+    void createAgent_unknownAvatarColorToken_returns400() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Marketer\",\"provider\":\"claude\",\"avatarColor\":\"not-a-color\"}"))
+                .andExpect(status().isBadRequest());
     }
 
     // ---- updateAgent toolIds partial-update semantics ----

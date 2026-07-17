@@ -1,6 +1,7 @@
 package com.conductor.controller;
 
 import com.conductor.agent.Agent;
+import com.conductor.agent.AgentAvatarDefaults;
 import com.conductor.agent.AgentService;
 import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.agent.credential.ProviderCredentialService;
@@ -77,7 +78,9 @@ public class AgentController implements AgentsApi {
                 request.getSystemPrompt(),
                 toConfigMap(request.getConfig()),
                 request.getToolIds(),
-                request.getState() != null ? request.getState().getValue() : null);
+                request.getState() != null ? request.getState().getValue() : null,
+                request.getAvatarEmoji(),
+                request.getAvatarColor() != null ? request.getAvatarColor().getValue() : null);
         Agent created = agentService.create(projectId, input);
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(created));
     }
@@ -94,7 +97,9 @@ public class AgentController implements AgentsApi {
                 request.getSystemPrompt(),
                 toConfigMap(request.getConfig()),
                 request.getToolIds(),
-                request.getState() != null ? request.getState().getValue() : null);
+                request.getState() != null ? request.getState().getValue() : null,
+                request.getAvatarEmoji(),
+                request.getAvatarColor() != null ? request.getAvatarColor().getValue() : null);
         Agent updated = agentService.update(projectId, agentId, input);
         return ResponseEntity.ok(toResponse(updated));
     }
@@ -110,6 +115,15 @@ public class AgentController implements AgentsApi {
     public ResponseEntity<ProviderCredentialStatus> getProviderCredentialStatus(String projectId, String provider) {
         requireMember(projectId);
         return ResponseEntity.ok(credentialStatus(projectId, provider));
+    }
+
+    @Override
+    public ResponseEntity<List<ProviderCredentialStatus>> listProviderCredentialStatuses(String projectId) {
+        requireMember(projectId);
+        List<ProviderCredentialStatus> statuses = providerCredentialService.listStatuses(projectId).stream()
+                .map(s -> new ProviderCredentialStatus().provider(s.provider()).configured(s.configured()))
+                .toList();
+        return ResponseEntity.ok(statuses);
     }
 
     @Override
@@ -164,6 +178,10 @@ public class AgentController implements AgentsApi {
                 .config(readConfig(agent.getConfigJson()))
                 .toolIds(readToolIds(agent.getToolIds()))
                 .state(AgentResponse.StateEnum.fromValue(agent.getState()))
+                .avatarEmoji(agent.getAvatarEmoji() != null
+                        ? agent.getAvatarEmoji() : AgentAvatarDefaults.defaultEmoji(agent.getSlug()))
+                .avatarColor(AgentResponse.AvatarColorEnum.fromValue(agent.getAvatarColor() != null
+                        ? agent.getAvatarColor() : AgentAvatarDefaults.defaultColor(agent.getSlug())))
                 .isDefault(DefaultAgentSlugs.isDefault(agent.getSlug()))
                 .createdAt(agent.getCreatedAt())
                 .updatedAt(agent.getUpdatedAt());

@@ -61,6 +61,14 @@ public class Agent {
     @Column(name = "state", length = 16, nullable = false)
     private String state;
 
+    /** Nullable — {@code AgentAvatarDefaults.defaultEmoji(slug)} fills in a deterministic default at read time. */
+    @Column(name = "avatar_emoji", length = 16)
+    private String avatarEmoji;
+
+    /** Nullable — a token from {@link AgentAvatarDefaults#COLOR_TOKENS}; see {@link #avatarEmoji}. */
+    @Column(name = "avatar_color", length = 32)
+    private String avatarColor;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -123,6 +131,12 @@ public class Agent {
 
     public String getState() { return state; }
     public void setState(String state) { this.state = state; }
+
+    public String getAvatarEmoji() { return avatarEmoji; }
+    public void setAvatarEmoji(String avatarEmoji) { this.avatarEmoji = avatarEmoji; }
+
+    public String getAvatarColor() { return avatarColor; }
+    public void setAvatarColor(String avatarColor) { this.avatarColor = avatarColor; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

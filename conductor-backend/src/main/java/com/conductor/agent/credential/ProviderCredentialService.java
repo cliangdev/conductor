@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Owns persistence + crypto for per-(project, provider) BYO credentials. One credential per
@@ -28,6 +29,9 @@ public class ProviderCredentialService {
 
     /** Non-{@link com.conductor.agent.provider.ChatModelProvider} provider ids {@link #setApiKey} also accepts. */
     public static final Set<String> NON_MODEL_PROVIDERS = Set.of("claude-code");
+
+    /** One provider's credential status, for {@link #listStatuses}. */
+    public record ProviderCredentialStatusView(String provider, boolean configured) {}
 
     private final ProviderCredentialRepository repository;
     private final ProviderCredentialCrypto crypto;
@@ -77,5 +81,24 @@ public class ProviderCredentialService {
     @Transactional
     public void deleteCredential(String projectId, String provider) {
         repository.findByProjectIdAndProvider(projectId, provider).ifPresent(repository::delete);
+    }
+
+    /**
+     * Status (configured or not) for every known provider — registered {@link ModelProviderRegistry}
+     * ids first, then {@link #NON_MODEL_PROVIDERS} — in one query rather than N {@link #hasCredential}
+     * calls.
+     */
+    @Transactional(readOnly = true)
+    public List<ProviderCredentialStatusView> listStatuses(String projectId) {
+        Set<String> configured = repository.findByProjectId(projectId).stream()
+                .map(ProviderCredential::getProvider)
+                .collect(Collectors.toSet());
+
+        List<String> allProviders = new ArrayList<>(providerRegistry.providerIds());
+        allProviders.addAll(NON_MODEL_PROVIDERS);
+
+        return allProviders.stream()
+                .map(provider -> new ProviderCredentialStatusView(provider, configured.contains(provider)))
+                .toList();
     }
 }

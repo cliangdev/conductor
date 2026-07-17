@@ -74,7 +74,9 @@ public class AgentService {
             String systemPrompt,
             Map<String, Object> config,
             List<String> toolIds,
-            String state) {
+            String state,
+            String avatarEmoji,
+            String avatarColor) {
     }
 
     @Transactional(readOnly = true)
@@ -109,6 +111,8 @@ public class AgentService {
         agent.setConfigJson(writeJson(input.config(), "{}"));
         agent.setToolIds(writeJson(input.toolIds(), "[]"));
         agent.setState(validateState(input.state(), "DRAFT"));
+        agent.setAvatarEmoji(blankToNull(input.avatarEmoji()));
+        agent.setAvatarColor(validateColor(input.avatarColor()));
         return repository.save(agent);
     }
 
@@ -150,6 +154,12 @@ public class AgentService {
         }
         if (input.state() != null) {
             agent.setState(validateState(input.state(), agent.getState()));
+        }
+        if (input.avatarEmoji() != null) {
+            agent.setAvatarEmoji(blankToNull(input.avatarEmoji()));
+        }
+        if (input.avatarColor() != null) {
+            agent.setAvatarColor(validateColor(input.avatarColor()));
         }
         return repository.save(agent);
     }
@@ -204,6 +214,18 @@ public class AgentService {
             throw new BusinessException("Invalid agent state: " + state + " (expected DRAFT or ACTIVE)");
         }
         return normalized;
+    }
+
+    /** {@code null} leaves the avatar color unset/unchanged; anything else must be a known token. */
+    private String validateColor(String color) {
+        if (color == null) {
+            return null;
+        }
+        if (!AgentAvatarDefaults.isValidColor(color)) {
+            throw new BusinessException("Invalid avatar color: " + color
+                    + " (expected one of " + AgentAvatarDefaults.COLOR_TOKENS + ")");
+        }
+        return color;
     }
 
     /**
