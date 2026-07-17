@@ -1,6 +1,6 @@
 # Conductor
 
-Team PRD collaboration platform. Claude Code generates PRDs; this app handles review, approval, and team workflow.
+Coordination platform for agentic organizations. AI agents do the work (specs, code, campaigns, wiki); humans review, approve, and steer. Pillars: Work Items + Reviews, Workflows (lifecycle statecharts + YAML automation), Agents, Knowledge Center, third-party integrations.
 
 ## Maintaining This File
 
@@ -11,13 +11,19 @@ Keep this file under 200 lines. Review changes to it like code. Rules for what b
 - **Don't** encode enforcement rules ("never do X") here — use hooks or permission settings instead
 - Any section growing past ~15 lines should move to a dedicated doc or skill with a pointer here
 
+## Maintaining README.md
+
+README.md is the public front door: positioning, pillar list, architecture diagram (mermaid), repo layout, quick start, doc index. Update it **in the same PR** as any change that alters one of those — a platform pillar added/removed/renamed, a new top-level package, a new execution mode, or a changed quick-start command. Everything else lives in `docs/` — link from the README, never inline. No per-feature sections; keep it readable in one sitting (~150 lines).
+
 ## Project Structure
 
 ```
 conductor/
 ├── conductor-backend/     # Spring Boot 4.1.0, Java 21, Maven
 ├── conductor-frontend/    # Next.js 16, TypeScript, Tailwind, shadcn/ui
-└── conductor-tools/       # @cliangdev/conductor — CLI + MCP server (single npm package)
+├── conductor-tools/       # @cliangdev/conductor — CLI + MCP server (single npm package)
+├── conductor-worker/      # self-hosted workflow job runner (Express + Docker socket)
+└── runner-image/          # container images for workflow step execution (ghcr conductor-runner)
 ```
 
 ## conductor-backend
@@ -26,18 +32,26 @@ Spring Boot REST API. OpenAPI-first — see [`docs/api-guidelines.md`](docs/api-
 
 ```
 src/main/java/com/conductor/
+├── agent/         # Agents: providers (BYO keys), runs (ReAct loop), tools
 ├── config/        # Spring Security, GCP storage, RestTemplate
-├── controller/    # REST controllers (implement generated interfaces)
+├── controller/    # Legacy /api/v1 controllers (issue vocabulary)
 ├── dto/           # Generated request/response DTOs
 ├── entity/        # JPA entities
 ├── exception/     # GlobalExceptionHandler, typed exceptions (RFC 7807)
+├── integration/   # Connector framework + connectors (github, discord, gcp, ...)
+├── internal/      # /internal/v1 controllers (run-token auth, not JWT)
+├── knowledge/     # Knowledge Center: sources, pages, librarian dispatch
 ├── repository/    # Spring Data JPA repositories
 ├── security/      # JWT filter, API key filter, Firebase token verification
-└── service/       # Business logic
+├── service/       # Business logic
+├── v2/            # Current Work Item API surface
+└── workflow/      # Execution engine, step executors, YAML model, lifecycle statecharts
 
 src/main/resources/
-├── openapi.yaml               # Source of truth for all API endpoints
-└── db/migration/V*.sql        # Flyway migrations (PostgreSQL 15)
+├── openapi.yaml               # External /api/v1 (legacy issue vocabulary)
+├── openapi-v2.yaml            # External v2 Work Item surface
+├── openapi-internal.yaml      # Internal /internal/v1
+└── db/migration/V*.sql        # Flyway migrations (PostgreSQL)
 ```
 
 **Auth**: Firebase Google OAuth → app JWT (HTTP-only cookie). API key auth also supported for CLI.
@@ -56,16 +70,16 @@ src/
 │   ├── app/projects/[projectId]/
 │   │   ├── [area]/[noun]/     # Work Item list, workflow-scoped (e.g. engineering/issues)
 │   │   │   └── [displayId]/   # Work Item detail: doc viewer + comments + review panel
-│   │   ├── workflows/         # Workflow list + lifecycle (statechart) / automation (YAML) editors
-│   │   └── members/           # Member management
+│   │   ├── workflows/         # Automation (YAML) list/editor + lifecycle/ statechart editors
+│   │   ├── agents/            # Agent list, creation, settings
+│   │   ├── knowledge/         # Wiki pages + ingestion sources
+│   │   ├── integrations/      # Connector catalog + connections
+│   │   ├── docs/              # Project docs (folders, versions)
+│   │   └── settings/          # general, members, api-keys, cli, notifications, secrets
 │   ├── invites/[token]/accept/
 │   └── login/
-├── components/
-│   ├── comments/    # CommentableDocument, CommentThread, NewCommentForm
-│   ├── issues/      # StatusDropdown
-│   ├── markdown/    # MarkdownRenderer (react-markdown + remark-gfm + rehype-highlight)
-│   ├── members/     # MemberRow
-│   ├── reviews/     # ReviewSubmissionForm, ReviewersSummaryPanel
+├── components/      # per-domain groups: agents, comments, docs, integrations, issues,
+│                    # knowledge, layout, markdown, members, reviews, workflow, workitems, ui
 │   └── ui/          # shadcn/ui primitives (Badge, Button, Avatar, etc.)
 ├── contexts/        # AuthContext, ProjectContext
 └── lib/api.ts       # apiGet / apiPost / apiPatch / apiDelete helpers
@@ -81,7 +95,7 @@ src/
 
 ```
 src/
-├── commands/    # CLI commands: mcp, start, stop, status, dashboard, login, init, config, doctor
+├── commands/    # CLI commands: mcp, start, stop, status, dashboard, login, logout, init, config, doctor, lint
 ├── daemon/      # watcher.ts — chokidar file watcher, 500ms debounce
 ├── lib/         # API client, config loader
 └── mcp/         # MCP server (stdio): work items, documents, workflows, comments, integrations tools
@@ -103,6 +117,9 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 `comments` + `comment_replies` (line-level or selection-based anchors)  
 `project_settings` (Discord webhook URL)  
 `invites`, `api_keys`  
+`workflow_definitions` → `workflow_definition_versions` (immutable published snapshots) → `workflow_runs`/`workflow_job_runs`/`workflow_step_runs`; plus `workflow_secrets`, `workflow_artifacts`, `runtime_targets` (BYO Cloud Run)  
+`connections` (connector framework) + `webhook_event` (inbound) + `action_invocation` (outbound idempotency/retry)  
+`agents` → `agent_runs` (ReAct transcripts); `provider_credentials` (BYO model keys, KMS envelope)  
 `knowledge_sources` → `knowledge_pages`/`knowledge_page_revisions` (+ links) — agent-maintained wiki, see [`docs/knowledge.md`](docs/knowledge.md)
 
 **Future eng/marketing grouping** should use **labels + saved views** (or a nullable `group` tag on `project_members`), *not* a nested container above projects — that two-level org→project model was deliberately removed for simplicity.

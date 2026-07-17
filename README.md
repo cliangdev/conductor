@@ -6,130 +6,108 @@
 [![Tools CI](https://github.com/cliangdev/conductor/actions/workflows/tools.yml/badge.svg)](https://github.com/cliangdev/conductor/actions/workflows/tools.yml)
 [![npm](https://img.shields.io/npm/v/%40cliangdev%2Fconductor)](https://www.npmjs.com/package/@cliangdev/conductor)
 
-Agentic software development platform. Conductor uses AI to orchestrate the full software development lifecycle — from spec to ship. AI agents author PRDs, teams review and approve them, and Conductor coordinates what gets built, by whom, and when.
+The coordination layer for an agentic organization. AI agents do the work — author specs, write code, run campaigns, maintain the wiki. Humans review, approve, and steer. Conductor is where the two meet: shared work items, automated workflows, a living knowledge base, and connections to the tools your organization already uses.
 
-## How it works
+## What's in the platform
+
+- **Work Items & Reviews** — typed work (PRDs, issues, campaigns, anything) with documents, line-level comments, reviewers, and approval gates. Types and statuses come from your workflows, not hardcoded enums.
+- **Workflows** — two complementary kinds:
+  - *Lifecycle statecharts* define how a Work Item moves through states (draft → review → approved → build), including which agent or human acts at each step.
+  - *YAML automation* runs jobs on schedule, webhook, or event triggers — with agent, claude-code, docker, http, and integration action steps, artifacts, secrets, and loops. See [docs/workflows.md](docs/workflows.md).
+- **Agents** — bring-your-own-key model personas with tools drawn from connectors and custom HTTP tools. Agent runs are fully transcripted for observability.
+- **Knowledge Center** — an ingestion inbox feeding an agent-maintained wiki. Librarian workflows organize incoming knowledge into reviewed, versioned pages. See [docs/knowledge.md](docs/knowledge.md).
+- **Integrations** — a unified connector framework (OAuth, webhooks, fetch, actions): GitHub, Discord, GCP, Apple Search Ads, Google Search Console, PostHog, RevenueCat, and more. See [docs/integrations-adding-a-connector.md](docs/integrations-adding-a-connector.md).
+
+## Architecture
 
 ```mermaid
-flowchart TD
-    User["Developer / User"]
-    Agent["Claude Code (AI Agent)"]
+flowchart LR
+    Human["Team member<br/>(browser)"]
+    Agent["AI agent<br/>(Claude Code)"]
 
-    subgraph Tools["conductor-tools"]
-        CLI["@conductor/cli\ncommand-line interface"]
-        MCP["@conductor/mcp\nMCP server (stdio)"]
-        Sync["Local Sync Daemon\n~/.conductor/{projectId}/issues/**"]
+    subgraph Local["Developer machine"]
+        Tools["@cliangdev/conductor<br/>CLI + MCP server + sync daemon"]
     end
 
-    subgraph Cloud["Cloud Services"]
-        API["conductor-backend\nSpring Boot REST API"]
-        UI["conductor-frontend\nNext.js Web App"]
-        DB["PostgreSQL"]
-        GCP["GCP Storage\n(documents)"]
+    subgraph Cloud["Conductor"]
+        UI["conductor-frontend<br/>Next.js 16"]
+        API["conductor-backend<br/>Spring Boot 4 / Java 21"]
+        Engine["Workflow engine<br/>triggers · jobs · steps"]
+        DB[("PostgreSQL")]
+        GCS[("GCP Storage<br/>documents")]
     end
 
-    User -- "conductor issue / doc / login" --> CLI
-    User -- "reviews, approvals, comments" --> UI
-    Agent -- "create_issue / update_doc / list_issues" --> MCP
+    subgraph Exec["Step execution"]
+        CloudRun["GCP Cloud Run<br/>managed or BYO runtime"]
+        Worker["conductor-worker<br/>self-hosted runner"]
+        Runner["runner-image<br/>step containers"]
+    end
 
-    CLI -- "REST" --> API
-    MCP -- "REST" --> API
-    CLI -- "spawns" --> Sync
-    Sync -- "file watch + debounce" --> API
-    Sync -- "writes" --> LocalFiles["~/.conductor/\nlocal issue files"]
-    LocalFiles -- "read by" --> Agent
+    Ext["Third-party services<br/>GitHub · Discord · GCP · …"]
 
+    Human --> UI --> API
+    Agent -- "MCP tools" --> Tools -- "REST" --> API
     API --> DB
-    API --> GCP
-    UI -- "REST" --> API
+    API --> GCS
+    API --> Engine
+    Engine --> CloudRun --> Runner
+    Engine --> Worker --> Runner
+    API <-- "connectors + webhooks" --> Ext
 ```
 
-**User flow**: Authenticate with `conductor login`, initialize a project with `conductor init`, then use `conductor start` to run the local sync daemon. Issues created via the CLI or MCP tools sync to local files at `~/.conductor/{projectId}/issues/`, which Claude Code reads directly to work with your specs.
+**Human flow**: review and approve work in the web app — documents, comments, reviews, workflow runs, knowledge pages.
 
-**Agent flow**: Claude Code uses the MCP server (`@conductor/mcp`) to create issues, write document drafts, and fetch issue lists — without any manual copy-paste.
+**Agent flow**: Claude Code (or any MCP client) uses the `conductor` MCP server to create and transition work items, write documents, dispatch workflows, search and update knowledge, and call integration tools — no copy-paste.
 
-## Project Structure
+**Execution flow**: workflow jobs run as containers on GCP Cloud Run (Conductor-managed or your own via `runs-on` runtime targets) or on a self-hosted `conductor-worker` next to your own Docker daemon.
+
+## Repository layout
 
 ```
-conductor/                          # monorepo root
-├── conductor-backend/              # Spring Boot 4, Java 21, Maven
-│   └── src/main/
-│       ├── java/com/conductor/
-│       │   ├── config/             # Spring Security, GCP, RestTemplate
-│       │   ├── controller/         # REST controllers (OpenAPI-generated interfaces)
-│       │   ├── entity/             # JPA entities
-│       │   ├── repository/         # Spring Data JPA
-│       │   ├── service/            # business logic
-│       │   └── security/           # JWT + API key filters, Firebase verification
-│       └── resources/
-│           ├── openapi.yaml        # source of truth for all API endpoints
-│           └── db/migration/       # Flyway migrations (PostgreSQL 15)
-│
-├── conductor-frontend/             # Next.js 14, TypeScript, Tailwind, shadcn/ui
-│   └── src/
-│       ├── app/                    # App Router pages (projects, issues, invites, login)
-│       ├── components/             # comments, reviews, markdown, members, shadcn/ui
-│       ├── contexts/               # AuthContext (Firebase + JWT), ProjectContext
-│       └── lib/api.ts              # apiGet / apiPost / apiPatch / apiDelete helpers
-│
-└── conductor-tools/                # @conductor/cli — see conductor-tools/README.md
-│
-├── docker-compose.yml              # local dev stack (backend, frontend, postgres)
-├── Makefile                        # dev, build, logs, down, seed, e2e, e2e-ui
-└── scripts/logs.sh                 # fetch Cloud Run logs from GCP
+conductor/
+├── conductor-backend/     # Spring Boot 4, Java 21 — REST API, workflow engine, connectors
+├── conductor-frontend/    # Next.js 16, TypeScript, Tailwind, shadcn/ui
+├── conductor-tools/       # @cliangdev/conductor — CLI + MCP server (single npm package)
+├── conductor-worker/      # self-hosted job runner (Express + Docker)
+├── runner-image/          # container images for workflow step execution
+├── docs/                  # architecture and contributor guides (see below)
+├── docker-compose.yml     # local dev stack (db, backend, frontend)
+└── Makefile               # dev, seed, e2e, logs, cli-install, ...
 ```
 
-## Local Development
+## Quick start (local development)
 
-### Prerequisites
-
-- Docker + Docker Compose
-- Node.js 20+
-- Java 21 + Maven (for backend-only changes)
-
-### Start the full stack
+Prerequisites: Docker + Docker Compose, Node.js 22+, Java 21 + Maven (backend work only).
 
 ```bash
-make dev         # build and start all services (backend, frontend, postgres)
+make dev         # build + start db/backend/frontend, seed demo data
+                 # → http://localhost:3000 (dev@example.com / conductor)
 make logs        # tail all service logs
-make down        # stop all services
+make down        # stop everything
 ```
 
-### Seed test data
-
-After the stack is running:
+Tests:
 
 ```bash
-make seed        # creates a demo project with dev@example.com / conductor
+cd conductor-backend && mvn test        # backend (Testcontainers)
+cd conductor-frontend && npx vitest     # frontend unit
+cd conductor-tools && npx vitest        # CLI + MCP
+make e2e                                # Playwright against the running stack
 ```
 
-### Run E2E tests
+CLI + MCP for agent use: see the [conductor-tools README](conductor-tools/README.md) — `conductor login`, `conductor init`, `conductor mcp`.
 
-```bash
-make e2e         # headless Playwright tests against the running stack
-make e2e-ui      # open Playwright UI mode
-```
+## Documentation
 
-### Unit tests
-
-```bash
-# Backend
-cd conductor-backend && mvn test
-
-# Frontend
-cd conductor-frontend && npx vitest
-
-# CLI
-cd conductor-tools && npx vitest
-```
-
-## CLI
-
-See the [CLI README](conductor-tools/README.md).
-
-## Workflows
-
-See the [Workflows guide](docs/workflows.md) for how to automate work with triggers, jobs, steps, loops, conditions, and self-hosted execution.
+| Doc | What it covers |
+|---|---|
+| [docs/workflows.md](docs/workflows.md) | Workflow YAML, triggers, step types, execution modes, self-hosted runners |
+| [docs/knowledge.md](docs/knowledge.md) | Knowledge Center: ingestion, wiki model, librarian workflows |
+| [docs/api-guidelines.md](docs/api-guidelines.md) | OpenAPI-first workflow, external vs internal API split |
+| [docs/mcp-tool-guidelines.md](docs/mcp-tool-guidelines.md) | MCP tool design principles |
+| [docs/integrations-adding-a-connector.md](docs/integrations-adding-a-connector.md) | Building a new connector |
+| [docs/design-system.md](docs/design-system.md) | Frontend design tokens and patterns |
+| [docs/dev-workflow.md](docs/dev-workflow.md) | PR deploy labels, live testing, log access |
 
 ## Contributing
 
@@ -144,4 +122,3 @@ Found a vulnerability? Please report it privately via [GitHub Security Advisorie
 Conductor is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). You are free to use, modify, and distribute Conductor for personal and non-commercial purposes — including hobby projects, research, and use by charitable, educational, or government organizations.
 
 **Commercial use requires a separate license.** If you'd like to use Conductor commercially, please open a [GitHub Discussion](https://github.com/cliangdev/conductor/discussions) or contact [@cliangdev](https://github.com/cliangdev).
-

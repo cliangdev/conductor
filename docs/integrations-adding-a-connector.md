@@ -61,7 +61,8 @@ capability interfaces it implements: `FetchConnector` (pull), `WebhookConnector`
    (default export, `{ projectId }` prop). Reuse the shared `ConnectorHeader`, `StatCard`, and
    `lib/format` helpers rather than re-declaring them.
 6. **Router switch** — add a `case '<id>':` to the switch in
-   `app/projects/[projectId]/integrations/[connectorId]/page.tsx` rendering your page.
+   `conductor-frontend/src/app/app/projects/[projectId]/integrations/[connectorId]/page.tsx`
+   rendering your page.
 7. **Logo** — drop `conductor-frontend/public/integrations/<id>.svg` (filename **must equal**
    `getId()`). `ConnectorIcon` picks it up automatically and falls back to the `iconLabel` text badge
    if it's missing — no code change needed.

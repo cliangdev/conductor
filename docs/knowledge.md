@@ -81,6 +81,21 @@ frontend settings page for it; toggle it via `PATCH /api/v1/projects/{projectId}
 
 ## The pipeline
 
+```mermaid
+flowchart LR
+    Producers["Producers<br/>MCP · event tap · UI"]
+    Inbox[("knowledge_sources<br/>(inbox)")]
+    Sched["KnowledgeIngestScheduler<br/>30s poll · claim ≤10 · sweep"]
+    Librarian["knowledge-librarian run<br/>(claude-code step)"]
+    Pages[("knowledge_pages +<br/>revisions · links")]
+
+    Producers -- "submit (PENDING)" --> Inbox
+    Sched -- "claim → PROCESSING" --> Inbox
+    Sched -- "dispatch batch" --> Librarian
+    Librarian -- "write_knowledge_pages<br/>(atomically marks PROCESSED)" --> Pages
+    Sched -. "stale/failed → PENDING (backoff)<br/>5 attempts → DEAD" .-> Inbox
+```
+
 `KnowledgeIngestScheduler` polls every 30s:
 
 1. **Dispatch.** For each project with a due `PENDING` source (`nextAttemptAt` null or past) and

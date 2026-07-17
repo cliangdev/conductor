@@ -6,11 +6,9 @@
 
 ## What is Conductor?
 
-Conductor is an agentic software development platform that manages the entire software development lifecycle using AI agents and human collaboration. You bring the intent; agents handle the execution.
+Conductor is the coordination layer for an agentic organization: AI agents do the work — author specs, write code, run automations, maintain the knowledge base — and humans review, approve, and steer. The platform combines work items with review gates, lifecycle + automation workflows, named agents, a Knowledge Center, and third-party integrations.
 
-Today, Conductor covers product requirements (PRD), team review, and AI-driven implementation. The roadmap extends across the full SDLC — testing, deployment, monitoring, and incident response — every phase driven by agents, with humans in the loop at the moments that matter.
-
-The platform is built around Claude Code. You write PRDs with AI, your team reviews and approves them, then Claude implements them — opening PRs, running tests, and tracking progress — all coordinated through Conductor.
+This package is the local toolkit: a CLI for auth/sync and an MCP server that gives Claude Code (or any MCP client) full access to the platform.
 
 ## How it works
 
@@ -20,7 +18,7 @@ The platform is built around Claude Code. You write PRDs with AI, your team revi
 3. Implement       →   /conductor:implement in Claude Code
 4. PR opens        →   Claude commits, pushes, and creates the pull request
 5. Fix & iterate   →   /conductor:fix — address review feedback on the open PR
-6. Merge           →   Issue closes automatically
+6. Merge           →   Work item closes automatically
 ```
 
 Agents do the execution. Humans set the intent and sign off.
@@ -50,6 +48,7 @@ Then open Claude Code in your project and run `/conductor:prd` to create your fi
 | `/conductor:prd` | Guides you through writing a PRD with AI — discovery, research, structured output |
 | `/conductor:implement` | Takes an approved PRD and implements it — task breakdown, parallel subagents, PR creation |
 | `/conductor:fix` | Fixes bugs and review feedback on an open PR — structured intake, investigation, build validation, and push |
+| `/conductor:workflow` | Designs and creates a Conductor workflow — YAML automation or lifecycle statechart — via guided discovery |
 
 These commands are installed automatically when you run `conductor init` (project-level) or during global install (user-level, to `~/.claude/`).
 
@@ -67,21 +66,22 @@ These commands are installed automatically when you run `conductor init` (projec
 | `conductor config show` | Print current config (API key redacted) |
 | `conductor config set-url <url>` | Hot-swap API URL without re-auth |
 | `conductor dashboard` | Live terminal view of daemon, sync queue, and active workflow runs |
+| `conductor lint [issueId]` | Validate local work-item files |
+| `conductor mcp` | Run the MCP server (stdio) — wired into Claude Code by `conductor init` |
 
 ## MCP Tools
 
-Once `conductor init` runs, Claude Code gets access to these tools via the Conductor MCP server:
+Once `conductor init` runs, Claude Code gets access to 32 tools via the Conductor MCP server, grouped by area:
 
-| Tool | Description |
-|------|-------------|
-| `create_issue` | Create a new PRD or task |
-| `list_issues` | List issues with optional filters |
-| `get_issue` | Fetch a single issue with its document |
-| `update_issue` | Update title or description |
-| `set_issue_status` | Advance issue through the workflow |
-| `scaffold_document` | Create a new document attached to an issue |
-| `delete_document` | Remove a document |
-| `list_issue_comments` | Fetch reviewer comments on an issue |
+| Area | Tools |
+|------|-------|
+| Work items | `create_work_item`, `update_work_item`, `get_work_item`, `list_work_items`, `set_work_item_status`, `get_available_transitions`, `transition_work_item`, `list_work_item_comments`, `record_asset` |
+| Documents | `write_document` (headless upsert), `scaffold_document` (local file, needs daemon), `delete_document` |
+| Workflows | `list_workflows`, `create_workflow`, `get_workflow`, `update_workflow`, `publish_workflow`, `dispatch_workflow`, `get_workflow_run`, `list_workflow_runs`, `list_workflow_secrets`, `report_step_run` |
+| Integrations & discovery | `list_integration_tools`, `list_connector_catalog`, `list_agents`, `list_skills`, `register_skill` |
+| Knowledge | `submit_knowledge_source`, `read_knowledge_sources`, `search_knowledge`, `read_knowledge_pages`, `write_knowledge_pages` |
+
+Tool descriptions embed the usage contract (discover-then-create, action–verify) — see [docs/mcp-tool-guidelines.md](../docs/mcp-tool-guidelines.md).
 
 ## Links
 
@@ -94,11 +94,11 @@ Once `conductor init` runs, Claude Code gets access to these tools via the Condu
 
 ### Local dev setup
 
-The local stack runs at `http://localhost:8080` (backend) and `http://localhost:3000` (frontend) with email/password auth — no Firebase required.
+The local stack runs at `http://localhost:8090` (backend) and `http://localhost:3000` (frontend) with email/password auth — no Firebase required.
 
 ```bash
 # First-time login against local stack
-CONDUCTOR_API_URL=http://localhost:8080 conductor login --local
+CONDUCTOR_API_URL=http://localhost:8090 conductor login --local
 # Default credentials: dev@example.com / conductor
 
 # Verify
@@ -109,7 +109,7 @@ conductor doctor
 Switching between local and prod:
 
 ```bash
-conductor config set-url http://localhost:8080   # local
+conductor config set-url http://localhost:8090   # local
 conductor config set-url <prod-url>              # prod
 ```
 
@@ -136,7 +136,7 @@ npm link          # makes `conductor` available globally
 }
 ```
 
-Override the API URL: `CONDUCTOR_API_URL=http://localhost:8080 conductor login --local`
+Override the API URL: `CONDUCTOR_API_URL=http://localhost:8090 conductor login --local`
 
 ### Testing
 
