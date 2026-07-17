@@ -1,12 +1,10 @@
 package com.conductor.workflow;
 
 import com.conductor.agent.credential.ProviderCredentialService;
-import com.conductor.entity.ProjectApiKey;
 import com.conductor.entity.ProjectSettings;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.entity.WorkflowStepStatus;
-import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -47,8 +45,9 @@ import java.util.UUID;
  * {@code claude-code} — a Claude Code OAuth token from {@code claude setup-token}, distinct from the
  * {@code claude} provider the {@code agent} step's {@code api} runtime's Anthropic API key lives under
  * — is injected as {@code CLAUDE_CODE_OAUTH_TOKEN}. {@code ANTHROPIC_API_KEY} is never set by this
- * class. When {@code conductorMcp} is true, the container also needs a Conductor project API key for
- * its MCP server, recovered directly via {@link ProjectApiKeyRepository}.
+ * class. When {@code conductorMcp} is true, the container also needs credentials for its Conductor MCP
+ * server: rather than requiring a user-created project API key, this runner mints a short-lived,
+ * run-scoped token via {@link RunTokenService#generateMcpToken}.
  *
  * <h2>Runs-on defaulting for agent-step calls</h2>
  * A raw {@code claude-code} step requires its job to declare a container-capable {@code runs-on}
@@ -81,7 +80,6 @@ public class ClaudeCodeContainerRunner {
     private final CloudRunJobLauncher launcher;
     private final RuntimeTargetResolver runtimeTargetResolver;
     private final ProviderCredentialService credentialService;
-    private final ProjectApiKeyRepository projectApiKeyRepository;
     private final WorkflowStepRunRepository stepRunRepository;
     private final RunTokenService runTokenService;
     private final ProjectSettingsRepository projectSettingsRepository;
@@ -93,7 +91,6 @@ public class ClaudeCodeContainerRunner {
     public ClaudeCodeContainerRunner(CloudRunJobLauncher launcher,
                                       RuntimeTargetResolver runtimeTargetResolver,
                                       ProviderCredentialService credentialService,
-                                      ProjectApiKeyRepository projectApiKeyRepository,
                                       WorkflowStepRunRepository stepRunRepository,
                                       RunTokenService runTokenService,
                                       ProjectSettingsRepository projectSettingsRepository,
@@ -104,7 +101,6 @@ public class ClaudeCodeContainerRunner {
         this.launcher = launcher;
         this.runtimeTargetResolver = runtimeTargetResolver;
         this.credentialService = credentialService;
-        this.projectApiKeyRepository = projectApiKeyRepository;
         this.stepRunRepository = stepRunRepository;
         this.runTokenService = runTokenService;
         this.projectSettingsRepository = projectSettingsRepository;
@@ -170,16 +166,9 @@ public class ClaudeCodeContainerRunner {
                     + "the project's Claude Code credential under Integrations → Google Cloud.");
         }
 
+        int ttlHours = loadTokenTtlHours(projectId);
         boolean conductorMcp = Boolean.TRUE.equals(inv.conductorMcp());
-        String conductorApiKey = null;
-        if (conductorMcp) {
-            List<ProjectApiKey> keys = projectApiKeyRepository.findByProjectIdAndRevokedAtIsNull(projectId);
-            if (keys.isEmpty()) {
-                return StepResult.failed("", "PROJECT_API_KEY_MISSING: conductor_mcp requires a project "
-                        + "API key (create one in project settings)");
-            }
-            conductorApiKey = keys.get(0).getKeyValue();
-        }
+        String conductorApiKey = conductorMcp ? runTokenService.generateMcpToken(runId, projectId, ttlHours) : null;
 
         WorkflowStepRun stepRun = resolveOrCreateStepRun(jobRun, stepId, stepDef, inv.stepType());
         String workerJobId = stepRun.getWorkerJobId();
@@ -206,7 +195,7 @@ public class ClaudeCodeContainerRunner {
         }
 
         Map<String, String> env = buildEnv(inv, stepDef, ctx, projectId, runId, jobRun, workerJobId,
-                timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get(), context.getConsumes());
+                timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get(), context.getConsumes(), ttlHours);
         ContainerTask task = new ContainerTask(image, CONTAINER_COMMAND, env, timeoutMinutes);
 
         appendLauncherLine(stepRun, projectId, logBuilder,
@@ -271,7 +260,7 @@ public class ClaudeCodeContainerRunner {
     private Map<String, String> buildEnv(ClaudeCodeInvocation inv, Map<String, Object> stepDef, RuntimeContext ctx,
                                           String projectId, String runId, WorkflowJobRun jobRun, String workerJobId,
                                           int timeoutMinutes, boolean conductorMcp, String conductorApiKey,
-                                          String oauthToken, List<String> consumes) {
+                                          String oauthToken, List<String> consumes, int ttlHours) {
         Map<String, String> env = new LinkedHashMap<>();
         env.put("CONDUCTOR_STEP_PROMPT", inv.prompt());
 
@@ -305,7 +294,6 @@ public class ClaudeCodeContainerRunner {
         env.put("CONDUCTOR_JOB_ID", jobRun.getJobId());
         env.put("CONDUCTOR_WORKER_JOB_ID", workerJobId);
 
-        int ttlHours = loadTokenTtlHours(projectId);
         env.put("CONDUCTOR_RUN_TOKEN", runTokenService.generateRunToken(runId, ttlHours));
         env.put("CONDUCTOR_LOG_CHUNK_URL", backendBaseUrl + "/internal/v1/workflow-runs/" + runId + "/log-chunk");
         env.put("CONDUCTOR_STEP_COMPLETE_URL",

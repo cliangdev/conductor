@@ -5,6 +5,7 @@ import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.AuthService;
 import com.conductor.service.CliLoginService;
@@ -59,6 +60,8 @@ class AuthControllerTest {
 
     @MockitoBean
     private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean
+    private RunTokenService runTokenService;
 
     private User testUser;
 

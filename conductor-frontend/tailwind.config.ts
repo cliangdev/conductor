@@ -73,6 +73,16 @@ const config: Config = {
           closed: 'hsl(var(--status-closed))',
           failed: 'hsl(var(--status-failed))',
         },
+        avatar: {
+          gray: 'hsl(var(--avatar-gray-bg))',
+          blue: 'hsl(var(--avatar-blue-bg))',
+          amber: 'hsl(var(--avatar-amber-bg))',
+          violet: 'hsl(var(--avatar-violet-bg))',
+          teal: 'hsl(var(--avatar-teal-bg))',
+          green: 'hsl(var(--avatar-green-bg))',
+          rose: 'hsl(var(--avatar-rose-bg))',
+          slate: 'hsl(var(--avatar-slate-bg))',
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',

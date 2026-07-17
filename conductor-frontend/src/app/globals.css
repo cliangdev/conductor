@@ -58,6 +58,18 @@
     --sidebar-item-hover: 216 15% 94%;
     --sidebar-item-active: 171 35% 92%;
     --sidebar-item-active-text: 174 81% 23%;
+    /* Agent avatar identity colors (AgentAvatar / AgentAvatarPicker) — soft, pastel circle
+       backgrounds an emoji glyph stays legible on. Deliberately separate from the status ramp
+       above: these are decorative identity, not workflow-state semantics, and are never read by
+       StatusBadge. Token names/order mirror AgentAvatarDefaults.COLOR_TOKENS on the backend. */
+    --avatar-gray-bg: 220 14% 92%;
+    --avatar-blue-bg: 216 70% 92%;
+    --avatar-amber-bg: 40 75% 88%;
+    --avatar-violet-bg: 257 55% 92%;
+    --avatar-teal-bg: 174 45% 88%;
+    --avatar-green-bg: 150 45% 88%;
+    --avatar-rose-bg: 350 65% 92%;
+    --avatar-slate-bg: 216 12% 90%;
   }
 
   .dark {
@@ -104,6 +116,14 @@
     --sidebar-item-hover: 213 14% 15%;
     --sidebar-item-active: 174 51% 47% / 0.13;
     --sidebar-item-active-text: 173 51% 56%;
+    --avatar-gray-bg: 220 10% 22%;
+    --avatar-blue-bg: 216 35% 24%;
+    --avatar-amber-bg: 40 40% 22%;
+    --avatar-violet-bg: 257 30% 26%;
+    --avatar-teal-bg: 174 30% 20%;
+    --avatar-green-bg: 150 30% 20%;
+    --avatar-rose-bg: 350 35% 24%;
+    --avatar-slate-bg: 216 10% 24%;
   }
 
   * {

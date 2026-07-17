@@ -18,6 +18,7 @@ import com.conductor.integration.ConnectorRegistry;
 import com.conductor.repository.ConnectionDataCacheRepository;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.repository.WebhookEventRepository;
 import com.conductor.service.ConnectionService;
@@ -83,6 +84,7 @@ class IntegrationControllerTest {
     @MockitoBean private UserRepository userRepository;
     @MockitoBean private ProjectApiKeyRepository projectApiKeyRepository;
     @MockitoBean private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean private RunTokenService runTokenService;
 
     private User memberUser;
 

@@ -4,7 +4,7 @@ import org.springframework.security.authentication.AbstractAuthenticationToken;
 
 import java.util.List;
 
-public class ApiKeyAuthenticationToken extends AbstractAuthenticationToken {
+public class ApiKeyAuthenticationToken extends AbstractAuthenticationToken implements ProjectScopedPrincipal {
 
     private final String projectId;
 
@@ -21,6 +21,11 @@ public class ApiKeyAuthenticationToken extends AbstractAuthenticationToken {
 
     @Override
     public Object getPrincipal() {
+        return projectId;
+    }
+
+    @Override
+    public String getProjectId() {
         return projectId;
     }
 }

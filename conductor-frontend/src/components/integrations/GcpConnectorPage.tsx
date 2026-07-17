@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { ArrowRightIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -11,7 +13,6 @@ import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { ServiceAccountKeyField } from './ServiceAccountKeyField';
 import RuntimeTargetsPanel from './RuntimeTargetsPanel';
-import ClaudeCodeCredentialPanel from './ClaudeCodeCredentialPanel';
 
 const CONNECTOR_ID = 'gcp';
 
@@ -185,7 +186,13 @@ export default function GcpConnectorPage({ projectId }: { projectId: string }) {
             </>
           )}
 
-          <ClaudeCodeCredentialPanel projectId={projectId} />
+          <Link
+            href={`/app/projects/${projectId}/settings/providers`}
+            className="flex items-center gap-1 text-sm text-primary hover:underline"
+          >
+            Claude Code credential moved to Settings → AI Providers
+            <ArrowRightIcon className="h-3.5 w-3.5" />
+          </Link>
 
           <RuntimeTargetsPanel projectId={projectId} connections={connections} />
         </div>

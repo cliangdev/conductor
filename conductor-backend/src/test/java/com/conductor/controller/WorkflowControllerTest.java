@@ -9,6 +9,7 @@ import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowJobRunRepository;
@@ -98,6 +99,7 @@ class WorkflowControllerTest {
     @MockitoBean private UserRepository userRepository;
     @MockitoBean private ProjectApiKeyRepository projectApiKeyRepository;
     @MockitoBean private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean private RunTokenService runTokenService;
 
     private static final String PROJECT_ID = "proj-1";
 

@@ -6,6 +6,7 @@ import { PageHeader, Breadcrumb, type Crumb } from '@/components/layout/PageHead
 import { Badge } from '@/components/ui/badge'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { DefaultAgentBadge } from '@/components/agents/DefaultAgentBadge'
+import { AgentAvatar } from '@/components/agents/AgentAvatar'
 import { AgentProvider, useAgent } from '@/contexts/AgentContext'
 import { useCan } from '@/contexts/PermissionsContext'
 
@@ -28,7 +29,12 @@ function AgentDetailHeader() {
   }
   return (
     <PageHeader
-      title={agent.name}
+      title={
+        <span className="inline-flex items-center gap-2">
+          <AgentAvatar emoji={agent.avatarEmoji} color={agent.avatarColor} size="md" />
+          {agent.name}
+        </span>
+      }
       status={
         <div className="flex items-center gap-1.5">
           <Badge variant={agent.state === 'ACTIVE' ? 'status-approved' : 'status-draft'}>

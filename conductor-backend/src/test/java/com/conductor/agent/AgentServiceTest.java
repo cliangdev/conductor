@@ -4,6 +4,7 @@ import com.conductor.agent.provider.ChatModelProvider;
 import com.conductor.agent.provider.ModelProviderRegistry;
 import com.conductor.agent.tool.AgentTool;
 import com.conductor.agent.tool.AgentToolRegistry;
+import com.conductor.exception.BusinessException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -58,14 +60,14 @@ class AgentServiceTest {
     }
 
     private AgentService.AgentInput onlyToolIds(List<String> toolIds) {
-        return new AgentService.AgentInput(null, null, null, null, null, null, null, toolIds, null);
+        return new AgentService.AgentInput(null, null, null, null, null, null, null, toolIds, null, null, null);
     }
 
     @Test
     void update_explicitBlankModel_clearsPinBackToNull() {
         existingAgent();
         AgentService.AgentInput input =
-                new AgentService.AgentInput(null, null, null, null, "  ", null, null, null, null);
+                new AgentService.AgentInput(null, null, null, null, "  ", null, null, null, null, null, null);
 
         Agent updated = service.update(PROJECT_ID, AGENT_ID, input);
 
@@ -94,11 +96,85 @@ class AgentServiceTest {
     void update_blankDescription_clearsToNull() {
         existingAgent();
         AgentService.AgentInput input =
-                new AgentService.AgentInput(null, null, "", null, null, null, null, null, null);
+                new AgentService.AgentInput(null, null, "", null, null, null, null, null, null, null, null);
 
         Agent updated = service.update(PROJECT_ID, AGENT_ID, input);
 
         assertThat(updated.getDescription()).isNull();
+    }
+
+    // ---- avatar ----
+
+    private AgentService.AgentInput createInput(String avatarEmoji, String avatarColor) {
+        return new AgentService.AgentInput(
+                "Test Agent", null, null, "claude", null, null, null, null, null, avatarEmoji, avatarColor);
+    }
+
+    @Test
+    void create_withoutAvatar_leavesBothFieldsNull() {
+        when(providerRegistry.findById("claude")).thenReturn(Optional.of(mock(ChatModelProvider.class)));
+
+        Agent created = service.create(PROJECT_ID, createInput(null, null));
+
+        assertThat(created.getAvatarEmoji()).isNull();
+        assertThat(created.getAvatarColor()).isNull();
+    }
+
+    @Test
+    void create_withExplicitAvatar_persistsBothFields() {
+        when(providerRegistry.findById("claude")).thenReturn(Optional.of(mock(ChatModelProvider.class)));
+
+        Agent created = service.create(PROJECT_ID, createInput("🦉", "teal"));
+
+        assertThat(created.getAvatarEmoji()).isEqualTo("🦉");
+        assertThat(created.getAvatarColor()).isEqualTo("teal");
+    }
+
+    @Test
+    void create_withInvalidAvatarColor_throwsBusinessException() {
+        when(providerRegistry.findById("claude")).thenReturn(Optional.of(mock(ChatModelProvider.class)));
+
+        assertThatThrownBy(() -> service.create(PROJECT_ID, createInput("🦉", "not-a-color")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Invalid avatar color")
+                .hasMessageContaining("not-a-color");
+    }
+
+    @Test
+    void update_setsAvatarEmojiAndColor() {
+        existingAgent();
+        AgentService.AgentInput input =
+                new AgentService.AgentInput(null, null, null, null, null, null, null, null, null, "🚀", "rose");
+
+        Agent updated = service.update(PROJECT_ID, AGENT_ID, input);
+
+        assertThat(updated.getAvatarEmoji()).isEqualTo("🚀");
+        assertThat(updated.getAvatarColor()).isEqualTo("rose");
+    }
+
+    @Test
+    void update_nullAvatarFields_leaveExistingAvatarUnchanged() {
+        Agent agent = existingAgent();
+        agent.setAvatarEmoji("🧠");
+        agent.setAvatarColor("amber");
+        AgentService.AgentInput input =
+                new AgentService.AgentInput(null, null, null, null, null, null, null, null, null, null, null);
+
+        Agent updated = service.update(PROJECT_ID, AGENT_ID, input);
+
+        assertThat(updated.getAvatarEmoji()).isEqualTo("🧠");
+        assertThat(updated.getAvatarColor()).isEqualTo("amber");
+    }
+
+    @Test
+    void update_invalidAvatarColor_throwsBusinessException() {
+        existingAgent();
+        AgentService.AgentInput input =
+                new AgentService.AgentInput(null, null, null, null, null, null, null, null, null, null, "chartreuse");
+
+        assertThatThrownBy(() -> service.update(PROJECT_ID, AGENT_ID, input))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Invalid avatar color");
     }
 
     @Test

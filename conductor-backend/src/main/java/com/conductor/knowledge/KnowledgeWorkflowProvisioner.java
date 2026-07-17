@@ -1,6 +1,7 @@
 package com.conductor.knowledge;
 
 import com.conductor.agent.Agent;
+import com.conductor.agent.AgentAvatarDefaults;
 import com.conductor.agent.AgentRepository;
 import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.entity.Project;
@@ -22,6 +23,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Idempotently provisions the two knowledge-domain system workflows (see
@@ -69,6 +71,8 @@ public class KnowledgeWorkflowProvisioner {
     private static final String LIBRARIAN_SYSTEM_PROMPT_RESOURCE = "/knowledge/librarian-system-prompt.md";
     private static final String LIBRARIAN_AGENT_NAME = "Knowledge Librarian";
     private static final String LIBRARIAN_AGENT_PROVIDER = "claude";
+    private static final String LIBRARIAN_AVATAR_EMOJI = "📚";
+    private static final String LIBRARIAN_AVATAR_COLOR = "violet";
     private static final List<String> LIBRARIAN_TOOL_IDS = List.of(
             "knowledge:read_knowledge_pages", "knowledge:read_knowledge_sources",
             "knowledge:search_knowledge", "knowledge:write_knowledge_pages");
@@ -111,7 +115,9 @@ public class KnowledgeWorkflowProvisioner {
     }
 
     private void seedLibrarianAgent(String projectId) {
-        if (agentRepository.existsByProjectIdAndSlug(projectId, LIBRARIAN_AGENT_SLUG)) {
+        Optional<Agent> existing = agentRepository.findByProjectIdAndSlug(projectId, LIBRARIAN_AGENT_SLUG);
+        if (existing.isPresent()) {
+            backfillAvatarIfMissing(existing.get());
             return;
         }
         Agent agent = new Agent();
@@ -126,8 +132,21 @@ public class KnowledgeWorkflowProvisioner {
         agent.setConfigJson(writeJson(Map.of("maxToolTurns", 40)));
         agent.setToolIds(writeJson(LIBRARIAN_TOOL_IDS));
         agent.setState("ACTIVE");
+        agent.setAvatarEmoji(LIBRARIAN_AVATAR_EMOJI);
+        agent.setAvatarColor(LIBRARIAN_AVATAR_COLOR);
         agentRepository.save(agent);
         log.info("Provisioned '{}' agent for project {}", LIBRARIAN_AGENT_SLUG, projectId);
+    }
+
+    /** Backfills the avatar on a pre-existing librarian seeded before {@code avatarEmoji} existed. */
+    private void backfillAvatarIfMissing(Agent agent) {
+        if (agent.getAvatarEmoji() != null) {
+            return;
+        }
+        agent.setAvatarEmoji(LIBRARIAN_AVATAR_EMOJI);
+        agent.setAvatarColor(LIBRARIAN_AVATAR_COLOR);
+        agentRepository.save(agent);
+        log.info("Backfilled avatar for '{}' agent in project {}", LIBRARIAN_AGENT_SLUG, agent.getProjectId());
     }
 
     private String writeJson(Object value) {

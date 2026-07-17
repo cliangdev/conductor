@@ -7,6 +7,7 @@ import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.generated.model.MemberResponse;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectService;
@@ -56,6 +57,8 @@ class MemberControllerTest {
 
     @MockitoBean
     private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean
+    private RunTokenService runTokenService;
 
     private User adminUser;
     private User creatorUser;

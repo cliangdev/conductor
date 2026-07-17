@@ -114,6 +114,46 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         assertThat(librarian.getConfigJson()).contains("\"maxToolTurns\"").contains("40");
         // No runtime key -- resolved at execution time (auto-detect), never pinned by the seed.
         assertThat(librarian.getConfigJson()).doesNotContain("runtime");
+        assertThat(librarian.getAvatarEmoji()).isEqualTo("📚");
+        assertThat(librarian.getAvatarColor()).isEqualTo("violet");
+    }
+
+    @Test
+    void provisionBackfillsAvatarOnExistingLibrarianSeededWithoutOne() {
+        provisioner.provision(projectId);
+        Agent librarian = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        librarian.setAvatarEmoji(null);
+        librarian.setAvatarColor(null);
+        agentRepository.save(librarian);
+
+        provisioner.provision(projectId);
+
+        Agent backfilled = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        assertThat(backfilled.getAvatarEmoji()).isEqualTo("📚");
+        assertThat(backfilled.getAvatarColor()).isEqualTo("violet");
+    }
+
+    @Test
+    void provisionLeavesACustomizedLibrarianAvatarAlone() {
+        provisioner.provision(projectId);
+        Agent librarian = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        librarian.setAvatarEmoji("🦉");
+        librarian.setAvatarColor("teal");
+        agentRepository.save(librarian);
+
+        provisioner.provision(projectId);
+
+        Agent unchanged = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        assertThat(unchanged.getAvatarEmoji()).isEqualTo("🦉");
+        assertThat(unchanged.getAvatarColor()).isEqualTo("teal");
     }
 
     @Test

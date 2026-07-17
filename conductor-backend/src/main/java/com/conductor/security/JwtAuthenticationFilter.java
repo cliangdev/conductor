@@ -33,6 +33,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             HttpServletResponse response,
             FilterChain filterChain) throws ServletException, IOException {
 
+        // An upstream filter (run-MCP token, API key) may have already authenticated this request —
+        // don't re-parse the bearer token as a user JWT (all token types share jwt.secret and are
+        // disambiguated by claims, so re-parsing is wasted work at best and fragile at worst).
+        if (SecurityContextHolder.getContext().getAuthentication() != null) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String token = extractToken(request);
 
         if (token != null && jwtService.validateToken(token)) {

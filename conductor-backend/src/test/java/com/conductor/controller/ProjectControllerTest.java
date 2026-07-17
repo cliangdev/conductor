@@ -9,6 +9,7 @@ import com.conductor.generated.model.ProjectResponse;
 import com.conductor.generated.model.ProjectSummary;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectService;
@@ -56,6 +57,8 @@ class ProjectControllerTest {
 
     @MockitoBean
     private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean
+    private RunTokenService runTokenService;
 
     private User testUser;
 

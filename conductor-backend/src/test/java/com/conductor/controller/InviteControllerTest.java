@@ -10,6 +10,7 @@ import com.conductor.generated.model.AcceptInviteResponse;
 import com.conductor.generated.model.InviteResponse;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.InviteService;
 import com.conductor.service.JwtService;
@@ -60,6 +61,8 @@ class InviteControllerTest {
 
     @MockitoBean
     private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean
+    private RunTokenService runTokenService;
 
     private User adminUser;
     private User creatorUser;

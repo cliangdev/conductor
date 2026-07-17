@@ -10,7 +10,7 @@ References: Linear (shell, lists, density, theming), GitHub PR review (PRD revie
 2. **Borders, not shadows.** 1px hairlines separate surfaces; the surface ladder creates depth. Shadows only on true overlays (menus, popovers, modals, toasts).
 3. **Chrome is neutral, state is color.** The teal accent marks the one primary action and active nav. All other color belongs to status chips and semantic feedback — never decoration.
 4. **Every async edge has a face.** One `Skeleton` for loading, one `EmptyState` pattern, one toast for mutation failures. A mutation that fails always says so and reverts — no silent `catch`.
-5. **One way to do each thing.** One `StatusBadge`, one dropdown (`DropdownMenu`), one input, one `timeAgo` helper, one icon set (lucide). No emoji/text glyphs (`▼ ✅ ▶ ×`) as UI chrome; no native `confirm()`.
+5. **One way to do each thing.** One `StatusBadge`, one dropdown (`DropdownMenu`), one input, one `timeAgo` helper, one icon set (lucide). No emoji/text glyphs (`▼ ✅ ▶ ×`) as UI chrome (sole exception: agent identity emoji via `AgentAvatar` — see "Avatar identity tokens"); no native `confirm()`.
 
 ## Tokens
 
@@ -47,6 +47,19 @@ Status color is applied **only** through `StatusBadge` (soft tinted background a
 | green | `#178a50` | `#4cc07e` | Done / Succeeded |
 | slate | `#9199a5` | `#7d8591` | Closed / Skipped |
 | red | `#ce3b3b` | `#e46969` | Failed / destructive |
+
+### Avatar identity tokens
+
+Agents have emoji avatars (`AgentAvatar`): an emoji on a soft tinted circle. The eight background
+tokens (`--avatar-{gray,blue,amber,violet,teal,green,rose,slate}-bg`, light + dark in
+`globals.css`, exposed as `bg-avatar-*`) are **identity, not status** — decorative, user-chosen,
+never read by `StatusBadge` and never used to signal workflow state. Hues echo the status ramp's
+families for visual kinship, but the values are separate pastel-lightness vars (and `rose` ≠ the
+ramp's `red`). Token names mirror the backend's `AgentAvatarDefaults.COLOR_TOKENS`.
+
+**Emoji exception to principle 5**: emoji are permitted *only* as agent identity content rendered
+through `AgentAvatar` (and chosen via `AgentAvatarPicker`). Everywhere else the no-emoji-as-chrome
+rule stands — lucide remains the one icon set for UI chrome.
 
 ## Typography
 
