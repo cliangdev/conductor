@@ -1,11 +1,11 @@
 import type { Config } from './config.js'
 
-async function request<T>(
+async function requestWithStatus<T>(
   method: string,
   urlPath: string,
   body: unknown | undefined,
   config: Config
-): Promise<T> {
+): Promise<{ data: T; status: number }> {
   const url = `${config.apiUrl}${urlPath}`
   const headers: Record<string, string> = {
     Authorization: `Bearer ${config.apiKey}`,
@@ -24,10 +24,19 @@ async function request<T>(
   }
 
   if (method === 'DELETE') {
-    return undefined as T
+    return { data: undefined as T, status: response.status }
   }
 
-  return response.json() as Promise<T>
+  return { data: (await response.json()) as T, status: response.status }
+}
+
+async function request<T>(
+  method: string,
+  urlPath: string,
+  body: unknown | undefined,
+  config: Config
+): Promise<T> {
+  return (await requestWithStatus<T>(method, urlPath, body, config)).data
 }
 
 /**
@@ -45,6 +54,16 @@ export async function apiGet<T>(urlPath: string, config: Config): Promise<T> {
 
 export async function apiPost<T>(urlPath: string, body: unknown, config: Config): Promise<T> {
   return request<T>('POST', urlPath, body, config)
+}
+
+/** Like {@link apiPost}, but also returns the response status -- for the rare caller that needs to
+ *  distinguish e.g. 201 (created) from 200 (claim-or-return hit an existing row) in the response body. */
+export async function apiPostWithStatus<T>(
+  urlPath: string,
+  body: unknown,
+  config: Config
+): Promise<{ data: T; status: number }> {
+  return requestWithStatus<T>('POST', urlPath, body, config)
 }
 
 export async function apiPatch<T>(urlPath: string, body: unknown, config: Config): Promise<T> {

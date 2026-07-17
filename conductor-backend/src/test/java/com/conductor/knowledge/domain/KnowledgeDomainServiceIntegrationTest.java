@@ -2,9 +2,20 @@ package com.conductor.knowledge.domain;
 
 import com.conductor.agent.Agent;
 import com.conductor.agent.AgentRepository;
+import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
+import com.conductor.knowledge.Actor;
+import com.conductor.knowledge.KnowledgeIngestionService;
+import com.conductor.knowledge.KnowledgeSource;
+import com.conductor.knowledge.KnowledgeSourceRepository;
+import com.conductor.knowledge.KnowledgeSubmission;
+import com.conductor.knowledge.SourceReceipt;
+import com.conductor.knowledge.page.KnowledgePage;
+import com.conductor.knowledge.page.KnowledgePageRepository;
+import com.conductor.knowledge.page.KnowledgePageService;
+import com.conductor.knowledge.page.PageWrite;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.support.AbstractNoneWebIntegrationTest;
@@ -14,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,6 +43,14 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
     private KnowledgeDomainRepository domainRepository;
     @Autowired
     private AgentRepository agentRepository;
+    @Autowired
+    private KnowledgePageRepository pageRepository;
+    @Autowired
+    private KnowledgePageService pageService;
+    @Autowired
+    private KnowledgeIngestionService ingestionService;
+    @Autowired
+    private KnowledgeSourceRepository sourceRepository;
     @Autowired
     private ProjectRepository projectRepository;
     @Autowired
@@ -136,6 +156,153 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         KnowledgeDomain cleared = domainService.updateOwningAgent(projectId, "engineering", null);
 
         assertThat(cleared.getOwningAgentSlug()).isNull();
+    }
+
+    // ---- approving a SUGGESTED domain seeds a skeleton schema page ----
+
+    @Test
+    void approvingSuggestedDomainSeedsSkeletonSchemaPage() {
+        createDomain("legal", "Legal", KnowledgeDomainState.SUGGESTED);
+
+        domainService.update(projectId, "legal", null, null, null, KnowledgeDomainState.ACTIVE);
+
+        Optional<KnowledgePage> page = pageRepository.findByProjectIdAndPath(projectId, "legal/_schema.md");
+        assertThat(page).isPresent();
+        assertThat(page.get().getPageType()).isEqualTo("schema");
+        assertThat(page.get().getTitle()).isEqualTo("Legal domain schema");
+        assertThat(page.get().getBody()).contains("librarian-raised gap report")
+                .contains("under `legal/`"); // %DOMAIN_SLUG% placeholder replaced
+    }
+
+    @Test
+    void approvingSuggestedDomainWithExistingSchemaPageDoesNotOverwriteIt() {
+        createDomain("legal", "Legal", KnowledgeDomainState.SUGGESTED);
+        String customContent = "---\ntype: schema\ntitle: Custom\n---\n\nAlready written by someone.";
+        pageService.batchWrite(projectId, List.of(new PageWrite("legal/_schema.md", customContent, null, false)),
+                List.of(), new Actor("user", "u1", null));
+
+        domainService.update(projectId, "legal", null, null, null, KnowledgeDomainState.ACTIVE);
+
+        KnowledgePage page = pageRepository.findByProjectIdAndPath(projectId, "legal/_schema.md").orElseThrow();
+        assertThat(page.getVersion()).isEqualTo(1);
+        assertThat(page.getBody()).contains("Already written by someone.");
+    }
+
+    @Test
+    void updateWithoutStateTransitionToActiveDoesNotSeedSkeletonPage() {
+        createDomain("legal", "Legal", KnowledgeDomainState.SUGGESTED);
+
+        domainService.update(projectId, "legal", "Legal Affairs", null, null, null);
+
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_schema.md")).isEmpty();
+    }
+
+    // ---- gap-report suggestions (claim-or-return) ----
+
+    @Test
+    void suggestCreatesNewSuggestedRow() {
+        KnowledgeDomainService.SuggestResult result = domainService.suggest(projectId, "legal", "Legal",
+                "Contracts and compliance", "Sources keep mentioning contracts with nowhere to go", List.of(), "agent-1");
+
+        assertThat(result.created()).isTrue();
+        assertThat(result.domain().getState()).isEqualTo(KnowledgeDomainState.SUGGESTED);
+        assertThat(result.domain().getPathPrefix()).isEqualTo("legal/");
+        assertThat(result.domain().getSchemaPagePath()).isEqualTo("legal/_schema.md");
+        assertThat(result.domain().getSuggestedBy()).isEqualTo("agent-1");
+        assertThat(result.domain().getSuggestionReason()).isEqualTo("Sources keep mentioning contracts with nowhere to go");
+    }
+
+    @Test
+    void suggestReturnsExistingActiveRowWithCreatedFalse() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+
+        KnowledgeDomainService.SuggestResult result =
+                domainService.suggest(projectId, "engineering", "Eng", null, "reason", List.of(), "agent-1");
+
+        assertThat(result.created()).isFalse();
+        assertThat(result.domain().getState()).isEqualTo(KnowledgeDomainState.ACTIVE);
+    }
+
+    @Test
+    void suggestReturnsExistingDismissedRowWithCreatedFalse() {
+        createDomain("legal", "Legal", KnowledgeDomainState.DISMISSED);
+
+        KnowledgeDomainService.SuggestResult result =
+                domainService.suggest(projectId, "legal", "Legal", null, "reason again", List.of(), "agent-2");
+
+        assertThat(result.created()).isFalse();
+        assertThat(result.domain().getState()).isEqualTo(KnowledgeDomainState.DISMISSED);
+    }
+
+    @Test
+    void suggestRejectsInvalidSlug() {
+        assertThatThrownBy(() -> domainService.suggest(projectId, "Not Valid!", "X", null, "r", List.of(), "a"))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void suggestRejectsBlankDisplayName() {
+        assertThatThrownBy(() -> domainService.suggest(projectId, "legal", "  ", null, "r", List.of(), "a"))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    // ---- specialist creation ----
+
+    @Test
+    void createSpecialistCreatesAgentAndAssignsOwningAgent() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+
+        KnowledgeDomain updated = domainService.createSpecialist(projectId, "engineering");
+
+        assertThat(updated.getOwningAgentSlug()).isEqualTo("knowledge-engineering");
+        Agent agent = agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow();
+        assertThat(agent.getProvider()).isEqualTo("claude");
+        assertThat(agent.getSystemPrompt()).contains("Engineering").contains("engineering/_schema.md");
+        assertThat(agent.getToolIds()).contains("knowledge:list_knowledge_domains")
+                .contains("knowledge:suggest_knowledge_domain");
+        assertThat(agent.getConfigJson()).contains("\"maxToolTurns\"").contains("40");
+        assertThat(agent.getAvatarEmoji()).isNotBlank();
+        assertThat(agent.getAvatarColor()).isNotBlank();
+        assertThat(DefaultAgentSlugs.isDefault("knowledge-engineering")).isFalse();
+    }
+
+    @Test
+    void createSpecialistIsIdempotentWhenAgentAlreadyExists() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+
+        domainService.createSpecialist(projectId, "engineering");
+        domainService.createSpecialist(projectId, "engineering");
+
+        List<Agent> agents = agentRepository.findByProjectId(projectId);
+        assertThat(agents).filteredOn(a -> a.getSlug().equals("knowledge-engineering")).hasSize(1);
+    }
+
+    @Test
+    void createSpecialistThrowsNotFoundForUnknownDomain() {
+        assertThatThrownBy(() -> domainService.createSpecialist(projectId, "nonexistent"))
+                .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    // ---- end to end: gap report -> approval -> routing ----
+
+    @Test
+    void approvingASuggestedDomainMakesItRoutableForMatchingSources() {
+        KnowledgeDomainService.SuggestResult suggestion = domainService.suggest(projectId, "legal", "Legal",
+                "Contracts", "Sources keep mentioning contracts", List.of("legal.*"), "agent-1");
+        assertThat(suggestion.domain().getState()).isEqualTo(KnowledgeDomainState.SUGGESTED);
+
+        // While still SUGGESTED, the pattern is not yet live -- only ACTIVE domains route by pattern.
+        SourceReceipt beforeApproval = ingestionService.submit(new KnowledgeSubmission(projectId, "legal.contract",
+                "ref-1", null, "text/plain", "content", null, null, null, null, null));
+        KnowledgeSource beforeSource = sourceRepository.findById(beforeApproval.sourceId()).orElseThrow();
+        assertThat(beforeSource.getDomain()).isNull();
+
+        domainService.update(projectId, "legal", null, null, null, KnowledgeDomainState.ACTIVE);
+
+        SourceReceipt afterApproval = ingestionService.submit(new KnowledgeSubmission(projectId, "legal.contract",
+                "ref-2", null, "text/plain", "content", null, null, null, null, null));
+        KnowledgeSource afterSource = sourceRepository.findById(afterApproval.sourceId()).orElseThrow();
+        assertThat(afterSource.getDomain()).isEqualTo("legal");
     }
 
     private void saveAgent(String slug) {

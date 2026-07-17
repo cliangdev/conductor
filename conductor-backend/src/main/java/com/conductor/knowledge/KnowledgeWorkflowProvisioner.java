@@ -79,9 +79,12 @@ public class KnowledgeWorkflowProvisioner {
     private static final String LIBRARIAN_AGENT_PROVIDER = "claude";
     private static final String LIBRARIAN_AVATAR_EMOJI = "📚";
     private static final String LIBRARIAN_AVATAR_COLOR = "violet";
-    private static final List<String> LIBRARIAN_TOOL_IDS = List.of(
+    /** Shared by the librarian seed here and by {@code KnowledgeDomainService#createSpecialist} -- a
+     *  specialist agent gets the same 6 tools as the generalist librarian. */
+    public static final List<String> LIBRARIAN_TOOL_IDS = List.of(
             "knowledge:read_knowledge_pages", "knowledge:read_knowledge_sources",
-            "knowledge:search_knowledge", "knowledge:write_knowledge_pages");
+            "knowledge:search_knowledge", "knowledge:write_knowledge_pages",
+            "knowledge:list_knowledge_domains", "knowledge:suggest_knowledge_domain");
     private static final Actor PROVISIONER_ACTOR = new Actor("system", "knowledge-provisioner", null);
 
     /** One registry row + schema page to seed, keyed by slug. {@code patterns} is the
@@ -159,6 +162,7 @@ public class KnowledgeWorkflowProvisioner {
         Optional<Agent> existing = agentRepository.findByProjectIdAndSlug(projectId, LIBRARIAN_AGENT_SLUG);
         if (existing.isPresent()) {
             backfillAvatarIfMissing(existing.get());
+            backfillToolIdsIfMissing(existing.get());
             return;
         }
         Agent agent = new Agent();
@@ -188,6 +192,26 @@ public class KnowledgeWorkflowProvisioner {
         agent.setAvatarColor(LIBRARIAN_AVATAR_COLOR);
         agentRepository.save(agent);
         log.info("Backfilled avatar for '{}' agent in project {}", LIBRARIAN_AGENT_SLUG, agent.getProjectId());
+    }
+
+    /** Backfills any of {@link #LIBRARIAN_TOOL_IDS} missing from a pre-existing librarian agent (e.g.
+     *  one seeded before {@code list_knowledge_domains}/{@code suggest_knowledge_domain} existed) --
+     *  adds only what's missing, preserving any custom tool ids an operator added on top. */
+    private void backfillToolIdsIfMissing(Agent agent) {
+        List<String> current;
+        try {
+            current = objectMapper.readValue(agent.getToolIds(), new com.fasterxml.jackson.core.type.TypeReference<List<String>>() { });
+        } catch (Exception e) {
+            current = new ArrayList<>();
+        }
+        java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>(current);
+        boolean changed = merged.addAll(LIBRARIAN_TOOL_IDS);
+        if (!changed) {
+            return;
+        }
+        agent.setToolIds(writeJson(new ArrayList<>(merged)));
+        agentRepository.save(agent);
+        log.info("Backfilled tool ids for '{}' agent in project {}", LIBRARIAN_AGENT_SLUG, agent.getProjectId());
     }
 
     private String writeJson(Object value) {

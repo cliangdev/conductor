@@ -202,7 +202,9 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         assertThat(librarian.getToolIds()).contains("knowledge:read_knowledge_pages")
                 .contains("knowledge:read_knowledge_sources")
                 .contains("knowledge:search_knowledge")
-                .contains("knowledge:write_knowledge_pages");
+                .contains("knowledge:write_knowledge_pages")
+                .contains("knowledge:list_knowledge_domains")
+                .contains("knowledge:suggest_knowledge_domain");
         assertThat(librarian.getConfigJson()).contains("\"maxToolTurns\"").contains("40");
         // No runtime key -- resolved at execution time (auto-detect), never pinned by the seed.
         assertThat(librarian.getConfigJson()).doesNotContain("runtime");
@@ -227,6 +229,28 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
                 .orElseThrow();
         assertThat(backfilled.getAvatarEmoji()).isEqualTo("📚");
         assertThat(backfilled.getAvatarColor()).isEqualTo("violet");
+    }
+
+    @Test
+    void provisionBackfillsMissingToolIdsOnPreExistingLibrarianAgent() {
+        provisioner.provision(projectId);
+        Agent librarian = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        // Simulate a librarian seeded before list_knowledge_domains/suggest_knowledge_domain existed --
+        // only the original 4 tool ids, plus a custom addition an operator made on top.
+        librarian.setToolIds("[\"knowledge:read_knowledge_pages\",\"knowledge:read_knowledge_sources\","
+                + "\"knowledge:search_knowledge\",\"knowledge:write_knowledge_pages\",\"custom:my_tool\"]");
+        agentRepository.save(librarian);
+
+        provisioner.provision(projectId);
+
+        Agent backfilled = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        assertThat(backfilled.getToolIds()).contains("knowledge:list_knowledge_domains")
+                .contains("knowledge:suggest_knowledge_domain")
+                .contains("custom:my_tool"); // the operator's custom addition survives the backfill
     }
 
     @Test

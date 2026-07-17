@@ -4377,6 +4377,92 @@ paths:
                   $ref: '#/components/schemas/KnowledgeDomainDto'
         '403':
           $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [knowledge]
+      summary: Raise a knowledge domain gap report
+      description: >-
+        Claim-or-return on `(projectId, slug)`: the first call for a slug inserts a SUGGESTED row; any
+        later call (whatever the row's current state — ACTIVE, still SUGGESTED, or DISMISSED) returns
+        the existing row unchanged instead of erroring or resetting it. A DISMISSED result means an
+        admin already declined this slug — don't call this again for it. Activation is a separate step
+        (the admin PATCH transitioning `state` to ACTIVE, which also seeds a skeleton schema page).
+        Membership-gated, not admin-only — any project principal (including an agent's run-scoped MCP
+        token) can raise a gap report; only approving one is privileged.
+      operationId: createKnowledgeDomain
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateKnowledgeDomainRequest'
+      responses:
+        '200':
+          description: The existing domain row (already suggested, active, or dismissed) — created is false.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeDomainDto'
+        '201':
+          description: A new SUGGESTED row was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeDomainDto'
+        '400':
+          description: Invalid slug (must match `^[a-z0-9][a-z0-9-]*$`) or missing displayName.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/knowledge/domains/{slug}/specialist:
+    post:
+      tags: [knowledge]
+      summary: Create (or reassign) a specialist agent for a knowledge domain
+      description: >-
+        ADMIN only. Creates a project Agent `knowledge-<slug>` (provider `claude`, the same 6 knowledge
+        tools and `maxToolTurns` as the generalist librarian, a domain-focused system prompt, a
+        deterministic avatar) if one doesn't already exist under that slug, then assigns it as the
+        domain's `owningAgentSlug` — one transaction. Idempotent: calling this again when the agent
+        already exists just re-assigns it, never duplicates the Agent row. No request body.
+      operationId: createKnowledgeDomainSpecialist
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: slug
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: The domain, now owned by its specialist agent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeDomainDto'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No such domain slug in this project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /projects/{projectId}/knowledge/domains/{slug}:
     patch:
@@ -7001,6 +7087,32 @@ components:
           description: Set true to clear an existing owningAgentSlug assignment. Takes precedence over owningAgentSlug if both are set.
         state:
           $ref: '#/components/schemas/KnowledgeDomainState'
+
+    CreateKnowledgeDomainRequest:
+      type: object
+      description: Raises a gap report for a domain that doesn't exist in the registry yet. Always lands SUGGESTED -- activation is a separate admin PATCH.
+      required:
+        - slug
+        - displayName
+      properties:
+        slug:
+          type: string
+          description: Must match `^[a-z0-9][a-z0-9-]*$` -- it becomes the domain's wiki path prefix.
+        displayName:
+          type: string
+        description:
+          type: string
+          nullable: true
+        sourceTypePatterns:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: Optional glob patterns to seed the registry row with, if known upfront. Defaults to empty.
+        reason:
+          type: string
+          nullable: true
+          description: Why this domain is being suggested -- surfaced to the admin reviewing the gap report.
 
     KnowledgePageWrite:
       type: object

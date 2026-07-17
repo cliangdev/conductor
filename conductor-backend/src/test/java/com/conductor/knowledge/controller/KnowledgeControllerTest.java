@@ -322,6 +322,91 @@ class KnowledgeControllerTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void createDomain_member_landsSuggestedWith201WhenNew() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        com.conductor.knowledge.domain.KnowledgeDomain suggested = new com.conductor.knowledge.domain.KnowledgeDomain();
+        suggested.setSlug("legal");
+        suggested.setDisplayName("Legal");
+        suggested.setPathPrefix("legal/");
+        suggested.setSchemaPagePath("legal/_schema.md");
+        suggested.setSourceTypePatterns(List.of());
+        suggested.setState(com.conductor.knowledge.domain.KnowledgeDomainState.SUGGESTED);
+        when(domainService.suggest(eq(PROJECT_ID), eq("legal"), eq("Legal"), any(), eq("reason"), any(), eq("user-1")))
+                .thenReturn(new com.conductor.knowledge.domain.KnowledgeDomainService.SuggestResult(suggested, true));
+        when(ingestionService.getDomainCounts(PROJECT_ID)).thenReturn(java.util.Map.of());
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slug\":\"legal\",\"displayName\":\"Legal\",\"reason\":\"reason\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.slug").value("legal"))
+                .andExpect(jsonPath("$.state").value("SUGGESTED"));
+    }
+
+    @Test
+    void createDomain_existingSlug_returns200NotCreated() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        com.conductor.knowledge.domain.KnowledgeDomain existing = new com.conductor.knowledge.domain.KnowledgeDomain();
+        existing.setSlug("engineering");
+        existing.setDisplayName("Engineering");
+        existing.setPathPrefix("engineering/");
+        existing.setSchemaPagePath("engineering/_schema.md");
+        existing.setSourceTypePatterns(List.of());
+        existing.setState(com.conductor.knowledge.domain.KnowledgeDomainState.ACTIVE);
+        when(domainService.suggest(eq(PROJECT_ID), eq("engineering"), any(), any(), any(), any(), eq("user-1")))
+                .thenReturn(new com.conductor.knowledge.domain.KnowledgeDomainService.SuggestResult(existing, false));
+        when(ingestionService.getDomainCounts(PROJECT_ID)).thenReturn(java.util.Map.of());
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slug\":\"engineering\",\"displayName\":\"Engineering\",\"reason\":\"r\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.state").value("ACTIVE"));
+    }
+
+    @Test
+    void createDomain_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slug\":\"legal\",\"displayName\":\"Legal\",\"reason\":\"r\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createSpecialist_admin_returns200() throws Exception {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(true);
+        com.conductor.knowledge.domain.KnowledgeDomain domain = new com.conductor.knowledge.domain.KnowledgeDomain();
+        domain.setSlug("engineering");
+        domain.setDisplayName("Engineering");
+        domain.setPathPrefix("engineering/");
+        domain.setSchemaPagePath("engineering/_schema.md");
+        domain.setSourceTypePatterns(List.of());
+        domain.setState(com.conductor.knowledge.domain.KnowledgeDomainState.ACTIVE);
+        domain.setOwningAgentSlug("knowledge-engineering");
+        when(domainService.createSpecialist(PROJECT_ID, "engineering")).thenReturn(domain);
+        when(ingestionService.getDomainCounts(PROJECT_ID)).thenReturn(java.util.Map.of());
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains/engineering/specialist")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.owningAgentSlug").value("knowledge-engineering"));
+    }
+
+    @Test
+    void createSpecialist_nonAdmin_returns403() throws Exception {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(false);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains/engineering/specialist")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isForbidden());
+    }
+
     // ---- run-scoped MCP token auth ----
 
     @Test

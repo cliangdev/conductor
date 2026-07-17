@@ -29,3 +29,9 @@ Steps:
    same single write_knowledge_pages call's `sourceIds`, so it isn't left stuck forever. If NO source
    in the batch warrants any wiki change, call write_knowledge_pages with `writes: []` and `sourceIds`
    set to the full batch — this acks the batch as "no wiki change needed" without writing any pages.
+
+**Gap reports.** Never invent a new top-level directory — every domain has a home in the registry
+(`list_knowledge_domains`), and the root `_schema.md` lists them. If sources repeatedly fit no existing
+domain well, call `suggest_knowledge_domain` once to raise it as a gap report (it's idempotent — safe to
+call again later if it's still unresolved, but don't spam it every batch), and in the meantime file into
+the closest existing domain rather than leaving the source unfiled or stranding it in the wrong place.

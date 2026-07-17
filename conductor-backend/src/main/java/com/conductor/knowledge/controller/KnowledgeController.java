@@ -3,6 +3,7 @@ package com.conductor.knowledge.controller;
 import com.conductor.entity.User;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.KnowledgeApi;
+import com.conductor.generated.model.CreateKnowledgeDomainRequest;
 import com.conductor.generated.model.KnowledgeActor;
 import com.conductor.generated.model.KnowledgeDomainDto;
 import com.conductor.generated.model.KnowledgeOrigin;
@@ -130,6 +131,25 @@ public class KnowledgeController implements KnowledgeApi {
         } else if (request.getOwningAgentSlug() != null) {
             domain = domainService.updateOwningAgent(projectId, slug, request.getOwningAgentSlug());
         }
+        Map<String, KnowledgeSourceCountsView> counts = ingestionService.getDomainCounts(projectId);
+        return ResponseEntity.ok(toDto(domain, counts.get(domain.getSlug())));
+    }
+
+    @Override
+    public ResponseEntity<KnowledgeDomainDto> createKnowledgeDomain(String projectId, CreateKnowledgeDomainRequest request) {
+        Caller caller = requireProjectAccess(projectId);
+        KnowledgeDomainService.SuggestResult result = domainService.suggest(projectId, request.getSlug(),
+                request.getDisplayName(), request.getDescription(), request.getReason(),
+                request.getSourceTypePatterns(), caller.actor().id());
+        Map<String, KnowledgeSourceCountsView> counts = ingestionService.getDomainCounts(projectId);
+        KnowledgeDomainDto dto = toDto(result.domain(), counts.get(result.domain().getSlug()));
+        return ResponseEntity.status(result.created() ? 201 : 200).body(dto);
+    }
+
+    @Override
+    public ResponseEntity<KnowledgeDomainDto> createKnowledgeDomainSpecialist(String projectId, String slug) {
+        requireProjectAdmin(projectId);
+        KnowledgeDomain domain = domainService.createSpecialist(projectId, slug);
         Map<String, KnowledgeSourceCountsView> counts = ingestionService.getDomainCounts(projectId);
         return ResponseEntity.ok(toDto(domain, counts.get(domain.getSlug())));
     }

@@ -257,18 +257,43 @@ dispatches and busy-checks each lane independently.
 **Registry fields** (`KnowledgeDomainDto`): `slug`, `displayName`, `description`, `pathPrefix`,
 `schemaPagePath`, `sourceTypePatterns`, `owningAgentSlug` (nullable — the specialist agent dispatch
 resolves to, if assigned; un-FK'd, since agents are deletable and dispatch just falls back), `state`
-(`ACTIVE`/`SUGGESTED`/`DISMISSED` — `SUGGESTED`/`DISMISSED` are reserved for a future gap-report workflow
-where the librarian raises a suggested domain, not yet wired up), `suggestionReason`, and live
+(`ACTIVE`/`SUGGESTED`/`DISMISSED` — see gap reports below), `suggestionReason`, and live
 `pendingCount`/`processingCount`/`processedCount` from the ingestion inbox. `PATCH /knowledge/domains/{slug}`
-(ADMIN-only) edits
-`displayName`/`description`/`sourceTypePatterns`/`state` with standard partial-PATCH semantics (omit a
-field to leave it unchanged); `owningAgentSlug` assignment/clearing is a discriminated pair
-(`owningAgentSlug` to assign, `clearOwningAgent: true` to clear) rather than a plain nullable field, since
-a request body has no wire-level way to distinguish an omitted field from an explicit `null` for just one
-field in an otherwise-partial PATCH.
+(ADMIN-only) edits `displayName`/`description`/`sourceTypePatterns`/`state` with standard partial-PATCH
+semantics (omit a field to leave it unchanged); `owningAgentSlug` assignment/clearing is a discriminated
+pair (`owningAgentSlug` to assign, `clearOwningAgent: true` to clear) rather than a plain nullable field,
+since a request body has no wire-level way to distinguish an omitted field from an explicit `null` for
+just one field in an otherwise-partial PATCH.
 
-Creating a specialist agent for a domain (`owningAgentSlug` assignment via a dedicated endpoint) and
-librarian-raised gap reports (the `SUGGESTED` state) are not yet implemented — reserved for a later phase.
+### Specialists on demand
+
+A domain's `owningAgentSlug` can point at a dedicated specialist agent instead of the generalist
+librarian. `POST /knowledge/domains/{slug}/specialist` (ADMIN-only, no body) creates (if absent) a
+project `Agent` `knowledge-<slug>` — provider `claude`, the same 6 knowledge tools and `maxToolTurns: 40`
+as the generalist librarian, a domain-focused system prompt (`specialist-system-prompt.md`, with
+`%DOMAIN_SLUG%`/`%DOMAIN_DISPLAY%` placeholders filled in), and a deterministic avatar — then assigns it
+as `owningAgentSlug`, one transaction. Idempotent: calling it again when the agent already exists just
+re-assigns it. Deliberately **not** added to `DefaultAgentSlugs`: specialists are user-initiated, not
+self-healing — deleting one simply clears the assignment and dispatch falls back to the generalist
+librarian (see [The pipeline](#the-pipeline)'s agent resolution).
+
+### Gap reports
+
+The librarian (or any agent/caller) can raise a **gap report** for a domain that doesn't exist yet:
+`suggest_knowledge_domain` / `POST /knowledge/domains` claim-or-returns on `(projectId, slug)` — the
+first call for a slug inserts a `SUGGESTED` row (validated slug shape `^[a-z0-9][a-z0-9-]*$`, since it
+becomes a wiki path segment); any later call for the same slug, in any state, returns the existing row
+unchanged instead of erroring or resetting it. A `DISMISSED` result is the signal to stop re-suggesting
+that slug. Membership-gated, not admin-only — raising a report is cheap and safe; only **approving** one
+is privileged: the admin `PATCH .../domains/{slug}` transitioning `state` to `ACTIVE` also seeds a
+generic skeleton `<slug>/_schema.md` page (from `_suggested-skeleton.md`) if one isn't already there, so
+the domain has somewhere for the librarian to file into immediately — the skeleton explicitly tells
+whoever edits it next (librarian or human) to define the domain's actual page-type taxonomy. Dismissing
+is the same PATCH with `state: DISMISSED`.
+
+Both the librarian and any specialist are instructed (system prompts) to never invent a new top-level
+directory — call `suggest_knowledge_domain` once when sources repeatedly fit no existing domain, and file
+into the closest existing home in the meantime rather than leaving material stranded.
 
 ---
 
@@ -307,7 +332,7 @@ compacted (`purgedAt` set; `payload`/`payloadOffloaded` will read back empty).
 
 ## MCP tools
 
-Five tools in `conductor-tools` (`src/mcp/tools/knowledge.ts`), used by the librarian/bootstrap workflows
+Six tools in `conductor-tools` (`src/mcp/tools/knowledge.ts`), used by the librarian/bootstrap workflows
 and available to any Claude Code session with the Conductor MCP server configured:
 
 | Tool | Purpose |
@@ -317,12 +342,16 @@ and available to any Claude Code session with the Conductor MCP server configure
 | `search_knowledge` | Full-text search over pages — path, type, title, description, snippet, rank. Orientation before reading. |
 | `read_knowledge_pages` | Fetch full page content by path. `["index.md"]`/`["log.md"]` return the virtual orientation pages. Returned `version` feeds `baseVersion` on the next write. |
 | `write_knowledge_pages` | Atomic batch create/update/delete; `writes` may be empty when `sourceIds` is set, to ack a batch that needs no page changes. A stale write returns a structured `{conflict: true, conflicts: [...]}` result instead of throwing, per [MCP tool guidelines](mcp-tool-guidelines.md) — merge and retry once. |
+| `list_knowledge_domains` | List the domain registry — slug, displayName, description, pathPrefix, schemaPagePath, sourceTypePatterns, state, owningAgentSlug. Call before `suggest_knowledge_domain`. |
+| `suggest_knowledge_domain` | Raise a [gap report](#gap-reports) for a domain not yet in the registry. Claim-or-return on slug — idempotent; a `DISMISSED` result means don't call again for that slug. Verify with `list_knowledge_domains`. |
 
-The same four operations back an `agent`-tool source (`knowledge:read_knowledge_pages`, etc. —
+The same six operations back an `agent`-tool source (`knowledge:read_knowledge_pages`, etc. —
 `KnowledgeToolProvider`) so any project agent, not just the librarian, can be bound to them under
 **Automation → Agents**. Bare tool names match across both surfaces on purpose — one system prompt works
 whether the agent runs the `api` runtime (calling this provider directly) or the `claude-code` runtime
-(calling the equivalent `mcp__conductor__*` MCP tool). Both are gated on `knowledge_enabled`.
+(calling the equivalent `mcp__conductor__*` MCP tool). All six are gated on `knowledge_enabled`.
+`KnowledgeWorkflowProvisioner` backfills the two domain tools onto any librarian agent seeded before they
+existed (`backfillToolIdsIfMissing`, additive — preserves any custom tool ids an operator added).
 
 ---
 
@@ -338,7 +367,9 @@ are `ProjectScopedPrincipal` — see [`docs/workflows.md`](workflows.md)):
 | `GET` | `/sources` | List by `status` (default `PENDING`), optionally filtered by `domain` (exact match), or multi-get via `ids` (`ids` wins over both filters). |
 | `GET` | `/sources/counts` | Per-status inbox counts (`pending`/`processing`/`processed`/`dead`), zero-defaulted — the cheap summary the frontend's pipeline strip polls instead of a full `listSources` per status. |
 | `GET` | `/domains` | List the [domain](#domains) registry, slug-ordered, each with live pending/processing/processed counts. Membership-gated, no admin requirement. |
-| `PATCH` | `/domains/{slug}` | Update a domain's metadata, owning agent, or state. ADMIN-only. |
+| `POST` | `/domains` | Raise a [gap report](#gap-reports). Claim-or-return on slug — `201` for a new SUGGESTED row, `200` for an existing one (any state). Membership-gated, not admin-only. |
+| `PATCH` | `/domains/{slug}` | Update a domain's metadata, owning agent, or state. ADMIN-only. Approving (`state: ACTIVE`) from SUGGESTED also seeds a skeleton schema page if absent. |
+| `POST` | `/domains/{slug}/specialist` | Create (or reassign) the `knowledge-<slug>` specialist agent and assign it as owning agent. ADMIN-only, idempotent, no body. |
 | `POST` | `/pages/batch-write` | Atomic create/update/delete batch. `200` on success; `409` with a `conflicts` extension on a concurrency race; `422` on malformed frontmatter. |
 | `GET` | `/pages?paths=` | Multi-get full page content by comma-separated paths. Unknown/deleted paths silently omitted. |
 | `GET` | `/index` | The generated virtual `index.md`. |
@@ -361,6 +392,12 @@ are `ProjectScopedPrincipal` — see [`docs/workflows.md`](workflows.md)):
   pending/dead inbox counts (linking to the source list below), the librarian's last run status, and a
   link to the librarian `Agent`. Best-effort and auxiliary — a fetch failure renders nothing rather than
   breaking the wiki page.
+- **Domains panel.** Directly below the pipeline strip, `KnowledgeDomainsPanel` lists ACTIVE domains
+  (display name linking to its schema page, owning-agent chip — "Librarian" when none assigned, pending/
+  processed counts, an admin-only "Create specialist" action when unowned) and SUGGESTED domains (amber
+  badge + reason, admin-only Approve/Dismiss). DISMISSED domains are omitted entirely — nothing
+  actionable to show. No per-domain last-run column — run history isn't tracked per domain, and this is
+  deliberately omitted rather than faked. Same chrome and best-effort behavior as the pipeline strip.
 - **Source list.** `knowledge/sources` is a read-only, status-filtered browse of the ingestion inbox
   (`GET /sources`) — no actions; the scheduler and librarian own the lifecycle. Rows show the domain
   lane as a small badge next to the source-type badge when the source was routed to one (nothing shown
@@ -376,10 +413,6 @@ are `ProjectScopedPrincipal` — see [`docs/workflows.md`](workflows.md)):
 
 Deliberately deferred out of this phase:
 
-- **Domain specialists + gap reports** — creating a specialist agent for a domain
-  (`owningAgentSlug` assignment via a dedicated endpoint) and librarian-raised gap reports (the
-  `SUGGESTED` registry state) are designed but not yet implemented; see [Domains](#domains).
-- **Domains overview UI** — the registry is API/MCP-only so far; no frontend panel yet.
 - **Lint workflow** — a scheduled pass that checks the wiki against `_schema.md`'s own conventions (broken
   links, missing recommended frontmatter, orphaned pages) and files findings back into the inbox.
 - **Human editing** — the frontend wiki browser is read-only; writing a page today means the librarian, or

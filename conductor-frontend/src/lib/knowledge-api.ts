@@ -1,4 +1,4 @@
-import { apiGet, apiPatch } from '@/lib/api'
+import { apiGet, apiPatch, apiPost } from '@/lib/api'
 
 export interface KnowledgePageView {
   path: string
@@ -149,4 +149,86 @@ export function listKnowledgeRevisions(
     `/api/v1/projects/${projectId}/knowledge/revisions?path=${encodeURIComponent(path)}`,
     token,
   )
+}
+
+// ── Domains ──────────────────────────────────────────────────────────────────
+
+export type KnowledgeDomainState = 'ACTIVE' | 'SUGGESTED' | 'DISMISSED'
+
+export interface KnowledgeDomainDto {
+  slug: string
+  displayName: string
+  description?: string | null
+  pathPrefix: string
+  schemaPagePath: string
+  sourceTypePatterns: string[]
+  owningAgentSlug?: string | null
+  state: KnowledgeDomainState
+  suggestionReason?: string | null
+  pendingCount: number
+  processingCount: number
+  processedCount: number
+}
+
+/** Every domain row (ACTIVE, plus any SUGGESTED gap report or DISMISSED past suggestion), slug-ordered. */
+export function listKnowledgeDomains(projectId: string, token: string): Promise<KnowledgeDomainDto[]> {
+  return apiGet<KnowledgeDomainDto[]>(`/api/v1/projects/${projectId}/knowledge/domains`, token)
+}
+
+export interface UpdateKnowledgeDomainRequest {
+  displayName?: string
+  description?: string
+  sourceTypePatterns?: string[]
+  /** Assigns this agent slug (must exist in the project). To clear an assignment, use clearOwningAgent instead. */
+  owningAgentSlug?: string
+  /** Set true to clear an existing owningAgentSlug assignment; takes precedence over owningAgentSlug. */
+  clearOwningAgent?: boolean
+  state?: KnowledgeDomainState
+}
+
+/** ADMIN-only partial update — omit a field to leave it unchanged (see UpdateKnowledgeDomainRequest). */
+export function updateKnowledgeDomain(
+  projectId: string,
+  slug: string,
+  request: UpdateKnowledgeDomainRequest,
+  token: string,
+): Promise<KnowledgeDomainDto> {
+  return apiPatch<KnowledgeDomainDto>(
+    `/api/v1/projects/${projectId}/knowledge/domains/${encodeURIComponent(slug)}`,
+    request,
+    token,
+  ) as Promise<KnowledgeDomainDto>
+}
+
+/**
+ * ADMIN-only. Creates (or reuses) the `knowledge-<slug>` specialist agent and assigns it as the
+ * domain's owningAgentSlug. Idempotent — safe to call again if the agent already exists.
+ */
+export function createKnowledgeDomainSpecialist(
+  projectId: string,
+  slug: string,
+  token: string,
+): Promise<KnowledgeDomainDto> {
+  return apiPost<KnowledgeDomainDto>(
+    `/api/v1/projects/${projectId}/knowledge/domains/${encodeURIComponent(slug)}/specialist`,
+    {},
+    token,
+  )
+}
+
+export interface CreateKnowledgeDomainRequest {
+  slug: string
+  displayName: string
+  description?: string
+  sourceTypePatterns?: string[]
+  reason?: string
+}
+
+/** Raises a gap report — claim-or-return on slug, always lands (or returns) SUGGESTED for a new row. */
+export function createKnowledgeDomain(
+  projectId: string,
+  request: CreateKnowledgeDomainRequest,
+  token: string,
+): Promise<KnowledgeDomainDto> {
+  return apiPost<KnowledgeDomainDto>(`/api/v1/projects/${projectId}/knowledge/domains`, request, token)
 }
