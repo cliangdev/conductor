@@ -73,16 +73,18 @@ public class ProjectSettingsService {
         if (githubRepoUrl != null) {
             settings.setGithubRepoUrl(githubRepoUrl);
         }
-        boolean wasKnowledgeEnabled = settings.isKnowledgeEnabled();
         if (knowledgeEnabled != null) {
             settings.setKnowledgeEnabled(knowledgeEnabled);
         }
         projectSettingsRepository.save(settings);
 
-        // Provision the knowledge-librarian/knowledge-bootstrap system workflows + _schema.md exactly
-        // once, on the false->true transition -- never on every save, and never on disable (disabling
-        // just stops the scheduler from dispatching; it doesn't tear down what was provisioned).
-        if (Boolean.TRUE.equals(knowledgeEnabled) && !wasKnowledgeEnabled) {
+        // Provision (or catch-up-provision) the knowledge-librarian/knowledge-bootstrap system
+        // workflows + _schema.md whenever the save leaves knowledge enabled -- not just the
+        // false->true transition. provision() is idempotent per artifact, so this also heals projects
+        // that were enabled before a given artifact existed, or where a seeded artifact (most often
+        // the librarian Agent) was since deleted. Never runs on disable -- disabling just stops the
+        // scheduler from dispatching; it doesn't tear down what was provisioned.
+        if (Boolean.TRUE.equals(knowledgeEnabled)) {
             knowledgeWorkflowProvisioner.provision(projectId);
         }
 

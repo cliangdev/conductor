@@ -149,8 +149,14 @@ class ProjectSettingsServiceTest {
         verify(knowledgeWorkflowProvisioner).provision(PROJECT_ID);
     }
 
+    /**
+     * Catch-up/self-heal: every save that leaves knowledge enabled re-provisions, not just the
+     * false-&gt;true transition -- {@code provision()} is idempotent per artifact, so this is what heals
+     * a project enabled before an artifact existed, or a deleted seeded artifact (e.g. the librarian
+     * Agent), without needing a disable/re-enable round trip.
+     */
     @Test
-    void updateSettingsDoesNotReprovisionWhenAlreadyEnabled() {
+    void updateSettingsReprovisionsOnEverySaveThatLeavesKnowledgeEnabled() {
         ProjectSettings settings = new ProjectSettings();
         settings.setProjectId(PROJECT_ID);
         settings.setKnowledgeEnabled(true);
@@ -161,7 +167,7 @@ class ProjectSettingsServiceTest {
 
         projectSettingsService.updateSettings(PROJECT_ID, null, null, null, null, true, adminUser);
 
-        verify(knowledgeWorkflowProvisioner, never()).provision(any());
+        verify(knowledgeWorkflowProvisioner).provision(PROJECT_ID);
     }
 
     @Test

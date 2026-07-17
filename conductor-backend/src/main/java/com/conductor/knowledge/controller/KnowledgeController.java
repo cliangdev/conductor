@@ -12,12 +12,14 @@ import com.conductor.generated.model.KnowledgePageView;
 import com.conductor.generated.model.KnowledgePageWrite;
 import com.conductor.generated.model.KnowledgePageWriteResult;
 import com.conductor.generated.model.KnowledgeSearchHit;
+import com.conductor.generated.model.KnowledgeSourceCounts;
 import com.conductor.generated.model.KnowledgeSourceDto;
 import com.conductor.generated.model.KnowledgeSourceReceipt;
 import com.conductor.generated.model.KnowledgeSourceStatus;
 import com.conductor.generated.model.KnowledgeSourceSubmitRequest;
 import com.conductor.knowledge.Actor;
 import com.conductor.knowledge.KnowledgeIngestionService;
+import com.conductor.knowledge.KnowledgeSourceCountsView;
 import com.conductor.knowledge.KnowledgeSourceView;
 import com.conductor.knowledge.KnowledgeSubmission;
 import com.conductor.knowledge.SourceReceipt;
@@ -89,6 +91,12 @@ public class KnowledgeController implements KnowledgeApi {
             views = ingestionService.listSources(projectId, domainStatus);
         }
         return ResponseEntity.ok(views.stream().map(this::toDto).toList());
+    }
+
+    @Override
+    public ResponseEntity<KnowledgeSourceCounts> getKnowledgeSourceCounts(String projectId) {
+        requireProjectAccess(projectId);
+        return ResponseEntity.ok(toDto(ingestionService.getSourceCounts(projectId)));
     }
 
     @Override
@@ -212,6 +220,15 @@ public class KnowledgeController implements KnowledgeApi {
         dto.setAttempts(v.attempts());
         dto.setErrorMessage(v.errorMessage());
         dto.setPurgedAt(v.purgedAt());
+        return dto;
+    }
+
+    private KnowledgeSourceCounts toDto(KnowledgeSourceCountsView v) {
+        KnowledgeSourceCounts dto = new KnowledgeSourceCounts();
+        dto.setPending(v.pending());
+        dto.setProcessing(v.processing());
+        dto.setProcessed(v.processed());
+        dto.setDead(v.dead());
         return dto;
     }
 

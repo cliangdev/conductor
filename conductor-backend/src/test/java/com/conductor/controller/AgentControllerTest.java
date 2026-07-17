@@ -67,6 +67,32 @@ class AgentControllerTest {
         when(userRepository.findById("member-user-id")).thenReturn(java.util.Optional.of(memberUser));
     }
 
+    // ---- isDefault mapping ----
+
+    @Test
+    void getAgent_seededLibrarianSlug_isDefaultTrue() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Agent librarian = stubAgent();
+        librarian.setSlug("knowledge-librarian");
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(librarian);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isDefault").value(true));
+    }
+
+    @Test
+    void getAgent_userCreatedSlug_isDefaultFalse() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(stubAgent());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isDefault").value(false));
+    }
+
     // ---- listAgentTools ----
 
     @Test

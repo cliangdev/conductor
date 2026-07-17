@@ -1,5 +1,6 @@
 package com.conductor.knowledge;
 
+import com.conductor.agent.AgentRepository;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.repository.WorkflowDefinitionRepository;
@@ -38,6 +39,8 @@ public class LibrarianDispatchService {
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowTriggerService workflowTriggerService;
     private final KnowledgeSourceRepository sourceRepository;
+    private final AgentRepository agentRepository;
+    private final KnowledgeWorkflowProvisioner provisioner;
     private final ObjectMapper objectMapper;
 
     /** Self-reference so {@code @Transactional(REQUIRES_NEW)} helpers run through the Spring proxy --
@@ -49,10 +52,14 @@ public class LibrarianDispatchService {
     public LibrarianDispatchService(WorkflowDefinitionRepository workflowRepository,
                                     WorkflowTriggerService workflowTriggerService,
                                     KnowledgeSourceRepository sourceRepository,
+                                    AgentRepository agentRepository,
+                                    KnowledgeWorkflowProvisioner provisioner,
                                     ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.workflowTriggerService = workflowTriggerService;
         this.sourceRepository = sourceRepository;
+        this.agentRepository = agentRepository;
+        this.provisioner = provisioner;
         this.objectMapper = objectMapper;
     }
 
@@ -65,9 +72,13 @@ public class LibrarianDispatchService {
      * human-authored dispatch form; this is a programmatic fan-out of an arbitrary-length id batch, and
      * a flat top-level field avoids the publish-time "undeclared input" lint entirely.
      *
-     * <p>If the workflow isn't provisioned yet (e.g. a race between the enable-settings transaction and
-     * this scheduler tick), the batch is released back to PENDING so the next tick retries it once
-     * provisioning has landed, rather than leaving it stuck PROCESSING with no run to track.
+     * <p>If seeding turns out to be incomplete -- the {@code knowledge-librarian} workflow or its Agent
+     * row is missing (e.g. a race between the enable-settings transaction and this scheduler tick, or
+     * an operator deleted the librarian Agent) -- this self-heals by calling {@link
+     * KnowledgeWorkflowProvisioner#provision} and re-looking-up the workflow, rather than dispatching
+     * into a void. If provisioning itself throws, or the workflow is still missing afterward, the batch
+     * falls back to being released back to PENDING so the next tick retries it once provisioning has
+     * landed.
      */
     public void dispatch(String projectId, List<String> sourceIds) {
         if (sourceIds == null || sourceIds.isEmpty()) {
@@ -75,8 +86,23 @@ public class LibrarianDispatchService {
         }
         Optional<WorkflowDefinition> workflow =
                 workflowRepository.findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME);
+        boolean agentMissing = !agentRepository.existsByProjectIdAndSlug(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG);
+        if (workflow.isEmpty() || agentMissing) {
+            log.info("Knowledge-librarian seeding incomplete for project {} (workflow missing={}, agent missing={}) "
+                    + "-- self-healing before dispatch", projectId, workflow.isEmpty(), agentMissing);
+            try {
+                provisioner.provision(projectId);
+                workflow = workflowRepository.findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME);
+            } catch (Exception e) {
+                log.warn("Failed to self-heal knowledge-librarian provisioning for project {} -- releasing {} "
+                        + "claimed source(s) back to PENDING", projectId, sourceIds.size(), e);
+                self.releaseBatchInNewTx(sourceIds);
+                return;
+            }
+        }
         if (workflow.isEmpty()) {
-            log.warn("No {} workflow provisioned for project {} yet -- releasing {} claimed source(s) back to PENDING",
+            log.warn("No {} workflow provisioned for project {} even after self-heal -- releasing {} claimed "
+                    + "source(s) back to PENDING",
                     KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME, projectId, sourceIds.size());
             self.releaseBatchInNewTx(sourceIds);
             return;

@@ -4,6 +4,7 @@ import com.conductor.config.SecurityConfig;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.knowledge.KnowledgeIngestionService;
+import com.conductor.knowledge.KnowledgeSourceCountsView;
 import com.conductor.knowledge.KnowledgeSourceView;
 import com.conductor.knowledge.SourceReceipt;
 import com.conductor.knowledge.page.FrontmatterException;
@@ -211,5 +212,46 @@ class KnowledgeControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].id").value("src-1"));
+    }
+
+    // ---- getKnowledgeSourceCounts ----
+
+    @Test
+    void sourceCounts_happyPath_returnsCountsPerStatus() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(ingestionService.getSourceCounts(PROJECT_ID))
+                .thenReturn(new KnowledgeSourceCountsView(3, 1, 42, 2));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pending").value(3))
+                .andExpect(jsonPath("$.processing").value(1))
+                .andExpect(jsonPath("$.processed").value(42))
+                .andExpect(jsonPath("$.dead").value(2));
+    }
+
+    @Test
+    void sourceCounts_zeroDefaultsWhenProjectHasNoSources() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(ingestionService.getSourceCounts(PROJECT_ID))
+                .thenReturn(new KnowledgeSourceCountsView(0, 0, 0, 0));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pending").value(0))
+                .andExpect(jsonPath("$.processing").value(0))
+                .andExpect(jsonPath("$.processed").value(0))
+                .andExpect(jsonPath("$.dead").value(0));
+    }
+
+    @Test
+    void sourceCounts_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isForbidden());
     }
 }

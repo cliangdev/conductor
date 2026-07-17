@@ -118,6 +118,26 @@ public class KnowledgeIngestionService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Per-status row counts for a project's inbox, with a zero default for any status the project has
+     * no rows in -- a cheap summary for the UI's inbox badge, avoiding a full {@link #listSources} per
+     * status.
+     */
+    public KnowledgeSourceCountsView getSourceCounts(String projectId) {
+        long pending = 0, processing = 0, processed = 0, dead = 0;
+        for (Object[] row : repository.countByProjectIdGroupByStatus(projectId)) {
+            KnowledgeSourceStatus status = (KnowledgeSourceStatus) row[0];
+            long count = (Long) row[1];
+            switch (status) {
+                case PENDING -> pending = count;
+                case PROCESSING -> processing = count;
+                case PROCESSED -> processed = count;
+                case DEAD -> dead = count;
+            }
+        }
+        return new KnowledgeSourceCountsView(pending, processing, processed, dead);
+    }
+
     private KnowledgeSourceView toView(KnowledgeSource s, boolean resolvePayload) {
         String payload = s.getPayload();
         boolean offloaded = payload == null && s.getPayloadUri() != null;
