@@ -2,7 +2,7 @@ import * as React from 'react'
 import { ChevronDownIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {}
+export type SelectProps = React.SelectHTMLAttributes<HTMLSelectElement>
 
 // Styled native <select> — keeps the platform's own dropdown/keyboard/a11y behavior
 // instead of pulling in a new listbox dependency.
