@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { listAgents, updateAgent, deleteAgent, apiErrorMessage, type Agent } from '@/lib/api'
 import { DefaultAgentBadge } from '@/components/agents/DefaultAgentBadge'
+import { AgentAvatar } from '@/components/agents/AgentAvatar'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -20,6 +21,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { RowActionsMenu } from '@/components/ui/RowActionsMenu'
 import { Can } from '@/components/auth/Can'
 import { useToast } from '@/components/ui/toast'
+import { Card } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 
 export default function AgentsPage() {
   const { projectId } = useParams<{ projectId: string }>()
@@ -96,16 +99,18 @@ export default function AgentsPage() {
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-32" />)}
         </div>
       ) : agents.length === 0 ? (
-        <div className="bg-card rounded-lg border border-border p-12 text-center">
-          <BotIcon className="h-8 w-8 mx-auto text-muted-foreground" />
-          <h2 className="mt-3 text-lg font-medium text-foreground">No agents yet</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Create an agent to analyze data and automate work in your workflows.
-          </p>
-          <Can do="agent.manage">
-            <Button className="mt-4" onClick={() => router.push(`${base}/new`)}>New agent</Button>
-          </Can>
-        </div>
+        <Card>
+          <EmptyState
+            icon={BotIcon}
+            title="No agents yet"
+            description="Create an agent to analyze data and automate work in your workflows."
+            action={
+              <Can do="agent.manage">
+                <Button size="sm" onClick={() => router.push(`${base}/new`)}>New agent</Button>
+              </Can>
+            }
+          />
+        </Card>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {agents.map((agent) => (
@@ -116,7 +121,7 @@ export default function AgentsPage() {
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                  <BotIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <AgentAvatar emoji={agent.avatarEmoji} color={agent.avatarColor} size="sm" />
                   <span className="font-medium text-foreground truncate">{agent.name}</span>
                   {agent.isDefault && <DefaultAgentBadge />}
                 </div>

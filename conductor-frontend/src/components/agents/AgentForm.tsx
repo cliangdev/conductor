@@ -12,6 +12,7 @@ import {
 } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
+import { AgentAvatarPicker, randomAvatar } from '@/components/agents/AgentAvatarPicker'
 
 const INPUT = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring'
 const LABEL = 'block text-sm font-medium text-foreground mb-1'
@@ -51,6 +52,11 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set(initial?.toolIds ?? []))
   const [state, setState] = useState<'DRAFT' | 'ACTIVE'>(initial?.state ?? 'DRAFT')
   const [nameError, setNameError] = useState<string | null>(null)
+  // New agent: seed a random pair client-side so what's shown is what gets submitted (the server
+  // only derives its own default when the fields are omitted, which this form never does).
+  const [avatar, setAvatar] = useState(() =>
+    initial ? { emoji: initial.avatarEmoji, color: initial.avatarColor } : randomAvatar()
+  )
 
   useEffect(() => {
     if (!accessToken || !projectId) return
@@ -113,6 +119,8 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
       config,
       toolIds: Array.from(selectedTools),
       state,
+      avatarEmoji: avatar.emoji,
+      avatarColor: avatar.color,
     })
   }
 
@@ -120,6 +128,14 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
     <form onSubmit={handleSubmit} noValidate className="space-y-6 max-w-2xl">
       {/* Identity */}
       <div className="space-y-4">
+        <div>
+          <p className={LABEL}>Avatar</p>
+          <AgentAvatarPicker
+            emoji={avatar.emoji}
+            color={avatar.color}
+            onChange={setAvatar}
+          />
+        </div>
         <div>
           <label className={LABEL} htmlFor="agent-name">Name</label>
           <input

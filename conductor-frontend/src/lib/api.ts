@@ -396,6 +396,10 @@ export interface Agent {
   /** Namespaced tool ids (e.g. connector:posthog/web_analytics_summary). */
   toolIds: string[]
   state: AgentState
+  /** Always present — the server derives a deterministic default from the slug when unset. */
+  avatarEmoji: string
+  /** Always present, one of the 8 avatar identity tokens (see AgentAvatar) — server-derived when unset. */
+  avatarColor: string
   /** True for agents seeded by Conductor (e.g. the knowledge-librarian) rather than created by a
    *  project member. Deleting one is allowed — it is recreated the next time the owning feature
    *  self-heals. */
@@ -414,6 +418,8 @@ export interface CreateAgentBody {
   config?: AgentConfig
   toolIds?: string[]
   state?: AgentState
+  avatarEmoji?: string
+  avatarColor?: string
 }
 
 /**
