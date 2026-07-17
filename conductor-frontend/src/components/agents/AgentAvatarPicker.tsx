@@ -100,7 +100,9 @@ export function AgentAvatarPicker({ emoji, color, onChange, className }: AgentAv
         <Input
           value={customEmoji}
           onChange={(e) => handleCustomEmojiChange(e.target.value)}
-          maxLength={4}
+          // 16 UTF-16 units matches the backend's VARCHAR(16) and admits ZWJ sequences
+          // (family/profession emoji run ~7-11 units) that a tighter cap would reject.
+          maxLength={16}
           placeholder="Or type any emoji…"
           aria-label="Custom emoji"
           className="mt-2 max-w-[160px]"

@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -94,7 +95,9 @@ public class ProviderCredentialService {
                 .map(ProviderCredential::getProvider)
                 .collect(Collectors.toSet());
 
-        List<String> allProviders = new ArrayList<>(providerRegistry.providerIds());
+        // LinkedHashSet keeps registry-then-non-model order while guarding against a provider id
+        // ever appearing in both sets.
+        Set<String> allProviders = new LinkedHashSet<>(providerRegistry.providerIds());
         allProviders.addAll(NON_MODEL_PROVIDERS);
 
         return allProviders.stream()

@@ -11,6 +11,7 @@ import com.conductor.generated.model.DaemonEventsResponse;
 import com.conductor.generated.model.JobDispatchPayloadDto;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.security.ProjectScopedPrincipal;
+import com.conductor.security.WorkflowRunAuthenticationToken;
 import com.conductor.service.DaemonEventService;
 import com.conductor.workflow.JobDispatchPayloadService;
 import com.conductor.workflow.WorkflowJobOrchestrator;
@@ -72,7 +73,9 @@ public class DaemonEventsController implements DaemonApi {
      * Daemon endpoints are authenticated by a project-scoped principal (a project API key or a
      * run-scoped MCP token), but runId/jobId don't carry the project in the path — unlike
      * getDaemonEvents/ackDaemonEvents which trust a caller-supplied projectId path segment, these load
-     * the run and verify the authenticated principal's project actually matches it.
+     * the run and verify the authenticated principal's project actually matches it. A run-scoped
+     * token is additionally pinned to its own run: unlike a project API key, it was minted for one
+     * runId and must not act on siblings.
      */
     private void requireProjectApiKeyScopeForRun(String runId) {
         WorkflowRun run = runRepository.findByIdWithWorkflow(runId)
@@ -81,6 +84,9 @@ public class DaemonEventsController implements DaemonApi {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (!(auth instanceof ProjectScopedPrincipal scoped) || !projectId.equals(scoped.getProjectId())) {
             throw new ForbiddenException("API key does not belong to project " + projectId);
+        }
+        if (auth instanceof WorkflowRunAuthenticationToken runToken && !runId.equals(runToken.getRunId())) {
+            throw new ForbiddenException("Run token does not belong to run " + runId);
         }
     }
 }

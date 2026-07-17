@@ -69,7 +69,7 @@ export default function KnowledgeIndexPage() {
   // The librarian avatar only matters for the empty-state admin composition — fetched lazily once
   // we know that's what's rendering, rather than on every knowledge page visit.
   useEffect(() => {
-    if (!accessToken || loading || !isAdmin || !empty) return
+    if (!accessToken || loading || error || !isAdmin || !empty) return
     let cancelled = false
     listAgents(projectId, accessToken)
       .then((agents) => {
