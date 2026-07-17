@@ -7,6 +7,7 @@ import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSourceCountsView;
 import com.conductor.knowledge.KnowledgeSourceView;
 import com.conductor.knowledge.SourceReceipt;
+import com.conductor.knowledge.domain.KnowledgeDomainService;
 import com.conductor.knowledge.page.FrontmatterException;
 import com.conductor.knowledge.page.KnowledgeConflictException;
 import com.conductor.knowledge.page.KnowledgePageService;
@@ -33,6 +34,7 @@ import java.util.Optional;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -55,6 +57,7 @@ class KnowledgeControllerTest {
     @MockitoBean private KnowledgeIngestionService ingestionService;
     @MockitoBean private KnowledgePageService pageService;
     @MockitoBean private KnowledgeSearchService searchService;
+    @MockitoBean private KnowledgeDomainService domainService;
     @MockitoBean private ProjectSecurityService projectSecurityService;
 
     // Security-filter collaborators
@@ -192,7 +195,7 @@ class KnowledgeControllerTest {
     @Test
     void listSources_defaultsToPendingStatus() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(ingestionService.listSources(eq(PROJECT_ID), eq(com.conductor.knowledge.KnowledgeSourceStatus.PENDING)))
+        when(ingestionService.listSources(eq(PROJECT_ID), eq(com.conductor.knowledge.KnowledgeSourceStatus.PENDING), isNull()))
                 .thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources")
@@ -207,7 +210,7 @@ class KnowledgeControllerTest {
         when(ingestionService.getSources(eq(PROJECT_ID), any()))
                 .thenReturn(List.of(new KnowledgeSourceView("src-1", PROJECT_ID, "manual_note", null, null,
                         null, "hello", false, null, null, null, null,
-                        com.conductor.knowledge.KnowledgeSourceStatus.PENDING, 0, null, null)));
+                        com.conductor.knowledge.KnowledgeSourceStatus.PENDING, 0, null, null, null)));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources?ids=src-1")
                         .header("Authorization", "Bearer valid-token"))
@@ -254,6 +257,68 @@ class KnowledgeControllerTest {
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
                         .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    // ---- knowledge domains ----
+
+    @Test
+    void listDomains_returnsRegistryWithCounts() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        com.conductor.knowledge.domain.KnowledgeDomain engineering = new com.conductor.knowledge.domain.KnowledgeDomain();
+        engineering.setSlug("engineering");
+        engineering.setDisplayName("Engineering");
+        engineering.setPathPrefix("engineering/");
+        engineering.setSchemaPagePath("engineering/_schema.md");
+        engineering.setSourceTypePatterns(List.of("github.*"));
+        engineering.setState(com.conductor.knowledge.domain.KnowledgeDomainState.ACTIVE);
+        when(domainService.list(PROJECT_ID)).thenReturn(List.of(engineering));
+        when(ingestionService.getDomainCounts(PROJECT_ID))
+                .thenReturn(java.util.Map.of("engineering", new KnowledgeSourceCountsView(2, 1, 5, 0)));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].slug").value("engineering"))
+                .andExpect(jsonPath("$[0].sourceTypePatterns[0]").value("github.*"))
+                .andExpect(jsonPath("$[0].pendingCount").value(2))
+                .andExpect(jsonPath("$[0].processingCount").value(1))
+                .andExpect(jsonPath("$[0].processedCount").value(5));
+    }
+
+    @Test
+    void updateDomain_admin_updatesAndReturns200() throws Exception {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(true);
+        com.conductor.knowledge.domain.KnowledgeDomain updated = new com.conductor.knowledge.domain.KnowledgeDomain();
+        updated.setSlug("engineering");
+        updated.setDisplayName("Eng");
+        updated.setPathPrefix("engineering/");
+        updated.setSchemaPagePath("engineering/_schema.md");
+        updated.setSourceTypePatterns(List.of("github.*"));
+        updated.setState(com.conductor.knowledge.domain.KnowledgeDomainState.ACTIVE);
+        when(domainService.update(eq(PROJECT_ID), eq("engineering"), eq("Eng"), any(), any(), any()))
+                .thenReturn(updated);
+        when(ingestionService.getDomainCounts(PROJECT_ID)).thenReturn(java.util.Map.of());
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains/engineering")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"Eng\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.displayName").value("Eng"));
+    }
+
+    @Test
+    void updateDomain_nonAdmin_returns403() throws Exception {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(false);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains/engineering")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"Eng\"}"))
                 .andExpect(status().isForbidden());
     }
 

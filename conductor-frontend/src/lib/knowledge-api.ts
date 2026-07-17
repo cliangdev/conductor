@@ -121,17 +121,21 @@ export interface KnowledgeSourceDto {
   errorMessage?: string | null
   /** Set once retention has compacted this source's payload; null means it's still intact. */
   purgedAt?: string | null
+  /** The domain lane this source was routed to at submit time. Null is the unclassified/generalist lane. */
+  domain?: string | null
 }
 
 /** Browse the inbox filtered by status (default PENDING) — never resolves offloaded payload content. */
 export function listKnowledgeSources(
   projectId: string,
   token: string,
-  opts?: { status?: KnowledgeSourceStatus },
+  opts?: { status?: KnowledgeSourceStatus; domain?: string },
 ): Promise<KnowledgeSourceDto[]> {
   const status = opts?.status ?? 'PENDING'
+  const params = new URLSearchParams({ status })
+  if (opts?.domain) params.set('domain', opts.domain)
   return apiGet<KnowledgeSourceDto[]>(
-    `/api/v1/projects/${projectId}/knowledge/sources?status=${status}`,
+    `/api/v1/projects/${projectId}/knowledge/sources?${params.toString()}`,
     token,
   )
 }

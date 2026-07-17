@@ -368,6 +368,7 @@ const TOOLS = [
         occurredAt: { type: 'string', description: 'ISO-8601 timestamp of when the event occurred (optional)' },
         dedupKey: { type: 'string', description: 'Idempotency key — resubmitting the same key returns status DUPLICATE instead of a second entry (optional)' },
         metadata: { type: 'object', description: 'Arbitrary structured metadata (optional)' },
+        domain: { type: 'string', description: 'Explicit knowledge domain slug to route this into (optional) — omit to let the registry route by sourceType instead' },
       },
       required: ['sourceType'],
     },
@@ -776,6 +777,7 @@ export async function runMcpServer(): Promise<void> {
               occurredAt: params['occurredAt'] as string | undefined,
               dedupKey: params['dedupKey'] as string | undefined,
               metadata: params['metadata'] as Record<string, unknown> | undefined,
+              domain: params['domain'] as string | undefined,
             },
             config
           )

@@ -4302,6 +4302,14 @@ paths:
           required: false
           description: Comma-separated source ids for a multi-get. Resolves offloaded payloads.
           schema: {type: string}
+        - name: domain
+          in: query
+          required: false
+          description: >-
+            Restrict to sources routed to this domain lane (exact match against the slug stamped at
+            submit time). Ignored when `ids` is supplied. Omit for every lane, including the
+            unclassified/null lane.
+          schema: {type: string}
       responses:
         '200':
           description: Matching knowledge sources
@@ -4340,6 +4348,88 @@ paths:
                 $ref: '#/components/schemas/KnowledgeSourceCounts'
         '403':
           $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/knowledge/domains:
+    get:
+      tags: [knowledge]
+      summary: List the project's knowledge domain registry
+      description: >-
+        Every domain row (ACTIVE, plus any SUGGESTED gap report or DISMISSED past suggestion), slug-
+        ordered, each with its live pending/processing/processed source counts. Membership-gated like
+        every other knowledge endpoint — no admin requirement for reading.
+      operationId: listKnowledgeDomains
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: The project's domain registry
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KnowledgeDomainDto'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/knowledge/domains/{slug}:
+    patch:
+      tags: [knowledge]
+      summary: Update a knowledge domain's metadata, owning agent, or state
+      description: >-
+        All-optional partial update; ADMIN only. `displayName`/`description`/`sourceTypePatterns` are
+        classic PATCH semantics — omit a field to leave it unchanged. `state` transitions the domain
+        (e.g. approving a SUGGESTED gap report to ACTIVE). `owningAgentSlug` assigns a specialist agent
+        (validated to exist in this project); to clear an existing assignment, set `clearOwningAgent`
+        true — a plain omitted/null `owningAgentSlug` alone is treated as "leave unchanged", since this
+        API has no wire-level way to distinguish an absent field from an explicit `null` for one field
+        in an otherwise-partial body.
+      operationId: updateKnowledgeDomain
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: slug
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateKnowledgeDomainRequest'
+      responses:
+        '200':
+          description: The updated domain
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeDomainDto'
+        '400':
+          description: Unknown owningAgentSlug (no such agent in this project)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No such domain slug in this project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /projects/{projectId}/knowledge/pages/batch-write:
     post:
@@ -6719,6 +6809,12 @@ components:
           type: object
           additionalProperties: true
           nullable: true
+        domain:
+          type: string
+          nullable: true
+          description: >-
+            Explicit domain-lane request, validated against the project's ACTIVE registry (unknown/
+            inactive slug is a 400). Omit to let KnowledgeDomainResolver route by sourceType pattern.
 
     KnowledgeSourceReceipt:
       type: object
@@ -6789,6 +6885,10 @@ components:
           description: >-
             Set once KnowledgeRetentionService has compacted this source's payload (nulled the inline
             column and/or deleted the offloaded GCS object). Null means the payload is still intact.
+        domain:
+          type: string
+          nullable: true
+          description: The domain lane this source was routed to at submit time. Null is the unclassified/generalist lane.
 
     KnowledgeSourceCounts:
       type: object
@@ -6811,6 +6911,96 @@ components:
         dead:
           type: integer
           format: int64
+
+    KnowledgeDomainState:
+      type: string
+      enum: [ACTIVE, SUGGESTED, DISMISSED]
+      description: >-
+        ACTIVE domains route sources and appear in the Domains panel. SUGGESTED is a librarian-raised
+        gap report awaiting admin approval. DISMISSED is a declined suggestion the librarian should not
+        re-raise for the same slug.
+
+    KnowledgeDomainDto:
+      type: object
+      required:
+        - slug
+        - displayName
+        - pathPrefix
+        - schemaPagePath
+        - sourceTypePatterns
+        - state
+        - pendingCount
+        - processingCount
+        - processedCount
+      properties:
+        slug:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+          nullable: true
+        pathPrefix:
+          type: string
+          description: The wiki directory this domain owns, e.g. `engineering/`.
+        schemaPagePath:
+          type: string
+          description: Path of this domain's schema page, e.g. `engineering/_schema.md`.
+        sourceTypePatterns:
+          type: array
+          items:
+            type: string
+          description: Glob patterns (`*` wildcard) matched against a submission's sourceType when no explicit domain is given, in slug order.
+        owningAgentSlug:
+          type: string
+          nullable: true
+          description: Specialist agent slug, if one is assigned. Null falls back to the generalist knowledge-librarian at dispatch.
+        state:
+          $ref: '#/components/schemas/KnowledgeDomainState'
+        suggestionReason:
+          type: string
+          nullable: true
+          description: Set only for a SUGGESTED (or since-DISMISSED) row -- why the librarian raised this gap report.
+        pendingCount:
+          type: integer
+          format: int64
+        processingCount:
+          type: integer
+          format: int64
+        processedCount:
+          type: integer
+          format: int64
+
+    UpdateKnowledgeDomainRequest:
+      type: object
+      description: >-
+        All-optional partial update. `owningAgentSlug`/`clearOwningAgent` are a discriminated pair (see
+        `updateKnowledgeDomain`'s description) rather than a plain nullable field, since this API has no
+        wire-level way to distinguish an omitted field from an explicit `null` for one field in an
+        otherwise-partial body.
+      properties:
+        displayName:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        sourceTypePatterns:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: Omit to leave unchanged. An empty array is a valid value (clears all patterns), distinct from omitted.
+        owningAgentSlug:
+          type: string
+          nullable: true
+          description: Assigns this agent slug (must exist in this project). Ignored unless non-null -- to clear an assignment, use clearOwningAgent instead.
+        clearOwningAgent:
+          type: boolean
+          default: false
+          description: Set true to clear an existing owningAgentSlug assignment. Takes precedence over owningAgentSlug if both are set.
+        state:
+          $ref: '#/components/schemas/KnowledgeDomainState'
 
     KnowledgePageWrite:
       type: object

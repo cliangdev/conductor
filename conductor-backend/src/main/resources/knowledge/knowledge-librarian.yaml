@@ -2,9 +2,18 @@ name: Knowledge Librarian
 
 # System-managed workflow (see KnowledgeWorkflowProvisioner) — fired programmatically by
 # KnowledgeIngestScheduler via LibrarianDispatchService, never by a human. workflow_dispatch is
-# declared only so the run has a recognized trigger kind; the dispatcher passes sourceIds/projectId
-# as top-level event payload fields (${{ event.* }}), not workflow_dispatch inputs, so there is
-# nothing to declare under `inputs:`.
+# declared only so the run has a recognized trigger kind; the dispatcher passes
+# sourceIds/projectId/agentSlug/domain as top-level event payload fields (${{ event.* }}), not
+# workflow_dispatch inputs, so there is nothing to declare under `inputs:`.
+#
+# `agent: ${{ event.agentSlug }}` is resolved per dispatch by LibrarianDispatchService: the domain's
+# assigned specialist if one exists, else the generalist knowledge-librarian agent (AgentStepExecutor
+# interpolates with.agent same as task/context; a fixed literal slug still works unchanged for any
+# other workflow).
+#
+# `concurrency: single` is NOT what serializes this workflow -- that annotation is only honored by the
+# cron WorkflowScheduler. Real serialization is per (project, domain lane) via KnowledgeIngestScheduler
+# checking each lane's own PROCESSING rows, so multiple lanes can dispatch concurrently in one tick.
 on:
   workflow_dispatch: {}
 
@@ -16,12 +25,13 @@ jobs:
       - id: librarian
         uses: agent
         with:
-          agent: knowledge-librarian
+          agent: ${{ event.agentSlug }}
           timeout_minutes: 20
           task: |
             File the following batch of knowledge-inbox sources into the wiki.
             Source ids (comma-separated): ${{ event.sourceIds }}
             Project id: ${{ event.projectId }}
+            Domain: ${{ event.domain }} (empty = unclassified -- pick the right domain dir per source)
 
             Return a short JSON summary: {"pagesWritten": <int>, "sourcesFiled": <int>}.
           output_schema:

@@ -198,18 +198,46 @@ public class KnowledgeWorkflowProvisioner {
         }
     }
 
+    /**
+     * Creates the workflow if absent, or -- since these are system-owned, canonical content, unlike the
+     * seed-if-absent wiki schema pages below -- refreshes its stored YAML in place if it has drifted
+     * from the current classpath resource (e.g. a project enabled before {@code agent: ${{ event.agentSlug }}}
+     * shipped). {@code LibrarianDispatchService} treats this drift as incomplete seeding and calls
+     * {@link #provision} to trigger the refresh before dispatching into a stale workflow.
+     */
     private void upsertWorkflow(Project project, String name, String resource) {
-        if (workflowRepository.findByProjectIdAndName(project.getId(), name).isPresent()) {
+        String classpathYaml = readResource(resource);
+        Optional<WorkflowDefinition> existing = workflowRepository.findByProjectIdAndName(project.getId(), name);
+        if (existing.isPresent()) {
+            WorkflowDefinition def = existing.get();
+            if (!classpathYaml.equals(def.getYaml())) {
+                def.setYaml(classpathYaml);
+                workflowRepository.save(def);
+                log.info("Refreshed drifted system workflow '{}' YAML for project {}", name, project.getId());
+            }
             return;
         }
         WorkflowDefinition def = new WorkflowDefinition();
         def.setProject(project);
         def.setName(name);
-        def.setYaml(readResource(resource));
+        def.setYaml(classpathYaml);
         def.setEnabled(true);
         def.setArea("knowledge");
         workflowRepository.save(def);
         log.info("Provisioned system workflow '{}' for project {}", name, project.getId());
+    }
+
+    /**
+     * True if the project's stored {@code knowledge-librarian} workflow YAML differs from the current
+     * classpath resource -- {@code LibrarianDispatchService} treats drift as "seeding incomplete" and
+     * self-heals via {@link #provision} (whose {@link #upsertWorkflow} refreshes drifted YAML in place)
+     * before dispatching into a stale target. A missing workflow row entirely is not "stale" -- that's
+     * the caller's separate empty-optional check.
+     */
+    public boolean isLibrarianWorkflowStale(String projectId) {
+        return workflowRepository.findByProjectIdAndName(projectId, LIBRARIAN_WORKFLOW_NAME)
+                .map(w -> !readResource(LIBRARIAN_RESOURCE).equals(w.getYaml()))
+                .orElse(false);
     }
 
     private void seedSchemaPage(String projectId) {

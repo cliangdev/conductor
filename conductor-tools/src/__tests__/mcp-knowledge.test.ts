@@ -57,6 +57,7 @@ describe('knowledge MCP tools', () => {
         occurredAt: '2026-07-01T00:00:00Z',
         dedupKey: 'pr-1',
         metadata: { repo: 'x/y' },
+        domain: 'engineering',
       },
       config
     )
@@ -70,6 +71,7 @@ describe('knowledge MCP tools', () => {
         occurredAt: '2026-07-01T00:00:00Z',
         dedupKey: 'pr-1',
         metadata: { repo: 'x/y' },
+        domain: 'engineering',
       },
       config
     )

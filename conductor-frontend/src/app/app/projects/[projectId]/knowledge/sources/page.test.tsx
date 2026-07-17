@@ -116,6 +116,23 @@ describe('Knowledge sources page', () => {
     expect(await screen.findByText('purged')).toBeInTheDocument()
   })
 
+  it('shows a domain badge when the source was routed to a domain', async () => {
+    listKnowledgeSourcesBehavior = () => Promise.resolve([source({ domain: 'engineering' })])
+
+    render(<KnowledgeSourcesPage />)
+
+    expect(await screen.findByText('engineering')).toBeInTheDocument()
+  })
+
+  it('shows no domain badge for an unclassified (null-domain) source', async () => {
+    listKnowledgeSourcesBehavior = () => Promise.resolve([source({ domain: null })])
+
+    render(<KnowledgeSourcesPage />)
+
+    expect(await screen.findByText('A note')).toBeInTheDocument()
+    expect(screen.queryByText('engineering')).not.toBeInTheDocument()
+  })
+
   it('shows an alert when the fetch fails', async () => {
     listKnowledgeSourcesBehavior = () => Promise.reject(Object.assign(new Error('boom'), { detail: 'Server error' }))
 

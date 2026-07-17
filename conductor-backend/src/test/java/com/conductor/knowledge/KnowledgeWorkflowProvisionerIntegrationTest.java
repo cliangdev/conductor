@@ -81,6 +81,32 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
     }
 
     @Test
+    void reprovisionRefreshesDriftedLibrarianWorkflowYaml() {
+        provisioner.provision(projectId);
+        WorkflowDefinition librarian = workflowRepository
+                .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME)
+                .orElseThrow();
+        librarian.setYaml("name: Stale Knowledge Librarian\non:\n  workflow_dispatch: {}\n");
+        workflowRepository.save(librarian);
+        assertThat(provisioner.isLibrarianWorkflowStale(projectId)).isTrue();
+
+        provisioner.provision(projectId);
+
+        WorkflowDefinition refreshed = workflowRepository
+                .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME)
+                .orElseThrow();
+        assertThat(refreshed.getYaml()).contains("agent: ${{ event.agentSlug }}");
+        assertThat(provisioner.isLibrarianWorkflowStale(projectId)).isFalse();
+    }
+
+    @Test
+    void isLibrarianWorkflowStaleIsFalseImmediatelyAfterProvisioning() {
+        provisioner.provision(projectId);
+
+        assertThat(provisioner.isLibrarianWorkflowStale(projectId)).isFalse();
+    }
+
+    @Test
     void provisionCreatesBothWorkflowsAndSchemaPage() {
         provisioner.provision(projectId);
 

@@ -43,6 +43,13 @@ public class KnowledgeSource {
     @Column(name = "source_ref", length = 512)
     private String sourceRef;
 
+    /** The domain lane (a {@code KnowledgeDomain} slug) this source was routed to at submit time by
+     *  {@code KnowledgeDomainResolver} -- null is the generalist/unclassified lane, not "not yet
+     *  resolved" (resolution always runs before insert). Stamped once; never re-resolved after the fact
+     *  even if the registry changes later. */
+    @Column(name = "domain", length = 64)
+    private String domain;
+
     @Column(name = "title", length = 255)
     private String title;
 
@@ -118,6 +125,9 @@ public class KnowledgeSource {
 
     public String getSourceRef() { return sourceRef; }
     public void setSourceRef(String sourceRef) { this.sourceRef = sourceRef; }
+
+    public String getDomain() { return domain; }
+    public void setDomain(String domain) { this.domain = domain; }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }

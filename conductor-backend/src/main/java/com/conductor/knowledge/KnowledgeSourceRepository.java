@@ -49,6 +49,42 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
     List<KnowledgeSource> findDuePendingForProject(@Param("projectId") String projectId,
                                                     @Param("now") OffsetDateTime now, @Param("limit") int limit);
 
+    // ---- domain-aware lanes (KnowledgeIngestScheduler concurrency unit is per (project, domain)) ----
+
+    /** Distinct domain lanes (including {@code null}, the generalist lane) with at least one due PENDING
+     *  source in this project -- the scheduler dispatches each lane independently, in the same tick. */
+    @Query("SELECT DISTINCT s.domain FROM KnowledgeSource s WHERE s.projectId = :projectId "
+            + "AND s.status = com.conductor.knowledge.KnowledgeSourceStatus.PENDING "
+            + "AND (s.nextAttemptAt IS NULL OR s.nextAttemptAt <= :now)")
+    List<String> findLanesWithDuePending(@Param("projectId") String projectId, @Param("now") OffsetDateTime now);
+
+    /** Lane-scoped variant of {@link #findDuePendingForProject} -- {@code domain IS NOT DISTINCT FROM}
+     *  (native, null-safe equality; a plain {@code =} never matches a null bind parameter in Postgres)
+     *  so the null lane's own claim only ever picks up null-domain rows, never another lane's. */
+    @Query(value = "SELECT * FROM knowledge_sources WHERE project_id = :projectId AND status = 'PENDING' "
+            + "AND domain IS NOT DISTINCT FROM :domain "
+            + "AND (next_attempt_at IS NULL OR next_attempt_at <= :now) "
+            + "ORDER BY received_at ASC LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
+    List<KnowledgeSource> findDuePendingForProjectAndDomain(@Param("projectId") String projectId,
+                                                             @Param("domain") String domain,
+                                                             @Param("now") OffsetDateTime now, @Param("limit") int limit);
+
+    /** True if this lane (domain, or the null lane) has any source currently PROCESSING -- the
+     *  scheduler's per-lane busy check; a busy lane is skipped this tick, other lanes are unaffected. */
+    @Query(value = "SELECT EXISTS(SELECT 1 FROM knowledge_sources WHERE project_id = :projectId "
+            + "AND status = 'PROCESSING' AND domain IS NOT DISTINCT FROM :domain)", nativeQuery = true)
+    boolean existsProcessingInLane(@Param("projectId") String projectId, @Param("domain") String domain);
+
+    /** Per-(domain, status) row counts for a project -- backs the Domains panel's pending/processing/
+     *  processed counts per {@code KnowledgeDomain}. Domains (and the status) with zero rows are simply
+     *  absent, same zero-fill-by-caller convention as {@link #countByProjectIdGroupByStatus}. */
+    @Query("SELECT s.domain, s.status, COUNT(s) FROM KnowledgeSource s WHERE s.projectId = :projectId "
+            + "GROUP BY s.domain, s.status")
+    List<Object[]> countByProjectIdGroupByDomainAndStatus(@Param("projectId") String projectId);
+
+    List<KnowledgeSource> findByProjectIdAndStatusAndDomainOrderByReceivedAtDesc(
+            String projectId, KnowledgeSourceStatus status, String domain);
+
     /**
      * Marks a batch of sources PROCESSED as part of the same transaction that wrote the pages derived
      * from them -- see {@code KnowledgePageService#batchWrite} -- so a crash between the page write and

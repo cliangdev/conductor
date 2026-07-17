@@ -99,6 +99,11 @@ function KnowledgeSourcesPageContent() {
                 <Badge variant="outline" className="shrink-0 font-mono text-[11px] font-normal">
                   {source.sourceType}
                 </Badge>
+                {source.domain && (
+                  <Badge variant="secondary" className="shrink-0 text-[11px] font-normal">
+                    {source.domain}
+                  </Badge>
+                )}
                 <span className="truncate flex-1 text-foreground">
                   {source.title ?? source.sourceRef ?? '—'}
                 </span>

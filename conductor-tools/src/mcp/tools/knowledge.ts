@@ -31,6 +31,7 @@ export async function submitKnowledgeSource(
     occurredAt?: string
     dedupKey?: string
     metadata?: Record<string, unknown>
+    domain?: string
   },
   config: Config
 ): Promise<Record<string, unknown>> {
@@ -42,6 +43,7 @@ export async function submitKnowledgeSource(
   if (params.occurredAt !== undefined) body['occurredAt'] = params.occurredAt
   if (params.dedupKey !== undefined) body['dedupKey'] = params.dedupKey
   if (params.metadata !== undefined) body['metadata'] = params.metadata
+  if (params.domain !== undefined) body['domain'] = params.domain
 
   return apiPost<Record<string, unknown>>(
     `/api/v1/projects/${config.projectId}/knowledge/sources`,

@@ -8,7 +8,9 @@ import java.util.Map;
  * a manual note, etc. Exactly one of {@code payload} (by-value) or {@code sourceRef} (by-reference,
  * resolved later by the ingestion adapter) must be present. {@code dedupKey} is optional -- when absent,
  * {@link KnowledgeIngestionService} derives one from the other fields so repeat deliveries of the same
- * underlying event collapse to a single row.
+ * underlying event collapse to a single row. {@code domain} is the caller's explicit domain-lane
+ * preference (validated against the ACTIVE registry, unknown slug rejected); leave null to let
+ * {@code KnowledgeDomainResolver} route by {@code sourceType} pattern instead.
  */
 public record KnowledgeSubmission(
         String projectId,
@@ -20,7 +22,8 @@ public record KnowledgeSubmission(
         OffsetDateTime occurredAt,
         String dedupKey,
         Origin origin,
-        Map<String, Object> metadata
+        Map<String, Object> metadata,
+        String domain
 ) {
 
     /** Where a submission came from -- e.g. {@code kind="workflow_run", id=<runId>}. */

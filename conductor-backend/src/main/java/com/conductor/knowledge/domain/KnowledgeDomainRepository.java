@@ -13,5 +13,6 @@ public interface KnowledgeDomainRepository extends JpaRepository<KnowledgeDomain
 
     List<KnowledgeDomain> findByProjectIdOrderBySlugAsc(String projectId);
 
-    List<KnowledgeDomain> findByProjectIdAndState(String projectId, KnowledgeDomainState state);
+    /** Slug-ordered so {@code KnowledgeDomainResolver}'s pattern match is deterministic under overlapping globs. */
+    List<KnowledgeDomain> findByProjectIdAndStateOrderBySlugAsc(String projectId, KnowledgeDomainState state);
 }

@@ -13,6 +13,7 @@ creates and edits them; humans and other agents read them.
 - [The pipeline](#the-pipeline)
 - [Page model](#page-model)
 - [System workflows](#system-workflows)
+- [Domains](#domains)
 - [Retention](#retention)
 - [MCP tools](#mcp-tools)
 - [REST endpoints](#rest-endpoints)
@@ -52,6 +53,7 @@ Every unit of inbound material — regardless of producer — is a `KnowledgeSub
 | `title`, `contentType`, `occurredAt`, `metadata` | no | Descriptive metadata carried through to the librarian's read. |
 | `dedupKey` | no | Explicit idempotency key. When omitted, derived server-side from `projectId`+`sourceType`+`sourceRef`+`occurredAt` (SHA-256). |
 | `origin` | server-derived | `{kind, id}` — who/what submitted it (`USER`, `API_KEY`, `EVENT_TAP`, `GITHUB_CONNECTOR`). Never accepted from the client; always derived from the caller's auth or the adapter's identity. |
+| `domain` | no | Explicit [domain](#domains) slug to route into (validated against the ACTIVE registry; unknown/inactive is a 400). Omitted lets `KnowledgeDomainResolver` route by `sourceType` glob pattern instead; still unmatched falls to the null/generalist lane. Resolved once at submit time and stamped onto the row — never re-resolved later. |
 
 **Idempotency.** Submission is claim-or-return on `(projectId, dedupKey)`: the first caller for a key
 inserts the row (`ACCEPTED`); any later caller with the same key gets back the original row's id
@@ -84,43 +86,59 @@ frontend settings page for it; toggle it via `PATCH /api/v1/projects/{projectId}
 ```mermaid
 flowchart LR
     Producers["Producers<br/>MCP · event tap · UI"]
-    Inbox[("knowledge_sources<br/>(inbox)")]
-    Sched["KnowledgeIngestScheduler<br/>30s poll · claim ≤10 · sweep"]
-    Librarian["knowledge-librarian run<br/>(claude-code step)"]
+    Inbox[("knowledge_sources<br/>(inbox, domain-stamped)")]
+    Sched["KnowledgeIngestScheduler<br/>30s poll · per-lane claim ≤10 · sweep"]
+    Librarian["knowledge-librarian run<br/>(agent: resolved per lane)"]
     Pages[("knowledge_pages +<br/>revisions · links")]
 
-    Producers -- "submit (PENDING)" --> Inbox
-    Sched -- "claim → PROCESSING" --> Inbox
-    Sched -- "dispatch batch" --> Librarian
+    Producers -- "submit (PENDING, domain resolved)" --> Inbox
+    Sched -- "claim lane → PROCESSING" --> Inbox
+    Sched -- "dispatch batch per lane" --> Librarian
     Librarian -- "write_knowledge_pages<br/>(atomically marks PROCESSED)" --> Pages
     Sched -. "stale/failed → PENDING (backoff)<br/>5 attempts → DEAD" .-> Inbox
 ```
 
-`KnowledgeIngestScheduler` polls every 30s:
+`KnowledgeIngestScheduler` polls every 30s, per **lane** — a lane is a [domain](#domains) slug, or `null`
+for the generalist/unclassified lane; the concurrency unit is `(project, lane)`, not the whole project:
 
-1. **Dispatch.** For each project with a due `PENDING` source (`nextAttemptAt` null or past) and
-   `knowledge_enabled`, claim up to 10 oldest sources into `PROCESSING` (`REQUIRES_NEW` transaction), then
-   fire a `knowledge-librarian` run via `LibrarianDispatchService` — a `workflow_dispatch` trigger carrying
-   `sourceIds` (comma-joined) and `projectId` as top-level event-payload fields (`${{ event.sourceIds }}`),
-   not `workflow_dispatch` `inputs` (see [`docs/workflows.md`](workflows.md#outputs-and-interpolation) —
-   `event.FIELD` resolves any trigger's stored payload).
-2. **One active knowledge run per project.** Before claiming, the scheduler checks for a non-terminal run
-   (`PENDING`/`PENDING_LOCAL_PICKUP`/`RUNNING`) of either `knowledge-librarian` or `knowledge-bootstrap` and
-   skips dispatch if one is in flight — the librarian and the bootstrap seed job never race each other or
-   themselves.
-3. **Librarian files the batch.** The dispatched `claude-code` step reads `_schema.md` and `index.md` for
-   orientation, reads the batch's sources, drafts page content, and writes every resulting page in **one**
-   `write_knowledge_pages` call passing `sourceIds` — which atomically marks the batch `PROCESSED` in the
-   same transaction as the page writes (`KnowledgeSourceRepository.markProcessed`, `flushAutomatically` +
-   `clearAutomatically`, so a crash between the write and the mark can never happen). If no source in the
-   batch warrants a wiki change, the librarian still calls `write_knowledge_pages` with `writes: []` and
-   `sourceIds` set to the full batch — an explicit "no wiki change needed" ack, so the batch is marked
-   `PROCESSED` instead of rotting through the stale-processing sweep into `DEAD`.
-4. **Sweep.** Every tick, any source still `PROCESSING` whose run is missing, terminally
+1. **Dispatch.** For each project with `knowledge_enabled` and any due `PENDING` source (`nextAttemptAt`
+   null or past), the scheduler enumerates every lane with due work and, for each lane not already busy,
+   claims up to 10 oldest sources *in that lane* into `PROCESSING` (`REQUIRES_NEW` transaction), then fires
+   a `knowledge-librarian` run via `LibrarianDispatchService` — a `workflow_dispatch` trigger carrying
+   `sourceIds` (comma-joined), `projectId`, `agentSlug`, and `domain` (`""` for the null lane) as top-level
+   event-payload fields (`${{ event.sourceIds }}` etc.), not `workflow_dispatch` `inputs` (see
+   [`docs/workflows.md`](workflows.md#outputs-and-interpolation) — `event.FIELD` resolves any trigger's
+   stored payload). Multiple lanes can dispatch in the same tick — an in-flight engineering-domain batch
+   never blocks a product-domain batch.
+2. **Per-lane busy check, project-wide bootstrap block.** A lane is busy iff it currently has any
+   `PROCESSING` source — busy lanes are skipped this tick without affecting any other lane (they
+   self-serialize; a non-terminal `knowledge-librarian` run no longer blocks the whole project). The one
+   project-wide block is `knowledge-bootstrap`: while it has a non-terminal run, no lane dispatches — it
+   writes broadly across the wiki in one large operator-triggered run.
+3. **Agent resolution.** `LibrarianDispatchService` resolves `agentSlug` per dispatch: the lane's domain
+   row's `owningAgentSlug` if one is assigned and that agent still exists, else the generalist
+   `knowledge-librarian` — a deleted specialist demotes its lane back to the generalist on the next
+   dispatch rather than stranding it. `knowledge-librarian.yaml`'s `agent: ${{ event.agentSlug }}`
+   resolves this per run (see [`docs/workflows.md`](workflows.md#outputs-and-interpolation) — `with.agent`
+   now accepts `${{ }}` interpolation, same as `task`/`context`; a fixed literal agent slug in any other
+   workflow still works unchanged).
+4. **Librarian files the batch.** The dispatched agent step reads `_schema.md` (and, if `Domain` is
+   non-empty, that domain's own `<domain>/_schema.md`) and `index.md` for orientation, reads the batch's
+   sources, drafts page content, and writes every resulting page in **one** `write_knowledge_pages` call
+   passing `sourceIds` — which atomically marks the batch `PROCESSED` in the same transaction as the page
+   writes (`KnowledgeSourceRepository.markProcessed`, `flushAutomatically` + `clearAutomatically`, so a
+   crash between the write and the mark can never happen). If no source in the batch warrants a wiki
+   change, the librarian still calls `write_knowledge_pages` with `writes: []` and `sourceIds` set to the
+   full batch — an explicit "no wiki change needed" ack, so the batch is marked `PROCESSED` instead of
+   rotting through the stale-processing sweep into `DEAD`.
+5. **Sweep.** Every tick, any source still `PROCESSING` whose run is missing, terminally
    failed/cancelled/timed-out, or has simply run longer than 30 minutes is resurrected: attempts++, back to
    `PENDING` with exponential backoff (`60s * 2^attempts`), or — at 5 attempts — `DEAD` with an error
-   message. If the librarian workflow isn't provisioned yet (a race with the enable transaction), the claimed
-   batch is released straight back to `PENDING` instead of being dispatched into a void.
+   message. If the librarian workflow isn't provisioned yet, or its stored YAML has drifted from the
+   current classpath template (e.g. a project enabled before per-lane `agent: ${{ event.agentSlug }}`
+   shipped), dispatch self-heals via `KnowledgeWorkflowProvisioner.provision` (which refreshes drifted
+   system-workflow YAML in place) before retrying; if that still fails, the claimed batch is released
+   straight back to `PENDING` instead of being dispatched into a stale or missing target.
 
 Source lifecycle: `PENDING → PROCESSING → PROCESSED` (success) or `PENDING → PROCESSING → PENDING`
 (retried, backoff) `→ … → DEAD` (exhausted).
@@ -134,9 +152,9 @@ Source lifecycle: `PENDING → PROCESSING → PROCESSED` (success) or `PENDING �
 - **Frontmatter contract.** Every page is Markdown with a leading `---`/`---` YAML block. `type` is the only
   *required* field — a page with none is rejected (422). `title`, `description`, `resource`, `tags`,
   `timestamp`, `confidence`, `sources` are recommended conventions (defined in `_schema.md`, not enforced by
-  the parser); any other key round-trips verbatim so page-type-specific fields survive. The taxonomy ships
-  with 8 types: `person`, `project`, `decision`, `meeting`, `metric`, `feature`, `architecture`,
-  `integration`.
+  the parser); any other key round-trips verbatim so page-type-specific fields survive. Root `_schema.md`
+  owns only `schema` and the cross-cutting `decision` type; every other type (`architecture`, `feature`,
+  `person`, etc.) is owned by a [domain](#domains)'s own `<slug>/_schema.md` schema page, not the root.
 - **Versioning + optimistic concurrency.** Every page has an integer `version`, starting at 1. A
   `write_knowledge_pages`/`batch-write` call supplies `baseVersion` per write: `null` means "I believe this
   path doesn't exist yet"; any other value must match the current stored version exactly. **The whole batch
@@ -175,8 +193,12 @@ idempotent (upsert-if-missing) so any number of callers racing or repeating neve
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
-| `knowledge-librarian` | `workflow_dispatch`, fired programmatically by `LibrarianDispatchService` — never by a human | A thin `uses: agent` step dispatching to the seeded `knowledge-librarian` Agent, filing one batch of claimed sources into pages. `concurrency: single`. |
+| `knowledge-librarian` | `workflow_dispatch`, fired programmatically by `LibrarianDispatchService` — never by a human | A thin `uses: agent` step, `agent: ${{ event.agentSlug }}` resolved per dispatch (see [The pipeline](#the-pipeline)) — the seeded generalist `knowledge-librarian` Agent, or a domain's assigned specialist. Files one batch of claimed sources (one lane's worth) into pages. |
 | `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input (`owner/repo`) | Operator-triggered once, to seed the wiki (`engineering/architecture/*.md`, `product/features/*.md`) from an existing codebase by cloning and reading it. A raw `claude-code` step (no agent involved). |
+
+Both are **system-owned, canonical content**: `KnowledgeWorkflowProvisioner.provision` refreshes a
+project's stored workflow YAML in place if it's drifted from the current classpath template (unlike the
+wiki schema pages below, which are seed-if-absent only, since those are agent/user-editable).
 
 **The librarian is an `Agent` definition, not a hardcoded prompt.** `KnowledgeWorkflowProvisioner` seeds a
 project-scoped `knowledge-librarian` Agent (slug `knowledge-librarian`, provider `claude`, the filing
@@ -203,6 +225,50 @@ librarian; `knowledge-bootstrap` is subscription-only:
   (**Settings → Workflows → Secrets**) with read access to the target repo, for cloning a private repo.
   Unset works fine for a public repo (the token segment interpolates to empty and `git clone` proceeds
   unauthenticated).
+
+---
+
+## Domains
+
+A **domain** is a top-level wiki area (`engineering/`, `product/`, `marketing/`, `finance/`, `people/` by
+default) with its own registry row (`knowledge_domains`, `KnowledgeDomain`/`KnowledgeDomainRepository`)
+and its own `<slug>/_schema.md` schema page defining that area's page-type taxonomy, path layout, and
+body templates. The root `_schema.md` covers only the frontmatter contract, linking, create-vs-edit, and
+the cross-cutting `decision` type — everything else is domain-owned (see [Page model](#page-model)).
+`KnowledgeWorkflowProvisioner` seeds all five on enable, the same idempotent guard-then-insert pattern as
+the system workflows/schema page.
+
+**Resolution precedence**, run once per submission by `KnowledgeDomainResolver` and stamped onto the
+source (never re-resolved later, even if the registry changes afterward):
+
+1. **Explicit caller `domain`** — validated against the project's `ACTIVE` registry; an unknown or
+   non-`ACTIVE` slug is rejected (400), not silently dropped or redirected.
+2. **First `ACTIVE` domain (slug order) whose `sourceTypePatterns` glob-matches `sourceType`** — `*` is a
+   wildcard, everything else is matched literally. Seeded default: `engineering` claims `github.*`; every
+   other seeded domain starts with no patterns (PATCH-able per project — see below). Slug order makes
+   overlapping globs deterministic.
+3. **`null`** — the generalist/unclassified lane. Never strands a source: a domain dismissed or deleted
+   after a source was stamped just means dispatch re-resolves the *agent* (not the domain) at claim time,
+   falling back to the generalist librarian.
+
+**Lane concurrency** is `(project, domain)` — see [The pipeline](#the-pipeline) for how the scheduler
+dispatches and busy-checks each lane independently.
+
+**Registry fields** (`KnowledgeDomainDto`): `slug`, `displayName`, `description`, `pathPrefix`,
+`schemaPagePath`, `sourceTypePatterns`, `owningAgentSlug` (nullable — the specialist agent dispatch
+resolves to, if assigned; un-FK'd, since agents are deletable and dispatch just falls back), `state`
+(`ACTIVE`/`SUGGESTED`/`DISMISSED` — `SUGGESTED`/`DISMISSED` are reserved for a future gap-report workflow
+where the librarian raises a suggested domain, not yet wired up), `suggestionReason`, and live
+`pendingCount`/`processingCount`/`processedCount` from the ingestion inbox. `PATCH /knowledge/domains/{slug}`
+(ADMIN-only) edits
+`displayName`/`description`/`sourceTypePatterns`/`state` with standard partial-PATCH semantics (omit a
+field to leave it unchanged); `owningAgentSlug` assignment/clearing is a discriminated pair
+(`owningAgentSlug` to assign, `clearOwningAgent: true` to clear) rather than a plain nullable field, since
+a request body has no wire-level way to distinguish an omitted field from an explicit `null` for just one
+field in an otherwise-partial PATCH.
+
+Creating a specialist agent for a domain (`owningAgentSlug` assignment via a dedicated endpoint) and
+librarian-raised gap reports (the `SUGGESTED` state) are not yet implemented — reserved for a later phase.
 
 ---
 
@@ -246,7 +312,7 @@ and available to any Claude Code session with the Conductor MCP server configure
 
 | Tool | Purpose |
 |---|---|
-| `submit_knowledge_source` | Push one source into the inbox. Idempotent on `dedupKey`; `DUPLICATE` status is not an error. |
+| `submit_knowledge_source` | Push one source into the inbox. Idempotent on `dedupKey`; `DUPLICATE` status is not an error. Optional `domain` requests an explicit [domain](#domains) lane (validated); omitted lets the registry route by `sourceType` pattern. |
 | `read_knowledge_sources` | Fetch inbox sources by id, with offloaded payloads resolved inline. |
 | `search_knowledge` | Full-text search over pages — path, type, title, description, snippet, rank. Orientation before reading. |
 | `read_knowledge_pages` | Fetch full page content by path. `["index.md"]`/`["log.md"]` return the virtual orientation pages. Returned `version` feeds `baseVersion` on the next write. |
@@ -268,9 +334,11 @@ are `ProjectScopedPrincipal` — see [`docs/workflows.md`](workflows.md)):
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/sources` | Submit a source. `202` with `{sourceId, status}`. |
-| `GET` | `/sources` | List by `status` (default `PENDING`), or multi-get via `ids` (mutually exclusive; `ids` wins). |
+| `POST` | `/sources` | Submit a source. `202` with `{sourceId, status}`. Optional `domain` requests an explicit lane. |
+| `GET` | `/sources` | List by `status` (default `PENDING`), optionally filtered by `domain` (exact match), or multi-get via `ids` (`ids` wins over both filters). |
 | `GET` | `/sources/counts` | Per-status inbox counts (`pending`/`processing`/`processed`/`dead`), zero-defaulted — the cheap summary the frontend's pipeline strip polls instead of a full `listSources` per status. |
+| `GET` | `/domains` | List the [domain](#domains) registry, slug-ordered, each with live pending/processing/processed counts. Membership-gated, no admin requirement. |
+| `PATCH` | `/domains/{slug}` | Update a domain's metadata, owning agent, or state. ADMIN-only. |
 | `POST` | `/pages/batch-write` | Atomic create/update/delete batch. `200` on success; `409` with a `conflicts` extension on a concurrency race; `422` on malformed frontmatter. |
 | `GET` | `/pages?paths=` | Multi-get full page content by comma-separated paths. Unknown/deleted paths silently omitted. |
 | `GET` | `/index` | The generated virtual `index.md`. |
@@ -294,7 +362,9 @@ are `ProjectScopedPrincipal` — see [`docs/workflows.md`](workflows.md)):
   link to the librarian `Agent`. Best-effort and auxiliary — a fetch failure renders nothing rather than
   breaking the wiki page.
 - **Source list.** `knowledge/sources` is a read-only, status-filtered browse of the ingestion inbox
-  (`GET /sources`) — no actions; the scheduler and librarian own the lifecycle.
+  (`GET /sources`) — no actions; the scheduler and librarian own the lifecycle. Rows show the domain
+  lane as a small badge next to the source-type badge when the source was routed to one (nothing shown
+  for the null/generalist lane).
 - **Default agent chip.** The Agents list, an agent's detail header, and `AgentResponse.isDefault`
   together surface which agents (e.g. the librarian) are seeded by Conductor rather than user-created.
   Deleting one is allowed — the chip's tooltip says it will be recreated. The librarian's Overview tab
@@ -306,6 +376,10 @@ are `ProjectScopedPrincipal` — see [`docs/workflows.md`](workflows.md)):
 
 Deliberately deferred out of this phase:
 
+- **Domain specialists + gap reports** — creating a specialist agent for a domain
+  (`owningAgentSlug` assignment via a dedicated endpoint) and librarian-raised gap reports (the
+  `SUGGESTED` registry state) are designed but not yet implemented; see [Domains](#domains).
+- **Domains overview UI** — the registry is API/MCP-only so far; no frontend panel yet.
 - **Lint workflow** — a scheduled pass that checks the wiki against `_schema.md`'s own conventions (broken
   links, missing recommended frontmatter, orphaned pages) and files findings back into the inbox.
 - **Human editing** — the frontend wiki browser is read-only; writing a page today means the librarian, or
