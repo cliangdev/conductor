@@ -10,6 +10,7 @@ import com.conductor.generated.model.CreateUserApiKeyResponse;
 import com.conductor.generated.model.UserApiKeyResponse;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.ApiKeyService;
 import com.conductor.service.JwtService;
@@ -63,6 +64,8 @@ class ApiKeyControllerTest {
 
     @MockitoBean
     private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean
+    private RunTokenService runTokenService;
 
     private User testUser;
 

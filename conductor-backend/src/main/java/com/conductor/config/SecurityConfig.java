@@ -5,7 +5,9 @@ import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.security.ApiKeyAuthenticationFilter;
 import com.conductor.security.JwtAuthenticationFilter;
+import com.conductor.security.RunMcpTokenAuthenticationFilter;
 import com.conductor.service.JwtService;
+import com.conductor.workflow.RunTokenService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -31,15 +33,17 @@ public class SecurityConfig {
     private final UserRepository userRepository;
     private final ProjectApiKeyRepository projectApiKeyRepository;
     private final UserApiKeyRepository userApiKeyRepository;
+    private final RunTokenService runTokenService;
 
     @Value("${frontend.url:http://localhost:3000}")
     private String frontendUrl;
 
-    public SecurityConfig(JwtService jwtService, UserRepository userRepository, ProjectApiKeyRepository projectApiKeyRepository, UserApiKeyRepository userApiKeyRepository) {
+    public SecurityConfig(JwtService jwtService, UserRepository userRepository, ProjectApiKeyRepository projectApiKeyRepository, UserApiKeyRepository userApiKeyRepository, RunTokenService runTokenService) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
         this.projectApiKeyRepository = projectApiKeyRepository;
         this.userApiKeyRepository = userApiKeyRepository;
+        this.runTokenService = runTokenService;
     }
 
     @Bean
@@ -77,6 +81,7 @@ public class SecurityConfig {
                 ).permitAll()
                 .anyRequest().authenticated()
             )
+            .addFilterBefore(new RunMcpTokenAuthenticationFilter(runTokenService), UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(new ApiKeyAuthenticationFilter(projectApiKeyRepository, userApiKeyRepository), UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(new JwtAuthenticationFilter(jwtService, userRepository), UsernamePasswordAuthenticationFilter.class)
             .exceptionHandling(ex -> ex

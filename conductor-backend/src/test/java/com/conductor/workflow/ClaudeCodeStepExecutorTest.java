@@ -1,14 +1,12 @@
 package com.conductor.workflow;
 
 import com.conductor.agent.credential.ProviderCredentialService;
-import com.conductor.entity.ProjectApiKey;
 import com.conductor.entity.RuntimeTarget;
 import com.conductor.entity.RuntimeTargetStatus;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.entity.WorkflowStepStatus;
-import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.RuntimeTargetService;
@@ -38,7 +36,6 @@ class ClaudeCodeStepExecutorTest {
 
     @Mock private CloudRunJobLauncher launcher;
     @Mock private ProviderCredentialService credentialService;
-    @Mock private ProjectApiKeyRepository projectApiKeyRepository;
     @Mock private WorkflowStepRunRepository stepRunRepository;
     @Mock private RunTokenService runTokenService;
     @Mock private ProjectSettingsRepository projectSettingsRepository;
@@ -58,7 +55,7 @@ class ClaudeCodeStepExecutorTest {
         // container-execution mechanics to it) — this test still exercises the executor end-to-end
         // through that runner, just with the poll sleep stubbed out for speed.
         runner = new ClaudeCodeContainerRunner(launcher, runtimeTargetResolver, credentialService,
-                projectApiKeyRepository, stepRunRepository, runTokenService, projectSettingsRepository,
+                stepRunRepository, runTokenService, projectSettingsRepository,
                 new WorkflowInterpolator(), new ObjectMapper(), logBroker, "http://localhost:8080") {
             @Override
             protected void sleepSeconds(int seconds) {
@@ -172,17 +169,22 @@ class ClaudeCodeStepExecutorTest {
     }
 
     @Test
-    void execute_missingProjectApiKeyWithMcpEnabledReturnsFailed() {
-        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
-        when(projectApiKeyRepository.findByProjectIdAndRevokedAtIsNull(PROJECT_ID)).thenReturn(List.of());
+    void execute_mintsRunScopedMcpTokenWhenConductorMcpEnabled() {
+        stubHappyCredentials();
+        when(runTokenService.generateMcpToken(eq("run-123"), eq(PROJECT_ID), anyInt())).thenReturn("mcp-token-xyz");
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString()))
+                .thenReturn(Optional.empty());
 
         Map<String, Object> stepDef = baseStepDef();
         stepDef.put("conductor_mcp", true);
         StepResult result = executor.execute(context(stepDef, "cloud-run"));
 
-        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
-        assertThat(result.getErrorReason()).contains("PROJECT_API_KEY_MISSING");
-        verifyNoInteractions(launcher, stepRunRepository);
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        verify(launcher).startExecution(any(CloudRunTarget.class),
+                argThat(task -> "mcp-token-xyz".equals(task.env().get("CONDUCTOR_API_KEY"))));
     }
 
     @Test
@@ -202,8 +204,7 @@ class ClaudeCodeStepExecutorTest {
         Map<String, Object> stepDef = baseStepDef();
         stepDef.put("conductor_mcp", true);
         stepDef.put("outputs", Map.of("title", "body.document_title"));
-        when(projectApiKeyRepository.findByProjectIdAndRevokedAtIsNull(PROJECT_ID))
-                .thenReturn(List.of(apiKeyWithValue("ck_abc123")));
+        when(runTokenService.generateMcpToken(eq("run-123"), eq(PROJECT_ID), anyInt())).thenReturn("ck_abc123");
 
         StepResult result = executor.execute(context(stepDef, "cloud-run"));
 
@@ -417,11 +418,5 @@ class ClaudeCodeStepExecutorTest {
         verify(launcher, never()).startExecution(any(), any());
         verify(launcher).pollExecution(any(CloudRunTarget.class), eq("exec-inflight"));
         verify(stepRunRepository, never()).save(any());
-    }
-
-    private ProjectApiKey apiKeyWithValue(String value) {
-        ProjectApiKey key = new ProjectApiKey();
-        key.setKeyValue(value);
-        return key;
     }
 }

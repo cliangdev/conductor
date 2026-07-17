@@ -17,6 +17,7 @@ import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectSecurityService;
+import com.conductor.workflow.RunTokenService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,6 +62,7 @@ class KnowledgeControllerTest {
     @MockitoBean private UserRepository userRepository;
     @MockitoBean private ProjectApiKeyRepository projectApiKeyRepository;
     @MockitoBean private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean private RunTokenService runTokenService;
 
     @BeforeEach
     void setUp() {
@@ -252,6 +254,31 @@ class KnowledgeControllerTest {
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
                         .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    // ---- run-scoped MCP token auth ----
+
+    @Test
+    void sourceCounts_mcpTokenMatchingProject_returns200() throws Exception {
+        when(runTokenService.parseMcpToken("eyJ.mcp.matching"))
+                .thenReturn(Optional.of(new RunTokenService.McpTokenClaims(PROJECT_ID, "run-1")));
+        when(ingestionService.getSourceCounts(PROJECT_ID))
+                .thenReturn(new KnowledgeSourceCountsView(1, 0, 0, 0));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
+                        .header("Authorization", "Bearer eyJ.mcp.matching"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pending").value(1));
+    }
+
+    @Test
+    void sourceCounts_mcpTokenMismatchedProject_returns403() throws Exception {
+        when(runTokenService.parseMcpToken("eyJ.mcp.mismatched"))
+                .thenReturn(Optional.of(new RunTokenService.McpTokenClaims("other-project", "run-1")));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
+                        .header("Authorization", "Bearer eyJ.mcp.mismatched"))
                 .andExpect(status().isForbidden());
     }
 }

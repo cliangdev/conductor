@@ -30,7 +30,7 @@ import com.conductor.knowledge.page.PageWrite;
 import com.conductor.knowledge.page.PageWriteResult;
 import com.conductor.knowledge.page.RevisionView;
 import com.conductor.knowledge.page.SearchHit;
-import com.conductor.security.ApiKeyAuthenticationToken;
+import com.conductor.security.ProjectScopedPrincipal;
 import com.conductor.service.ProjectSecurityService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -154,9 +154,10 @@ public class KnowledgeController implements KnowledgeApi {
     /**
      * Verifies the authenticated caller may act on {@code projectId} and derives its Actor/Origin
      * provenance in the same step -- both a user JWT/user-API-key principal ({@link User}, checked
-     * via {@link ProjectSecurityService#isProjectMember}) and a project-scoped API key principal
-     * ({@link ApiKeyAuthenticationToken}, whose {@code projectId} must equal the path {@code projectId})
-     * are accepted, mirroring {@code DaemonEventsController#requireProjectApiKeyScopeForRun}.
+     * via {@link ProjectSecurityService#isProjectMember}) and a project-scoped machine principal
+     * ({@link ProjectScopedPrincipal} -- a project API key or a run-scoped MCP token -- whose
+     * {@code projectId} must equal the path {@code projectId}) are accepted, mirroring
+     * {@code DaemonEventsController#requireProjectApiKeyScopeForRun}.
      */
     private Caller requireProjectAccess(String projectId) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
@@ -168,7 +169,7 @@ public class KnowledgeController implements KnowledgeApi {
             return new Caller(new Actor("user", user.getId(), null),
                     new KnowledgeSubmission.Origin("USER", user.getId()));
         }
-        if (auth instanceof ApiKeyAuthenticationToken && projectId.equals(principal)) {
+        if (auth instanceof ProjectScopedPrincipal scoped && projectId.equals(scoped.getProjectId())) {
             return new Caller(new Actor("agent", projectId, null),
                     new KnowledgeSubmission.Origin("API_KEY", projectId));
         }

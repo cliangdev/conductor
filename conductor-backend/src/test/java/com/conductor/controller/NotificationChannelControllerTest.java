@@ -12,6 +12,7 @@ import com.conductor.notification.ProviderType;
 import com.conductor.service.NotificationGroupService.UpsertResult;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import com.conductor.entity.NotificationGroupConfig;
@@ -67,6 +68,8 @@ class NotificationChannelControllerTest {
 
     @MockitoBean
     private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean
+    private RunTokenService runTokenService;
 
     private User testUser;
 

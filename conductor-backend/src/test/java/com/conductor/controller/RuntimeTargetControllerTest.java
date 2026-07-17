@@ -9,6 +9,7 @@ import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.generated.model.CreateRuntimeTargetRequest;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
+import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectSecurityService;
@@ -53,6 +54,7 @@ class RuntimeTargetControllerTest {
     @MockitoBean private UserRepository userRepository;
     @MockitoBean private ProjectApiKeyRepository projectApiKeyRepository;
     @MockitoBean private UserApiKeyRepository userApiKeyRepository;
+    @MockitoBean private RunTokenService runTokenService;
 
     @BeforeEach
     void setUp() {

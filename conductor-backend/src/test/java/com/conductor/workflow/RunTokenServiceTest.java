@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -102,5 +103,66 @@ class RunTokenServiceTest {
         String token = runTokenService.generateRunToken("run-tampered", 24);
         String tampered = token.substring(0, token.length() - 4) + "XXXX";
         assertThat(runTokenService.validateRunToken(tampered, "run-tampered")).isFalse();
+    }
+
+    @Test
+    void generateMcpToken_parseMcpToken_roundTripsProjectIdAndRunId() {
+        String token = runTokenService.generateMcpToken("run-mcp-1", "proj-mcp-1", 24);
+
+        Optional<RunTokenService.McpTokenClaims> claims = runTokenService.parseMcpToken(token);
+
+        assertThat(claims).isPresent();
+        assertThat(claims.get().runId()).isEqualTo("run-mcp-1");
+        assertThat(claims.get().projectId()).isEqualTo("proj-mcp-1");
+    }
+
+    @Test
+    void parseMcpToken_returnsEmptyForExpiredToken() {
+        SecretKey key = Keys.hmacShaKeyFor(JWT_SECRET.getBytes(StandardCharsets.UTF_8));
+        long nowMs = System.currentTimeMillis();
+        String expiredToken = Jwts.builder()
+                .subject("run-mcp-expired")
+                .issuedAt(new Date(nowMs - 7200_000L))
+                .expiration(new Date(nowMs - 3600_000L))
+                .claim("type", "mcp")
+                .claim("projectId", "proj-mcp-1")
+                .signWith(key)
+                .compact();
+
+        assertThat(runTokenService.parseMcpToken(expiredToken)).isEmpty();
+    }
+
+    @Test
+    void parseMcpToken_rejectsRunCallbackToken() {
+        String runCallbackToken = runTokenService.generateRunToken("run-1", 24);
+        assertThat(runTokenService.parseMcpToken(runCallbackToken)).isEmpty();
+    }
+
+    @Test
+    void validateRunToken_rejectsMcpToken() {
+        String mcpToken = runTokenService.generateMcpToken("run-1", "proj-1", 24);
+        assertThat(runTokenService.validateRunToken(mcpToken, "run-1")).isFalse();
+    }
+
+    @Test
+    void parseMcpToken_returnsEmptyForTamperedToken() {
+        String token = runTokenService.generateMcpToken("run-mcp-1", "proj-mcp-1", 24);
+        String tampered = token.substring(0, token.length() - 4) + "XXXX";
+        assertThat(runTokenService.parseMcpToken(tampered)).isEmpty();
+    }
+
+    @Test
+    void parseMcpToken_returnsEmptyWhenProjectIdClaimMissing() {
+        SecretKey key = Keys.hmacShaKeyFor(JWT_SECRET.getBytes(StandardCharsets.UTF_8));
+        long nowMs = System.currentTimeMillis();
+        String tokenWithoutProjectId = Jwts.builder()
+                .subject("run-mcp-no-project")
+                .issuedAt(new Date(nowMs))
+                .expiration(new Date(nowMs + 3600_000L))
+                .claim("type", "mcp")
+                .signWith(key)
+                .compact();
+
+        assertThat(runTokenService.parseMcpToken(tokenWithoutProjectId)).isEmpty();
     }
 }
