@@ -7,6 +7,9 @@ import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinition;
+import com.conductor.knowledge.domain.KnowledgeDomain;
+import com.conductor.knowledge.domain.KnowledgeDomainRepository;
+import com.conductor.knowledge.domain.KnowledgeDomainState;
 import com.conductor.knowledge.page.KnowledgePage;
 import com.conductor.knowledge.page.KnowledgePageRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -45,6 +48,8 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
     private UserRepository userRepository;
     @Autowired
     private AgentRepository agentRepository;
+    @Autowired
+    private KnowledgeDomainRepository domainRepository;
     @Autowired
     private ProjectMemberRepository projectMemberRepository;
     @Autowired
@@ -93,6 +98,67 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         assertThat(schemaPage).isPresent();
         assertThat(schemaPage.get().getPageType()).isEqualTo("schema");
         assertThat(schemaPage.get().getTitle()).isEqualTo("Knowledge Center schema");
+    }
+
+    @Test
+    void provisionSeedsDomainRegistryAndSchemaPages() {
+        provisioner.provision(projectId);
+
+        List<KnowledgeDomain> domains = domainRepository.findByProjectIdOrderBySlugAsc(projectId);
+        assertThat(domains).extracting(KnowledgeDomain::getSlug)
+                .containsExactly("engineering", "finance", "marketing", "people", "product");
+        assertThat(domains).allSatisfy(d -> {
+            assertThat(d.getState()).isEqualTo(KnowledgeDomainState.ACTIVE);
+            assertThat(d.getDisplayName()).isNotBlank();
+            assertThat(d.getPathPrefix()).isEqualTo(d.getSlug() + "/");
+            assertThat(d.getSchemaPagePath()).isEqualTo(d.getSlug() + "/_schema.md");
+        });
+
+        KnowledgeDomain engineering = domains.stream()
+                .filter(d -> d.getSlug().equals("engineering")).findFirst().orElseThrow();
+        assertThat(engineering.getSourceTypePatterns()).containsExactly("github.*");
+
+        List<KnowledgeDomain> nonEngineering = domains.stream()
+                .filter(d -> !d.getSlug().equals("engineering")).toList();
+        assertThat(nonEngineering).allSatisfy(d -> assertThat(d.getSourceTypePatterns()).isEmpty());
+
+        for (KnowledgeDomain domain : domains) {
+            Optional<KnowledgePage> schemaPage = pageRepository.findByProjectIdAndPath(projectId, domain.getSchemaPagePath());
+            assertThat(schemaPage).as("schema page for domain " + domain.getSlug()).isPresent();
+            assertThat(schemaPage.get().getPageType()).isEqualTo("schema");
+        }
+    }
+
+    @Test
+    void provisionRestoresOnlyMissingDomainArtifactsOnReprovision() {
+        provisioner.provision(projectId);
+
+        KnowledgeDomain engineering = domainRepository.findByProjectIdAndSlug(projectId, "engineering").orElseThrow();
+        engineering.setDisplayName("Eng (customized)");
+        domainRepository.save(engineering);
+
+        domainRepository.delete(domainRepository.findByProjectIdAndSlug(projectId, "product").orElseThrow());
+        assertThat(domainRepository.findByProjectIdAndSlug(projectId, "product")).isEmpty();
+
+        KnowledgePage marketingSchema = pageRepository.findByProjectIdAndPath(projectId, "marketing/_schema.md").orElseThrow();
+        pageRepository.delete(marketingSchema);
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "marketing/_schema.md")).isEmpty();
+
+        provisioner.provision(projectId);
+
+        // Restored: the deleted product domain row and the deleted marketing schema page.
+        assertThat(domainRepository.findByProjectIdAndSlug(projectId, "product")).isPresent();
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "marketing/_schema.md")).isPresent();
+
+        // Untouched: the customized engineering display name was not reset back to the seed default.
+        KnowledgeDomain reloadedEngineering = domainRepository.findByProjectIdAndSlug(projectId, "engineering").orElseThrow();
+        assertThat(reloadedEngineering.getDisplayName()).isEqualTo("Eng (customized)");
+
+        // Still exactly 5 domain rows and 5 domain schema pages (no duplicates from the restore).
+        assertThat(domainRepository.findByProjectIdOrderBySlugAsc(projectId)).hasSize(5);
+        for (String slug : List.of("engineering", "product", "marketing", "finance", "people")) {
+            assertThat(pageRepository.findByProjectIdAndPath(projectId, slug + "/_schema.md")).isPresent();
+        }
     }
 
     @Test
@@ -176,6 +242,14 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         List<Agent> agents = agentRepository.findByProjectId(projectId);
         assertThat(agents).extracting(Agent::getSlug)
                 .containsExactly(KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG);
+
+        // Still exactly 5 domain rows and 5 domain schema pages -- the second call double-provisions nothing.
+        assertThat(domainRepository.findByProjectIdOrderBySlugAsc(projectId)).hasSize(5);
+        for (String slug : List.of("engineering", "product", "marketing", "finance", "people")) {
+            Optional<KnowledgePage> page = pageRepository.findByProjectIdAndPath(projectId, slug + "/_schema.md");
+            assertThat(page).isPresent();
+            assertThat(page.get().getVersion()).isEqualTo(1);
+        }
     }
 
     // ---- self-healing via ProjectSettingsService (a project already enabled before/independent of
