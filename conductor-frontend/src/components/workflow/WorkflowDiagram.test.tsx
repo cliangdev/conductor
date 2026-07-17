@@ -234,7 +234,7 @@ describe('WorkflowDiagram', () => {
   it('renders self-loop edge for loop jobs', () => {
     render(<WorkflowDiagram yaml={LOOP_YAML} />)
     expect(screen.getByTestId('edge-poll->self-loop')).toBeInTheDocument()
-    expect(screen.getByTestId('edge-label-poll->self-loop')).toHaveTextContent('↺ loop')
+    expect(screen.getByTestId('edge-label-poll->self-loop')).toHaveTextContent('loop')
   })
 
   // ── ConditionNode ────────────────────────────────────────────────────────────

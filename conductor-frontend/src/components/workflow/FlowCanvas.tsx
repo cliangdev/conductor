@@ -18,7 +18,7 @@ import {
   type NodeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Maximize2, Minimize2 } from 'lucide-react'
+import { Maximize2, Minimize2, Plus, Minus } from 'lucide-react'
 
 // ── Controls (zoom + fullscreen) ─────────────────────────────────────────────
 // Rendered as an absolute sibling of <ReactFlow> (outside its overflow-hidden layer) so the buttons
@@ -32,14 +32,14 @@ function CanvasControls({
 }) {
   const { zoomIn, zoomOut } = useReactFlow()
   const btn =
-    'flex h-9 w-9 items-center justify-center text-lg font-medium text-gray-700 hover:bg-gray-100 active:bg-gray-200'
+    'flex h-9 w-9 items-center justify-center text-foreground hover:bg-surface-3 active:bg-surface-3'
   return (
-    <div className="absolute top-4 right-4 z-10 flex flex-col overflow-hidden rounded-lg border border-gray-300 bg-white shadow-md">
-      <button onClick={() => zoomIn()} className={`${btn} border-b border-gray-300`} aria-label="Zoom in">
-        +
+    <div className="absolute top-4 right-4 z-10 flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-md">
+      <button onClick={() => zoomIn()} className={`${btn} border-b border-border`} aria-label="Zoom in">
+        <Plus size={16} />
       </button>
-      <button onClick={() => zoomOut()} className={`${btn} border-b border-gray-300`} aria-label="Zoom out">
-        −
+      <button onClick={() => zoomOut()} className={`${btn} border-b border-border`} aria-label="Zoom out">
+        <Minus size={16} />
       </button>
       <button
         onClick={onToggleFullscreen}
@@ -99,7 +99,7 @@ export function FlowCanvas({ nodes, edges, nodeTypes }: FlowCanvasProps) {
             elementsSelectable={false}
             proOptions={{ hideAttribution: true }}
           >
-            <Background color="#e5e7eb" gap={16} />
+            <Background color="hsl(var(--border))" gap={16} />
           </ReactFlow>
         </div>
         <CanvasControls fullscreen={fullscreen} onToggleFullscreen={toggleFullscreen} />

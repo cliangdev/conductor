@@ -1,17 +1,19 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Badge } from '@/components/ui/badge'
+import { ChevronDown } from 'lucide-react'
+import { StatusBadge } from '@/components/ui/status-badge'
+import { StatusRing } from '@/components/workitems/StatusRing'
+import { toastError } from '@/components/ui/toast'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
-import { apiGet, apiPatch } from '@/lib/api'
+import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import {
   DEFAULT_WORKFLOW_SLUG,
-  categoryVariant,
   statusMeta,
   useWorkflowView,
 } from '@/lib/workflows'
@@ -27,6 +29,13 @@ interface StatusDropdownProps {
   onStatusChanged: (newStatus: string) => void
   /** Workflow the Work Item is bound to; defaults to the project's Engineering Workflow. */
   workflowSlug?: string
+  /**
+   * Trigger visual: the default status pill/chevron everywhere, or a bare 14px `StatusRing` for the
+   * list row (COND-22 redesign). Same fetch/mutation logic either way — only the trigger markup differs.
+   */
+  trigger?: 'badge' | 'ring'
+  /** Forwarded to the trigger `<button>` so keyboard nav (list "S" shortcut, bulk-bar palette action) can open it programmatically. No-op on the read-only (REVIEWER / no transitions) branch. */
+  triggerRef?: React.Ref<HTMLButtonElement>
 }
 
 interface AvailableTransition {
@@ -57,13 +66,14 @@ export function StatusDropdown({
   token,
   onStatusChanged,
   workflowSlug = DEFAULT_WORKFLOW_SLUG,
+  trigger = 'badge',
+  triggerRef,
 }: StatusDropdownProps) {
   const [loading, setLoading] = useState(false)
   const [transitions, setTransitions] = useState<AvailableTransition[]>([])
 
   const view = useWorkflowView(projectId, workflowSlug, token)
   const { label: displayLabel, category } = statusMeta(view, currentStatus)
-  const currentVariant = categoryVariant(category)
 
   useEffect(() => {
     if (userRole === 'REVIEWER' || !token) return
@@ -83,9 +93,13 @@ export function StatusDropdown({
     }
   }, [projectId, issueId, currentStatus, userRole, token])
 
-  // REVIEWERs (and any state with no available moves) see a read-only badge.
+  // REVIEWERs (and any state with no available moves) see a read-only indicator.
   if (userRole === 'REVIEWER' || transitions.length === 0) {
-    return <Badge variant={currentVariant}>{displayLabel}</Badge>
+    return trigger === 'ring' ? (
+      <StatusRing status={currentStatus} category={category} label={displayLabel} />
+    ) : (
+      <StatusBadge status={currentStatus} category={category} label={displayLabel} />
+    )
   }
 
   async function handleSelect(newStatus: string) {
@@ -97,8 +111,9 @@ export function StatusDropdown({
         token
       )
       onStatusChanged(newStatus)
-    } catch {
+    } catch (err) {
       // Transition rejected (e.g. an unsatisfied gate); UI stays at the current status.
+      toastError(apiErrorMessage(err, 'Failed to update status'))
     } finally {
       setLoading(false)
     }
@@ -107,12 +122,26 @@ export function StatusDropdown({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button disabled={loading} className="focus:outline-none">
-          <Badge variant={currentVariant} className="cursor-pointer hover:opacity-80 transition-opacity">
-            {displayLabel}
-            <span className="ml-1 text-xs opacity-60">▼</span>
-          </Badge>
-        </button>
+        {trigger === 'ring' ? (
+          <button
+            ref={triggerRef}
+            disabled={loading}
+            aria-label={`Change status (currently ${displayLabel})`}
+            className="inline-flex focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full"
+          >
+            <StatusRing status={currentStatus} category={category} className="cursor-pointer hover:opacity-80 transition-opacity" />
+          </button>
+        ) : (
+          <button ref={triggerRef} disabled={loading} className="inline-flex items-center gap-1 focus:outline-none">
+            <StatusBadge
+              status={currentStatus}
+              category={category}
+              label={displayLabel}
+              className="cursor-pointer hover:opacity-80 transition-opacity"
+            />
+            <ChevronDown className="h-3 w-3 opacity-60" />
+          </button>
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {transitions.map((t) => {
@@ -123,9 +152,12 @@ export function StatusDropdown({
               onClick={() => handleSelect(t.toStatus)}
               className="cursor-pointer"
             >
-              <Badge variant={categoryVariant(meta.category)} className="mr-2">
-                {t.label || meta.label}
-              </Badge>
+              <StatusBadge
+                status={t.toStatus}
+                category={meta.category}
+                label={t.label || meta.label}
+                className="mr-2"
+              />
               {t.requiresReview && <span className="text-xs opacity-60">needs review</span>}
             </DropdownMenuItem>
           )

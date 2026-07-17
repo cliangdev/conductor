@@ -15,7 +15,8 @@ import {
 import '@xyflow/react/dist/style.css'
 import dagre from 'dagre'
 import { FlowCanvas } from '@/components/workflow/FlowCanvas'
-import { categoryColor, humanizeId } from '@/lib/workflows'
+import { categoryHue, humanizeId } from '@/lib/workflows'
+import { statusHueClasses } from '@/components/ui/status-badge'
 import type { StatechartStatus, StatechartTransition } from '@/lib/workflowDefinition'
 
 const NODE_W = 168
@@ -30,11 +31,10 @@ interface StatusNodeData {
 }
 
 function StatusNode({ data }: { data: StatusNodeData }) {
+  const c = statusHueClasses(categoryHue(data.category))
   return (
     <div
-      className={`rounded-lg border px-3 py-2 text-xs font-medium text-center shadow-sm ${categoryColor(
-        data.category,
-      )} ${data.terminal ? 'border-2' : ''}`}
+      className={`rounded-lg border px-3 py-2 text-xs font-medium text-center shadow-sm ${c.bg} ${c.text} ${c.border} ${data.terminal ? 'border-2' : ''}`}
       style={{ width: NODE_W }}
     >
       <Handle type="target" position={Position.Top} className="!bg-current opacity-40" />

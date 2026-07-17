@@ -7,12 +7,17 @@ import { useParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
-import { MemberRow } from '@/components/members/MemberRow'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
+import { Card, CardContent } from '@/components/ui/card'
+import { MemberRow, ROLE_LABELS, roleLabel } from '@/components/members/MemberRow'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiDelete, apiGet, apiPatch, apiPost, apiErrorMessage } from '@/lib/api'
+import { settingsBreadcrumbs } from '@/lib/navigation'
 import type { Invite, Member, MemberRole } from '@/types'
 
 const INVITE_ROLES: MemberRole[] = ['CREATOR', 'REVIEWER']
@@ -180,6 +185,7 @@ export default function MembersPage() {
             </Button>
           )
         }
+        breadcrumbs={settingsBreadcrumbs(projectId, 'settings-members')}
       />
 
       {membersLoading && (
@@ -191,11 +197,11 @@ export default function MembersPage() {
       )}
 
       {!membersLoading && !membersError && (
-        <div className="bg-card rounded-lg border border-border">
+        <Card>
           {members.length === 0 ? (
             <p className="text-sm text-muted-foreground p-4">No members yet.</p>
           ) : (
-            <div className="px-4">
+            <CardContent className="px-4">
               {members.map((member) => (
                 <MemberRow
                   key={member.userId}
@@ -206,34 +212,34 @@ export default function MembersPage() {
                   onRemove={openRemoveConfirm}
                 />
               ))}
-            </div>
+            </CardContent>
           )}
-        </div>
+        </Card>
       )}
 
       {isAdmin && invites.length > 0 && (
         <div className="mt-8">
           <h2 className="text-sm font-semibold text-foreground mb-3">Pending invitations</h2>
-          <div className="bg-card rounded-lg border border-border divide-y divide-border">
-            {invites.map((invite) => (
-              <div key={invite.id} className="flex items-center justify-between px-4 py-3">
-                <div className="min-w-0">
-                  <p className="text-sm text-foreground truncate">{invite.email}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {invite.role.charAt(0) + invite.role.slice(1).toLowerCase()}
-                  </p>
+          <Card>
+            <CardContent>
+              {invites.map((invite) => (
+                <div key={invite.id} className="flex items-center justify-between px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="text-sm text-foreground truncate">{invite.email}</p>
+                    <p className="text-xs text-muted-foreground">{roleLabel(invite.role)}</p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleCancelInvite(invite.id)}
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                  >
+                    Cancel
+                  </Button>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleCancelInvite(invite.id)}
-                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                >
-                  Cancel
-                </Button>
-              </div>
-            ))}
-          </div>
+              ))}
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -250,11 +256,7 @@ export default function MembersPage() {
               Invitation sent. Share this link so they can join:
             </p>
             <div className="flex items-center gap-2">
-              <input
-                readOnly
-                value={createdLink}
-                className="flex-1 rounded-md border border-input bg-muted text-foreground px-3 py-2 text-xs font-mono focus:outline-none"
-              />
+              <Input readOnly value={createdLink} className="flex-1 bg-muted font-mono text-xs" />
               <Button type="button" size="sm" variant="outline" onClick={copyLink}>
                 {copied ? 'Copied!' : 'Copy'}
               </Button>
@@ -271,35 +273,31 @@ export default function MembersPage() {
         ) : (
           <form onSubmit={handleInviteSubmit} noValidate className="space-y-4">
             <div>
-              <label htmlFor="invite-email" className="block text-sm font-medium text-foreground mb-1">
+              <Label htmlFor="invite-email">
                 Email <span className="text-destructive">*</span>
-              </label>
-              <input
+              </Label>
+              <Input
                 id="invite-email"
                 type="email"
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
                 placeholder="teammate@example.com"
-                className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
 
             <div>
-              <label htmlFor="invite-role" className="block text-sm font-medium text-foreground mb-1">
-                Role
-              </label>
-              <select
+              <Label htmlFor="invite-role">Role</Label>
+              <Select
                 id="invite-role"
                 value={inviteRole}
                 onChange={(e) => setInviteRole(e.target.value as MemberRole)}
-                className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 {INVITE_ROLES.map((role) => (
                   <option key={role} value={role}>
-                    {role.charAt(0) + role.slice(1).toLowerCase()}
+                    {ROLE_LABELS[role]}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             {inviteError && (

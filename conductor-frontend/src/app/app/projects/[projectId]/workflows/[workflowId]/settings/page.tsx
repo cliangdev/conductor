@@ -10,6 +10,7 @@ import { usePermissions } from '@/contexts/PermissionsContext';
 import WorkflowEditorLayout from '@/components/workflow/WorkflowEditorLayout';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
+import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/toast';
 
 export default function WorkflowSettingsPage() {
@@ -55,12 +56,16 @@ export default function WorkflowSettingsPage() {
 
   const handleToggleEnabled = async () => {
     if (!accessToken) return;
-    const updated = await apiPatch<WorkflowDefinitionDto>(
-      `/api/v1/projects/${projectId}/workflows/${workflowId}/enabled`,
-      { enabled: !workflow.enabled },
-      accessToken
-    );
-    if (updated) setWorkflow(updated);
+    try {
+      const updated = await apiPatch<WorkflowDefinitionDto>(
+        `/api/v1/projects/${projectId}/workflows/${workflowId}/enabled`,
+        { enabled: !workflow.enabled },
+        accessToken
+      );
+      if (updated) setWorkflow(updated);
+    } catch (e) {
+      showToast(apiErrorMessage(e, `Couldn't ${workflow.enabled ? 'disable' : 'enable'} workflow — try again.`), 'error');
+    }
   };
 
   const handleDelete = async () => {
@@ -79,17 +84,11 @@ export default function WorkflowSettingsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3 border rounded-lg p-4">
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleToggleEnabled}
+          <Switch
+            checked={workflow.enabled}
+            onCheckedChange={handleToggleEnabled}
             aria-label={workflow.enabled ? 'Disable workflow' : 'Enable workflow'}
-            className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
-              workflow.enabled ? 'bg-green-500' : 'bg-gray-300'
-            }`}
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-              workflow.enabled ? 'translate-x-5' : 'translate-x-1'
-            }`} />
-          </button>
+          />
           <span className="text-sm font-medium">{workflow.enabled ? 'Enabled' : 'Disabled'}</span>
         </div>
         <Button
@@ -103,7 +102,6 @@ export default function WorkflowSettingsPage() {
 
       <WorkflowEditorLayout
         embedded
-        title="Edit workflow"
         initialYaml={workflow.yaml ?? ''}
         initialName={workflow.name}
         onSave={handleSave}

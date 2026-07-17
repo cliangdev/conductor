@@ -6,26 +6,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet } from '@/lib/api';
 import { WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
-
-const STATUS_COLORS: Record<string, string> = {
-  SUCCESS: 'bg-green-100 text-green-800',
-  FAILED: 'bg-red-100 text-red-800',
-  RUNNING: 'bg-yellow-100 text-yellow-800',
-  PENDING: 'bg-gray-100 text-gray-600',
-  CANCELLED: 'bg-gray-100 text-gray-600',
-};
-
-function formatDuration(startedAt: string, completedAt?: string): string {
-  const start = new Date(startedAt).getTime();
-  const end = completedAt ? new Date(completedAt).getTime() : Date.now();
-  const seconds = Math.floor((end - start) / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString();
-}
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from '@/components/ui/empty-state';
+import { ListIcon } from 'lucide-react';
+import { formatElapsed, formatDate } from '@/lib/format';
 
 export default function RunListPage() {
   const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>();
@@ -55,11 +40,11 @@ export default function RunListPage() {
   return (
     <>
       {loading ? (
-        <div className="text-muted-foreground">Loading...</div>
-      ) : runs.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          No runs yet. Use Run above to trigger this workflow.
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
         </div>
+      ) : runs.length === 0 ? (
+        <EmptyState icon={ListIcon} title="No runs yet" description="Use Run above to trigger this workflow." />
       ) : (
         <div className="border rounded-lg overflow-x-auto">
           <table className="w-full min-w-[640px]">
@@ -79,13 +64,11 @@ export default function RunListPage() {
                   onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs/${run.id}`)}
                 >
                   <td className="p-3">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${STATUS_COLORS[run.status] ?? ''}`}>
-                      {run.status}
-                    </span>
+                    <StatusBadge status={run.status} />
                   </td>
                   <td className="p-3 text-sm text-muted-foreground">{run.triggerType}</td>
                   <td className="p-3 text-sm">{formatDate(run.startedAt)}</td>
-                  <td className="p-3 text-sm">{formatDuration(run.startedAt, run.completedAt)}</td>
+                  <td className="p-3 text-sm">{formatElapsed(run.startedAt, run.completedAt)}</td>
                 </tr>
               ))}
             </tbody>

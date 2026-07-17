@@ -64,6 +64,11 @@ class WebhookReceiverControllerTest {
         GitHubConnector connector = new GitHubConnector(
                 workItemService, connectionRepository, connectionService,
                 org.mockito.Mockito.mock(com.conductor.integration.connector.github.GitHubAppService.class),
+                org.mockito.Mockito.mock(com.conductor.knowledge.KnowledgeIngestionService.class),
+                // Mockito default-answers false for a boolean method, so knowledge submission is a
+                // no-op here without needing to stub it — this suite only exercises the pre-existing
+                // issue-completion path.
+                org.mockito.Mockito.mock(com.conductor.service.ProjectSettingsService.class),
                 new ObjectMapper(), SECRET);
         when(connectorRegistry.findWebhook("github")).thenReturn(Optional.of(connector));
     }

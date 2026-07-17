@@ -1,12 +1,15 @@
 package com.conductor.notification;
 
 import com.conductor.entity.NotificationGroupConfig;
+import com.conductor.knowledge.KnowledgeEventTap;
 import com.conductor.repository.NotificationGroupConfigRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Map;
 import java.util.Optional;
@@ -15,6 +18,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -28,8 +32,19 @@ class NotificationDispatcherTest {
     @Mock
     private DiscordProvider discordProvider;
 
+    @Mock
+    private KnowledgeEventTap knowledgeEventTap;
+
     @InjectMocks
     private NotificationDispatcher dispatcher;
+
+    @BeforeEach
+    void wireLazyAutowiredFields() {
+        // workflowTriggerService/lifecycleTriggerDispatcher/knowledgeEventTap are @Lazy @Autowired
+        // field injections (not constructor params), which @InjectMocks does not reliably populate —
+        // wire the one this suite cares about explicitly rather than depending on that.
+        ReflectionTestUtils.setField(dispatcher, "knowledgeEventTap", knowledgeEventTap);
+    }
 
     private static final String PROJECT_ID = "proj-1";
     private static final String ISSUE_ID = "issue-1";
@@ -117,6 +132,17 @@ class NotificationDispatcherTest {
         when(discordProvider.format(event)).thenThrow(new RuntimeException("format failed"));
 
         assertThatNoException().isThrownBy(() -> dispatcher.dispatch(event));
+    }
+
+    @Test
+    void dispatchCallsKnowledgeEventTapAndSwallowsItsExceptions() {
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(any(), any())).thenReturn(Optional.empty());
+        NotificationEvent event = eventOf(EventType.WORK_ITEM_STATUS_CHANGED);
+        doThrow(new RuntimeException("ingestion failed")).when(knowledgeEventTap).onConductorEvent(event);
+
+        assertThatNoException().isThrownBy(() -> dispatcher.dispatch(event));
+
+        verify(knowledgeEventTap).onConductorEvent(event);
     }
 
     private NotificationEvent eventOf(EventType type) {

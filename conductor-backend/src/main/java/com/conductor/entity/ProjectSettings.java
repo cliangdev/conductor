@@ -33,6 +33,9 @@ public class ProjectSettings {
     @Column(name = "github_repo_url", length = 512)
     private String githubRepoUrl;
 
+    @Column(name = "knowledge_enabled", nullable = false)
+    private boolean knowledgeEnabled = false;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -66,6 +69,9 @@ public class ProjectSettings {
 
     public String getGithubRepoUrl() { return githubRepoUrl; }
     public void setGithubRepoUrl(String githubRepoUrl) { this.githubRepoUrl = githubRepoUrl; }
+
+    public boolean isKnowledgeEnabled() { return knowledgeEnabled; }
+    public void setKnowledgeEnabled(boolean knowledgeEnabled) { this.knowledgeEnabled = knowledgeEnabled; }
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }

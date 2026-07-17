@@ -46,6 +46,7 @@ class ClaudeCodeStepExecutorTest {
     @Mock private WorkflowRunLogBroker logBroker;
 
     private RuntimeTargetResolver runtimeTargetResolver;
+    private ClaudeCodeContainerRunner runner;
 
     private ClaudeCodeStepExecutor executor;
 
@@ -53,7 +54,10 @@ class ClaudeCodeStepExecutorTest {
     void setUp() {
         runtimeTargetResolver = new RuntimeTargetResolver("gcp-proj", "us-central1", "conductor-claude-code",
                 runtimeTargetService);
-        executor = new ClaudeCodeStepExecutor(launcher, runtimeTargetResolver, credentialService,
+        // sleepSeconds seam now lives on the extracted runner (ClaudeCodeStepExecutor delegates all
+        // container-execution mechanics to it) — this test still exercises the executor end-to-end
+        // through that runner, just with the poll sleep stubbed out for speed.
+        runner = new ClaudeCodeContainerRunner(launcher, runtimeTargetResolver, credentialService,
                 projectApiKeyRepository, stepRunRepository, runTokenService, projectSettingsRepository,
                 new WorkflowInterpolator(), new ObjectMapper(), logBroker, "http://localhost:8080") {
             @Override
@@ -61,6 +65,7 @@ class ClaudeCodeStepExecutorTest {
                 // no-op for fast tests
             }
         };
+        executor = new ClaudeCodeStepExecutor(runner, new WorkflowInterpolator());
     }
 
     private Map<String, Object> baseStepDef() {

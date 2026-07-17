@@ -6,6 +6,10 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Card, CardContent } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
@@ -17,6 +21,7 @@ import {
   updateWorkflowSecret,
   type WorkflowSecretKey,
 } from '@/lib/api'
+import { settingsBreadcrumbs } from '@/lib/navigation'
 import { PageHeader } from '@/components/layout/PageHeader'
 
 const KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/
@@ -136,63 +141,64 @@ export default function WorkflowSecretsPage() {
         title="Secrets"
         description="Values workflow YAML can reference by key (e.g. ${{ secrets.DISCORD_WEBHOOK_URL }}). Values are write-only — once set, they're never shown again."
         actions={canManage && <Button size="sm" onClick={openAdd}>Add secret</Button>}
+        breadcrumbs={settingsBreadcrumbs(projectId, 'settings-secrets')}
       />
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="space-y-2">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
       ) : secrets.length === 0 ? (
         <p className="text-sm text-muted-foreground">No secrets yet.</p>
       ) : (
-        <div className="rounded-lg border border-border divide-y divide-border">
-          {secrets.map((secret) => (
-            <div key={secret.key} className="flex items-center justify-between px-4 py-3">
-              <span className="text-sm font-mono">{secret.key}</span>
-              {canManage && (
-                <div className="flex items-center gap-1">
-                  <Button variant="ghost" size="sm" onClick={() => openEdit(secret.key)}>
-                    Update value
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDeletingKey(secret.key)}
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                    aria-label={`Delete secret ${secret.key}`}
-                  >
-                    Delete
-                  </Button>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        <Card>
+          <CardContent>
+            {secrets.map((secret) => (
+              <div key={secret.key} className="flex items-center justify-between px-4 py-3">
+                <span className="text-sm font-mono">{secret.key}</span>
+                {canManage && (
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="sm" onClick={() => openEdit(secret.key)}>
+                      Update value
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDeletingKey(secret.key)}
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                      aria-label={`Delete secret ${secret.key}`}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
 
       <Modal open={addOpen} onOpenChange={(o) => { if (!o) setAddOpen(false) }} title="Add secret">
         <form onSubmit={handleAdd} className="space-y-4">
           <div>
-            <label htmlFor="secret-key" className="block text-sm font-medium text-foreground mb-1">
-              Key
-            </label>
-            <input
+            <Label htmlFor="secret-key">Key</Label>
+            <Input
               id="secret-key"
               type="text"
               value={addKey}
               onChange={(e) => setAddKey(e.target.value)}
               placeholder="DISCORD_WEBHOOK_URL"
-              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+              className="font-mono"
             />
           </div>
           <div>
-            <label htmlFor="secret-value" className="block text-sm font-medium text-foreground mb-1">
-              Value
-            </label>
-            <input
+            <Label htmlFor="secret-value">Value</Label>
+            <Input
               id="secret-value"
               type="password"
               value={addValue}
               onChange={(e) => setAddValue(e.target.value)}
-              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
           {addError && <p className="text-sm text-destructive" role="alert">{addError}</p>}
@@ -215,15 +221,12 @@ export default function WorkflowSecretsPage() {
       >
         <form onSubmit={handleEdit} className="space-y-4">
           <div>
-            <label htmlFor="secret-edit-value" className="block text-sm font-medium text-foreground mb-1">
-              New value
-            </label>
-            <input
+            <Label htmlFor="secret-edit-value">New value</Label>
+            <Input
               id="secret-edit-value"
               type="password"
               value={editValue}
               onChange={(e) => setEditValue(e.target.value)}
-              className="w-full rounded-md border border-input bg-background text-foreground px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
           {editError && <p className="text-sm text-destructive" role="alert">{editError}</p>}

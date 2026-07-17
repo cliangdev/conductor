@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useWorkflowByAreaNoun } from '@/lib/workflows'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
 import { WorkItemListView } from '@/components/workitems/WorkItemListView'
 
 export const dynamic = 'force-dynamic'
@@ -23,12 +24,7 @@ export default function WorkItemAreaNounPage() {
   if (status === 'loading') {
     return (
       <PageContainer>
-        <div className="h-9 w-48 rounded-md bg-muted animate-pulse mb-6" />
-        <div className="space-y-2">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="h-10 rounded-md bg-muted animate-pulse" style={{ opacity: 1 - i * 0.1 }} />
-          ))}
-        </div>
+        <WorkItemListSkeleton />
       </PageContainer>
     )
   }

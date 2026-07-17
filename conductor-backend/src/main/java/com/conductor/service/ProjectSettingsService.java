@@ -7,6 +7,7 @@ import com.conductor.exception.DiscordWebhookException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.DiscordTestResponse;
 import com.conductor.generated.model.ProjectSettingsResponse;
+import com.conductor.knowledge.KnowledgeWorkflowProvisioner;
 import com.conductor.repository.ProjectSettingsRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,18 +28,22 @@ public class ProjectSettingsService {
     private final ProjectSettingsRepository projectSettingsRepository;
     private final ProjectSecurityService projectSecurityService;
     private final RestTemplate restTemplate;
+    private final KnowledgeWorkflowProvisioner knowledgeWorkflowProvisioner;
 
     public ProjectSettingsService(
             ProjectSettingsRepository projectSettingsRepository,
             ProjectSecurityService projectSecurityService,
-            RestTemplate restTemplate) {
+            RestTemplate restTemplate,
+            KnowledgeWorkflowProvisioner knowledgeWorkflowProvisioner) {
         this.projectSettingsRepository = projectSettingsRepository;
         this.projectSecurityService = projectSecurityService;
         this.restTemplate = restTemplate;
+        this.knowledgeWorkflowProvisioner = knowledgeWorkflowProvisioner;
     }
 
     @Transactional
-    public ProjectSettingsResponse updateSettings(String projectId, String discordWebhookUrl, Integer runTokenTtlHours, String githubWebhookSecret, String githubRepoUrl, User caller) {
+    public ProjectSettingsResponse updateSettings(String projectId, String discordWebhookUrl, Integer runTokenTtlHours,
+            String githubWebhookSecret, String githubRepoUrl, Boolean knowledgeEnabled, User caller) {
         verifyAdmin(projectId, caller.getId());
 
         if (discordWebhookUrl != null && !discordWebhookUrl.isBlank()) {
@@ -68,9 +73,29 @@ public class ProjectSettingsService {
         if (githubRepoUrl != null) {
             settings.setGithubRepoUrl(githubRepoUrl);
         }
+        boolean wasKnowledgeEnabled = settings.isKnowledgeEnabled();
+        if (knowledgeEnabled != null) {
+            settings.setKnowledgeEnabled(knowledgeEnabled);
+        }
         projectSettingsRepository.save(settings);
 
+        // Provision the knowledge-librarian/knowledge-bootstrap system workflows + _schema.md exactly
+        // once, on the false->true transition -- never on every save, and never on disable (disabling
+        // just stops the scheduler from dispatching; it doesn't tear down what was provisioned).
+        if (Boolean.TRUE.equals(knowledgeEnabled) && !wasKnowledgeEnabled) {
+            knowledgeWorkflowProvisioner.provision(projectId);
+        }
+
         return toResponse(settings);
+    }
+
+    /** Cheap read for other domains to gate on (e.g. the knowledge ingestion scheduler, connector adapters).
+     *  No admin check -- this is an internal capability check, not a user-facing settings read. */
+    @Transactional(readOnly = true)
+    public boolean isKnowledgeEnabled(String projectId) {
+        return projectSettingsRepository.findByProjectId(projectId)
+                .map(ProjectSettings::isKnowledgeEnabled)
+                .orElse(false);
     }
 
     @Transactional(readOnly = true)
@@ -129,6 +154,7 @@ public class ProjectSettingsService {
         response.setRunTokenTtlHours(settings.getRunTokenTtlHours());
         response.setGithubWebhookConfigured(settings.getGithubWebhookSecret() != null && !settings.getGithubWebhookSecret().isBlank());
         response.setGithubRepoUrl(settings.getGithubRepoUrl());
+        response.setKnowledgeEnabled(settings.isKnowledgeEnabled());
         return response;
     }
 

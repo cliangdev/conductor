@@ -14,6 +14,9 @@ import {
 } from '@/lib/api';
 import type { ConnectionSummary, WebhookEventSummary, GitHubRepositoriesResponse, ApiError } from '@/lib/api';
 import { useCan } from '@/contexts/PermissionsContext';
+import { Skeleton } from '@/components/ui/skeleton';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { ArrowUpRight } from 'lucide-react';
 
 const CONNECTOR_ID = 'github';
 
@@ -122,7 +125,10 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
   if (connectionsLoading) {
     return (
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="space-y-4">
+          <Skeleton className="h-8 w-32" />
+          <Skeleton className="h-32 w-full" />
+        </div>
       </div>
     );
   }
@@ -147,12 +153,16 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <h1 className="text-2xl font-bold text-foreground mb-1">GitHub</h1>
-      <p className="text-sm text-muted-foreground mb-6">
-        Install the Conductor GitHub App and choose which repositories it can access. When a pull request
-        whose body contains <code className="font-mono text-xs">closes conductor/KEY-123</code> is merged, the
-        matching issue moves to Done.
-      </p>
+      <PageHeader
+        title="GitHub"
+        description={
+          <>
+            Install the Conductor GitHub App and choose which repositories it can access. When a pull request
+            whose body contains <code className="font-mono text-xs">closes conductor/KEY-123</code> is merged, the
+            matching issue moves to Done.
+          </>
+        }
+      />
 
       {connections.length === 0 ? (
         /* Not connected — install CTA */
@@ -230,9 +240,10 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
                         href={data.installationHtmlUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-primary hover:underline"
+                        className="inline-flex items-center gap-0.5 text-primary hover:underline"
                       >
-                        Add some on GitHub →
+                        Add some on GitHub
+                        <ArrowUpRight className="h-3 w-3" />
                       </a>
                     )}
                   </p>
@@ -258,7 +269,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
       <div className="bg-card rounded-lg border border-border p-6 mt-6">
         <h2 className="text-base font-semibold text-foreground mb-4">Recent Webhook Events</h2>
         {eventsLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <Skeleton className="h-24 w-full" />
         ) : events.length === 0 ? (
           <p className="text-sm text-muted-foreground">No webhook events received yet.</p>
         ) : (
@@ -281,8 +292,8 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
                     <td className="py-2 pr-4 font-mono">{event.eventType}</td>
                     <td className="py-2 pr-4">
                       <span className={
-                        event.status === 'PROCESSED' ? 'text-green-600 dark:text-green-400' :
-                        event.status === 'PENDING' ? 'text-yellow-600 dark:text-yellow-400' :
+                        event.status === 'PROCESSED' ? 'text-status-done' :
+                        event.status === 'PENDING' ? 'text-status-progress' :
                         'text-destructive'
                       }>
                         {event.status}

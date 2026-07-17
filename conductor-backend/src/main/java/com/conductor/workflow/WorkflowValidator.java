@@ -441,6 +441,15 @@ public class WorkflowValidator {
         if (agent == null || agent.toString().isBlank()) {
             errors.add("agent step missing required field: with.agent");
         }
+
+        // Validated regardless of runtime, but only the claude-code runtime applies it (container
+        // execution deadline). The api runtime's in-process loop is bounded by the agent's
+        // maxToolTurns, not wall-clock — see docs/workflows.md's runtime guardrail table.
+        Object timeoutMinutes = step.with().get("timeout_minutes");
+        if (timeoutMinutes != null && (!(timeoutMinutes instanceof Number)
+                || ((Number) timeoutMinutes).intValue() < 1 || ((Number) timeoutMinutes).intValue() > 120)) {
+            errors.add("agent step with.timeout_minutes must be an integer between 1 and 120");
+        }
     }
 
     /**

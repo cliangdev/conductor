@@ -19,7 +19,7 @@ function highlightMatch(text: string, query: string): React.ReactNode {
   return (
     <>
       {text.slice(0, index)}
-      <mark className="bg-yellow-200 text-inherit rounded-sm">{text.slice(index, index + query.length)}</mark>
+      <mark className="bg-status-progress/30 text-inherit rounded-sm">{text.slice(index, index + query.length)}</mark>
       {text.slice(index + query.length)}
     </>
   )

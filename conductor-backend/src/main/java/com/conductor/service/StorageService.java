@@ -4,6 +4,11 @@ public interface StorageService {
     void upload(String gcsPath, byte[] content, String contentType);
     byte[] download(String gcsPath);
     String generateSignedUrl(String gcsPath, int expiryMinutes);
+    /**
+     * Deletes an object. Idempotent: a missing object is success. A real backend failure (auth,
+     * network, quota) propagates as a runtime exception so callers cleaning up a stored reference can
+     * keep the reference and retry later instead of orphaning the object.
+     */
     void delete(String gcsPath);
     boolean isHealthy();
 

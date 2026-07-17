@@ -9,6 +9,8 @@ interface Props {
   submitLabel?: string
   /** Initial textarea height. 'comfortable' for line-comment composing, 'compact' for replies. */
   size?: 'comfortable' | 'compact'
+  /** Pre-fills the textarea — used when editing an existing draft so it doesn't open blank. */
+  initialValue?: string
 }
 
 export function NewCommentForm({
@@ -17,8 +19,9 @@ export function NewCommentForm({
   placeholder = 'Add a comment...',
   submitLabel = 'Comment',
   size = 'compact',
+  initialValue = '',
 }: Props) {
-  const [content, setContent] = useState('')
+  const [content, setContent] = useState(initialValue)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

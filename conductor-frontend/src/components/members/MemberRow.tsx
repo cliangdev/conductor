@@ -4,12 +4,20 @@ import * as React from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Select } from '@/components/ui/select'
+import { humanizeId } from '@/lib/workflows'
 import type { Member, MemberRole } from '@/types'
 
-const ROLE_LABELS: Record<MemberRole, string> = {
+/** Single source of role display labels — reused by the invite modal and the role dropdown. */
+export const ROLE_LABELS: Record<MemberRole, string> = {
   ADMIN: 'Admin',
   CREATOR: 'Creator',
   REVIEWER: 'Reviewer',
+}
+
+/** Display label for a role, falling back to a humanized id for any role outside the known set. */
+export function roleLabel(role: MemberRole | string): string {
+  return ROLE_LABELS[role as MemberRole] ?? humanizeId(role)
 }
 
 const ROLE_BADGE_VARIANTS: Record<MemberRole, 'default' | 'secondary' | 'outline'> = {
@@ -43,7 +51,7 @@ export function MemberRow({ member, isAdmin, currentUserId, onRoleChange, onRemo
   const isCurrentUser = member.userId === currentUserId
 
   return (
-    <div className="flex items-center justify-between py-3 border-b border-border last:border-b-0">
+    <div className="flex items-center justify-between py-3">
       <div className="flex items-center gap-3">
         <Avatar className="h-9 w-9">
           <AvatarImage src={member.avatarUrl ?? undefined} alt={member.name} />
@@ -52,28 +60,30 @@ export function MemberRow({ member, isAdmin, currentUserId, onRoleChange, onRemo
         <div>
           <p className="text-sm font-medium text-foreground">
             {member.name}
-            {isCurrentUser && <span className="ml-1 text-xs text-foreground-subtle">(you)</span>}
+            {isCurrentUser && <span className="ml-1 text-xs text-muted-foreground">(you)</span>}
           </p>
           <p className="text-xs text-muted-foreground">{member.email}</p>
         </div>
       </div>
 
       <div className="flex items-center gap-3">
-        <p className="text-xs text-foreground-subtle hidden sm:block">Joined {joinedDate}</p>
+        <p className="text-xs text-muted-foreground hidden sm:block">Joined {joinedDate}</p>
 
         {isAdmin && !isCurrentUser ? (
-          <select
+          <Select
             value={member.role}
             onChange={(e) => onRoleChange(member.userId, e.target.value as MemberRole)}
-            className="text-sm border border-input bg-background text-foreground rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-ring"
+            className="w-auto"
             aria-label={`Role for ${member.name}`}
           >
-            <option value="ADMIN">Admin</option>
-            <option value="CREATOR">Creator</option>
-            <option value="REVIEWER">Reviewer</option>
-          </select>
+            {(Object.keys(ROLE_LABELS) as MemberRole[]).map((role) => (
+              <option key={role} value={role}>
+                {roleLabel(role)}
+              </option>
+            ))}
+          </Select>
         ) : (
-          <Badge variant={ROLE_BADGE_VARIANTS[member.role]}>{ROLE_LABELS[member.role]}</Badge>
+          <Badge variant={ROLE_BADGE_VARIANTS[member.role] ?? 'outline'}>{roleLabel(member.role)}</Badge>
         )}
 
         {isAdmin && !isCurrentUser && (

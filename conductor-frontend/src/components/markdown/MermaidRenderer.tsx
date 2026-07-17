@@ -38,7 +38,7 @@ export function MermaidRenderer({ chart, className }: Props) {
 
   if (error) {
     return (
-      <pre className="text-red-500 text-sm p-3 border border-red-200 rounded bg-red-50 dark:bg-red-950 dark:border-red-800">
+      <pre className="text-status-failed text-sm p-3 border border-status-failed/30 rounded bg-status-failed/10">
         {error}
       </pre>
     )

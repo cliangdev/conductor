@@ -9,6 +9,7 @@ import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiGet, apiErrorMessage, type ApiError } from '@/lib/api'
 import { NotificationSettingsPage } from '@/components/notifications/NotificationSettingsPage'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { settingsBreadcrumbs } from '@/lib/navigation'
 
 export default function NotificationsPage() {
   const params = useParams<{ projectId: string }>()
@@ -40,7 +41,12 @@ export default function NotificationsPage() {
 
   const isAdmin = can('notifications.manage')
 
-  const header = <PageHeader title="Notifications" />
+  const header = (
+    <PageHeader
+      title="Notifications"
+      breadcrumbs={settingsBreadcrumbs(projectId, 'settings-notifications')}
+    />
+  )
 
   if (roleLoading || settingsLoading) {
     return (

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Loader2Icon, PlusIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Alert } from '@/components/ui/alert'
 import { Modal } from '@/components/ui/modal'
 import { RowActionsMenu } from '@/components/ui/RowActionsMenu'
 import { useCan } from '@/contexts/PermissionsContext'
@@ -316,10 +317,12 @@ export default function RuntimeTargetsPanel({
                   </div>
                 </div>
                 {target.errorMessage && (
-                  <p className="mt-1 text-xs text-destructive">{target.errorMessage}</p>
+                  <Alert variant="destructive" className="mt-1 py-1.5 text-xs">
+                    {target.errorMessage}
+                  </Alert>
                 )}
                 {target.warnings && target.warnings.length > 0 && (
-                  <p className="mt-1 text-xs text-yellow-600 dark:text-yellow-400">
+                  <p className="mt-1 text-xs text-status-progress">
                     {target.warnings.join(' ')}
                   </p>
                 )}

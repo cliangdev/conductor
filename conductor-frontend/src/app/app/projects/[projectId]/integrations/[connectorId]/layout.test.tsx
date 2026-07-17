@@ -23,7 +23,7 @@ describe('ConnectorLayout', () => {
   it('shows the Documentation tab and breadcrumb label for gcp', () => {
     render(<ConnectorLayout>{'overview content'}</ConnectorLayout>)
 
-    expect(screen.getByRole('button', { name: 'Documentation' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Documentation' })).toBeInTheDocument()
     expect(screen.getByText('Google Cloud')).toBeInTheDocument()
     expect(screen.getByText('overview content')).toBeInTheDocument()
     expect(screen.queryByTestId('docs-panel')).not.toBeInTheDocument()
@@ -32,7 +32,7 @@ describe('ConnectorLayout', () => {
   it('renders ConnectorDocsPanel when the Documentation tab is clicked', () => {
     render(<ConnectorLayout>{'overview content'}</ConnectorLayout>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Documentation' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Documentation' }))
 
     expect(screen.getByTestId('docs-panel')).toHaveTextContent('docs for gcp')
     expect(screen.queryByText('overview content')).not.toBeInTheDocument()
@@ -42,7 +42,7 @@ describe('ConnectorLayout', () => {
   it('still renders the Tools tab alongside Documentation', () => {
     render(<ConnectorLayout>{'overview content'}</ConnectorLayout>)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Tools' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }))
 
     expect(screen.getByTestId('tools-panel')).toHaveTextContent('tools for gcp')
   })

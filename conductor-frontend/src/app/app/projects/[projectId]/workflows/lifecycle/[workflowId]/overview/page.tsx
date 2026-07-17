@@ -61,11 +61,11 @@ export default function LifecycleOverviewPage() {
         )}
       </div>
 
-      <div className="border rounded-lg overflow-hidden" style={{ height: 360 }}>
-        <div className="px-4 py-2 border-b bg-muted/30">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Diagram</p>
+      <div className="flex flex-col h-[360px] border border-border rounded-lg overflow-hidden">
+        <div className="shrink-0 px-4 py-2.5 border-b border-border bg-muted">
+          <p className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">Diagram</p>
         </div>
-        <div className="h-[calc(100%-37px)]">
+        <div className="flex-1 min-h-0">
           <StatechartDiagram statuses={def.statuses} transitions={def.transitions} />
         </div>
       </div>

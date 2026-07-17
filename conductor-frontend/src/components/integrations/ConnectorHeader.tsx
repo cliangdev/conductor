@@ -1,31 +1,22 @@
 import { ExternalLink } from 'lucide-react';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 type HealthStatus = 'HEALTHY' | 'DEGRADED' | 'SETUP_REQUIRED' | null;
 
-const PILL: Record<
-  Exclude<HealthStatus, null>,
-  { label: string; text: string; dot: string }
-> = {
-  HEALTHY: {
-    label: 'Connected',
-    text: 'text-green-600 dark:text-green-400',
-    dot: 'bg-green-500',
-  },
-  DEGRADED: {
-    label: 'Degraded',
-    text: 'text-yellow-600 dark:text-yellow-400',
-    dot: 'bg-yellow-500',
-  },
-  SETUP_REQUIRED: {
-    label: 'Setup required',
-    text: 'text-muted-foreground',
-    dot: 'bg-muted-foreground',
-  },
+const HEALTH_STATUS: Record<Exclude<HealthStatus, null>, { status: string; label: string }> = {
+  HEALTHY: { status: 'done', label: 'Connected' },
+  DEGRADED: { status: 'in_progress', label: 'Degraded' },
+  SETUP_REQUIRED: { status: 'in_progress', label: 'Setup required' },
 };
 
 /**
- * The shared dashboard header for connector pages: a health pill, an "Open <vendor>"
- * external link, and a Refresh button.
+ * The shared dashboard header for connector pages, built on the PageHeader idiom: title, a health
+ * StatusBadge in the status slot, and the "Open <vendor>" link + Refresh button as actions. No
+ * breadcrumb here — ConnectorLayout already renders the one `Integrations / {name}` breadcrumb
+ * above the tabs, shared by every connector page regardless of which tab or component renders.
  */
 export function ConnectorHeader({
   title,
@@ -44,37 +35,29 @@ export function ConnectorHeader({
   onRefresh: () => void;
   refreshing: boolean;
 }) {
-  const pill = status ? PILL[status] : null;
+  const health = status ? HEALTH_STATUS[status] : null;
   return (
-    <div className="mb-6 flex items-start justify-between">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">{title}</h1>
-        {subtitle && <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>}
-      </div>
-      <div className="flex items-center gap-2">
-        {pill && (
-          <span className={`inline-flex items-center gap-1 text-xs font-medium ${pill.text}`}>
-            <span className={`h-1.5 w-1.5 rounded-full inline-block ${pill.dot}`} />
-            {pill.label}
-          </span>
-        )}
-        <a
-          href={externalUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
-        >
-          <ExternalLink className="h-3 w-3" />
-          {externalLabel}
-        </a>
-        <button
-          onClick={onRefresh}
-          disabled={refreshing}
-          className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
-        >
-          {refreshing ? 'Refreshing…' : 'Refresh'}
-        </button>
-      </div>
-    </div>
+    <PageHeader
+      className="mb-6"
+      title={title}
+      description={subtitle}
+      status={health && <StatusBadge status={health.status} label={health.label} />}
+      actions={
+        <>
+          <a
+            href={externalUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'gap-1.5')}
+          >
+            <ExternalLink className="h-3 w-3" />
+            {externalLabel}
+          </a>
+          <Button variant="outline" size="sm" onClick={onRefresh} disabled={refreshing}>
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </Button>
+        </>
+      }
+    />
   );
 }

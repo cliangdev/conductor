@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { createContext, useCallback, useContext, useState } from 'react'
+import { XIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 type ToastVariant = 'success' | 'error'
@@ -24,6 +25,19 @@ export function useToast(): ToastContextValue {
   return ctx
 }
 
+// Module-level dispatcher so non-component code (e.g. a catch block deep in a
+// lib function) can raise a toast without threading useToast() through props.
+let dispatch: ((message: string, variant?: ToastVariant) => void) | null = null
+
+/** Convenience for `catch` blocks: `.catch((e) => toastError(apiErrorMessage(e)))`. */
+export function toastError(message: string): void {
+  dispatch?.(message, 'error')
+}
+
+export function toastSuccess(message: string): void {
+  dispatch?.(message, 'success')
+}
+
 let nextId = 0
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
@@ -36,6 +50,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       setToasts((prev) => prev.filter((t) => t.id !== id))
     }, 4000)
   }, [])
+
+  React.useEffect(() => {
+    dispatch = showToast
+    return () => {
+      dispatch = null
+    }
+  }, [showToast])
 
   function dismiss(id: number) {
     setToasts((prev) => prev.filter((t) => t.id !== id))
@@ -50,17 +71,19 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             key={toast.id}
             role="alert"
             className={cn(
-              'flex items-center justify-between gap-4 rounded-md px-4 py-3 text-sm text-white shadow-lg',
-              toast.variant === 'success' ? 'bg-green-600' : 'bg-red-600',
+              'flex items-center justify-between gap-4 rounded-md px-4 py-3 text-sm shadow-lg',
+              toast.variant === 'success'
+                ? 'bg-status-done text-primary-foreground'
+                : 'bg-status-failed text-destructive-foreground',
             )}
           >
             <span>{toast.message}</span>
             <button
               onClick={() => dismiss(toast.id)}
-              className="text-white/80 hover:text-white"
+              className="opacity-80 hover:opacity-100"
               aria-label="Dismiss"
             >
-              ✕
+              <XIcon className="h-4 w-4" />
             </button>
           </div>
         ))}

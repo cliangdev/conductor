@@ -12,9 +12,11 @@ import { ProviderKeysPanel } from '@/components/agents/ProviderKeysPanel'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { Modal } from '@/components/ui/modal'
 import { Tabs } from '@/components/ui/tabs'
+import { Switch } from '@/components/ui/switch'
+import { Skeleton } from '@/components/ui/skeleton'
 import { RowActionsMenu } from '@/components/ui/RowActionsMenu'
 import { Can } from '@/components/auth/Can'
 import { useToast } from '@/components/ui/toast'
@@ -96,7 +98,7 @@ export default function AgentsPage() {
         <ProviderKeysPanel projectId={projectId} canMutate={canManage} roleLoading={roleLoading} />
       ) : loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {[0, 1, 2].map((i) => <div key={i} className="h-32 bg-muted rounded-lg animate-pulse" />)}
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-32" />)}
         </div>
       ) : agents.length === 0 ? (
         <div className="bg-card rounded-lg border border-border p-12 text-center">
@@ -124,23 +126,16 @@ export default function AgentsPage() {
                 </div>
                 <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                   {canManage ? (
-                    <button
-                      role="switch"
-                      aria-checked={agent.state === 'ACTIVE'}
-                      onClick={() => handleToggleState(agent)}
+                    <Switch
+                      checked={agent.state === 'ACTIVE'}
+                      onCheckedChange={() => handleToggleState(agent)}
                       aria-label={agent.state === 'ACTIVE' ? 'Set to draft' : 'Set to active'}
-                      className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
-                        agent.state === 'ACTIVE' ? 'bg-green-500' : 'bg-gray-300'
-                      }`}
-                    >
-                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        agent.state === 'ACTIVE' ? 'translate-x-5' : 'translate-x-1'
-                      }`} />
-                    </button>
+                    />
                   ) : (
-                    <Badge variant={agent.state === 'ACTIVE' ? 'status-approved' : 'status-draft'}>
-                      {agent.state === 'ACTIVE' ? 'Active' : 'Draft'}
-                    </Badge>
+                    <StatusBadge
+                      status={agent.state === 'ACTIVE' ? 'approved' : 'draft'}
+                      label={agent.state === 'ACTIVE' ? 'Active' : 'Draft'}
+                    />
                   )}
                   {canManage && (
                     <RowActionsMenu

@@ -76,7 +76,9 @@ public class LocalStorageService implements StorageService {
             Path target = storagePath.resolve(gcsPath);
             Files.deleteIfExists(target);
         } catch (IOException e) {
-            log.warn("Failed to delete local file '{}': {}", gcsPath, e.getMessage());
+            // Propagate per the interface contract — a missing file is success (deleteIfExists),
+            // but a real IO failure must reach the caller so it can keep its reference and retry.
+            throw new java.io.UncheckedIOException("Failed to delete local file '" + gcsPath + "'", e);
         }
     }
 

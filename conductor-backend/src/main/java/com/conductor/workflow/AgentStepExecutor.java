@@ -1,43 +1,44 @@
 package com.conductor.workflow;
 
 import com.conductor.agent.run.AgentExecutionService;
-import com.conductor.agent.run.AgentRunResult;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
- * Executes workflow steps of type "agent". Resolves a project-scoped {@link Agent} (by slug, then id),
- * interpolates the {@code task} + {@code context} values, and calls {@link AgentExecutionService} —
- * the engine-agnostic ReAct runner. The result is mapped to step outputs the same way
- * {@link IntegrationStepExecutor} maps connector data: {@code text} (the final answer), {@code data}
- * (the structured JSON serialized), and each top-level structured field as its own output key.
- * Declared {@code outputs:} dot-paths (e.g. {@code body.report}) are extracted exactly like
- * {@link HttpStepExecutor}. Provider credentials are never exposed in workflow YAML.
+ * Executes workflow steps of type "agent". Parses and interpolates the {@code with:} block (agent
+ * ref, task, context, output_schema, timeout_minutes) exactly as before, resolves the referenced
+ * {@link com.conductor.agent.Agent} definition via {@link AgentExecutionService#resolveDefinition},
+ * resolves which runtime it runs under via {@link AgentRuntimeResolver}, and delegates the actual call
+ * to the matching {@link AgentStepRuntime}. The runtime — {@code api} (in-process ReAct loop) or
+ * {@code claude-code} (headless Claude Code container) — is never declared in workflow YAML; it is a
+ * property of the agent definition (or auto-detected from project credentials).
  */
 @Component
 public class AgentStepExecutor implements WorkflowExecutionBackend {
 
     private static final Logger log = LoggerFactory.getLogger(AgentStepExecutor.class);
-    private static final int MAX_LOG_BYTES = 2_000;
-    private static final String STATUS_SUCCEEDED = "SUCCEEDED";
 
     private final AgentExecutionService agentExecutionService;
+    private final AgentRuntimeResolver runtimeResolver;
     private final WorkflowInterpolator interpolator;
-    private final ObjectMapper objectMapper;
+    private final Map<String, AgentStepRuntime> runtimesById;
 
     public AgentStepExecutor(AgentExecutionService agentExecutionService,
+                             AgentRuntimeResolver runtimeResolver,
                              WorkflowInterpolator interpolator,
-                             ObjectMapper objectMapper) {
+                             List<AgentStepRuntime> runtimes) {
         this.agentExecutionService = agentExecutionService;
+        this.runtimeResolver = runtimeResolver;
         this.interpolator = interpolator;
-        this.objectMapper = objectMapper;
+        Map<String, AgentStepRuntime> byId = new HashMap<>();
+        for (AgentStepRuntime rt : runtimes) byId.put(rt.id(), rt);
+        this.runtimesById = byId;
     }
 
     @Override
@@ -87,69 +88,35 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
             outputSchema = sm;
         }
 
+        Integer timeoutMinutes = null;
+        Object timeoutObj = withBlock.get("timeout_minutes");
+        if (timeoutObj instanceof Number n) {
+            timeoutMinutes = n.intValue();
+        }
+
+        AgentExecutionService.AgentDefinition agent;
         try {
-            // The agent module resolves the agent by slug-then-id internally (single load); the
-            // workflow package depends only on the runner facade, not on agent persistence.
-            AgentRunResult result = agentExecutionService.run(projectId, agentRef, task, agentContext, outputSchema);
-
-            String text = result.outputText() == null ? "" : result.outputText();
-            Map<String, Object> structured = result.structuredJson();
-
-            Map<String, String> outputs = new HashMap<>();
-            outputs.put("text", text);
-            if (structured != null) {
-                outputs.put("data", objectMapper.writeValueAsString(structured));
-                structured.forEach((k, v) -> {
-                    try {
-                        outputs.put(k, v instanceof String s ? s : objectMapper.writeValueAsString(v));
-                    } catch (Exception ignored) {}
-                });
-            }
-            // Honor declared `outputs:` dot-paths (body.X) like the http/kestra executors.
-            applyDeclaredOutputs(stepDef, text, structured, outputs);
-
-            String stepLog = "→ agent=" + agentRef + " run=" + result.runId()
-                    + "\n← " + result.status()
-                    + " tokens(in/out)=" + tokenSummary(result)
-                    + "\n" + truncate(text);
-
-            if (!STATUS_SUCCEEDED.equals(result.status())) {
-                return StepResult.failed(stepLog, "Agent run did not succeed: " + result.status());
-            }
-            return StepResult.success(stepLog, outputs);
-
+            agent = agentExecutionService.resolveDefinition(projectId, agentRef);
         } catch (Exception e) {
-            log.warn("AgentStepExecutor failed for agent={}: {}", agentRef, e.getMessage());
+            log.warn("AgentStepExecutor: could not resolve agent={}: {}", agentRef, e.getMessage());
             return StepResult.failed("Agent run failed: " + e.getMessage(), e.getMessage());
         }
-    }
 
-    /**
-     * Extracts declared {@code outputs:} dot-paths from the agent result, mirroring
-     * {@link HttpStepExecutor}. The "body" root combines the structured JSON fields with the
-     * top-level {@code text} and {@code data} keys, so {@code body.report}, {@code body.text}, etc.
-     * all resolve.
-     */
-    private void applyDeclaredOutputs(Map<String, Object> stepDef, String text,
-                                      Map<String, Object> structured, Map<String, String> outputs) {
-        ObjectNode body = structured != null
-                ? objectMapper.valueToTree(structured)
-                : objectMapper.createObjectNode();
-        body.put("text", text);
-        if (outputs.containsKey("data")) {
-            body.put("data", outputs.get("data"));
+        String runtimeId;
+        try {
+            runtimeId = runtimeResolver.resolve(projectId, agent);
+        } catch (AgentRuntimeUnresolvedException e) {
+            return StepResult.failed("", e.getMessage());
         }
-        StepOutputMapper.applyDeclaredOutputs(stepDef, body, outputs);
-    }
 
-    private String tokenSummary(AgentRunResult result) {
-        return result.usage() == null
-                ? "0/0"
-                : result.usage().inputTokens() + "/" + result.usage().outputTokens();
-    }
+        AgentStepRuntime runtime = runtimesById.get(runtimeId);
+        if (runtime == null) {
+            return StepResult.failed("", "Unknown agent runtime: " + runtimeId);
+        }
 
-    private String truncate(String s) {
-        if (s == null) return "";
-        return s.length() > MAX_LOG_BYTES ? s.substring(0, MAX_LOG_BYTES) + "\n[truncated]" : s;
+        log.info("agent step: agent={} runtime={}", agentRef, runtimeId);
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
+                agent, task, agentContext, outputSchema, timeoutMinutes);
+        return runtime.run(context, call);
     }
 }

@@ -15,6 +15,9 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } f
 import { ExternalLink } from 'lucide-react';
 import { StatCard } from './StatCard';
 import { ConnectorHeader } from './ConnectorHeader';
+import { Alert } from '@/components/ui/alert';
+import { statusHueClasses } from '@/components/ui/status-badge';
+import { toastError } from '@/components/ui/toast';
 
 interface TrendPoint {
   date: string;
@@ -132,7 +135,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
       );
       window.location.href = result.authorizationUrl;
     } catch (e) {
-      console.error('OAuth initiation failed', e);
+      toastError(apiErrorMessage(e, 'Could not start the Google authorization. Please try again.'));
       setAuthorizing(false);
     }
   };
@@ -308,11 +311,9 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
             </div>
             {(saveError ?? fetchError ?? (response?.data as GscData | null)?.siteUrl) ? (
               /* A save/fetch failure, or a previously configured property that failed — show as amber warning. */
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3">
-                <p className="text-xs text-yellow-700 dark:text-yellow-400">
-                  {saveError ?? fetchError ?? response?.errorMessage}
-                </p>
-              </div>
+              <Alert variant="warning" className="text-xs">
+                {saveError ?? fetchError ?? response?.errorMessage}
+              </Alert>
             ) : response?.errorMessage ? (
               /* Fresh setup prompt — informational, not an error. */
               <div className="bg-muted/50 border border-border rounded-md p-3">
@@ -368,10 +369,10 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
       </div>
 
       {errorBanner && (
-        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-3 mb-4">
-          <p className="text-xs font-medium text-yellow-800 dark:text-yellow-300">Fetch issue</p>
-          <p className="text-xs text-yellow-700 dark:text-yellow-400 mt-0.5 break-words">{errorBanner}</p>
-        </div>
+        <Alert variant="warning" className="mb-4 text-xs">
+          <p className="font-medium">Fetch issue</p>
+          <p className="mt-0.5 break-words">{errorBanner}</p>
+        </Alert>
       )}
 
       {/* Stat cards */}
@@ -530,9 +531,10 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
 }
 
 function HealthDot({ ok, label }: { ok: boolean; label: string }) {
+  const hue = statusHueClasses(ok ? 'green' : 'amber');
   return (
-    <span className={`inline-flex items-center gap-1.5 ${ok ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${ok ? 'bg-green-500' : 'bg-yellow-500'}`} />
+    <span className={`inline-flex items-center gap-1.5 ${hue.text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${hue.dot}`} />
       {label}
     </span>
   );

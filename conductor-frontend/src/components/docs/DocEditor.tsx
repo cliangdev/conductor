@@ -17,6 +17,7 @@ import {
   MoreHorizontal,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
   Quote,
   Redo2,
   Strikethrough,
@@ -32,6 +33,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { useToast } from '@/components/ui/toast'
 import { useEditorChrome } from '@/contexts/EditorChromeContext'
 import { ResizableSplit } from '@/components/ui/ResizableSplit'
@@ -145,6 +147,7 @@ export function DocEditor({
   const [value, setValue] = useState(doc.content ?? '')
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
 
   const [previewCollapsed, setPreviewCollapsedState] = useState(() =>
     readBoolPref('doc_editor_preview_collapsed', false),
@@ -331,7 +334,15 @@ export function DocEditor({
   const isDirty = value !== (doc.content ?? '')
 
   function handleCancel() {
-    if (isDirty && !window.confirm('Discard unsaved changes?')) return
+    if (isDirty) {
+      setDiscardConfirmOpen(true)
+      return
+    }
+    onCancel()
+  }
+
+  function confirmDiscard() {
+    setDiscardConfirmOpen(false)
     onCancel()
   }
 
@@ -465,8 +476,9 @@ export function DocEditor({
       {/* Header */}
       <div className="border-b border-border bg-background px-4 sm:px-6 py-3 shrink-0">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-foreground flex-1 min-w-0 truncate">
-            ✏ Editing: {doc.title}
+          <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground flex-1 min-w-0 truncate">
+            <Pencil className="h-3.5 w-3.5 shrink-0" />
+            Editing: {doc.title}
           </span>
           <div className="flex items-center gap-2 shrink-0">
             <Button variant="outline" size="sm" onClick={handleCancel} disabled={saving}>Cancel</Button>
@@ -537,6 +549,20 @@ export function DocEditor({
           </>
         }
       />
+
+      <ConfirmModal
+        open={discardConfirmOpen}
+        title="Discard unsaved changes?"
+        description="This can't be undone."
+        cancelLabel="Keep editing"
+        confirmLabel="Discard"
+        onConfirm={confirmDiscard}
+        onCancel={() => setDiscardConfirmOpen(false)}
+      >
+        <p className="text-sm text-muted-foreground">
+          Your changes to &ldquo;{doc.title}&rdquo; will be lost.
+        </p>
+      </ConfirmModal>
     </div>
   )
 }

@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { clearAllSidebarCaches } from '@/lib/workflows'
+
+const mockPush = vi.fn()
+const mockCloseSidebar = vi.fn()
+const mockSetPaletteOpen = vi.fn()
+const mockSignOut = vi.fn().mockResolvedValue(undefined)
+const mockSetTheme = vi.fn()
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/app/projects/proj-1/settings/members',
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: mockPush }),
 }))
 
 vi.mock('@/lib/api', () => ({ apiGet: vi.fn() }))
@@ -12,11 +18,14 @@ vi.mock('@/lib/api', () => ({ apiGet: vi.fn() }))
 vi.mock('@/contexts/SidebarContext', () => ({
   useSidebar: () => ({
     isOpen: false,
-    closeSidebar: vi.fn(),
+    toggleSidebar: vi.fn(),
+    closeSidebar: mockCloseSidebar,
     sidebarWidth: 240,
     setSidebarWidth: vi.fn(),
     sidebarCollapsed: false,
     setSidebarCollapsed: vi.fn(),
+    paletteOpen: false,
+    setPaletteOpen: mockSetPaletteOpen,
   }),
 }))
 
@@ -43,8 +52,25 @@ vi.mock('@/contexts/AuthContext', () => ({
     accessToken: 'test-token',
     loading: false,
     signIn: vi.fn(),
-    signOut: vi.fn(),
+    signOut: mockSignOut,
   }),
+}))
+
+vi.mock('next-themes', () => ({
+  useTheme: () => ({ theme: 'light', setTheme: mockSetTheme }),
+}))
+
+// Flatten the dropdown so trigger-gated content is always visible/clickable in jsdom (same
+// approach as RuntimeTargetsPanel.test.tsx — the real Radix popup is portal-based).
+vi.mock('@/components/ui/dropdown-menu', () => ({
+  DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuItem: ({ children, onSelect }: { children: React.ReactNode; onSelect?: () => void }) => (
+    <button type="button" onClick={onSelect}>{children}</button>
+  ),
+  DropdownMenuLabel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuSeparator: () => <hr />,
 }))
 
 import { apiGet } from '@/lib/api'
@@ -72,6 +98,11 @@ describe('Sidebar', () => {
     // Clear the module-scope sidebar cache between tests to prevent cross-test contamination.
     clearAllSidebarCaches()
     ;(apiGet as Mock).mockResolvedValue([])
+    mockPush.mockClear()
+    mockCloseSidebar.mockClear()
+    mockSetPaletteOpen.mockClear()
+    mockSignOut.mockClear()
+    mockSetTheme.mockClear()
   })
 
   it('renders the active workspace name in the quiet switcher', () => {
@@ -194,5 +225,31 @@ describe('Sidebar', () => {
     expect(deals).toHaveAttribute('href', '/app/projects/proj-1/sales_ops/deals')
     // Area slug is humanized into a section label.
     expect(screen.getByText('Sales Ops')).toBeInTheDocument()
+  })
+
+  // ── User account menu ──────────────────────────────────────────────────────
+
+  it('shows the signed-in user name and the sign-out/theme items in the account menu', () => {
+    render(<Sidebar />)
+    expect(screen.getAllByText('Test User').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^light$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^dark$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^system$/i })).toBeInTheDocument()
+  })
+
+  it('signs out and redirects to /login when Sign out is clicked', async () => {
+    render(<Sidebar />)
+    fireEvent.click(screen.getByRole('button', { name: /sign out/i }))
+    await waitFor(() => {
+      expect(mockSignOut).toHaveBeenCalled()
+      expect(mockPush).toHaveBeenCalledWith('/login')
+    })
+  })
+
+  it('calls setTheme when a theme item is selected from the account menu', () => {
+    render(<Sidebar />)
+    fireEvent.click(screen.getByRole('button', { name: /^dark$/i }))
+    expect(mockSetTheme).toHaveBeenCalledWith('dark')
   })
 })

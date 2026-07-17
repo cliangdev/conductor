@@ -764,6 +764,66 @@ class WorkflowValidatorExtensionsTest {
     }
 
     @Test
+    void agentStep_timeoutMinutesOutOfRange_rejected() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  analyze:
+                    steps:
+                      - id: report
+                        uses: agent
+                        with:
+                          agent: marketing-agent
+                          task: "do the thing"
+                          timeout_minutes: 121
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("agent step with.timeout_minutes must be an integer between 1 and 120"));
+    }
+
+    @Test
+    void agentStep_timeoutMinutesZero_rejected() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  analyze:
+                    steps:
+                      - id: report
+                        uses: agent
+                        with:
+                          agent: marketing-agent
+                          task: "do the thing"
+                          timeout_minutes: 0
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).anyMatch(e -> e.contains("agent step with.timeout_minutes must be an integer between 1 and 120"));
+    }
+
+    @Test
+    void agentStep_timeoutMinutesInRange_accepted() {
+        String yaml = """
+                on:
+                  schedule:
+                    cron: "0 * * * *"
+                jobs:
+                  analyze:
+                    steps:
+                      - id: report
+                        uses: agent
+                        with:
+                          agent: marketing-agent
+                          task: "do the thing"
+                          timeout_minutes: 20
+                """;
+        WorkflowValidationResult result = validate(yaml);
+        assertThat(result.getErrors()).noneMatch(e -> e.contains("timeout_minutes"));
+    }
+
+    @Test
     void agentStep_withAgent_isAccepted() {
         String yaml = """
                 on:

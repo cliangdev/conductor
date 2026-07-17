@@ -1,0 +1,34 @@
+name: Knowledge Librarian
+
+# System-managed workflow (see KnowledgeWorkflowProvisioner) — fired programmatically by
+# KnowledgeIngestScheduler via LibrarianDispatchService, never by a human. workflow_dispatch is
+# declared only so the run has a recognized trigger kind; the dispatcher passes sourceIds/projectId
+# as top-level event payload fields (${{ event.* }}), not workflow_dispatch inputs, so there is
+# nothing to declare under `inputs:`.
+on:
+  workflow_dispatch: {}
+
+concurrency: single
+
+jobs:
+  file:
+    steps:
+      - id: librarian
+        uses: agent
+        with:
+          agent: knowledge-librarian
+          timeout_minutes: 20
+          task: |
+            File the following batch of knowledge-inbox sources into the wiki.
+            Source ids (comma-separated): ${{ event.sourceIds }}
+            Project id: ${{ event.projectId }}
+
+            Return a short JSON summary: {"pagesWritten": <int>, "sourcesFiled": <int>}.
+          output_schema:
+            type: object
+            properties:
+              pagesWritten: { type: integer }
+              sourcesFiled: { type: integer }
+        outputs:
+          pagesWritten: body.pagesWritten
+          sourcesFiled: body.sourcesFiled

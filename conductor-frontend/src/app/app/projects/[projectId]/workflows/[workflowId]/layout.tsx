@@ -9,6 +9,7 @@ import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
+import { PlayIcon } from 'lucide-react'
 import { Can } from '@/components/auth/Can'
 import { WorkflowStatusBadge } from '@/components/workflow/WorkflowStatusBadge'
 import { WorkflowProvider, useWorkflow } from '@/contexts/WorkflowContext'
@@ -75,8 +76,8 @@ function WorkflowDetailHeader() {
       description={triggers.length > 0 ? `Triggers: ${triggers.join(', ')}` : undefined}
       actions={
         <Can do="workflow.run">
-          <Button onClick={handleRun} disabled={!workflow.enabled || dispatching}>
-            {dispatching ? 'Starting…' : '▶ Run'}
+          <Button onClick={handleRun} disabled={!workflow.enabled || dispatching} className="gap-1.5">
+            {dispatching ? 'Starting…' : (<><PlayIcon className="h-3.5 w-3.5" /> Run</>)}
           </Button>
         </Can>
       }

@@ -10,8 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { DocFolderDialog } from './DocFolderDialog'
 import { MoveDocDialog } from './MoveDocDialog'
-import { Modal } from '@/components/ui/modal'
-import { Button } from '@/components/ui/button'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { getFolders, getDocs, deleteFolder, deleteDoc } from '@/lib/docs-api'
 import type { DocFolder, ProjectDocSummary } from '@/lib/docs-api'
 
@@ -454,28 +453,20 @@ export function DocTree({
         />
       )}
 
-      <Modal
+      <ConfirmModal
         open={!!pendingDelete}
-        onOpenChange={(open) => { if (!open) setPendingDelete(null) }}
         title={pendingDelete?.type === 'folder' ? `Delete "${pendingDelete.name}"?` : `Delete "${pendingDelete?.title}"?`}
         description={
           pendingDelete?.type === 'folder'
             ? 'Sub-folders will be deleted. Documents inside will be moved to the root level.'
             : 'This document will be permanently deleted.'
         }
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setPendingDelete(null)} disabled={deleting}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={confirmDelete} disabled={deleting}>
-              {deleting ? 'Deleting…' : 'Delete'}
-            </Button>
-          </div>
-        }
-      >
-        <span />
-      </Modal>
+        confirmLabel="Delete"
+        busyLabel="Deleting…"
+        busy={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   )
 }

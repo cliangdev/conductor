@@ -5,12 +5,21 @@ import rehypeHighlight from 'rehype-highlight'
 import rehypeSlug from 'rehype-slug'
 import { SignedImage } from './SignedImage'
 import { MermaidDiagram } from './MermaidDiagram'
+import { resolveBundleLink } from './resolveBundleLink'
 
 interface Props {
   content: string
   className?: string
   onDocumentNavigate?: (filename: string) => void
   projectId?: string
+  /**
+   * When set, intercepts bundle-relative markdown links (e.g. "/engineering/architecture.md",
+   * "../people/jane.md") and calls this instead of a raw navigation. `basePath` is the directory of
+   * the page currently being rendered, used to resolve relative hrefs. Links that aren't
+   * bundle-relative ".md" targets (external URLs, mailto:, doc:, fragments) fall through unchanged.
+   */
+  onWikiLink?: (path: string) => void
+  basePath?: string
 }
 
 function stripFrontmatter(content: string): string {
@@ -20,7 +29,7 @@ function stripFrontmatter(content: string): string {
   return content.slice(end + 4).trimStart()
 }
 
-export function MarkdownRenderer({ content, className, onDocumentNavigate, projectId }: Props) {
+export function MarkdownRenderer({ content, className, onDocumentNavigate, projectId, onWikiLink, basePath }: Props) {
   const stripped = stripFrontmatter(content)
   return (
     <div className={`prose prose-sm dark:prose-invert max-w-none ${className ?? ''}`}>
@@ -44,6 +53,23 @@ export function MarkdownRenderer({ content, className, onDocumentNavigate, proje
                   {children}
                 </a>
               )
+            }
+            if (onWikiLink) {
+              const resolved = resolveBundleLink(href, basePath)
+              if (resolved) {
+                return (
+                  <a
+                    href="#"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      onWikiLink(resolved)
+                    }}
+                    {...props}
+                  >
+                    {children}
+                  </a>
+                )
+              }
             }
             if (href?.startsWith('./') && onDocumentNavigate) {
               const filename = href.slice(2)

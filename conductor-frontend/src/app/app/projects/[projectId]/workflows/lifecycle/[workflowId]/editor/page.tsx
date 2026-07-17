@@ -13,6 +13,7 @@ import { isLifecycleWorkflow, publishWorkflow, updateLifecycleWorkflow } from '@
 import type { StatechartDefinition } from '@/lib/workflowDefinition'
 import type { WorkflowDefinitionDto, WorkflowValidationWarning } from '@/types/workflow'
 import { Button } from '@/components/ui/button'
+import { Alert } from '@/components/ui/alert'
 import { useToast } from '@/components/ui/toast'
 import { useWorkflow } from '@/contexts/WorkflowContext'
 import { StatechartEditor } from '@/components/workflow/lifecycle/StatechartEditor'
@@ -35,8 +36,8 @@ export default function LifecycleEditorPage() {
   const [def, setDef] = useState<StatechartDefinition | null>(null)
   const [saving, setSaving] = useState(false)
   const [publishing, setPublishing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<WorkflowValidationWarning[]>([])
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   // Seed the local editor state once the workflow loads (re-seeds when the bound workflow changes,
   // e.g. after a save/publish writes back to the context).
@@ -52,8 +53,8 @@ export default function LifecycleEditorPage() {
   const handleSave = async () => {
     if (!accessToken || !def) return
     setSaving(true)
-    setError(null)
     setWarnings([])
+    setSaveError(null)
     try {
       const res = await updateLifecycleWorkflow(
         projectId,
@@ -66,7 +67,9 @@ export default function LifecycleEditorPage() {
       setWarnings(res.warnings ?? [])
       showToast('Workflow saved.', 'success')
     } catch (e) {
-      setError(apiErrorMessage(e, 'Failed to save workflow'))
+      // 422 surfaces the semantic-validation detail — kept on-screen (not just a toast) since it
+      // can be long and the toast auto-dismisses before it's fully read.
+      setSaveError(apiErrorMessage(e, 'Failed to save workflow'))
     } finally {
       setSaving(false)
     }
@@ -75,7 +78,7 @@ export default function LifecycleEditorPage() {
   const handlePublish = async () => {
     if (!accessToken) return
     setPublishing(true)
-    setError(null)
+    setSaveError(null)
     try {
       const published = await publishWorkflow(projectId, workflowId, accessToken)
       setWorkflow(published)
@@ -83,7 +86,7 @@ export default function LifecycleEditorPage() {
       showToast('Workflow published.', 'success')
     } catch (e) {
       // 422 surfaces the semantic-validation detail; 403 surfaces the permission message.
-      setError(apiErrorMessage(e, 'Failed to publish workflow'))
+      setSaveError(apiErrorMessage(e, 'Failed to publish workflow'))
     } finally {
       setPublishing(false)
     }
@@ -99,11 +102,6 @@ export default function LifecycleEditorPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-end gap-2">
-        {error && (
-          <span className="text-sm text-destructive max-w-xs truncate" title={error}>
-            {error}
-          </span>
-        )}
         <Button variant="outline" onClick={handleSave} disabled={saving || publishing}>
           {saving ? 'Saving…' : 'Save draft'}
         </Button>
@@ -112,15 +110,21 @@ export default function LifecycleEditorPage() {
         </Button>
       </div>
 
+      {saveError && (
+        <Alert variant="destructive">
+          <p>{saveError}</p>
+        </Alert>
+      )}
+
       {warnings.length > 0 && (
-        <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+        <Alert variant="warning">
           <p className="font-medium mb-1">Saved with warnings:</p>
           <ul className="list-disc pl-5">
             {warnings.map((w, i) => (
               <li key={i}>{w.message}</li>
             ))}
           </ul>
-        </div>
+        </Alert>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4">

@@ -5,8 +5,11 @@ import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.InboundEvent;
 import com.conductor.integration.WebhookRouting;
 import com.conductor.integration.WebhookVerification;
+import com.conductor.knowledge.KnowledgeIngestionService;
+import com.conductor.knowledge.KnowledgeSubmission;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
+import com.conductor.service.ProjectSettingsService;
 import com.conductor.service.WorkItemService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -30,6 +33,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -44,13 +48,18 @@ class GitHubConnectorTest {
     @Mock private ConnectionRepository connectionRepository;
     @Mock private ConnectionService connectionService;
     @Mock private GitHubAppService gitHubAppService;
+    @Mock private KnowledgeIngestionService knowledgeIngestionService;
+    @Mock private ProjectSettingsService projectSettingsService;
 
     private GitHubConnector connector;
 
     @BeforeEach
     void setUp() {
+        // Most tests don't care about the knowledge-submission side effect — default to disabled so
+        // they don't need to stub it; the dedicated knowledge tests below override it.
+        lenient().when(projectSettingsService.isKnowledgeEnabled(anyString())).thenReturn(false);
         connector = new GitHubConnector(workItemService, connectionRepository, connectionService,
-                gitHubAppService, new ObjectMapper(), APP_SECRET);
+                gitHubAppService, knowledgeIngestionService, projectSettingsService, new ObjectMapper(), APP_SECRET);
     }
 
     private ConnectionContext ctx() {
@@ -88,7 +97,7 @@ class GitHubConnectorTest {
     @Test
     void verify_failsWhenAppSecretNotConfigured() throws Exception {
         GitHubConnector noSecret = new GitHubConnector(workItemService, connectionRepository, connectionService,
-                gitHubAppService, new ObjectMapper(), "");
+                gitHubAppService, knowledgeIngestionService, projectSettingsService, new ObjectMapper(), "");
         byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
         assertThat(noSecret.verify(body, signedHeaders(body), ctx()).valid()).isFalse();
     }
@@ -205,5 +214,52 @@ class GitHubConnectorTest {
         String payload = "{\"action\":\"closed\",\"pull_request\":{\"merged\":true,\"body\":\"just a PR\"}}";
         connector.handleEvent(new InboundEvent("d4", "pull_request", payload, Map.of()), ctx());
         verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    // --- handleEvent() : Knowledge Center adapter — submits a merged PR as a github.pr_merged source ---
+
+    private static final String MERGED_PR_PAYLOAD =
+            "{\"action\":\"closed\",\"repository\":{\"full_name\":\"x/y\"},"
+            + "\"pull_request\":{\"number\":3,\"merged\":true,\"title\":\"Add feature\","
+            + "\"body\":\"just a PR, no conductor link\","
+            + "\"labels\":[{\"name\":\"enhancement\"}],"
+            + "\"merged_by\":{\"login\":\"alice\"},"
+            + "\"base\":{\"sha\":\"aaa\"},\"head\":{\"sha\":\"bbb\"}}}";
+
+    @Test
+    void handleEvent_mergedPr_knowledgeEnabled_submitsSource() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        connector.handleEvent(new InboundEvent("d5", "pull_request", MERGED_PR_PAYLOAD, Map.of()), ctx());
+
+        org.mockito.ArgumentCaptor<KnowledgeSubmission> captor = org.mockito.ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(knowledgeIngestionService).submit(captor.capture());
+        KnowledgeSubmission submission = captor.getValue();
+        assertThat(submission.projectId()).isEqualTo(PROJECT_ID);
+        assertThat(submission.sourceType()).isEqualTo("github.pr_merged");
+        assertThat(submission.sourceRef()).isEqualTo("github:x/y#3");
+        assertThat(submission.title()).isEqualTo("Add feature");
+        assertThat(submission.payload()).contains("\"enhancement\"", "\"alice\"", "\"aaa\"", "\"bbb\"");
+        assertThat(submission.dedupKey()).isEqualTo("github-pr-merged:github:x/y#3");
+    }
+
+    @Test
+    void handleEvent_mergedPr_knowledgeDisabled_doesNotSubmit() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(false);
+
+        connector.handleEvent(new InboundEvent("d6", "pull_request", MERGED_PR_PAYLOAD, Map.of()), ctx());
+
+        verify(knowledgeIngestionService, never()).submit(any());
+    }
+
+    @Test
+    void handleEvent_nonMergedClose_knowledgeEnabled_doesNotSubmit() {
+        // isMergeEvent is false here, so submitMergedPrKnowledge (and its isKnowledgeEnabled check)
+        // is never reached — nothing to stub; this only asserts the ingestion service is left alone.
+        String payload = "{\"action\":\"closed\",\"pull_request\":{\"merged\":false}}";
+
+        connector.handleEvent(new InboundEvent("d7", "pull_request", payload, Map.of()), ctx());
+
+        verify(knowledgeIngestionService, never()).submit(any());
     }
 }

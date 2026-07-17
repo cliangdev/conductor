@@ -1,7 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { apiPost, apiPatch, apiDelete } from '@/lib/api'
+import { XIcon } from 'lucide-react'
+import { apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api'
+import { toastError } from '@/components/ui/toast'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
+import { Badge } from '@/components/ui/badge'
 import { NewCommentForm } from './NewCommentForm'
 import type { Comment } from './types'
 
@@ -44,6 +48,7 @@ export function CommentThread({
     commentApiBasePath ?? `/api/v2/projects/${projectId}/work-items/${issueId}/comments`
   const [showResolved, setShowResolved] = useState(false)
   const [showReplyForm, setShowReplyForm] = useState(false)
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
 
   const isResolved = !!comment.resolvedAt
   if (isResolved && !showResolved) {
@@ -58,7 +63,7 @@ export function CommentThread({
         </button>
         {onClose && (
           <button onClick={onClose} className="ml-auto text-foreground-subtle hover:text-foreground">
-            ✕
+            <XIcon className="h-3.5 w-3.5" />
           </button>
         )}
       </div>
@@ -66,14 +71,22 @@ export function CommentThread({
   }
 
   async function handleResolve() {
-    await apiPatch(`${basePath}/${comment.id}/resolve`, {}, token)
-    onUpdated()
+    try {
+      await apiPatch(`${basePath}/${comment.id}/resolve`, {}, token)
+      onUpdated()
+    } catch (err) {
+      toastError(apiErrorMessage(err, 'Failed to resolve comment'))
+    }
   }
 
   async function handleDelete() {
-    if (!confirm('Delete this comment?')) return
-    await apiDelete(`${basePath}/${comment.id}`, token)
-    onUpdated()
+    setConfirmDeleteOpen(false)
+    try {
+      await apiDelete(`${basePath}/${comment.id}`, token)
+      onUpdated()
+    } catch (err) {
+      toastError(apiErrorMessage(err, 'Failed to delete comment'))
+    }
   }
 
   async function handleReply(content: string) {
@@ -89,9 +102,9 @@ export function CommentThread({
         {comment.quotedText && (
           <blockquote className="border-l-4 border-muted pl-3 mb-2">
             {comment.lineStale && (
-              <span className="inline-block text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 rounded px-1.5 py-0.5 mb-1 font-medium">
+              <Badge variant="status-progress" className="mb-1">
                 Line no longer exists
-              </span>
+              </Badge>
             )}
             <p className="text-xs text-muted-foreground italic leading-relaxed line-clamp-3">
               {comment.quotedText}
@@ -101,9 +114,7 @@ export function CommentThread({
         {/* Stale indicator when there's no quotedText */}
         {comment.lineStale && !comment.quotedText && (
           <div className="mb-2">
-            <span className="inline-block text-xs bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 rounded px-1.5 py-0.5 font-medium">
-              Line no longer exists
-            </span>
+            <Badge variant="status-progress">Line no longer exists</Badge>
           </div>
         )}
         <div className="flex items-start justify-between gap-2">
@@ -124,9 +135,9 @@ export function CommentThread({
           {onClose && (
             <button
               onClick={onClose}
-              className="text-foreground-subtle hover:text-foreground flex-shrink-0 text-xs leading-none transition-colors"
+              className="text-foreground-subtle hover:text-foreground flex-shrink-0 leading-none transition-colors"
             >
-              ✕
+              <XIcon className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
@@ -150,7 +161,7 @@ export function CommentThread({
           )}
           {currentUserId === comment.authorId && (
             <button
-              onClick={handleDelete}
+              onClick={() => setConfirmDeleteOpen(true)}
               className="text-xs text-destructive hover:text-destructive/80 hover:underline transition-colors"
             >
               Delete
@@ -193,6 +204,19 @@ export function CommentThread({
           />
         </div>
       )}
+
+      <ConfirmModal
+        open={confirmDeleteOpen}
+        title="Delete comment?"
+        description="This can't be undone."
+        confirmLabel="Delete"
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmDeleteOpen(false)}
+      >
+        <p className="text-sm text-muted-foreground">
+          {comment.content.length > 120 ? `${comment.content.slice(0, 120)}…` : comment.content}
+        </p>
+      </ConfirmModal>
     </div>
   )
 }

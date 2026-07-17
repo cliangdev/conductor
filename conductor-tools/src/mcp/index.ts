@@ -30,6 +30,14 @@ import {
 import { listIntegrationTools, listConnectorCatalog } from './tools/integrations.js'
 import { listAgents } from './tools/agents.js'
 import { listSkills, registerSkill } from './tools/skills.js'
+import {
+  submitKnowledgeSource,
+  readKnowledgeSources,
+  searchKnowledge,
+  readKnowledgePages,
+  writeKnowledgePages,
+  type KnowledgePageWrite,
+} from './tools/knowledge.js'
 
 const TOOLS = [
   // --- Canonical Work Item tools (v2 /work-items surface) ---
@@ -344,6 +352,85 @@ const TOOLS = [
         flags: { type: 'array', description: 'Reviewer flags: [{level: info|warn, message}]' },
       },
       required: ['issueId', 'stepKind', 'status', 'inputBrief', 'reportedBy'],
+    },
+  },
+  {
+    name: 'submit_knowledge_source',
+    description: "Push an observation, event, or document into the project's knowledge inbox for the librarian to file into wiki pages. Provide payload (inline content) and/or sourceRef (external reference) — at least one is required. Returns {sourceId, status}; status DUPLICATE means this was already submitted (by dedupKey) and is safe to ignore, not an error. Verify with read_knowledge_sources.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sourceType: { type: 'string', description: 'Kind of source (e.g. slack_message, github_pr, observation, document)' },
+        payload: { type: 'string', description: 'Inline content of the source (optional if sourceRef is given)' },
+        sourceRef: { type: 'string', description: 'External reference/URL for the source (optional if payload is given)' },
+        title: { type: 'string', description: 'Human-readable title (optional)' },
+        contentType: { type: 'string', description: 'MIME type of payload (optional, defaults to text/plain)' },
+        occurredAt: { type: 'string', description: 'ISO-8601 timestamp of when the event occurred (optional)' },
+        dedupKey: { type: 'string', description: 'Idempotency key — resubmitting the same key returns status DUPLICATE instead of a second entry (optional)' },
+        metadata: { type: 'object', description: 'Arbitrary structured metadata (optional)' },
+      },
+      required: ['sourceType'],
+    },
+  },
+  {
+    name: 'read_knowledge_sources',
+    description: "Fetch knowledge-inbox sources by id, with offloaded payload content resolved inline. Companion to submit_knowledge_source (verify a submission landed) and the librarian's read path for filing pending sources.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ids: { type: 'array', items: { type: 'string' }, description: 'Source IDs to fetch' },
+      },
+      required: ['ids'],
+    },
+  },
+  {
+    name: 'search_knowledge',
+    description: 'Search the project wiki for pages matching a query: returns path, type, title, description, snippet, and rank per hit. Orientation step before reading — follow with read_knowledge_pages on the paths that matter.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        q: { type: 'string', description: 'Search query' },
+        type: { type: 'string', description: 'Filter by page type (optional)' },
+        pathPrefix: { type: 'string', description: 'Filter to paths under this prefix (optional)' },
+        limit: { type: 'number', description: 'Max results (optional)' },
+      },
+      required: ['q'],
+    },
+  },
+  {
+    name: 'read_knowledge_pages',
+    description: 'Fetch full content of wiki pages by path. Pass ["index.md"] for wiki orientation (a virtual index of all pages); "log.md" is also virtual (recent activity log). Unknown paths are silently omitted. The returned `version` feeds `baseVersion` on write_knowledge_pages.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        paths: { type: 'array', items: { type: 'string' }, description: 'Page paths to fetch' },
+      },
+      required: ['paths'],
+    },
+  },
+  {
+    name: 'write_knowledge_pages',
+    description: "Create, update, or delete wiki pages atomically. Updating an existing page requires its current version as baseVersion (read_knowledge_pages first) — a stale write returns a structured {conflict: true, conflicts: [{path, currentVersion, currentContent}]} result instead of throwing; merge and retry once. Optionally pass sourceIds to mark those knowledge-inbox sources PROCESSED atomically with the write — pass writes: [] with sourceIds to ack a batch that warrants no wiki change. Verify with read_knowledge_pages.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        writes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'Wiki page path' },
+              content: { type: 'string', description: 'Full page content (Markdown with frontmatter); omit when delete=true' },
+              baseVersion: { type: 'number', description: 'Current version of the page being updated (required for updates; omit only when creating a new page)' },
+              delete: { type: 'boolean', description: 'Delete this page instead of writing content (optional)' },
+            },
+            required: ['path'],
+          },
+          description: 'Pages to write or delete; may be empty when sourceIds is provided (no wiki change needed for this batch)',
+        },
+        sourceIds: { type: 'array', items: { type: 'string' }, description: 'Knowledge-inbox source IDs to mark PROCESSED atomically with this write (optional)' },
+      },
+      required: ['writes'],
     },
   },
 ]
@@ -673,6 +760,58 @@ export async function runMcpServer(): Promise<void> {
             {
               issueId: params['issueId'] as string,
               resolved: params['resolved'] as boolean | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'submit_knowledge_source': {
+          const result = await submitKnowledgeSource(
+            {
+              sourceType: params['sourceType'] as string,
+              sourceRef: params['sourceRef'] as string | undefined,
+              title: params['title'] as string | undefined,
+              contentType: params['contentType'] as string | undefined,
+              payload: params['payload'] as string | undefined,
+              occurredAt: params['occurredAt'] as string | undefined,
+              dedupKey: params['dedupKey'] as string | undefined,
+              metadata: params['metadata'] as Record<string, unknown> | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'read_knowledge_sources': {
+          const result = await readKnowledgeSources(
+            { ids: (params['ids'] as string[] | undefined) ?? [] },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'search_knowledge': {
+          const result = await searchKnowledge(
+            {
+              q: params['q'] as string,
+              type: params['type'] as string | undefined,
+              pathPrefix: params['pathPrefix'] as string | undefined,
+              limit: params['limit'] as number | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'read_knowledge_pages': {
+          const result = await readKnowledgePages(
+            { paths: (params['paths'] as string[] | undefined) ?? [] },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'write_knowledge_pages': {
+          const result = await writeKnowledgePages(
+            {
+              writes: (params['writes'] as KnowledgePageWrite[] | undefined) ?? [],
+              sourceIds: params['sourceIds'] as string[] | undefined,
             },
             config
           )

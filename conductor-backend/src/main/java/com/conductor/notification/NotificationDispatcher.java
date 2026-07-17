@@ -1,6 +1,7 @@
 package com.conductor.notification;
 
 import com.conductor.entity.NotificationGroupConfig;
+import com.conductor.knowledge.KnowledgeEventTap;
 import com.conductor.repository.NotificationGroupConfigRepository;
 import com.conductor.service.LifecycleTriggerDispatcher;
 import com.conductor.workflow.WorkflowTriggerService;
@@ -28,6 +29,10 @@ public class NotificationDispatcher {
     @Autowired
     private LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
 
+    @Lazy
+    @Autowired
+    private KnowledgeEventTap knowledgeEventTap;
+
     public NotificationDispatcher(NotificationGroupConfigRepository groupConfigRepository,
                                   DiscordProvider discordProvider) {
         this.groupConfigRepository = groupConfigRepository;
@@ -47,6 +52,12 @@ public class NotificationDispatcher {
             lifecycleTriggerDispatcher.onConductorEvent(event);
         } catch (Exception e) {
             log.warn("Lifecycle trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
+        }
+
+        try {
+            knowledgeEventTap.onConductorEvent(event);
+        } catch (Exception e) {
+            log.warn("Knowledge ingestion tap failed for event {}: {}", event.getEventType(), e.getMessage());
         }
     }
 
