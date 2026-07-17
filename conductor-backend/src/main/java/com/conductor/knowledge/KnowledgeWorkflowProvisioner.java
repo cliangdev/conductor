@@ -2,6 +2,7 @@ package com.conductor.knowledge;
 
 import com.conductor.agent.Agent;
 import com.conductor.agent.AgentRepository;
+import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.entity.Project;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.knowledge.page.KnowledgePageRepository;
@@ -24,9 +25,13 @@ import java.util.Map;
 
 /**
  * Idempotently provisions the two knowledge-domain system workflows (see
- * {@code src/main/resources/knowledge/*.yaml}) and the {@code _schema.md} seed page for a project the
- * first time knowledge is enabled -- called from {@code ProjectSettingsService} on the false->true
- * transition of {@code knowledge_enabled}.
+ * {@code src/main/resources/knowledge/*.yaml}) and the {@code _schema.md} seed page for a project.
+ * Called from {@code ProjectSettingsService} on every settings save that leaves knowledge enabled
+ * (not just the false-&gt;true transition) -- catch-up provisioning for projects that were enabled
+ * before a given artifact existed, or where a seeded artifact (most commonly the librarian
+ * {@code Agent}) was since deleted -- and from {@code LibrarianDispatchService} as a just-in-time
+ * self-heal before dispatch if seeding turns out to be incomplete. {@link #provision} is a no-op for
+ * anything that already exists, so any number of callers racing or repeating never duplicates rows.
  *
  * <p>{@link WorkflowDefinition} has no "system-managed" column (COND-18's lifecycle layer added one
  * for statecharts -- {@code sidebar_enabled} -- but nothing generic), so identity here is purely the
@@ -53,7 +58,9 @@ public class KnowledgeWorkflowProvisioner {
 
     public static final String LIBRARIAN_WORKFLOW_NAME = "knowledge-librarian";
     public static final String BOOTSTRAP_WORKFLOW_NAME = "knowledge-bootstrap";
-    public static final String LIBRARIAN_AGENT_SLUG = "knowledge-librarian";
+    /** Alias for {@link DefaultAgentSlugs#KNOWLEDGE_LIBRARIAN} -- kept here too since callers/tests
+     *  reference the provisioner for it. */
+    public static final String LIBRARIAN_AGENT_SLUG = DefaultAgentSlugs.KNOWLEDGE_LIBRARIAN;
 
     private static final String SCHEMA_PAGE_PATH = "_schema.md";
     private static final String LIBRARIAN_RESOURCE = "/knowledge/knowledge-librarian.yaml";

@@ -16,6 +16,7 @@ creates and edits them; humans and other agents read them.
 - [Retention](#retention)
 - [MCP tools](#mcp-tools)
 - [REST endpoints](#rest-endpoints)
+- [Frontend surfaces](#frontend-surfaces)
 - [Roadmap](#roadmap)
 
 ---
@@ -145,12 +146,17 @@ Source lifecycle: `PENDING → PROCESSING → PROCESSED` (success) or `PENDING �
 
 ## System workflows
 
-Two automation workflows, plus the librarian's `Agent` definition, are provisioned automatically — the
-first time a project's `knowledge_enabled` flips `false → true` — by `KnowledgeWorkflowProvisioner`, from
-the YAML templates in `conductor-backend/src/main/resources/knowledge/`. They're identified purely by
-reserved workflow name / agent slug (no schema-level "system" flag); re-enabling is idempotent
-(upsert-if-missing). See [`docs/workflows.md`](workflows.md#system-managed-workflows) for how they fit the
-general workflow model.
+Two automation workflows, plus the librarian's `Agent` definition, are provisioned by
+`KnowledgeWorkflowProvisioner`, from the YAML templates in `conductor-backend/src/main/resources/knowledge/`.
+Provisioning isn't a one-shot on the `false → true` transition: `ProjectSettingsService.updateSettings` calls
+it on **every** settings save that leaves `knowledge_enabled` true, and `LibrarianDispatchService` calls it
+just-in-time before firing a dispatch if it finds the workflow or the librarian `Agent` row missing. Both
+paths are catch-up/self-heal — they cover a project enabled before a given artifact existed, and a seeded
+artifact (most often the librarian `Agent`) that was deleted after the fact — coming back on the next
+enabled settings save or the next scheduler tick, without an operator having to disable/re-enable. They're
+identified purely by reserved workflow name / agent slug (no schema-level "system" flag); every call is
+idempotent (upsert-if-missing) so any number of callers racing or repeating never duplicates rows. See
+[`docs/workflows.md`](workflows.md#system-managed-workflows) for how they fit the general workflow model.
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
@@ -162,19 +168,19 @@ project-scoped `knowledge-librarian` Agent (slug `knowledge-librarian`, provider
 procedure from `knowledge/librarian-system-prompt.md` as its system prompt, bound to the four
 `knowledge:*` tools — see [MCP tools](#mcp-tools) — with `configJson: {"maxToolTurns": 40}`) the same way
 it seeds the workflow YAML. The system prompt, model, and tool bindings are all editable afterward under
-**Settings → Agents**, same as any other agent — evolving the librarian's behavior no longer requires a
+**Automation → Agents**, same as any other agent — evolving the librarian's behavior no longer requires a
 backend change. Its **runtime** (which engine actually executes a run) is decoupled from this definition
 entirely and resolves fresh on every dispatch — see
 [Runtimes](workflows.md#agent--run-an-ai-agent) in the workflows doc: an explicit `runtime` key in the
 agent's `configJson` pins it, otherwise it auto-detects from the project's credentials (a Claude Code
 subscription credential is preferred over a `claude` API key when both are configured). Switching which
-runtime the librarian runs on is therefore a Settings change, not a workflow edit.
+runtime the librarian runs on is therefore an Agents change, not a workflow edit.
 
 **Operator prerequisites** before either workflow can run — either credential option works for the
 librarian; `knowledge-bootstrap` is subscription-only:
 
 - **`knowledge-librarian`**: either the project's **Claude Code (subscription)** credential (**Integrations
-  → Google Cloud**) or a `claude` provider API key (**Settings → Agents**) — subscription preferred when
+  → Google Cloud**) or a `claude` provider API key (**Automation → Agents**) — subscription preferred when
   both are configured. If it resolves to the `claude-code` runtime, an active **project API key**
   (**Settings → API Keys**) is also needed, since the agent's knowledge tools map to Conductor MCP tools on
   that runtime.
@@ -234,7 +240,7 @@ and available to any Claude Code session with the Conductor MCP server configure
 
 The same four operations back an `agent`-tool source (`knowledge:read_knowledge_pages`, etc. —
 `KnowledgeToolProvider`) so any project agent, not just the librarian, can be bound to them under
-**Settings → Agents**. Bare tool names match across both surfaces on purpose — one system prompt works
+**Automation → Agents**. Bare tool names match across both surfaces on purpose — one system prompt works
 whether the agent runs the `api` runtime (calling this provider directly) or the `claude-code` runtime
 (calling the equivalent `mcp__conductor__*` MCP tool). Both are gated on `knowledge_enabled`.
 
@@ -249,11 +255,32 @@ All under `/api/v1/projects/{projectId}/knowledge/`, accepting both a user sessi
 |---|---|---|
 | `POST` | `/sources` | Submit a source. `202` with `{sourceId, status}`. |
 | `GET` | `/sources` | List by `status` (default `PENDING`), or multi-get via `ids` (mutually exclusive; `ids` wins). |
+| `GET` | `/sources/counts` | Per-status inbox counts (`pending`/`processing`/`processed`/`dead`), zero-defaulted — the cheap summary the frontend's pipeline strip polls instead of a full `listSources` per status. |
 | `POST` | `/pages/batch-write` | Atomic create/update/delete batch. `200` on success; `409` with a `conflicts` extension on a concurrency race; `422` on malformed frontmatter. |
 | `GET` | `/pages?paths=` | Multi-get full page content by comma-separated paths. Unknown/deleted paths silently omitted. |
 | `GET` | `/index` | The generated virtual `index.md`. |
 | `GET` | `/search?q=` | Full-text search; optional `type`, `pathPrefix`, `limit` (default 20). |
 | `GET` | `/revisions?path=` | Revision history for one page, newest first, with actor + source provenance. |
+
+---
+
+## Frontend surfaces
+
+- **Setup checklist.** The Knowledge index page's empty state (admins only) shows a small guidance
+  checklist instead of a bare "Enable Knowledge" button: whether a Claude credential (`claude-code`
+  subscription or a `claude` provider API key) and a project API key are configured. Both rows are
+  informational, not gates — `Enable Knowledge` stays clickable regardless, since the pipeline
+  self-heals (see [System workflows](#system-workflows)).
+- **Pipeline strip.** Once the wiki has content, the index page shows a one-line summary above it:
+  pending/dead inbox counts (linking to the source list below), the librarian's last run status, and a
+  link to the librarian `Agent`. Best-effort and auxiliary — a fetch failure renders nothing rather than
+  breaking the wiki page.
+- **Source list.** `knowledge/sources` is a read-only, status-filtered browse of the ingestion inbox
+  (`GET /sources`) — no actions; the scheduler and librarian own the lifecycle.
+- **Default agent chip.** The Agents list, an agent's detail header, and `AgentResponse.isDefault`
+  together surface which agents (e.g. the librarian) are seeded by Conductor rather than user-created.
+  Deleting one is allowed — the chip's tooltip says it will be recreated. The librarian's Overview tab
+  also cross-links to its workflow's Runs tab.
 
 ---
 

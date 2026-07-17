@@ -396,6 +396,10 @@ export interface Agent {
   /** Namespaced tool ids (e.g. connector:posthog/web_analytics_summary). */
   toolIds: string[]
   state: AgentState
+  /** True for agents seeded by Conductor (e.g. the knowledge-librarian) rather than created by a
+   *  project member. Deleting one is allowed — it is recreated the next time the owning feature
+   *  self-heals. */
+  isDefault: boolean
   createdAt: string
   updatedAt: string
 }
@@ -500,6 +504,24 @@ export function deleteProviderCredential(
   token: string,
 ): Promise<void> {
   return apiDelete(`/api/v1/projects/${projectId}/agents/providers/${provider}/credential`, token)
+}
+
+// ── Project-scoped API keys (machine-to-machine: CLI/MCP daemon, claude-code runtime) ──────
+//
+// Distinct from a user's personal API keys (`/api/v1/api-keys`, managed on the API Keys settings
+// page) — these are scoped to the project itself (`ApiKeyAuthenticationToken`, principal = projectId)
+// and are what a `claude-code` runtime's knowledge tools authenticate with. Key values are never
+// returned after creation.
+
+export interface ProjectApiKey {
+  id: string
+  name: string
+  createdAt: string
+  lastUsedAt?: string | null
+}
+
+export function listProjectApiKeys(projectId: string, token: string): Promise<ProjectApiKey[]> {
+  return apiGet<ProjectApiKey[]>(`/api/v1/projects/${projectId}/api-keys`, token)
 }
 
 // ── Runtime targets (BYO GCP Cloud Run for claude-code workflow steps) ─────

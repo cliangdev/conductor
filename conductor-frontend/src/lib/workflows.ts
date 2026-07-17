@@ -18,12 +18,33 @@ import type {
 import type {
   WorkflowCreateResponse,
   WorkflowDefinitionDto,
+  WorkflowRunDto,
 } from '@/types/workflow'
 import type { StatechartDefinition } from '@/lib/workflowDefinition'
 import type { Member } from '@/types'
 
 /** The project's default Workflow. Work Items with no explicit slug resolve to this. */
 export const DEFAULT_WORKFLOW_SLUG = 'ENGINEERING'
+
+/** All Workflows (lifecycle + automation) for a project — unfiltered, uncached. */
+export function listWorkflows(projectId: string, token: string): Promise<WorkflowDefinitionDto[]> {
+  return apiGet<WorkflowDefinitionDto[]>(`/api/v1/projects/${projectId}/workflows`, token)
+}
+
+/** Runs for one Workflow, newest first. */
+export function listWorkflowRuns(
+  projectId: string,
+  workflowId: string,
+  token: string,
+  opts?: { page?: number; size?: number },
+): Promise<WorkflowRunDto[]> {
+  const page = opts?.page ?? 0
+  const size = opts?.size ?? 20
+  return apiGet<WorkflowRunDto[]>(
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/runs?page=${page}&size=${size}`,
+    token,
+  )
+}
 
 // ── WorkflowView cache ──────────────────────────────────────────────────────
 //

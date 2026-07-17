@@ -2,19 +2,24 @@ package com.conductor.knowledge;
 
 import com.conductor.agent.Agent;
 import com.conductor.agent.AgentRepository;
+import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
+import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.knowledge.page.KnowledgePage;
 import com.conductor.knowledge.page.KnowledgePageRepository;
+import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.service.ProjectSettingsService;
 import com.conductor.support.AbstractNoneWebIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -40,21 +45,34 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
     private UserRepository userRepository;
     @Autowired
     private AgentRepository agentRepository;
+    @Autowired
+    private ProjectMemberRepository projectMemberRepository;
+    @Autowired
+    private ProjectSettingsService projectSettingsService;
 
     private String projectId;
+    private User adminUser;
 
     @BeforeEach
     void setUp() {
         User user = new User();
         user.setFirebaseUid("test-uid-" + UUID.randomUUID());
         user.setEmail("test-" + UUID.randomUUID() + "@example.com");
-        userRepository.save(user);
+        adminUser = userRepository.save(user);
 
         Project project = new Project();
         project.setName("Knowledge Provisioning Test Project");
         project.setKey("KP" + String.valueOf(UUID.randomUUID()).substring(0, 6).toUpperCase());
         project.setCreatedBy(user);
-        projectId = projectRepository.save(project).getId();
+        Project saved = projectRepository.save(project);
+        projectId = saved.getId();
+
+        ProjectMember membership = new ProjectMember();
+        membership.setProject(saved);
+        membership.setUser(adminUser);
+        membership.setRole(MemberRole.ADMIN);
+        membership.setJoinedAt(OffsetDateTime.now());
+        projectMemberRepository.save(membership);
     }
 
     @Test
@@ -118,5 +136,39 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         List<Agent> agents = agentRepository.findByProjectId(projectId);
         assertThat(agents).extracting(Agent::getSlug)
                 .containsExactly(KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG);
+    }
+
+    // ---- self-healing via ProjectSettingsService (a project already enabled before/independent of
+    // this save re-provisions on every save that leaves knowledge enabled, not just false->true) ----
+
+    @Test
+    void settingsSaveReseedsLibrarianAgentDeletedAfterInitialProvisioning() {
+        provisioner.provision(projectId);
+        Agent librarian = agentRepository.findByProjectIdAndSlug(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        agentRepository.delete(librarian);
+        assertThat(agentRepository.existsByProjectIdAndSlug(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)).isFalse();
+
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, adminUser);
+
+        assertThat(agentRepository.existsByProjectIdAndSlug(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)).isTrue();
+    }
+
+    @Test
+    void repeatedSettingsSavesDoNotDuplicateProvisionedArtifacts() {
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, adminUser);
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, adminUser);
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, adminUser);
+
+        List<WorkflowDefinition> workflows = workflowRepository.findByProjectId(projectId);
+        assertThat(workflows).hasSize(2);
+
+        List<Agent> agents = agentRepository.findByProjectId(projectId);
+        assertThat(agents).extracting(Agent::getSlug)
+                .containsExactly(KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG);
+
+        Optional<KnowledgePage> schemaPage = pageRepository.findByProjectIdAndPath(projectId, "_schema.md");
+        assertThat(schemaPage).isPresent();
+        assertThat(schemaPage.get().getVersion()).isEqualTo(1);
     }
 }

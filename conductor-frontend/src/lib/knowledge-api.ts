@@ -82,6 +82,60 @@ export function enableKnowledge(projectId: string, token: string): Promise<{ kno
   ) as Promise<{ knowledgeEnabled: boolean }>
 }
 
+// ── Ingestion inbox (sources) ───────────────────────────────────────────────
+
+export type KnowledgeSourceStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'DEAD'
+
+export interface KnowledgeSourceCounts {
+  pending: number
+  processing: number
+  processed: number
+  dead: number
+}
+
+/** Cheap per-status inbox summary — for the pipeline strip's badge/count row. */
+export function getKnowledgeSourceCounts(projectId: string, token: string): Promise<KnowledgeSourceCounts> {
+  return apiGet<KnowledgeSourceCounts>(`/api/v1/projects/${projectId}/knowledge/sources/counts`, token)
+}
+
+export interface KnowledgeSourceOrigin {
+  kind?: string
+  id?: string
+}
+
+export interface KnowledgeSourceDto {
+  id: string
+  projectId: string
+  sourceType: string
+  sourceRef?: string | null
+  title?: string | null
+  contentType?: string | null
+  payload?: string | null
+  payloadOffloaded: boolean
+  metadata?: Record<string, unknown> | null
+  origin?: KnowledgeSourceOrigin | null
+  occurredAt?: string | null
+  receivedAt: string
+  status: KnowledgeSourceStatus
+  attempts: number
+  errorMessage?: string | null
+  /** Set once retention has compacted this source's payload; null means it's still intact. */
+  purgedAt?: string | null
+}
+
+/** Browse the inbox filtered by status (default PENDING) — never resolves offloaded payload content. */
+export function listKnowledgeSources(
+  projectId: string,
+  token: string,
+  opts?: { status?: KnowledgeSourceStatus },
+): Promise<KnowledgeSourceDto[]> {
+  const status = opts?.status ?? 'PENDING'
+  return apiGet<KnowledgeSourceDto[]>(
+    `/api/v1/projects/${projectId}/knowledge/sources?status=${status}`,
+    token,
+  )
+}
+
 export function listKnowledgeRevisions(
   projectId: string,
   path: string,

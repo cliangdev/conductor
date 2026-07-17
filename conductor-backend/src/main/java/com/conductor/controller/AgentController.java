@@ -2,6 +2,7 @@ package com.conductor.controller;
 
 import com.conductor.agent.Agent;
 import com.conductor.agent.AgentService;
+import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.entity.User;
 import com.conductor.generated.api.AgentsApi;
@@ -163,6 +164,7 @@ public class AgentController implements AgentsApi {
                 .config(readConfig(agent.getConfigJson()))
                 .toolIds(readToolIds(agent.getToolIds()))
                 .state(AgentResponse.StateEnum.fromValue(agent.getState()))
+                .isDefault(DefaultAgentSlugs.isDefault(agent.getSlug()))
                 .createdAt(agent.getCreatedAt())
                 .updatedAt(agent.getUpdatedAt());
     }

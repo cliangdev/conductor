@@ -23,6 +23,12 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
 
     List<KnowledgeSource> findByStatus(KnowledgeSourceStatus status);
 
+    /** Per-status row counts for a project's inbox -- {@code KnowledgeIngestionService#getSourceCounts}'s
+     *  backing query. Statuses with zero rows are simply absent from the result; the service fills in
+     *  zero-defaults. */
+    @Query("SELECT s.status, COUNT(s) FROM KnowledgeSource s WHERE s.projectId = :projectId GROUP BY s.status")
+    List<Object[]> countByProjectIdGroupByStatus(@Param("projectId") String projectId);
+
     /** Distinct projects with at least one PENDING source due for (re)processing -- {@code KnowledgeIngestScheduler}'s dispatch fan-out. */
     @Query("SELECT DISTINCT s.projectId FROM KnowledgeSource s "
             + "WHERE s.status = com.conductor.knowledge.KnowledgeSourceStatus.PENDING "

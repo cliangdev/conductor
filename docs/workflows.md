@@ -368,7 +368,7 @@ When the condition is true, `then` job is enqueued and `else` job is skipped (an
 
 #### `agent` — Run an AI agent
 
-Hands a task to a project-scoped **AI agent** (a named persona configured under **Settings → Agents**) and exposes its answer as step outputs. The agent runs a tool-calling loop against its configured model provider; the provider API key is resolved at runtime and never appears in the workflow YAML.
+Hands a task to a project-scoped **AI agent** (a named persona configured under **Automation → Agents**) and exposes its answer as step outputs. The agent runs a tool-calling loop against its configured model provider; the provider API key is resolved at runtime and never appears in the workflow YAML.
 
 ```yaml
 - id: analyze
@@ -406,13 +406,13 @@ The step exposes these outputs:
 
 Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answer just like the `http` step — `body.text` and `body.data` are also available.
 
-The agent must be created first under **Settings → Agents** (persona, model provider, tool bindings) and a provider API key configured for the project. A run that ends in any non-`SUCCEEDED` state fails the step.
+The agent must be created first under **Automation → Agents** (persona, model provider, tool bindings) and a provider API key configured for the project. A run that ends in any non-`SUCCEEDED` state fails the step.
 
 ##### Runtimes
 
 An agent's *definition* (system prompt, tools, guardrails) is decoupled from the *runtime* that executes it — the workflow step never declares a runtime; it's resolved fresh on every run:
 
-1. The agent's `runtime` config key, if set (`Settings → Agents` → the agent's config, or via `POST/PATCH` on the agent) — `"api"` or `"claude-code"`.
+1. The agent's `runtime` config key, if set (`Automation → Agents` → the agent's config, or via `POST/PATCH` on the agent) — `"api"` or `"claude-code"`.
 2. Otherwise auto-detected from the project's credentials: a **Claude Code (subscription)** credential (**Integrations → Google Cloud**) wins over an API key when both are configured, since it gets the full Claude Code tool-calling loop rather than just a single-model ReAct loop.
 3. If neither credential is configured, the step fails with a message naming both options.
 

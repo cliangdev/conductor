@@ -5,6 +5,7 @@ import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, Breadcrumb, type Crumb } from '@/components/layout/PageHeader'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
+import { DefaultAgentBadge } from '@/components/agents/DefaultAgentBadge'
 import { AgentProvider, useAgent } from '@/contexts/AgentContext'
 import { useCan } from '@/contexts/PermissionsContext'
 
@@ -29,9 +30,12 @@ function AgentDetailHeader() {
     <PageHeader
       title={agent.name}
       status={
-        <Badge variant={agent.state === 'ACTIVE' ? 'status-approved' : 'status-draft'}>
-          {agent.state === 'ACTIVE' ? 'Active' : 'Draft'}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          <Badge variant={agent.state === 'ACTIVE' ? 'status-approved' : 'status-draft'}>
+            {agent.state === 'ACTIVE' ? 'Active' : 'Draft'}
+          </Badge>
+          {agent.isDefault && <DefaultAgentBadge />}
+        </div>
       }
       description={agent.description ?? undefined}
     />

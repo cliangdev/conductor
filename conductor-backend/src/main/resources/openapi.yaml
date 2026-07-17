@@ -4284,6 +4284,33 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /projects/{projectId}/knowledge/sources/counts:
+    get:
+      tags: [knowledge]
+      summary: Inbox status counts for a project
+      description: >-
+        Cheap summary of the ingestion inbox by status (pending/processing/processed/dead) — for the
+        UI's inbox badge/summary without a full listSources per status. Statuses with no rows are
+        reported as 0, not omitted.
+      operationId: getKnowledgeSourceCounts
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Inbox status counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeSourceCounts'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /projects/{projectId}/knowledge/pages/batch-write:
     post:
       tags: [knowledge]
@@ -6424,6 +6451,7 @@ components:
         - state
         - createdAt
         - updatedAt
+        - isDefault
       properties:
         id:
           type: string
@@ -6455,6 +6483,13 @@ components:
         state:
           type: string
           enum: [DRAFT, ACTIVE]
+        isDefault:
+          type: boolean
+          description: >-
+            True for agents seeded by Conductor itself (e.g. the knowledge-librarian) rather than
+            created by a project member. Deleting a default agent is allowed -- it is recreated the
+            next time the owning feature self-heals (e.g. a knowledge settings save, or the next
+            librarian dispatch).
         createdAt:
           type: string
           format: date-time
@@ -6695,6 +6730,28 @@ components:
           description: >-
             Set once KnowledgeRetentionService has compacted this source's payload (nulled the inline
             column and/or deleted the offloaded GCS object). Null means the payload is still intact.
+
+    KnowledgeSourceCounts:
+      type: object
+      description: Inbox status counts for a project — a cheap summary for the UI, avoiding a full listSources per status.
+      required:
+        - pending
+        - processing
+        - processed
+        - dead
+      properties:
+        pending:
+          type: integer
+          format: int64
+        processing:
+          type: integer
+          format: int64
+        processed:
+          type: integer
+          format: int64
+        dead:
+          type: integer
+          format: int64
 
     KnowledgePageWrite:
       type: object

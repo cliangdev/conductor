@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { listAgents, updateAgent, deleteAgent, apiErrorMessage, type Agent } from '@/lib/api'
 import { ProviderKeysPanel } from '@/components/agents/ProviderKeysPanel'
+import { DefaultAgentBadge } from '@/components/agents/DefaultAgentBadge'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -123,6 +124,7 @@ export default function AgentsPage() {
                 <div className="flex items-center gap-2 min-w-0">
                   <BotIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="font-medium text-foreground truncate">{agent.name}</span>
+                  {agent.isDefault && <DefaultAgentBadge />}
                 </div>
                 <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                   {canManage ? (
@@ -166,6 +168,12 @@ export default function AgentsPage() {
         <p className="text-sm text-foreground">
           Permanently delete <strong>{deleteTarget?.name}</strong>? This cannot be undone.
         </p>
+        {deleteTarget?.isDefault && (
+          <p className="text-xs text-foreground-subtle mt-2">
+            This is a default agent seeded by Conductor — it will be recreated automatically the next
+            time it&apos;s needed.
+          </p>
+        )}
         <div className="flex gap-3 mt-4">
           <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
             {deleting ? 'Deleting…' : 'Delete agent'}

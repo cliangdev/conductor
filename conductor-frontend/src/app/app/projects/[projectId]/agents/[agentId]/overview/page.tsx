@@ -1,6 +1,17 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { ActivityIcon, ArrowRightIcon } from 'lucide-react'
 import { useAgent } from '@/contexts/AgentContext'
+import { useAuth } from '@/contexts/AuthContext'
+import { listWorkflows } from '@/lib/workflows'
+
+// Matches KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME on the backend — the only knowledge
+// domain agent today. Kept as a literal here (rather than importing a shared constant) since the
+// frontend has no equivalent domain module; if a second default agent gains a runs cross-link this
+// should become a small map keyed by agent slug instead.
+const LIBRARIAN_WORKFLOW_NAME = 'knowledge-librarian'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -8,6 +19,47 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <dt className="text-xs uppercase tracking-wide text-muted-foreground">{label}</dt>
       <dd className="mt-0.5 text-sm text-foreground">{children}</dd>
     </div>
+  )
+}
+
+/** Cross-links to the knowledge-librarian workflow's Runs tab. Hides itself entirely if the
+ *  workflow can't be resolved (not provisioned yet, or the lookup fails) — never a broken link. */
+function LibrarianRecentActivity({ projectId }: { projectId: string }) {
+  const { accessToken } = useAuth()
+  const [workflowId, setWorkflowId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!accessToken) return
+    let cancelled = false
+    listWorkflows(projectId, accessToken)
+      .then((workflows) => {
+        if (cancelled) return
+        setWorkflowId(workflows.find((w) => w.name === LIBRARIAN_WORKFLOW_NAME)?.id ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setWorkflowId(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, accessToken])
+
+  if (!workflowId) return null
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold mb-2">Recent activity</h2>
+      <Link
+        href={`/app/projects/${projectId}/workflows/${workflowId}/runs`}
+        className="flex items-center justify-between gap-2 text-sm border rounded-lg p-4 text-foreground hover:border-primary/50 transition-colors"
+      >
+        <span className="flex items-center gap-2">
+          <ActivityIcon className="h-4 w-4 text-muted-foreground" />
+          View knowledge-librarian runs
+        </span>
+        <ArrowRightIcon className="h-3.5 w-3.5 text-muted-foreground" />
+      </Link>
+    </section>
   )
 }
 
@@ -28,6 +80,10 @@ export default function AgentOverviewPage() {
         <Field label="Tools">{agent.toolIds.length}</Field>
         <Field label="Slug"><span className="font-mono text-xs">{agent.slug}</span></Field>
       </dl>
+
+      {agent.isDefault && agent.slug === 'knowledge-librarian' && (
+        <LibrarianRecentActivity projectId={agent.projectId} />
+      )}
 
       {agent.systemPrompt && (
         <section>
