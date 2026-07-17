@@ -4,18 +4,17 @@ export const dynamic = 'force-dynamic'
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { BotIcon } from 'lucide-react'
+import Link from 'next/link'
+import { ArrowRightIcon, BotIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { listAgents, updateAgent, deleteAgent, apiErrorMessage, type Agent } from '@/lib/api'
-import { ProviderKeysPanel } from '@/components/agents/ProviderKeysPanel'
 import { DefaultAgentBadge } from '@/components/agents/DefaultAgentBadge'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Modal } from '@/components/ui/modal'
-import { Tabs } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import { RowActionsMenu } from '@/components/ui/RowActionsMenu'
@@ -27,8 +26,7 @@ export default function AgentsPage() {
   const { accessToken } = useAuth()
   const router = useRouter()
   const { showToast } = useToast()
-  const { can, loading: roleLoading } = usePermissions()
-  const [tab, setTab] = useState<'agents' | 'providers'>('agents')
+  const { can } = usePermissions()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null)
@@ -82,22 +80,18 @@ export default function AgentsPage() {
       <PageHeader
         title="Agents"
         description="Named AI agents that can analyze data and run tools inside your workflows."
-        actions={tab === 'agents' ? newAgentAction : undefined}
+        actions={newAgentAction}
       />
 
-      <Tabs
-        className="mb-4"
-        value={tab}
-        onValueChange={(v) => setTab(v as 'agents' | 'providers')}
-        items={[
-          { value: 'agents', label: 'Agents' },
-          { value: 'providers', label: 'Providers' },
-        ]}
-      />
+      <Link
+        href={`/app/projects/${projectId}/settings/providers`}
+        className="mb-4 flex items-center gap-1 text-sm text-primary hover:underline w-fit"
+      >
+        Manage AI providers
+        <ArrowRightIcon className="h-3.5 w-3.5" />
+      </Link>
 
-      {tab === 'providers' ? (
-        <ProviderKeysPanel projectId={projectId} canMutate={canManage} roleLoading={roleLoading} />
-      ) : loading ? (
+      {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-32" />)}
         </div>

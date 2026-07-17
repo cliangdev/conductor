@@ -31,7 +31,7 @@ describe('KnowledgeSetupChecklist', () => {
     expect(screen.getByText('Project API key')).toBeInTheDocument()
     // Unsatisfied rows render their hint links.
     await waitFor(() => {
-      expect(screen.getByText('Add in Agents')).toBeInTheDocument()
+      expect(screen.getByText('Add in Providers')).toBeInTheDocument()
       expect(screen.getByText('Add in Settings')).toBeInTheDocument()
     })
   })
@@ -43,7 +43,7 @@ describe('KnowledgeSetupChecklist', () => {
     render(<KnowledgeSetupChecklist projectId="proj-1" token="tok" onEnable={vi.fn()} enabling={false} />)
 
     await waitFor(() => {
-      expect(screen.queryByText('Add in Agents')).not.toBeInTheDocument()
+      expect(screen.queryByText('Add in Providers')).not.toBeInTheDocument()
     })
     // API key row is still unsatisfied.
     expect(screen.getByText('Add in Settings')).toBeInTheDocument()
@@ -85,7 +85,7 @@ describe('KnowledgeSetupChecklist', () => {
     render(<KnowledgeSetupChecklist projectId="proj-1" token="tok" onEnable={vi.fn()} enabling={false} />)
 
     await waitFor(() => {
-      expect(screen.getByText('Add in Agents')).toBeInTheDocument()
+      expect(screen.getByText('Add in Providers')).toBeInTheDocument()
       expect(screen.getByText('Add in Settings')).toBeInTheDocument()
     })
   })

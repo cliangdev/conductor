@@ -85,8 +85,8 @@ export function KnowledgeSetupChecklist({
           label="Claude credential"
           satisfied={credentialOk}
           hint={
-            <Link href={`/app/projects/${projectId}/agents`} className="text-primary hover:underline">
-              Add in Agents
+            <Link href={`/app/projects/${projectId}/settings/providers`} className="text-primary hover:underline">
+              Add in Providers
             </Link>
           }
         />
