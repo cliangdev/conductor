@@ -2,10 +2,11 @@ package com.conductor.workflow.lifecycle;
 
 import com.conductor.workflow.WorkflowValidationResult;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.networknt.schema.JsonSchema;
-import com.networknt.schema.JsonSchemaFactory;
-import com.networknt.schema.SpecVersion;
-import com.networknt.schema.ValidationMessage;
+import com.networknt.schema.Error;
+import com.networknt.schema.InputFormat;
+import com.networknt.schema.Schema;
+import com.networknt.schema.SchemaRegistry;
+import com.networknt.schema.SpecificationVersion;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
@@ -44,7 +45,7 @@ public class WorkflowDefinitionValidator {
     /** The one system trigger that cascades (fires on the event it also produces); see the cycle check below. */
     private static final String TRIGGER_STATUS_CHANGED = "status_changed";
 
-    private final JsonSchema schema;
+    private final Schema schema;
     private final SkillRegistry skillRegistry;
     private final SystemTriggerRegistry systemTriggerRegistry;
 
@@ -54,11 +55,11 @@ public class WorkflowDefinitionValidator {
         this.schema = loadSchema();
     }
 
-    private static JsonSchema loadSchema() {
-        JsonSchemaFactory factory = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012);
+    private static Schema loadSchema() {
+        SchemaRegistry registry = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12);
         ClassPathResource resource = new ClassPathResource(SCHEMA_RESOURCE);
         try (InputStream in = resource.getInputStream()) {
-            return factory.getSchema(in);
+            return registry.getSchema(in);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to load workflow definition schema from " + SCHEMA_RESOURCE, e);
         }
@@ -74,10 +75,12 @@ public class WorkflowDefinitionValidator {
         }
 
         // 1) Structural — the JSON Schema. If it fails, the document isn't safe to parse semantically.
-        Set<ValidationMessage> structural = schema.validate(definition);
+        // definition arrives as a Jackson 2 JsonNode; serialize to a string so the validator (Jackson 3
+        // internally, per json-schema-validator 3.x) never has to touch our JsonNode type.
+        List<Error> structural = schema.validate(definition.toString(), InputFormat.JSON);
         if (!structural.isEmpty()) {
             structural.stream()
-                    .map(m -> "schema: " + m.getMessage())
+                    .map(e -> "schema: " + e)
                     .sorted()
                     .forEach(errors::add);
             return new WorkflowValidationResult(errors, warnings);
