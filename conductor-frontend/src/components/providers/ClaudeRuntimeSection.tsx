@@ -151,7 +151,7 @@ export function ClaudeRuntimeSection({
       )}
       {config.source === 'builtin' && !config.builtinConfigured && (
         <p className="text-xs text-muted-foreground">
-          No runtime target is designated, and the operator's built-in Cloud Run target isn't
+          No runtime target is designated, and the operator&apos;s built-in Cloud Run target isn&apos;t
           configured either — link a runtime target below, or set GCP_CLOUDRUN_PROJECT_ID on the backend.
         </p>
       )}
