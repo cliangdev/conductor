@@ -4277,6 +4277,71 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /projects/{projectId}/agents/providers/claude-code/runtime:
+    get:
+      tags: [agents]
+      summary: Get the project's effective Claude Code runtime configuration
+      description: >-
+        DB-only, cheap — safe to call on every page load. Reports whether `runs-on: cloud-run`
+        resolves to a project-designated runtime target or the operator's builtin target, plus
+        whether that builtin is actually configured (so the UI can tell "no fallback either" apart
+        from "a target is designated").
+      operationId: getClaudeRuntime
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeRuntimeConfig'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      tags: [agents]
+      summary: Designate (or clear) the project's Claude Code runtime target
+      description: >-
+        `runtimeTargetId: null` (or omitted) clears the designation, falling `runs-on: cloud-run`
+        back to the operator's builtin target for this project. Clears the `claude-code`
+        credential's stored verification — the effective runtime just changed, so re-verify.
+      operationId: setClaudeRuntime
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetClaudeRuntimeRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaudeRuntimeConfig'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: runtimeTargetId doesn't name a runtime target in this project
+
   /projects/{projectId}/knowledge/sources:
     post:
       tags: [knowledge]
@@ -6909,6 +6974,35 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/VerificationCheck'
+
+    ClaudeRuntimeConfig:
+      type: object
+      required:
+        - source
+        - builtinConfigured
+      properties:
+        source:
+          type: string
+          enum: [project-target, builtin]
+          description: Which config below is effective for runs-on:cloud-run in this project.
+        runtimeTargetId:
+          type: string
+          nullable: true
+          description: Set iff source is project-target.
+        runtimeTarget:
+          $ref: '#/components/schemas/RuntimeTargetResponse'
+          nullable: true
+        builtinConfigured:
+          type: boolean
+          description: True when the operator's env-configured target (GCP_CLOUDRUN_PROJECT_ID) has a non-blank project id, regardless of source — so the UI can tell whether there's a fallback if the designation is cleared.
+
+    SetClaudeRuntimeRequest:
+      type: object
+      properties:
+        runtimeTargetId:
+          type: string
+          nullable: true
+          description: A runtime target's id to designate, or null/omitted to clear the designation and fall back to builtin.
 
     AvailableAgentTool:
       type: object

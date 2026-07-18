@@ -76,9 +76,7 @@ public class ProviderCredentialService {
                 });
         // A replaced key has never been verified — clear any stale result from the old key rather than
         // let the UI keep showing a "Verified" badge that no longer means anything.
-        credential.setLastVerifiedAt(null);
-        credential.setLastVerificationStatus(null);
-        credential.setLastVerificationReport(null);
+        clearVerificationFields(credential);
         crypto.putApiKey(credential, apiKey);
         return repository.save(credential);
     }
@@ -117,6 +115,27 @@ public class ProviderCredentialService {
             credential.setLastVerificationReport(reportJson);
             repository.save(credential);
         });
+    }
+
+    /**
+     * Clears a stale verification result without touching the key itself — used when something other
+     * than a key replacement invalidates the last probe (e.g. {@code ClaudeRuntimeService.setTarget}
+     * changing which runtime the {@code claude-code} credential's readiness depends on). A no-op when
+     * no row exists.
+     */
+    @Transactional
+    public void clearVerification(String projectId, String provider) {
+        repository.findByProjectIdAndProvider(projectId, provider)
+                .ifPresent(credential -> {
+                    clearVerificationFields(credential);
+                    repository.save(credential);
+                });
+    }
+
+    private void clearVerificationFields(ProviderCredential credential) {
+        credential.setLastVerifiedAt(null);
+        credential.setLastVerificationStatus(null);
+        credential.setLastVerificationReport(null);
     }
 
     /**

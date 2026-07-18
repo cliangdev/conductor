@@ -1,6 +1,8 @@
 package com.conductor.workflow;
 
 import com.conductor.agent.credential.ProviderCredentialService;
+import com.conductor.repository.ProjectSettingsRepository;
+import com.conductor.service.ClaudeRuntimeService;
 import com.conductor.service.ProviderVerificationService.Check;
 import com.conductor.service.ProviderVerificationService.CheckStatus;
 import com.conductor.service.RuntimeTargetService;
@@ -23,10 +25,12 @@ import static org.mockito.Mockito.when;
 
 /**
  * Pure unit test (no Spring/DB) for {@link ClaudeCodeRuntimePreflight}'s check chain against the
- * builtin, env-configured runtime target (Phase 1 scope — project-level designation is a later phase).
- * {@link RuntimeTargetResolver} is real (its "cloud-run" branch is pure config, no DB lookup) rather
- * than mocked; {@link CloudRunClientFactory} uses its package-private test-seam constructor so the
- * builtin ({@code connectionId == null}) path exercises the exact clients this test controls.
+ * builtin, env-configured runtime target — no project ever has a {@code claude_runtime_target_id}
+ * designation in these tests ({@link ProjectSettingsRepository} always returns empty), so resolution
+ * falls through to builtin the same way it did before project-level designation existed.
+ * {@link RuntimeTargetResolver} and {@link ClaudeRuntimeService} are real (pure config/mocked-repo, no
+ * DB) rather than mocked; {@link CloudRunClientFactory} uses its package-private test-seam constructor
+ * so the builtin ({@code connectionId == null}) path exercises the exact clients this test controls.
  */
 class ClaudeCodeRuntimePreflightTest {
 
@@ -34,16 +38,15 @@ class ClaudeCodeRuntimePreflightTest {
 
     private final ProviderCredentialService providerCredentialService = mock(ProviderCredentialService.class);
     private final RuntimeTargetService runtimeTargetService = mock(RuntimeTargetService.class);
+    private final ProjectSettingsRepository projectSettingsRepository = mock(ProjectSettingsRepository.class);
     private final JobsClient jobsClient = mock(JobsClient.class);
     private final ExecutionsClient executionsClient = mock(ExecutionsClient.class);
     private final TasksClient tasksClient = mock(TasksClient.class);
 
     @Test
     void check_blankBuiltinProjectId_failsRuntimeConfigAndStops() {
-        RuntimeTargetResolver resolver = new RuntimeTargetResolver("", "us-central1",
-                "conductor-claude-code", runtimeTargetService);
-        ClaudeCodeRuntimePreflight preflight = new ClaudeCodeRuntimePreflight(
-                providerCredentialService, resolver, Optional.empty());
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
+        ClaudeCodeRuntimePreflight preflight = preflightFor("", Optional.empty());
 
         List<Check> checks = preflight.check(PROJECT_ID);
 
@@ -55,10 +58,8 @@ class ClaudeCodeRuntimePreflightTest {
 
     @Test
     void check_localProfile_warnsCloudRunClientsAndStops() {
-        RuntimeTargetResolver resolver = new RuntimeTargetResolver("configured-project", "us-central1",
-                "conductor-claude-code", runtimeTargetService);
-        ClaudeCodeRuntimePreflight preflight = new ClaudeCodeRuntimePreflight(
-                providerCredentialService, resolver, Optional.empty());
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
+        ClaudeCodeRuntimePreflight preflight = preflightFor("configured-project", Optional.empty());
 
         List<Check> checks = preflight.check(PROJECT_ID);
 
@@ -71,6 +72,7 @@ class ClaudeCodeRuntimePreflightTest {
 
     @Test
     void check_jobNotFound_failsCloudRunJob() {
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(jobsClient.getJob(any(JobName.class))).thenThrow(notFound());
         ClaudeCodeRuntimePreflight preflight = builtinConfiguredPreflight();
 
@@ -85,6 +87,7 @@ class ClaudeCodeRuntimePreflightTest {
 
     @Test
     void check_permissionDenied_failsCloudRunJob() {
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(jobsClient.getJob(any(JobName.class))).thenThrow(permissionDenied());
         ClaudeCodeRuntimePreflight preflight = builtinConfiguredPreflight();
 
@@ -96,6 +99,7 @@ class ClaudeCodeRuntimePreflightTest {
 
     @Test
     void check_jobReachable_passesCloudRunJobAndWarnsTokenValidity() {
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(jobsClient.getJob(any(JobName.class))).thenReturn(Job.getDefaultInstance());
         ClaudeCodeRuntimePreflight preflight = builtinConfiguredPreflight();
 
@@ -110,6 +114,7 @@ class ClaudeCodeRuntimePreflightTest {
 
     @Test
     void check_noSubscriptionToken_warnsButStillRunsRuntimeChecks() {
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(providerCredentialService.hasCredential(PROJECT_ID, "claude-code")).thenReturn(false);
         when(jobsClient.getJob(any(JobName.class))).thenReturn(Job.getDefaultInstance());
         ClaudeCodeRuntimePreflight preflight = builtinConfiguredPreflight();
@@ -121,13 +126,20 @@ class ClaudeCodeRuntimePreflightTest {
     }
 
     private ClaudeCodeRuntimePreflight builtinConfiguredPreflight() {
-        RuntimeTargetResolver resolver = new RuntimeTargetResolver("configured-project", "us-central1",
-                "conductor-claude-code", runtimeTargetService);
         CloudRunClientFactory factory = new CloudRunClientFactory(
                 jobsClient, executionsClient, tasksClient, null, key -> {
                     throw new IllegalStateException("builtin target must never build per-connection clients");
                 });
-        return new ClaudeCodeRuntimePreflight(providerCredentialService, resolver, Optional.of(factory));
+        return preflightFor("configured-project", Optional.of(factory));
+    }
+
+    private ClaudeCodeRuntimePreflight preflightFor(String builtinGcpProjectId,
+                                                     Optional<CloudRunClientFactory> factory) {
+        RuntimeTargetResolver resolver = new RuntimeTargetResolver(builtinGcpProjectId, "us-central1",
+                "conductor-claude-code", runtimeTargetService, projectSettingsRepository);
+        ClaudeRuntimeService claudeRuntimeService = new ClaudeRuntimeService(
+                projectSettingsRepository, runtimeTargetService, resolver, providerCredentialService);
+        return new ClaudeCodeRuntimePreflight(providerCredentialService, claudeRuntimeService, factory);
     }
 
     private NotFoundException notFound() {

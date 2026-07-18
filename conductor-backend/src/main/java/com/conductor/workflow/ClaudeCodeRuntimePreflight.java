@@ -1,6 +1,7 @@
 package com.conductor.workflow;
 
 import com.conductor.agent.credential.ProviderCredentialService;
+import com.conductor.service.ClaudeRuntimeService;
 import com.conductor.service.ProviderVerificationService.Check;
 import com.conductor.service.ProviderVerificationService.CheckStatus;
 import com.google.api.gax.rpc.NotFoundException;
@@ -29,29 +30,26 @@ import java.util.Optional;
  * the operator/connection credentials backing the client actually work). {@code token-validity} is
  * always appended last regardless of what came before — it is a disclaimer, not an infra check.
  *
- * <p>Phase 1 scope: only the builtin, env-configured target ({@code runs-on: "cloud-run"}) is probed —
- * project-level runtime designation ({@code claude_runtime_target_id} on {@code project_settings}) is a
- * later phase. Resolution goes through one {@link #resolveBuiltinTarget} call per {@link #check}
- * invocation whose result every subsequent check reuses, rather than each check re-resolving — so that
- * swapping this single call site for a future shared {@code ClaudeRuntimeService.resolveEffectiveClaudeRuntime}
- * seam (which will also consider a project's designated target) is a small, isolated diff.
+ * <p>Resolution goes through {@link ClaudeRuntimeService#resolveEffectiveClaudeRuntime} — the same seam
+ * {@code RuntimeTargetResolver} uses at execution time — so this probe considers a project's designated
+ * runtime target exactly the way a real {@code claude-code} step would, and the two can never drift.
+ * {@link RuntimeTargetNotReadyException} from that call (blank builtin, or a designated target that
+ * isn't ACTIVE) becomes the {@code runtime-config} fail check rather than propagating.
  */
 @Component
 public class ClaudeCodeRuntimePreflight {
 
     private static final String PROVIDER = "claude-code";
-    private static final String NO_RUNTIME_MESSAGE = "No Claude runtime configured — link a runtime "
-            + "target in Settings → AI Providers → Runtime, or set GCP_CLOUDRUN_PROJECT_ID on the backend";
 
     private final ProviderCredentialService providerCredentialService;
-    private final RuntimeTargetResolver runtimeTargetResolver;
+    private final ClaudeRuntimeService claudeRuntimeService;
     private final Optional<CloudRunClientFactory> cloudRunClientFactory;
 
     public ClaudeCodeRuntimePreflight(ProviderCredentialService providerCredentialService,
-                                      RuntimeTargetResolver runtimeTargetResolver,
+                                      ClaudeRuntimeService claudeRuntimeService,
                                       Optional<CloudRunClientFactory> cloudRunClientFactory) {
         this.providerCredentialService = providerCredentialService;
-        this.runtimeTargetResolver = runtimeTargetResolver;
+        this.claudeRuntimeService = claudeRuntimeService;
         this.cloudRunClientFactory = cloudRunClientFactory;
     }
 
@@ -64,9 +62,13 @@ public class ClaudeCodeRuntimePreflight {
                         : "No claude-code subscription token stored yet — the checks below still show "
                                 + "whether the runtime infrastructure is ready"));
 
-        CloudRunTarget target = resolveBuiltinTarget(projectId);
-        if (target == null || target.gcpProjectId() == null || target.gcpProjectId().isBlank()) {
-            checks.add(new Check("runtime-config", CheckStatus.FAIL, NO_RUNTIME_MESSAGE));
+        CloudRunTarget target;
+        try {
+            target = claudeRuntimeService.resolveEffectiveClaudeRuntime(projectId)
+                    .orElseThrow() // "cloud-run" always resolves or throws — never empty
+                    .target();
+        } catch (RuntimeTargetNotReadyException e) {
+            checks.add(new Check("runtime-config", CheckStatus.FAIL, e.getMessage()));
             checks.add(tokenValidityCheck());
             return checks;
         }
@@ -112,16 +114,6 @@ public class ClaudeCodeRuntimePreflight {
 
         checks.add(tokenValidityCheck());
         return checks;
-    }
-
-    private CloudRunTarget resolveBuiltinTarget(String projectId) {
-        // The "cloud-run" runs-on value is never project-scoped today (see RuntimeTargetResolver) — the
-        // resolved target ignores projectId entirely. It's threaded through anyway so that swapping this
-        // call for a future project-aware resolveEffectiveClaudeRuntime seam is a one-line change here,
-        // not a signature change.
-        return runtimeTargetResolver.resolve(projectId, "cloud-run")
-                .map(RuntimeTargetResolver.ResolvedRuntime::target)
-                .orElse(null);
     }
 
     private Check tokenValidityCheck() {

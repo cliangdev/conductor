@@ -12,9 +12,11 @@ import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
+import com.conductor.service.ClaudeRuntimeService;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.ProviderVerificationService;
+import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,6 +55,8 @@ class AgentControllerTest {
     @MockitoBean private AgentService agentService;
     @MockitoBean private ProviderCredentialService providerCredentialService;
     @MockitoBean private ProviderVerificationService providerVerificationService;
+    @MockitoBean private ClaudeRuntimeService claudeRuntimeService;
+    @MockitoBean private RuntimeTargetService runtimeTargetService;
     @MockitoBean private ProjectSecurityService projectSecurityService;
     @MockitoBean private ObjectMapper objectMapper;
 
@@ -281,6 +285,70 @@ class AgentControllerTest {
                 .andExpect(jsonPath("$.status").value("verified"))
                 .andExpect(jsonPath("$.checks[0].name").value("anthropic-api"))
                 .andExpect(jsonPath("$.checks[0].status").value("pass"));
+    }
+
+    // ---- getClaudeRuntime / setClaudeRuntime ----
+
+    @Test
+    void getClaudeRuntime_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude-code/runtime")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getClaudeRuntime_builtinSource_returnsConfigWithoutTarget() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(claudeRuntimeService.getConfig(PROJECT_ID)).thenReturn(
+                new ClaudeRuntimeService.ClaudeRuntimeConfig("builtin", null, null, true));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude-code/runtime")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value("builtin"))
+                .andExpect(jsonPath("$.builtinConfigured").value(true))
+                .andExpect(jsonPath("$.runtimeTarget").doesNotExist());
+    }
+
+    @Test
+    void setClaudeRuntime_nonAdmin_returns403() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(put("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude-code/runtime")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"runtimeTargetId\":\"target-1\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void setClaudeRuntime_happyPath_returnsDesignatedTargetConfig() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        com.conductor.entity.RuntimeTarget target = new com.conductor.entity.RuntimeTarget();
+        target.setId("target-1");
+        target.setName("my-target");
+        target.setProvider("gcp-cloud-run");
+        target.setStatus(com.conductor.entity.RuntimeTargetStatus.ACTIVE);
+        target.setConfigJson("{}");
+        target.setCreatedAt(java.time.OffsetDateTime.now());
+        target.setUpdatedAt(java.time.OffsetDateTime.now());
+        when(claudeRuntimeService.setTarget(PROJECT_ID, "target-1")).thenReturn(
+                new ClaudeRuntimeService.ClaudeRuntimeConfig("project-target", "target-1", target, true));
+        when(runtimeTargetService.toResponse(target)).thenReturn(
+                new com.conductor.generated.model.RuntimeTargetResponse()
+                        .id("target-1").name("my-target")
+                        .status(com.conductor.generated.model.RuntimeTargetResponse.StatusEnum.ACTIVE));
+
+        mockMvc.perform(put("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude-code/runtime")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"runtimeTargetId\":\"target-1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value("project-target"))
+                .andExpect(jsonPath("$.runtimeTargetId").value("target-1"))
+                .andExpect(jsonPath("$.runtimeTarget.name").value("my-target"));
     }
 
     // ---- avatar ----

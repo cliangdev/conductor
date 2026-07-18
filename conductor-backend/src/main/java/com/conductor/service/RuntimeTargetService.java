@@ -7,6 +7,7 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.CreateRuntimeTargetRequest;
+import com.conductor.generated.model.RuntimeTargetResponse;
 import com.conductor.generated.model.UpdateRuntimeTargetRequest;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.connector.gcp.GcpConnector;
@@ -183,6 +184,32 @@ public class RuntimeTargetService {
     public Optional<RuntimeTarget> findActiveByName(String projectId, String name) {
         return repository.findByProjectIdAndName(projectId, name)
                 .filter(t -> t.getStatus() == RuntimeTargetStatus.ACTIVE);
+    }
+
+    /**
+     * External-DTO mapping shared by {@code RuntimeTargetController} and
+     * {@code AgentController}'s Claude runtime endpoints — so a target only ever gets shaped into its
+     * API representation in one place.
+     */
+    public RuntimeTargetResponse toResponse(RuntimeTarget target) {
+        TargetRuntimeConfig config = configOf(target);
+        RuntimeTargetResponse response = new RuntimeTargetResponse()
+                .id(target.getId())
+                .name(target.getName())
+                .provider(target.getProvider())
+                .connectionId(target.getConnectionId())
+                .gcpProjectId(config.gcpProjectId())
+                .region(config.region())
+                .jobName(config.jobName())
+                .image(config.image())
+                .status(RuntimeTargetResponse.StatusEnum.fromValue(target.getStatus().name()))
+                .errorMessage(target.getErrorMessage())
+                .createdAt(target.getCreatedAt())
+                .updatedAt(target.getUpdatedAt());
+        if (!config.warnings().isEmpty()) {
+            config.warnings().forEach(response::addWarningsItem);
+        }
+        return response;
     }
 
     /** Provider-neutral snapshot of a target's config, so callers never parse {@code configJson} themselves. */

@@ -6,21 +6,26 @@ import com.conductor.agent.AgentService;
 import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.agent.credential.ProviderCredentialService.ProviderCredentialStatusView;
+import com.conductor.entity.RuntimeTarget;
 import com.conductor.entity.User;
 import com.conductor.generated.api.AgentsApi;
 import com.conductor.generated.model.AgentConfig;
 import com.conductor.generated.model.AgentProviderInfo;
 import com.conductor.generated.model.AgentResponse;
 import com.conductor.generated.model.AvailableAgentTool;
+import com.conductor.generated.model.ClaudeRuntimeConfig;
 import com.conductor.generated.model.CreateAgentRequest;
 import com.conductor.generated.model.ProviderCredentialStatus;
 import com.conductor.generated.model.ProviderVerificationReport;
 import com.conductor.generated.model.ProviderVerificationSummary;
+import com.conductor.generated.model.SetClaudeRuntimeRequest;
 import com.conductor.generated.model.SetProviderCredentialRequest;
 import com.conductor.generated.model.UpdateAgentRequest;
 import com.conductor.generated.model.VerificationCheck;
+import com.conductor.service.ClaudeRuntimeService;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.ProviderVerificationService;
+import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -50,17 +55,23 @@ public class AgentController implements AgentsApi {
     private final AgentService agentService;
     private final ProviderCredentialService providerCredentialService;
     private final ProviderVerificationService providerVerificationService;
+    private final ClaudeRuntimeService claudeRuntimeService;
+    private final RuntimeTargetService runtimeTargetService;
     private final ProjectSecurityService projectSecurityService;
     private final ObjectMapper objectMapper;
 
     public AgentController(AgentService agentService,
                            ProviderCredentialService providerCredentialService,
                            ProviderVerificationService providerVerificationService,
+                           ClaudeRuntimeService claudeRuntimeService,
+                           RuntimeTargetService runtimeTargetService,
                            ProjectSecurityService projectSecurityService,
                            ObjectMapper objectMapper) {
         this.agentService = agentService;
         this.providerCredentialService = providerCredentialService;
         this.providerVerificationService = providerVerificationService;
+        this.claudeRuntimeService = claudeRuntimeService;
+        this.runtimeTargetService = runtimeTargetService;
         this.projectSecurityService = projectSecurityService;
         this.objectMapper = objectMapper;
     }
@@ -169,6 +180,20 @@ public class AgentController implements AgentsApi {
     }
 
     @Override
+    public ResponseEntity<ClaudeRuntimeConfig> getClaudeRuntime(String projectId) {
+        requireMember(projectId);
+        return ResponseEntity.ok(toRuntimeConfig(claudeRuntimeService.getConfig(projectId)));
+    }
+
+    @Override
+    public ResponseEntity<ClaudeRuntimeConfig> setClaudeRuntime(String projectId, SetClaudeRuntimeRequest request) {
+        requireAdminOrCreator(projectId);
+        ClaudeRuntimeService.ClaudeRuntimeConfig config =
+                claudeRuntimeService.setTarget(projectId, request.getRuntimeTargetId());
+        return ResponseEntity.ok(toRuntimeConfig(config));
+    }
+
+    @Override
     public ResponseEntity<List<AvailableAgentTool>> listAgentTools(String projectId) {
         requireMember(projectId);
         List<AvailableAgentTool> tools = agentService.listAvailableTools(projectId).stream()
@@ -238,6 +263,15 @@ public class AgentController implements AgentsApi {
                                 .status(VerificationCheck.StatusEnum.fromValue(c.status().value()))
                                 .message(c.message()))
                         .toList());
+    }
+
+    private ClaudeRuntimeConfig toRuntimeConfig(ClaudeRuntimeService.ClaudeRuntimeConfig config) {
+        RuntimeTarget target = config.target();
+        return new ClaudeRuntimeConfig()
+                .source(ClaudeRuntimeConfig.SourceEnum.fromValue(config.source()))
+                .runtimeTargetId(config.runtimeTargetId())
+                .runtimeTarget(target != null ? runtimeTargetService.toResponse(target) : null)
+                .builtinConfigured(config.builtinConfigured());
     }
 
     /** Best-effort extraction of the first failing check's message from a persisted report — never throws. */
