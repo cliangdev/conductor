@@ -6,3 +6,43 @@ while read local_ref local_sha remote_ref remote_sha; do
     exit 1
   fi
 done
+
+# --- scoped local checks, mirrors a fast subset of CI ---
+
+# Non-interactive shells don't source ~/.zshrc, so nvm's lazy-loaded npm/npx
+# shell functions aren't on PATH here. Fall back to the nvm default version.
+if ! command -v npm >/dev/null 2>&1; then
+  nvm_dir="${NVM_DIR:-$HOME/.nvm}"
+  if [ -d "$nvm_dir/versions/node" ]; then
+    default_alias=$(cat "$nvm_dir/alias/default" 2>/dev/null)
+    node_bin=$(find "$nvm_dir/versions/node" -maxdepth 1 -type d -name "v${default_alias}*" 2>/dev/null | sort -V | tail -1)
+    [ -z "$node_bin" ] && node_bin=$(find "$nvm_dir/versions/node" -maxdepth 1 -type d 2>/dev/null | sort -V | tail -1)
+    [ -n "$node_bin" ] && PATH="$node_bin/bin:$PATH"
+  fi
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "pre-push: npm not found on PATH, skipping local checks (CI remains the gate)" >&2
+  exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root" || exit 0
+
+base=$(git merge-base HEAD origin/main 2>/dev/null)
+if [ -z "$base" ]; then
+  exit 0
+fi
+
+changed_files=$(git diff --name-only "$base" HEAD)
+
+if echo "$changed_files" | grep -q '^conductor-frontend/'; then
+  echo "pre-push: conductor-frontend changed -- running typecheck + lint"
+  (cd conductor-frontend && npm run typecheck && npm run lint) || exit 1
+fi
+
+# conductor-backend has no fast static-analysis step (no checkstyle/spotless),
+# and the full test suite (Testcontainers) is too slow to run on every push.
+# backend-ci.yml's mvn test remains the authoritative gate for backend changes.
+
+exit 0

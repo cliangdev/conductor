@@ -2,6 +2,20 @@
 
 Practical guide for deploying, testing, and debugging changes on a PR branch.
 
+## Local Git Hooks
+
+One-time setup per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+This activates `.githooks/pre-push` and `.githooks/pre-commit`, which:
+- Block direct commits/pushes to `main` (open a PR instead).
+- On push, if `conductor-frontend/**` changed relative to `origin/main`, run `npm run typecheck && npm run lint` — the same fast checks `frontend-ci.yml` runs, so lint/type errors are caught before the PR is even opened.
+
+Backend changes are intentionally not checked pre-push: there's no fast static-analysis step (no checkstyle/spotless) and the full `mvn test` suite (Testcontainers) is too slow to run on every push. `backend-ci.yml`'s `mvn test` remains the authoritative gate for backend changes.
+
 ## PR Branch Deployment
 
 CI deploys to Cloud Run when you add a label to the PR:
