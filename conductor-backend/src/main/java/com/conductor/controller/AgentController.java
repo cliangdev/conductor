@@ -5,6 +5,7 @@ import com.conductor.agent.AgentAvatarDefaults;
 import com.conductor.agent.AgentService;
 import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.agent.credential.ProviderCredentialService;
+import com.conductor.agent.credential.ProviderCredentialService.ProviderCredentialStatusView;
 import com.conductor.entity.User;
 import com.conductor.generated.api.AgentsApi;
 import com.conductor.generated.model.AgentConfig;
@@ -13,11 +14,18 @@ import com.conductor.generated.model.AgentResponse;
 import com.conductor.generated.model.AvailableAgentTool;
 import com.conductor.generated.model.CreateAgentRequest;
 import com.conductor.generated.model.ProviderCredentialStatus;
+import com.conductor.generated.model.ProviderVerificationReport;
+import com.conductor.generated.model.ProviderVerificationSummary;
 import com.conductor.generated.model.SetProviderCredentialRequest;
 import com.conductor.generated.model.UpdateAgentRequest;
+import com.conductor.generated.model.VerificationCheck;
 import com.conductor.service.ProjectSecurityService;
+import com.conductor.service.ProviderVerificationService;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -37,17 +45,22 @@ import java.util.Map;
 @RestController
 public class AgentController implements AgentsApi {
 
+    private static final Logger log = LoggerFactory.getLogger(AgentController.class);
+
     private final AgentService agentService;
     private final ProviderCredentialService providerCredentialService;
+    private final ProviderVerificationService providerVerificationService;
     private final ProjectSecurityService projectSecurityService;
     private final ObjectMapper objectMapper;
 
     public AgentController(AgentService agentService,
                            ProviderCredentialService providerCredentialService,
+                           ProviderVerificationService providerVerificationService,
                            ProjectSecurityService projectSecurityService,
                            ObjectMapper objectMapper) {
         this.agentService = agentService;
         this.providerCredentialService = providerCredentialService;
+        this.providerVerificationService = providerVerificationService;
         this.projectSecurityService = projectSecurityService;
         this.objectMapper = objectMapper;
     }
@@ -114,14 +127,14 @@ public class AgentController implements AgentsApi {
     @Override
     public ResponseEntity<ProviderCredentialStatus> getProviderCredentialStatus(String projectId, String provider) {
         requireMember(projectId);
-        return ResponseEntity.ok(credentialStatus(projectId, provider));
+        return ResponseEntity.ok(toStatus(providerCredentialService.getStatus(projectId, provider)));
     }
 
     @Override
     public ResponseEntity<List<ProviderCredentialStatus>> listProviderCredentialStatuses(String projectId) {
         requireMember(projectId);
         List<ProviderCredentialStatus> statuses = providerCredentialService.listStatuses(projectId).stream()
-                .map(s -> new ProviderCredentialStatus().provider(s.provider()).configured(s.configured()))
+                .map(this::toStatus)
                 .toList();
         return ResponseEntity.ok(statuses);
     }
@@ -131,7 +144,15 @@ public class AgentController implements AgentsApi {
             String projectId, String provider, SetProviderCredentialRequest request) {
         requireAdminOrCreator(projectId);
         providerCredentialService.setApiKey(projectId, provider, request.getApiKey());
-        return ResponseEntity.ok(credentialStatus(projectId, provider));
+        // A probe failure must never fail the PUT — the key is already stored; verify() itself already
+        // turns expected failure modes (decrypt error, unreachable Anthropic, ...) into a report rather
+        // than an exception, so this catch is only a safety net against something unexpected.
+        try {
+            providerVerificationService.verify(projectId, provider);
+        } catch (RuntimeException e) {
+            log.warn("Post-save verification threw for project {} provider {}: {}", projectId, provider, e.getMessage());
+        }
+        return ResponseEntity.ok(toStatus(providerCredentialService.getStatus(projectId, provider)));
     }
 
     @Override
@@ -139,6 +160,12 @@ public class AgentController implements AgentsApi {
         requireAdminOrCreator(projectId);
         providerCredentialService.deleteCredential(projectId, provider);
         return ResponseEntity.noContent().build();
+    }
+
+    @Override
+    public ResponseEntity<ProviderVerificationReport> verifyProviderCredential(String projectId, String provider) {
+        requireAdminOrCreator(projectId);
+        return ResponseEntity.ok(toReport(providerVerificationService.verify(projectId, provider)));
     }
 
     @Override
@@ -187,10 +214,48 @@ public class AgentController implements AgentsApi {
                 .updatedAt(agent.getUpdatedAt());
     }
 
-    private ProviderCredentialStatus credentialStatus(String projectId, String provider) {
-        return new ProviderCredentialStatus()
-                .provider(provider)
-                .configured(providerCredentialService.hasCredential(projectId, provider));
+    private ProviderCredentialStatus toStatus(ProviderCredentialStatusView view) {
+        ProviderCredentialStatus status = new ProviderCredentialStatus()
+                .provider(view.provider())
+                .configured(view.configured());
+        if (view.lastVerificationStatus() != null && view.lastVerifiedAt() != null) {
+            status.verification(new ProviderVerificationSummary()
+                    .status(ProviderVerificationSummary.StatusEnum.fromValue(view.lastVerificationStatus()))
+                    .checkedAt(view.lastVerifiedAt())
+                    .error(firstFailingCheckMessage(view.lastVerificationReport())));
+        }
+        return status;
+    }
+
+    private ProviderVerificationReport toReport(ProviderVerificationService.VerificationReport report) {
+        return new ProviderVerificationReport()
+                .provider(report.provider())
+                .status(ProviderVerificationReport.StatusEnum.fromValue(report.status().value()))
+                .checkedAt(report.checkedAt())
+                .checks(report.checks().stream()
+                        .map(c -> new VerificationCheck()
+                                .name(c.name())
+                                .status(VerificationCheck.StatusEnum.fromValue(c.status().value()))
+                                .message(c.message()))
+                        .toList());
+    }
+
+    /** Best-effort extraction of the first failing check's message from a persisted report — never throws. */
+    private String firstFailingCheckMessage(String reportJson) {
+        if (reportJson == null || reportJson.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode checks = objectMapper.readTree(reportJson).path("checks");
+            for (JsonNode check : checks) {
+                if ("fail".equals(check.path("status").asText())) {
+                    return check.path("message").asText(null);
+                }
+            }
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private Map<String, Object> toConfigMap(AgentConfig config) {

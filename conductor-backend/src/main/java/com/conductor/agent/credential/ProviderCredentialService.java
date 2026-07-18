@@ -9,6 +9,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -32,8 +33,19 @@ public class ProviderCredentialService {
     /** Non-{@link com.conductor.agent.provider.ChatModelProvider} provider ids {@link #setApiKey} also accepts. */
     public static final Set<String> NON_MODEL_PROVIDERS = Set.of("claude-code");
 
-    /** One provider's credential status, for {@link #listStatuses}. */
-    public record ProviderCredentialStatusView(String provider, boolean configured) {}
+    /**
+     * One provider's credential status, for {@link #listStatuses}/{@link #getStatus}. The last three
+     * fields mirror {@link ProviderCredential}'s verification columns — all null when never verified
+     * (or when no credential row exists at all).
+     */
+    public record ProviderCredentialStatusView(String provider, boolean configured,
+            String lastVerificationStatus, OffsetDateTime lastVerifiedAt, String lastVerificationReport) {
+
+        /** Convenience for call sites that don't care about verification (most tests). */
+        public ProviderCredentialStatusView(String provider, boolean configured) {
+            this(provider, configured, null, null, null);
+        }
+    }
 
     private final ProviderCredentialRepository repository;
     private final ProviderCredentialCrypto crypto;
@@ -108,15 +120,14 @@ public class ProviderCredentialService {
     }
 
     /**
-     * Status (configured or not) for every known provider — registered {@link ModelProviderRegistry}
-     * ids first, then {@link #NON_MODEL_PROVIDERS} — in one query rather than N {@link #hasCredential}
-     * calls.
+     * Status (configured or not, plus last verification) for every known provider — registered
+     * {@link ModelProviderRegistry} ids first, then {@link #NON_MODEL_PROVIDERS} — in one query rather
+     * than N {@link #getStatus} calls.
      */
     @Transactional(readOnly = true)
     public List<ProviderCredentialStatusView> listStatuses(String projectId) {
-        Set<String> configured = repository.findByProjectId(projectId).stream()
-                .map(ProviderCredential::getProvider)
-                .collect(Collectors.toSet());
+        Map<String, ProviderCredential> byProvider = repository.findByProjectId(projectId).stream()
+                .collect(Collectors.toMap(ProviderCredential::getProvider, c -> c));
 
         // LinkedHashSet keeps registry-then-non-model order while guarding against a provider id
         // ever appearing in both sets.
@@ -124,7 +135,21 @@ public class ProviderCredentialService {
         allProviders.addAll(NON_MODEL_PROVIDERS);
 
         return allProviders.stream()
-                .map(provider -> new ProviderCredentialStatusView(provider, configured.contains(provider)))
+                .map(provider -> toView(provider, byProvider.get(provider)))
                 .toList();
+    }
+
+    /** Single-provider counterpart to {@link #listStatuses}, for the per-provider GET/PUT responses. */
+    @Transactional(readOnly = true)
+    public ProviderCredentialStatusView getStatus(String projectId, String provider) {
+        return toView(provider, repository.findByProjectIdAndProvider(projectId, provider).orElse(null));
+    }
+
+    private ProviderCredentialStatusView toView(String provider, ProviderCredential credential) {
+        if (credential == null) {
+            return new ProviderCredentialStatusView(provider, false, null, null, null);
+        }
+        return new ProviderCredentialStatusView(provider, true, credential.getLastVerificationStatus(),
+                credential.getLastVerifiedAt(), credential.getLastVerificationReport());
     }
 }

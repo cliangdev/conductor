@@ -4129,8 +4129,9 @@ paths:
       summary: List credential statuses for every known provider
       description: >-
         Covers every known provider — registered model providers plus non-model providers (e.g.
-        `claude-code`) — each with a `configured` flag. One call instead of N per-provider lookups.
-        Key material is never returned, only whether one is stored.
+        `claude-code`) — each with a `configured` flag and, when available, the last `verification`
+        result. One call instead of N per-provider lookups. Key material is never returned, only
+        whether one is stored.
       operationId: listProviderCredentialStatuses
       parameters:
         - name: projectId
@@ -4184,6 +4185,11 @@ paths:
     put:
       tags: [agents]
       summary: Set (create or replace) the BYO API key for a provider
+      description: >-
+        Synchronously re-verifies the credential after storing it (a real Anthropic call for
+        `claude`, a runtime-readiness probe for `claude-code`) — the response's `verification`
+        reflects the outcome. A probe failure never fails this request: the key is stored
+        regardless, and the caller sees the failure reason in `verification`.
       operationId: setProviderCredential
       parameters:
         - name: projectId
@@ -4233,6 +4239,39 @@ paths:
       responses:
         '204':
           description: Removed (idempotent — no-op if none stored)
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/agents/providers/{provider}/credential/verify:
+    post:
+      tags: [agents]
+      summary: Re-run preflight verification for a provider
+      description: >-
+        Runs a real probe (an Anthropic API call for `claude`; a Cloud Run runtime-readiness
+        chain for `claude-code`) and persists the outcome onto the credential row, if one exists.
+        Runs even when no credential is stored yet, so `claude-code` builtin runtime readiness is
+        probeable before any subscription token is ever saved.
+      operationId: verifyProviderCredential
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: provider
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Verification report (status may be `error` — this is not itself a failure response)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderVerificationReport'
         '401':
           description: Unauthenticated
         '403':
@@ -6813,6 +6852,63 @@ components:
         configured:
           type: boolean
           description: True when a key is stored for this project + provider.
+        verification:
+          $ref: '#/components/schemas/ProviderVerificationSummary'
+          nullable: true
+
+    ProviderVerificationSummary:
+      type: object
+      description: Compact last-known verification result, for list/status views. Omitted (null) when never verified.
+      required:
+        - status
+        - checkedAt
+      properties:
+        status:
+          type: string
+          enum: [verified, error]
+        checkedAt:
+          type: string
+          format: date-time
+        error:
+          type: string
+          nullable: true
+          description: The first failing check's message, when status is `error`.
+
+    VerificationCheck:
+      type: object
+      required:
+        - name
+        - status
+        - message
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [pass, fail, warn]
+        message:
+          type: string
+
+    ProviderVerificationReport:
+      type: object
+      required:
+        - provider
+        - status
+        - checkedAt
+        - checks
+      properties:
+        provider:
+          type: string
+        status:
+          type: string
+          enum: [verified, error]
+        checkedAt:
+          type: string
+          format: date-time
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/VerificationCheck'
 
     AvailableAgentTool:
       type: object
