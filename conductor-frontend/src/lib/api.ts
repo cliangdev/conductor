@@ -442,9 +442,29 @@ export interface AgentProviderInfo {
   defaultModel?: string | null
 }
 
+export interface ProviderVerificationSummary {
+  status: 'verified' | 'error'
+  checkedAt: string
+  error?: string | null
+}
+
 export interface ProviderCredentialStatus {
   provider: string
   configured: boolean
+  verification?: ProviderVerificationSummary | null
+}
+
+export interface VerificationCheck {
+  name: string
+  status: 'pass' | 'fail' | 'warn'
+  message: string
+}
+
+export interface ProviderVerificationReport {
+  provider: string
+  status: 'verified' | 'error'
+  checkedAt: string
+  checks: VerificationCheck[]
 }
 
 export function listAgents(projectId: string, token: string): Promise<Agent[]> {
@@ -514,6 +534,47 @@ export function deleteProviderCredential(
   token: string,
 ): Promise<void> {
   return apiDelete(`/api/v1/projects/${projectId}/agents/providers/${provider}/credential`, token)
+}
+
+/** Re-runs preflight verification on demand — the same probe {@link setProviderCredential} triggers
+ *  automatically after a save. Runs even with no credential stored (probes `claude-code` builtin
+ *  runtime readiness pre-token). */
+export function verifyProviderCredential(
+  projectId: string,
+  provider: string,
+  token: string,
+): Promise<ProviderVerificationReport> {
+  return apiPost<ProviderVerificationReport>(
+    `/api/v1/projects/${projectId}/agents/providers/${provider}/credential/verify`,
+    {},
+    token,
+  )
+}
+
+/** Which Cloud Run target `runs-on: cloud-run` resolves to for this project. DB-only — cheap enough to
+ *  refetch on every page load so env drift (an operator setting GCP_CLOUDRUN_PROJECT_ID) is visible. */
+export interface ClaudeRuntimeConfig {
+  source: 'project-target' | 'builtin'
+  runtimeTargetId?: string | null
+  runtimeTarget?: RuntimeTarget | null
+  builtinConfigured: boolean
+}
+
+export function getClaudeRuntime(projectId: string, token: string): Promise<ClaudeRuntimeConfig> {
+  return apiGet<ClaudeRuntimeConfig>(`/api/v1/projects/${projectId}/agents/providers/claude-code/runtime`, token)
+}
+
+/** `runtimeTargetId: null` clears the designation, falling back to the operator's builtin target. */
+export function setClaudeRuntime(
+  projectId: string,
+  runtimeTargetId: string | null,
+  token: string,
+): Promise<ClaudeRuntimeConfig> {
+  return apiPut<ClaudeRuntimeConfig>(
+    `/api/v1/projects/${projectId}/agents/providers/claude-code/runtime`,
+    { runtimeTargetId },
+    token,
+  )
 }
 
 // ── Project-scoped API keys (machine-to-machine: CLI/MCP daemon, claude-code runtime) ──────

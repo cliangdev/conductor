@@ -520,9 +520,9 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 | `CLAUDE_TIMEOUT` | The step exceeded `timeout_minutes`. |
 | `CLAUDE_CONFIG_ERROR` | Bad step configuration (e.g. invalid `inputs`/`output_schema` JSON, or `claude` failed to launch). |
 | `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` | No Claude Code subscription OAuth token is configured for this runtime — self-hosted: the daemon host; cloud-run/runtime targets: the project's Claude Code credential. See "Auth & runtime targets" below. |
-| `CLAUDE_LAUNCH_ERROR` | The Cloud Run execution failed to launch, or ended without the container ever reporting a result (e.g. image pull failure, OOM kill). |
+| `CLAUDE_LAUNCH_ERROR` | The Cloud Run execution failed to launch, or ended without the container ever reporting a result (e.g. image pull failure, OOM kill) — the target itself resolved fine; something went wrong running on it. |
 | `RUNTIME_TARGET_NOT_FOUND` | `runs-on` names a [runtime target](#runtime-targets-bring-your-own-cloud-run) that no longer exists in the project. |
-| `RUNTIME_TARGET_NOT_READY` | The named runtime target exists but isn't `ACTIVE` (still `PROVISIONING`, or `ERROR`) — fix it under **Integrations → Google Cloud** and retry. |
+| `RUNTIME_TARGET_NOT_READY` | The resolved target isn't usable: a named target that exists but isn't `ACTIVE` (fix under **Integrations → Google Cloud** and retry), a project-designated `cloud-run` target in the same state (fix under **Settings → AI Providers → Runtime**), or — on `runs-on: cloud-run` with no designation and a blank builtin `GCP_CLOUDRUN_PROJECT_ID` — no runtime configured at all (this used to surface as an opaque `CLAUDE_LAUNCH_ERROR`; see [Cloud Run](#cloud-run)'s resolution order). |
 
 **Auth & runtime targets** — `claude-code` steps are **subscription auth only, on every runtime**. The containerized Claude Code CLI is the subscription runtime; there is no API-key path for this step type:
 
@@ -960,9 +960,19 @@ jobs:
           prompt: Summarize the attached data.
 ```
 
-Currently only meaningful for `claude-code` steps. The step runs as a **Google Cloud Run Job execution** on Conductor's GCP project rather than your own infrastructure, using subscription auth. No setup required on your end beyond configuring the project's **Claude Code (subscription)** credential under **Settings → AI Providers** — see "Auth & runtime targets" in the `claude-code` step section above.
+Currently only meaningful for `claude-code` steps. The step runs as a **Google Cloud Run Job execution**, using subscription auth. No setup required beyond configuring the project's **Claude Code (subscription)** credential under **Settings → AI Providers** — see "Auth & runtime targets" in the `claude-code` step section above.
 
-**One-time infra setup** (operator-only, not per-project): the backend launches executions against a pre-created Cloud Run Job resource rather than creating one per run — image, retry policy, etc. are pinned on that resource:
+**Resolution order.** `runs-on: cloud-run` doesn't name one fixed place to run — it resolves per project, checked in order:
+
+1. **A project-designated runtime target** (**Settings → AI Providers → Runtime**) — an admin links one of the project's [runtime targets](#runtime-targets-bring-your-own-cloud-run) as "the" `cloud-run` destination for that project. Must be `ACTIVE` with a live connection; otherwise the step fails with `RUNTIME_TARGET_NOT_READY` carrying the target's own error (e.g. its connection was removed).
+2. **The operator's builtin target** — Conductor's own GCP project, configured via the `GCP_CLOUDRUN_*` env vars below — used when the project has no designation.
+3. **Neither configured** — no designation *and* a blank builtin project id — fails the step with an actionable `RUNTIME_TARGET_NOT_READY` ("No Claude runtime configured — link a runtime target in Settings → AI Providers → Runtime, or set GCP_CLOUDRUN_PROJECT_ID on the backend") instead of the opaque Cloud Run gRPC error this used to surface as an undiagnosable `CLAUDE_LAUNCH_ERROR`.
+
+This applies to explicit `runs-on: cloud-run` in workflow YAML too — the designation is project-wide, not step-specific. An author who needs a *specific* target regardless of the project's designation should pin it by name (`runs-on: <target-name>`) instead — see [Runtime targets](#runtime-targets-bring-your-own-cloud-run).
+
+The **Settings → AI Providers → Runtime** section (next to the Claude Code credential row) shows the effective runtime for the project — the designated target's status, or whether the builtin fallback is actually configured — and lets an admin change or clear the designation. Provider "Verify" reruns a preflight against whichever target is effective, so a misconfigured runtime (e.g. the incident that prompted this: a blank `GCP_CLOUDRUN_PROJECT_ID` on the deployed backend) shows up as an actionable error there instead of only failing at the next real run.
+
+**One-time infra setup for the builtin target** (operator-only, not per-project): the backend launches executions against a pre-created Cloud Run Job resource rather than creating one per run — image, retry policy, etc. are pinned on that resource:
 
 ```bash
 gcloud run jobs create conductor-claude-code \
@@ -972,7 +982,7 @@ gcloud run jobs create conductor-claude-code \
   --region <region>
 ```
 
-The backend needs these env vars to target it:
+The backend needs these env vars to target it — all optional once at least one project designates a runtime target instead, but the builtin remains the fallback for every project that hasn't:
 
 | Variable | Description |
 |----------|--------------|

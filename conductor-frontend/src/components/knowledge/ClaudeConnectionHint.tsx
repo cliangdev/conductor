@@ -6,15 +6,17 @@ import { ArrowRightIcon, InfoIcon } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { listProviderCredentialStatuses } from '@/lib/api'
 
-type ConnectionState = 'loading' | 'connected' | 'api-key-only' | 'not-connected'
+type ConnectionState = 'loading' | 'connected' | 'verification-error' | 'api-key-only' | 'not-connected'
 
 /**
  * Admin-only guidance shown in the Knowledge empty state. Replaces the old multi-row
  * KnowledgeSetupChecklist — a project API key is no longer needed for Conductor MCP auth
  * (the backend mints a run-scoped token automatically, see docs/workflows.md), so this checks
  * Claude connectivity only, with a single `listProviderCredentialStatuses` call. Renders nothing
- * once the `claude-code` runtime is connected: guidance, never a gate — `Enable Knowledge` stays
- * clickable regardless, since the pipeline self-heals.
+ * once the `claude-code` runtime is connected AND verified — `configured` alone no longer means
+ * "will work" (see docs/workflows.md's verification section), so a stored-but-failing credential
+ * still surfaces guidance here. Never a gate either way — `Enable Knowledge` stays clickable
+ * regardless, since the pipeline self-heals.
  */
 export function ClaudeConnectionHint({ projectId, token }: { projectId: string; token: string }) {
   const [state, setState] = useState<ConnectionState>('loading')
@@ -25,9 +27,14 @@ export function ClaudeConnectionHint({ projectId, token }: { projectId: string; 
       .then((statuses) => {
         if (cancelled) return
         const configured = Object.fromEntries(statuses.map((s) => [s.provider, s.configured]))
-        if (configured['claude-code']) setState('connected')
-        else if (configured['claude']) setState('api-key-only')
-        else setState('not-connected')
+        const claudeCode = statuses.find((s) => s.provider === 'claude-code')
+        if (configured['claude-code']) {
+          setState(claudeCode?.verification?.status === 'error' ? 'verification-error' : 'connected')
+        } else if (configured['claude']) {
+          setState('api-key-only')
+        } else {
+          setState('not-connected')
+        }
       })
       .catch(() => {
         if (!cancelled) setState('not-connected')
@@ -47,9 +54,11 @@ export function ClaudeConnectionHint({ projectId, token }: { projectId: string; 
 
   const settingsHref = `/app/projects/${projectId}/settings/providers`
   const message =
-    state === 'api-key-only'
-      ? 'Claude is connected via API key. The bootstrap workflow additionally needs a Claude Code subscription.'
-      : 'Connect Claude to power the librarian.'
+    state === 'verification-error'
+      ? 'Claude Code is connected but failed verification — review in Settings → AI Providers.'
+      : state === 'api-key-only'
+        ? 'Claude is connected via API key. The bootstrap workflow additionally needs a Claude Code subscription.'
+        : 'Connect Claude to power the librarian.'
 
   return (
     <div className="flex items-center gap-2 rounded-md border border-border bg-surface-raised px-3 py-2 text-xs text-muted-foreground">

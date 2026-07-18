@@ -4,7 +4,13 @@ import { render, screen, waitFor } from '@testing-library/react'
 // vitest 4 flags a vi.fn() mock whose implementation returns a rejected promise as an unhandled
 // rejection even when the component awaits/catches it — drive rejections through a plain,
 // per-test behavior variable instead (see reference_vitest_rejected_promise_mock memory).
-let statusesBehavior: () => Promise<{ provider: string; configured: boolean }[]> = () =>
+interface StubStatus {
+  provider: string
+  configured: boolean
+  verification?: { status: 'verified' | 'error'; checkedAt: string; error?: string | null } | null
+}
+
+let statusesBehavior: () => Promise<StubStatus[]> = () =>
   Promise.resolve([
     { provider: 'claude-code', configured: false },
     { provider: 'claude', configured: false },
@@ -57,6 +63,46 @@ describe('ClaudeConnectionHint', () => {
     statusesBehavior = () =>
       Promise.resolve([
         { provider: 'claude-code', configured: true },
+        { provider: 'claude', configured: false },
+      ])
+
+    const { container } = render(<ClaudeConnectionHint projectId="proj-1" token="tok" />)
+
+    await waitFor(() => {
+      expect(container).toBeEmptyDOMElement()
+    })
+  })
+
+  it('renders a verification-error hint when claude-code is configured but failed its last probe', async () => {
+    statusesBehavior = () =>
+      Promise.resolve([
+        {
+          provider: 'claude-code',
+          configured: true,
+          verification: { status: 'error', checkedAt: '2026-01-01T00:00:00Z', error: 'Cloud Run Job not found' },
+        },
+        { provider: 'claude', configured: false },
+      ])
+
+    render(<ClaudeConnectionHint projectId="proj-1" token="tok" />)
+
+    expect(
+      await screen.findByText('Claude Code is connected but failed verification — review in Settings → AI Providers.'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /set up/i })).toHaveAttribute(
+      'href',
+      '/app/projects/proj-1/settings/providers',
+    )
+  })
+
+  it('renders nothing when claude-code is configured and verified', async () => {
+    statusesBehavior = () =>
+      Promise.resolve([
+        {
+          provider: 'claude-code',
+          configured: true,
+          verification: { status: 'verified', checkedAt: '2026-01-01T00:00:00Z' },
+        },
         { provider: 'claude', configured: false },
       ])
 
