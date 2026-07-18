@@ -275,8 +275,8 @@ class AgentControllerTest {
         when(providerVerificationService.verify(PROJECT_ID, "claude")).thenReturn(
                 new ProviderVerificationService.VerificationReport("claude",
                         ProviderVerificationService.ReportStatus.VERIFIED, checkedAt,
-                        List.of(new ProviderVerificationService.Check("anthropic-api",
-                                ProviderVerificationService.CheckStatus.PASS, "ok"))));
+                        List.of(new com.conductor.verification.Check("anthropic-api",
+                                com.conductor.verification.CheckStatus.PASS, "ok"))));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude/credential/verify")
                         .header("Authorization", "Bearer member-token"))

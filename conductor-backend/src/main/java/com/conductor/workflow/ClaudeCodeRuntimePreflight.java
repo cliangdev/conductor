@@ -2,8 +2,8 @@ package com.conductor.workflow;
 
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.service.ClaudeRuntimeService;
-import com.conductor.service.ProviderVerificationService.Check;
-import com.conductor.service.ProviderVerificationService.CheckStatus;
+import com.conductor.verification.Check;
+import com.conductor.verification.CheckStatus;
 import com.google.api.gax.rpc.NotFoundException;
 import com.google.api.gax.rpc.PermissionDeniedException;
 import com.google.cloud.run.v2.JobName;

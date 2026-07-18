@@ -128,6 +128,21 @@ class ProviderCredentialServiceTest {
                 new ProviderCredentialService.ProviderCredentialStatusView("claude-code", true));
     }
 
+    @Test
+    void recordVerification_skipsWhenRowAlreadyCarriesNewerResult() {
+        ProviderCredential credential = credential("proj-1", "claude");
+        java.time.OffsetDateTime newer = java.time.OffsetDateTime.now();
+        credential.setLastVerifiedAt(newer);
+        credential.setLastVerificationStatus("verified");
+        when(repository.findByProjectIdAndProvider("proj-1", "claude")).thenReturn(Optional.of(credential));
+
+        service.recordVerification("proj-1", "claude", newer.minusSeconds(30), "error", "{}");
+
+        // A slow probe that started against the old key must not overwrite the newer result.
+        org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+        assertThat(credential.getLastVerificationStatus()).isEqualTo("verified");
+    }
+
     private ProviderCredential credential(String projectId, String provider) {
         ProviderCredential credential = new ProviderCredential();
         credential.setProjectId(projectId);

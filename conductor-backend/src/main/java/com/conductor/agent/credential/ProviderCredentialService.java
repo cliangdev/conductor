@@ -104,12 +104,17 @@ public class ProviderCredentialService {
      * Persists a {@code com.conductor.service.ProviderVerificationService} probe outcome onto the
      * existing credential row, if any. A no-op when no row exists — {@code claude-code} runtime
      * readiness is probeable before any subscription token is ever stored, and there is nothing to
-     * persist onto in that case (the caller still gets the report; it's just not saved).
+     * persist onto in that case (the caller still gets the report; it's just not saved). Also a no-op
+     * when the row already carries a newer result: a slow manual verify that started against an
+     * old key must not overwrite the report a key-replacing PUT just recorded against the new one.
      */
     @Transactional
     public void recordVerification(String projectId, String provider, OffsetDateTime checkedAt,
                                    String status, String reportJson) {
         repository.findByProjectIdAndProvider(projectId, provider).ifPresent(credential -> {
+            if (credential.getLastVerifiedAt() != null && credential.getLastVerifiedAt().isAfter(checkedAt)) {
+                return;
+            }
             credential.setLastVerifiedAt(checkedAt);
             credential.setLastVerificationStatus(status);
             credential.setLastVerificationReport(reportJson);

@@ -3,8 +3,8 @@ package com.conductor.service;
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.agent.provider.ClaudeApiPreflight;
 import com.conductor.exception.CredentialEncryptionException;
-import com.conductor.service.ProviderVerificationService.Check;
-import com.conductor.service.ProviderVerificationService.CheckStatus;
+import com.conductor.verification.Check;
+import com.conductor.verification.CheckStatus;
 import com.conductor.service.ProviderVerificationService.ReportStatus;
 import com.conductor.service.ProviderVerificationService.VerificationReport;
 import com.conductor.workflow.ClaudeCodeRuntimePreflight;
@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -148,14 +149,16 @@ class ProviderVerificationServiceTest {
     }
 
     @Test
-    void verify_unknownProvider_returnsWarnAndOverallVerified() {
+    void verify_unknownProvider_returnsWarnButPersistsNothing() {
         VerificationReport report = service.verify(PROJECT_ID, "gemini");
 
         assertThat(report.status()).isEqualTo(ReportStatus.VERIFIED);
         assertThat(report.checks()).hasSize(1);
         assertThat(report.checks().get(0).status()).isEqualTo(CheckStatus.WARN);
         assertThat(report.checks().get(0).message()).containsIgnoringCase("not supported");
-        verify(providerCredentialService).recordVerification(
-                eq(PROJECT_ID), eq("gemini"), any(OffsetDateTime.class), eq("verified"), anyString());
+        // Never persisted: a warn-only report earned by zero probing must not light up a green
+        // Verified badge for whatever ChatModelProvider gets registered next.
+        verify(providerCredentialService, never()).recordVerification(
+                any(), any(), any(), any(), any());
     }
 }

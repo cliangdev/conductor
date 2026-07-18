@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { ClaudeRuntimeSection } from './ClaudeRuntimeSection'
+import { VerificationCheckList } from './VerificationCheckList'
 
 // Two peer methods for the same model provider — either, both, or neither may be connected.
 // `claude-code` powers `claude-code` workflow steps and the claude-code agent runtime (billed
@@ -242,16 +243,7 @@ export function ClaudeProviderCard({ projectId }: { projectId: string }) {
             {report && (
               <details className="mt-1">
                 <summary className="cursor-pointer text-muted-foreground">Details</summary>
-                <ul className="mt-1 space-y-0.5 pl-4 list-disc">
-                  {report.checks.map((check) => (
-                    <li
-                      key={check.name}
-                      className={check.status === 'fail' ? 'text-destructive' : 'text-muted-foreground'}
-                    >
-                      {check.name}: {check.message}
-                    </li>
-                  ))}
-                </ul>
+                <VerificationCheckList checks={report.checks} />
               </details>
             )}
           </div>
@@ -293,7 +285,21 @@ export function ClaudeProviderCard({ projectId }: { projectId: string }) {
         ) : (
           <p className="text-xs text-muted-foreground">Only admins and creators can manage this credential.</p>
         )}
-        {id === CLAUDE_CODE_PROVIDER_ID && <ClaudeRuntimeSection projectId={projectId} />}
+        {id === CLAUDE_CODE_PROVIDER_ID && (
+          <ClaudeRuntimeSection
+            projectId={projectId}
+            onVerified={(report) =>
+              setVerification((prev) => ({
+                ...prev,
+                [CLAUDE_CODE_PROVIDER_ID]: {
+                  status: report.status,
+                  checkedAt: report.checkedAt,
+                  error: report.checks.find((c) => c.status === 'fail')?.message ?? null,
+                },
+              }))
+            }
+          />
+        )}
       </div>
     )
   }

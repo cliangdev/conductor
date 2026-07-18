@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/AuthContext'
 import { useCan } from '@/contexts/PermissionsContext'
 import { RuntimeTargetCreateModal } from '@/components/runtime/RuntimeTargetCreateModal'
+import { VerificationCheckList } from './VerificationCheckList'
 import {
   apiErrorMessage,
   getClaudeRuntime,
@@ -27,7 +28,15 @@ const CLAUDE_CODE_PROVIDER_ID = 'claude-code'
  * the designation — the UI-managed counterpart to `ClaudeRuntimeService`. Renders under the
  * claude-code row in {@link ClaudeProviderCard}.
  */
-export function ClaudeRuntimeSection({ projectId }: { projectId: string }) {
+export function ClaudeRuntimeSection({
+  projectId,
+  onVerified,
+}: {
+  projectId: string
+  /** Fired with the fresh report after a designation change re-verifies, so the parent card's
+   *  claude-code badge updates in place instead of showing the stale (backend-cleared) result. */
+  onVerified?: (report: ProviderVerificationReport) => void
+}) {
   const { accessToken } = useAuth()
   const canMutate = useCan('agent.manage')
 
@@ -82,6 +91,7 @@ export function ClaudeRuntimeSection({ projectId }: { projectId: string }) {
       try {
         const report = await verifyProviderCredential(projectId, CLAUDE_CODE_PROVIDER_ID, accessToken)
         setVerifyReport(report)
+        onVerified?.(report)
       } catch (err) {
         setSaveError(apiErrorMessage(err, 'Runtime saved, but re-verification failed — verify manually above.'))
       } finally {
@@ -194,13 +204,7 @@ export function ClaudeRuntimeSection({ projectId }: { projectId: string }) {
               <summary className="cursor-pointer text-muted-foreground">
                 Re-verification: {verifyReport.status === 'verified' ? 'Verified' : 'Error'}
               </summary>
-              <ul className="mt-1 space-y-0.5 pl-4 list-disc">
-                {verifyReport.checks.map((check) => (
-                  <li key={check.name} className={check.status === 'fail' ? 'text-destructive' : 'text-muted-foreground'}>
-                    {check.name}: {check.message}
-                  </li>
-                ))}
-              </ul>
+              <VerificationCheckList checks={verifyReport.checks} />
             </details>
           )}
         </div>

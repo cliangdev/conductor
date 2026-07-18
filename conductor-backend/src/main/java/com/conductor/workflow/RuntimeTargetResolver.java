@@ -41,7 +41,9 @@ import java.util.Set;
 @Component
 public class RuntimeTargetResolver {
 
-    /** Shared with {@code ClaudeCodeRuntimePreflight} so the probe and the real resolver never drift. */
+    /** The blank-builtin failure message. Reaches {@code ClaudeCodeRuntimePreflight} via the thrown
+     *  {@link RuntimeTargetNotReadyException}'s message (not by direct reference); public so tests pin
+     *  the exact wording the UI and step errors rely on. */
     public static final String NO_RUNTIME_MESSAGE = "No Claude runtime configured — link a runtime "
             + "target in Settings → AI Providers → Runtime, or set GCP_CLOUDRUN_PROJECT_ID on the backend";
 
@@ -109,11 +111,17 @@ public class RuntimeTargetResolver {
         return gcpProjectId != null && !gcpProjectId.isBlank();
     }
 
-    private ResolvedRuntime resolveCloudRun(String projectId) {
-        String designatedTargetId = projectSettingsRepository.findByProjectId(projectId)
+    /** The project's designated Claude runtime target id, or null when unset/blank — the single
+     *  designation lookup, also used by {@code ClaudeRuntimeService.getConfig}. */
+    public String designatedTargetId(String projectId) {
+        return projectSettingsRepository.findByProjectId(projectId)
                 .map(ProjectSettings::getClaudeRuntimeTargetId)
                 .filter(id -> id != null && !id.isBlank())
                 .orElse(null);
+    }
+
+    private ResolvedRuntime resolveCloudRun(String projectId) {
+        String designatedTargetId = designatedTargetId(projectId);
 
         if (designatedTargetId != null) {
             return resolveDesignatedTarget(projectId, designatedTargetId);
@@ -128,8 +136,9 @@ public class RuntimeTargetResolver {
         RuntimeTarget target;
         try {
             target = runtimeTargetService.get(projectId, targetId);
-        } catch (RuntimeException e) {
+        } catch (jakarta.persistence.EntityNotFoundException e) {
             // FK is ON DELETE SET NULL, so this should be unreachable in practice — defensive only.
+            // Narrow catch on get()'s not-found contract: any other failure (e.g. DB down) propagates.
             throw new RuntimeTargetNotReadyException(CLOUD_RUN, "its designated runtime target no longer exists");
         }
         if (target.getStatus() != RuntimeTargetStatus.ACTIVE || target.getConnectionId() == null) {

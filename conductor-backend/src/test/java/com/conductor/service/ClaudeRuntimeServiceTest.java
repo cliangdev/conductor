@@ -40,10 +40,13 @@ class ClaudeRuntimeServiceTest {
     }
 
     // ---- getConfig ----
+    // Designation lookup is delegated to RuntimeTargetResolver.designatedTargetId (the single
+    // lookup shared with engine-side resolution), so these tests stub the resolver, not the
+    // settings repository.
 
     @Test
-    void getConfig_noSettingsRow_returnsBuiltinSource() {
-        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
+    void getConfig_noDesignation_returnsBuiltinSource() {
+        when(runtimeTargetResolver.designatedTargetId(PROJECT_ID)).thenReturn(null);
         when(runtimeTargetResolver.isBuiltinConfigured()).thenReturn(true);
 
         ClaudeRuntimeService.ClaudeRuntimeConfig config = service().getConfig(PROJECT_ID);
@@ -55,11 +58,8 @@ class ClaudeRuntimeServiceTest {
     }
 
     @Test
-    void getConfig_noDesignation_returnsBuiltinSource() {
-        ProjectSettings settings = new ProjectSettings();
-        settings.setProjectId(PROJECT_ID);
-        settings.setClaudeRuntimeTargetId(null);
-        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.of(settings));
+    void getConfig_noDesignationAndBuiltinUnconfigured_reportsIt() {
+        when(runtimeTargetResolver.designatedTargetId(PROJECT_ID)).thenReturn(null);
         when(runtimeTargetResolver.isBuiltinConfigured()).thenReturn(false);
 
         ClaudeRuntimeService.ClaudeRuntimeConfig config = service().getConfig(PROJECT_ID);
@@ -70,9 +70,7 @@ class ClaudeRuntimeServiceTest {
 
     @Test
     void getConfig_designatedTargetExists_returnsProjectTargetSource() {
-        ProjectSettings settings = new ProjectSettings();
-        settings.setClaudeRuntimeTargetId("target-1");
-        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.of(settings));
+        when(runtimeTargetResolver.designatedTargetId(PROJECT_ID)).thenReturn("target-1");
         when(runtimeTargetResolver.isBuiltinConfigured()).thenReturn(true);
         RuntimeTarget target = new RuntimeTarget();
         target.setId("target-1");
@@ -87,9 +85,7 @@ class ClaudeRuntimeServiceTest {
 
     @Test
     void getConfig_designatedTargetMissing_degradesToBuiltinRatherThanThrowing() {
-        ProjectSettings settings = new ProjectSettings();
-        settings.setClaudeRuntimeTargetId("stale-target");
-        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.of(settings));
+        when(runtimeTargetResolver.designatedTargetId(PROJECT_ID)).thenReturn("stale-target");
         when(runtimeTargetResolver.isBuiltinConfigured()).thenReturn(true);
         when(runtimeTargetService.get(PROJECT_ID, "stale-target"))
                 .thenThrow(new EntityNotFoundException("Runtime target not found: stale-target"));
@@ -108,6 +104,7 @@ class ClaudeRuntimeServiceTest {
         target.setId("target-1");
         target.setProvider("gcp-cloud-run");
         when(runtimeTargetService.get(PROJECT_ID, "target-1")).thenReturn(target);
+        when(runtimeTargetResolver.designatedTargetId(PROJECT_ID)).thenReturn(null);
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
 
         service().setTarget(PROJECT_ID, "target-1");
@@ -125,6 +122,7 @@ class ClaudeRuntimeServiceTest {
         existing.setId("settings-1");
         existing.setProjectId(PROJECT_ID);
         existing.setKnowledgeEnabled(true);
+        when(runtimeTargetResolver.designatedTargetId(PROJECT_ID)).thenReturn(null);
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.of(existing));
         RuntimeTarget target = new RuntimeTarget();
         target.setId("target-1");
@@ -145,6 +143,8 @@ class ClaudeRuntimeServiceTest {
         ProjectSettings existing = new ProjectSettings();
         existing.setProjectId(PROJECT_ID);
         existing.setClaudeRuntimeTargetId("old-target");
+        // First call = the no-op guard's pre-clear read; second = getConfig's post-clear read-back.
+        when(runtimeTargetResolver.designatedTargetId(PROJECT_ID)).thenReturn("old-target", (String) null);
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.of(existing));
 
         service().setTarget(PROJECT_ID, null);
@@ -154,6 +154,22 @@ class ClaudeRuntimeServiceTest {
         assertThat(captor.getValue().getClaudeRuntimeTargetId()).isNull();
         verify(runtimeTargetService, never()).get(eq(PROJECT_ID), org.mockito.ArgumentMatchers.anyString());
         verify(providerCredentialService).clearVerification(PROJECT_ID, "claude-code");
+    }
+
+    @Test
+    void setTarget_reselectingCurrentDesignation_isNoOpAndKeepsVerification() {
+        RuntimeTarget target = new RuntimeTarget();
+        target.setId("target-1");
+        target.setProvider("gcp-cloud-run");
+        when(runtimeTargetService.get(PROJECT_ID, "target-1")).thenReturn(target);
+        when(runtimeTargetResolver.designatedTargetId(PROJECT_ID)).thenReturn("target-1");
+
+        service().setTarget(PROJECT_ID, "target-1");
+
+        // Nothing changed — don't rewrite settings and don't demote a valid Verified badge.
+        verify(projectSettingsRepository, never()).save(org.mockito.ArgumentMatchers.any());
+        verify(providerCredentialService, never()).clearVerification(org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any());
     }
 
     @Test

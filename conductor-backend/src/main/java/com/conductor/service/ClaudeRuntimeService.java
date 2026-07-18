@@ -84,6 +84,10 @@ public class ClaudeRuntimeService {
                 throw new BusinessException("Runtime target must be a " + GCP_CLOUD_RUN_PROVIDER + " target");
             }
         }
+        if (java.util.Objects.equals(normalized, designatedTargetId(projectId))) {
+            // Re-selecting the current designation changes nothing — don't demote a valid Verified badge.
+            return getConfig(projectId);
+        }
 
         ProjectSettings settings = projectSettingsRepository.findByProjectId(projectId)
                 .orElseGet(() -> {
@@ -109,9 +113,6 @@ public class ClaudeRuntimeService {
     }
 
     private String designatedTargetId(String projectId) {
-        return projectSettingsRepository.findByProjectId(projectId)
-                .map(ProjectSettings::getClaudeRuntimeTargetId)
-                .filter(id -> id != null && !id.isBlank())
-                .orElse(null);
+        return runtimeTargetResolver.designatedTargetId(projectId);
     }
 }

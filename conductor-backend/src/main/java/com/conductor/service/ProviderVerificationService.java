@@ -4,6 +4,8 @@ import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.agent.provider.ClaudeApiPreflight;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.CredentialEncryptionException;
+import com.conductor.verification.Check;
+import com.conductor.verification.CheckStatus;
 import com.conductor.workflow.ClaudeCodeRuntimePreflight;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -46,16 +48,6 @@ public class ProviderVerificationService {
         this.objectMapper = objectMapper;
     }
 
-    /** Per-check status — {@code doctor}'s {@code checks[] {name, status, message}} shape. */
-    public enum CheckStatus {
-        PASS, FAIL, WARN;
-
-        @JsonValue
-        public String value() {
-            return name().toLowerCase(Locale.ROOT);
-        }
-    }
-
     /** A report's overall outcome: {@code error} iff any {@link Check} in it is {@link CheckStatus#FAIL}. */
     public enum ReportStatus {
         VERIFIED, ERROR;
@@ -66,8 +58,6 @@ public class ProviderVerificationService {
         }
     }
 
-    public record Check(String name, CheckStatus status, String message) {}
-
     public record VerificationReport(String provider, ReportStatus status, OffsetDateTime checkedAt, List<Check> checks) {}
 
     /**
@@ -75,8 +65,13 @@ public class ProviderVerificationService {
      * row, if one exists. {@code claude-code} may be verified with no row at all — this is how the UI
      * probes builtin runtime readiness before a subscription token is ever stored — in which case the
      * report is returned but nothing is persisted (there is no row to persist onto).
+     *
+     * <p>A provider without a real probe gets a warn-only report that is deliberately NOT persisted:
+     * writing {@code verified} for it would light up a green badge no probe ever earned the moment a
+     * new {@code ChatModelProvider} is registered.
      */
     public VerificationReport verify(String projectId, String provider) {
+        boolean supported = CLAUDE.equals(provider) || CLAUDE_CODE.equals(provider);
         List<Check> checks = switch (provider) {
             case CLAUDE -> verifyClaude(projectId);
             case CLAUDE_CODE -> claudeCodeRuntimePreflight.check(projectId);
@@ -88,8 +83,10 @@ public class ProviderVerificationService {
                 ? ReportStatus.ERROR : ReportStatus.VERIFIED;
         VerificationReport report = new VerificationReport(provider, overall, OffsetDateTime.now(), checks);
 
-        providerCredentialService.recordVerification(
-                projectId, provider, report.checkedAt(), overall.value(), writeReport(report));
+        if (supported) {
+            providerCredentialService.recordVerification(
+                    projectId, provider, report.checkedAt(), overall.value(), writeReport(report));
+        }
         return report;
     }
 

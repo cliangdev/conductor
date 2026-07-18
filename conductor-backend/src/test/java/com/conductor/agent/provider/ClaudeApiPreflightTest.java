@@ -12,8 +12,8 @@ import com.anthropic.errors.UnauthorizedException;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.services.blocking.MessageService;
-import com.conductor.service.ProviderVerificationService.Check;
-import com.conductor.service.ProviderVerificationService.CheckStatus;
+import com.conductor.verification.Check;
+import com.conductor.verification.CheckStatus;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -138,7 +138,7 @@ class ClaudeApiPreflightTest {
         MessageService messageService = mock(MessageService.class);
         when(client.messages()).thenReturn(messageService);
         when(messageService.create(any(MessageCreateParams.class))).thenReturn(message);
-        return new ClaudeApiPreflight(apiKey -> client);
+        return new ClaudeApiPreflight(keyCapturingFactory(client));
     }
 
     private ClaudeApiPreflight preflightThatThrows(RuntimeException exception) {
@@ -146,7 +146,17 @@ class ClaudeApiPreflightTest {
         MessageService messageService = mock(MessageService.class);
         when(client.messages()).thenReturn(messageService);
         when(messageService.create(any(MessageCreateParams.class))).thenThrow(exception);
-        return new ClaudeApiPreflight(apiKey -> client);
+        return new ClaudeApiPreflight(keyCapturingFactory(client));
+    }
+
+    /** Asserts the factory actually receives the caller's key — so {@link #assertKeyNeverLeaked} proves
+     *  "the key flowed through the probe and still never reached a Check", not merely that a discarded
+     *  literal is absent. */
+    private java.util.function.Function<String, AnthropicClient> keyCapturingFactory(AnthropicClient client) {
+        return apiKey -> {
+            assertThat(apiKey).isEqualTo(SECRET_KEY);
+            return client;
+        };
     }
 
     private Headers emptyHeaders() {

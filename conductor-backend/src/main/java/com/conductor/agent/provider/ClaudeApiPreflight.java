@@ -10,8 +10,8 @@ import com.anthropic.errors.PermissionDeniedException;
 import com.anthropic.errors.RateLimitException;
 import com.anthropic.errors.UnauthorizedException;
 import com.anthropic.models.messages.MessageCreateParams;
-import com.conductor.service.ProviderVerificationService.Check;
-import com.conductor.service.ProviderVerificationService.CheckStatus;
+import com.conductor.verification.Check;
+import com.conductor.verification.CheckStatus;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -85,7 +85,10 @@ public class ClaudeApiPreflight {
         } catch (AnthropicServiceException e) {
             return List.of(fail("Anthropic request failed (HTTP " + e.statusCode() + ")"));
         } catch (RuntimeException e) {
-            return List.of(fail("Could not reach Anthropic: " + e.getClass().getSimpleName()));
+            // Not necessarily a reachability problem (e.g. a response-parsing failure) — name the
+            // exception class only, never its message, which could embed request details.
+            return List.of(fail("Verification failed unexpectedly (" + e.getClass().getSimpleName()
+                    + ") — try again"));
         }
     }
 
