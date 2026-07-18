@@ -35,20 +35,6 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
             + "AND (s.nextAttemptAt IS NULL OR s.nextAttemptAt <= :now)")
     List<String> findProjectIdsWithDuePending(@Param("now") OffsetDateTime now);
 
-    /**
-     * The oldest-first batch (up to {@code limit}) of a project's due PENDING sources, row-locked so two
-     * concurrent {@code KnowledgeIngestScheduler} instances can never claim the same source --
-     * {@code FOR UPDATE SKIP LOCKED} isn't expressible in JPQL, so this is native (see
-     * {@code WorkflowJobQueueRepository} for the codebase's other use of this pattern). Caller must flip
-     * the returned rows to PROCESSING in the same transaction that ran this query, before the row locks
-     * release.
-     */
-    @Query(value = "SELECT * FROM knowledge_sources WHERE project_id = :projectId AND status = 'PENDING' "
-            + "AND (next_attempt_at IS NULL OR next_attempt_at <= :now) "
-            + "ORDER BY received_at ASC LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
-    List<KnowledgeSource> findDuePendingForProject(@Param("projectId") String projectId,
-                                                    @Param("now") OffsetDateTime now, @Param("limit") int limit);
-
     // ---- domain-aware lanes (KnowledgeIngestScheduler concurrency unit is per (project, domain)) ----
 
     /** Distinct domain lanes (including {@code null}, the generalist lane) with at least one due PENDING
@@ -58,9 +44,16 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
             + "AND (s.nextAttemptAt IS NULL OR s.nextAttemptAt <= :now)")
     List<String> findLanesWithDuePending(@Param("projectId") String projectId, @Param("now") OffsetDateTime now);
 
-    /** Lane-scoped variant of {@link #findDuePendingForProject} -- {@code domain IS NOT DISTINCT FROM}
-     *  (native, null-safe equality; a plain {@code =} never matches a null bind parameter in Postgres)
-     *  so the null lane's own claim only ever picks up null-domain rows, never another lane's. */
+    /**
+     * The oldest-first batch (up to {@code limit}) of a project's due PENDING sources in one lane,
+     * row-locked so two concurrent {@code KnowledgeIngestScheduler} instances can never claim the same
+     * source -- {@code FOR UPDATE SKIP LOCKED} isn't expressible in JPQL, so this is native (see
+     * {@code WorkflowJobQueueRepository} for the codebase's other use of this pattern). Caller must flip
+     * the returned rows to PROCESSING in the same transaction that ran this query, before the row locks
+     * release. {@code domain IS NOT DISTINCT FROM} (null-safe equality; a plain {@code =} never matches
+     * a null bind parameter in Postgres) so the null lane's own claim only ever picks up null-domain
+     * rows, never another lane's.
+     */
     @Query(value = "SELECT * FROM knowledge_sources WHERE project_id = :projectId AND status = 'PENDING' "
             + "AND domain IS NOT DISTINCT FROM :domain "
             + "AND (next_attempt_at IS NULL OR next_attempt_at <= :now) "

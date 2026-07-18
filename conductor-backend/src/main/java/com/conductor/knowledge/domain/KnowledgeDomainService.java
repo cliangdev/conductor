@@ -13,8 +13,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
@@ -44,6 +47,10 @@ public class KnowledgeDomainService {
     /** Must form a valid page-path segment (see {@code KnowledgePageService#normalizePath}) since it
      *  becomes both {@code pathPrefix} and part of {@code schemaPagePath}. */
     private static final Pattern SLUG_PATTERN = Pattern.compile("^[a-z0-9][a-z0-9-]*$");
+    /** Match the {@code knowledge_domains} column widths -- guarded here so an oversized value is a
+     *  400 (BusinessException) at the service boundary, not a commit-time DB truncation/constraint error. */
+    private static final int SLUG_MAX_LENGTH = 64;
+    private static final int DISPLAY_NAME_MAX_LENGTH = 255;
 
     private static final String SKELETON_RESOURCE = "/knowledge/domains/_suggested-skeleton.md";
     private static final String SPECIALIST_SYSTEM_PROMPT_RESOURCE = "/knowledge/specialist-system-prompt.md";
@@ -55,6 +62,12 @@ public class KnowledgeDomainService {
     private final KnowledgePageRepository pageRepository;
     private final KnowledgePageService pageService;
     private final ObjectMapper objectMapper;
+
+    /** Self-reference so the {@code REQUIRES_NEW} claim insert in {@link #suggest} runs through the
+     *  Spring proxy -- mirrors {@code KnowledgeIngestionService#self}. */
+    @Autowired
+    @Lazy
+    KnowledgeDomainService self;
 
     public KnowledgeDomainService(KnowledgeDomainRepository domainRepository, AgentRepository agentRepository,
             KnowledgePageRepository pageRepository, KnowledgePageService pageService, ObjectMapper objectMapper) {
@@ -73,17 +86,22 @@ public class KnowledgeDomainService {
 
     /**
      * Updates the editable metadata fields; a null argument leaves that field unchanged. To transition
-     * {@code state} (e.g. approving a {@code SUGGESTED} domain), pass the target state -- a
-     * {@code SUGGESTED -> ACTIVE} transition also seeds a generic skeleton {@code <slug>/_schema.md}
-     * page if one isn't already there (an admin approving a gap report shouldn't be left with a domain
-     * that has nowhere for the librarian to file anything). Owning-agent assignment is a separate
-     * operation -- see {@link #updateOwningAgent} -- since a null {@code owningAgentSlug} there means
-     * "clear it", which would be ambiguous alongside this method's "null means unchanged" convention for
-     * every other field.
+     * {@code state} (e.g. approving a {@code SUGGESTED} or re-approving a {@code DISMISSED} domain),
+     * pass the target state -- a transition to {@code ACTIVE} from any other state also seeds a generic
+     * skeleton {@code <slug>/_schema.md} page if one isn't already there (an admin approving a gap
+     * report shouldn't be left with a domain that has nowhere for the librarian to file anything; the
+     * seed is if-absent, so re-approving a domain that already has a schema page is a no-op there).
+     * Owning-agent assignment is a separate operation -- see {@link #updateOwningAgent} -- since a null
+     * {@code owningAgentSlug} there means "clear it", which would be ambiguous alongside this method's
+     * "null means unchanged" convention for every other field. Called directly, this method's own
+     * {@code @Transactional} is the atomicity boundary; called via {@link #applyPatch} (the PATCH
+     * endpoint's entry point), it simply executes inside that method's already-open transaction.
      */
     @Transactional
     public KnowledgeDomain update(String projectId, String slug, String displayName, String description,
             List<String> sourceTypePatterns, KnowledgeDomainState state) {
+        validateDisplayNameLength(displayName);
+        validateSourceTypePatterns(sourceTypePatterns);
         KnowledgeDomain domain = findRequired(projectId, slug);
         KnowledgeDomainState previousState = domain.getState();
         if (displayName != null) {
@@ -99,7 +117,7 @@ public class KnowledgeDomainService {
             domain.setState(state);
         }
         KnowledgeDomain saved = domainRepository.save(domain);
-        if (previousState == KnowledgeDomainState.SUGGESTED && saved.getState() == KnowledgeDomainState.ACTIVE) {
+        if (previousState != KnowledgeDomainState.ACTIVE && saved.getState() == KnowledgeDomainState.ACTIVE) {
             seedSkeletonSchemaPageIfAbsent(projectId, saved);
         }
         return saved;
@@ -121,28 +139,62 @@ public class KnowledgeDomainService {
     }
 
     /**
-     * Claim-or-return gap report: the first caller for a {@code (projectId, slug)} pair inserts a
+     * Composes {@link #update} and {@link #updateOwningAgent} in a single transaction -- the PATCH
+     * endpoint's entry point, so a request carrying both a metadata change and an invalid
+     * {@code owningAgentSlug} rolls back entirely instead of leaving the metadata change committed
+     * while the agent assignment 400s. {@code clearOwningAgent} takes precedence over
+     * {@code owningAgentSlug} (mirrors {@code updateOwningAgent}'s nullable-to-clear contract); neither
+     * set leaves the owning-agent assignment untouched.
+     */
+    @Transactional
+    public KnowledgeDomain applyPatch(String projectId, String slug, String displayName, String description,
+            List<String> sourceTypePatterns, KnowledgeDomainState state, boolean clearOwningAgent, String owningAgentSlug) {
+        KnowledgeDomain domain = update(projectId, slug, displayName, description, sourceTypePatterns, state);
+        if (clearOwningAgent) {
+            domain = updateOwningAgent(projectId, slug, null);
+        } else if (owningAgentSlug != null) {
+            domain = updateOwningAgent(projectId, slug, owningAgentSlug);
+        }
+        return domain;
+    }
+
+    /**
+     * Claim-or-return gap report. The insert itself runs in {@link #insertSuggestedInNewTx}, a nested
+     * {@code REQUIRES_NEW} transaction that {@code saveAndFlush}es -- forcing the INSERT to execute (and
+     * any unique-constraint violation to surface) synchronously, inside this method's try block, rather
+     * than only at the enclosing transaction's commit, well after this method has already returned a
+     * result to the caller. The first caller for a {@code (projectId, slug)} pair gets a new
      * {@code SUGGESTED} row; any later caller (regardless of the row's current state -- {@code ACTIVE},
      * still {@code SUGGESTED}, or {@code DISMISSED}) gets the existing row back with {@code created =
      * false} instead of erroring or resetting it. A {@code DISMISSED} return is the signal to the caller
      * (an agent calling {@code suggest_knowledge_domain}) that this was already declined and shouldn't
      * be re-suggested.
      */
-    @Transactional
     public SuggestResult suggest(String projectId, String slug, String displayName, String description,
             String reason, List<String> sourceTypePatterns, String suggestedBy) {
-        if (slug == null || !SLUG_PATTERN.matcher(slug).matches()) {
-            throw new BusinessException(
-                    "Invalid domain slug '" + slug + "' -- must match ^[a-z0-9][a-z0-9-]*$ (it becomes a wiki path segment)");
-        }
-        if (displayName == null || displayName.isBlank()) {
-            throw new BusinessException("displayName is required");
-        }
+        validateSlug(slug);
+        validateDisplayName(displayName, true);
+        validateSourceTypePatterns(sourceTypePatterns);
+
         Optional<KnowledgeDomain> existing = domainRepository.findByProjectIdAndSlug(projectId, slug);
         if (existing.isPresent()) {
             return new SuggestResult(existing.get(), false);
         }
+        try {
+            KnowledgeDomain created = self.insertSuggestedInNewTx(projectId, slug, displayName, description,
+                    reason, sourceTypePatterns, suggestedBy);
+            return new SuggestResult(created, true);
+        } catch (DataIntegrityViolationException e) {
+            // Lost a race on the (project_id, slug) unique constraint -- the winning row exists.
+            return domainRepository.findByProjectIdAndSlug(projectId, slug)
+                    .map(d -> new SuggestResult(d, false))
+                    .orElseThrow(() -> e);
+        }
+    }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public KnowledgeDomain insertSuggestedInNewTx(String projectId, String slug, String displayName, String description,
+            String reason, List<String> sourceTypePatterns, String suggestedBy) {
         KnowledgeDomain domain = new KnowledgeDomain();
         domain.setProjectId(projectId);
         domain.setSlug(slug);
@@ -154,14 +206,7 @@ public class KnowledgeDomainService {
         domain.setState(KnowledgeDomainState.SUGGESTED);
         domain.setSuggestedBy(suggestedBy);
         domain.setSuggestionReason(reason);
-        try {
-            return new SuggestResult(domainRepository.save(domain), true);
-        } catch (DataIntegrityViolationException e) {
-            // Lost a race on the (project_id, slug) unique constraint -- the winning row exists.
-            return domainRepository.findByProjectIdAndSlug(projectId, slug)
-                    .map(d -> new SuggestResult(d, false))
-                    .orElseThrow(() -> e);
-        }
+        return domainRepository.saveAndFlush(domain);
     }
 
     /** Result of {@link #suggest}: the claimed-or-existing row, and whether this call is the one that created it. */
@@ -192,7 +237,7 @@ public class KnowledgeDomainService {
             agent.setProvider(SPECIALIST_AGENT_PROVIDER);
             agent.setSystemPrompt(readSpecialistSystemPrompt(domain));
             // No "runtime" key -- resolved at execution time, same as the generalist librarian.
-            agent.setConfigJson(writeJson(Map.of("maxToolTurns", 40)));
+            agent.setConfigJson(writeJson(Map.of("maxToolTurns", KnowledgeWorkflowProvisioner.LIBRARIAN_MAX_TOOL_TURNS)));
             agent.setToolIds(writeJson(KnowledgeWorkflowProvisioner.LIBRARIAN_TOOL_IDS));
             agent.setState("ACTIVE");
             agent.setAvatarEmoji(AgentAvatarDefaults.defaultEmoji(agentSlug));
@@ -224,6 +269,45 @@ public class KnowledgeDomainService {
                 List.of(), SYSTEM_ACTOR);
         log.info("Seeded skeleton {} for approved domain '{}' in project {}", domain.getSchemaPagePath(),
                 domain.getSlug(), projectId);
+    }
+
+    private void validateSlug(String slug) {
+        if (slug == null || !SLUG_PATTERN.matcher(slug).matches()) {
+            throw new BusinessException(
+                    "Invalid domain slug '" + slug + "' -- must match ^[a-z0-9][a-z0-9-]*$ (it becomes a wiki path segment)");
+        }
+        if (slug.length() > SLUG_MAX_LENGTH) {
+            throw new BusinessException("Domain slug exceeds " + SLUG_MAX_LENGTH + " characters");
+        }
+    }
+
+    private void validateDisplayName(String displayName, boolean required) {
+        if (displayName == null || displayName.isBlank()) {
+            if (required) {
+                throw new BusinessException("displayName is required");
+            }
+            return;
+        }
+        validateDisplayNameLength(displayName);
+    }
+
+    private void validateDisplayNameLength(String displayName) {
+        if (displayName != null && displayName.length() > DISPLAY_NAME_MAX_LENGTH) {
+            throw new BusinessException("displayName exceeds " + DISPLAY_NAME_MAX_LENGTH + " characters");
+        }
+    }
+
+    /** A {@code [null]} or blank-element pattern would NPE {@code KnowledgeDomainResolver}'s glob match
+     *  on every pattern-routed submission once this domain is ACTIVE -- reject it at the source instead. */
+    private void validateSourceTypePatterns(List<String> patterns) {
+        if (patterns == null) {
+            return;
+        }
+        for (String pattern : patterns) {
+            if (pattern == null || pattern.isBlank()) {
+                throw new BusinessException("sourceTypePatterns must not contain null or blank entries");
+            }
+        }
     }
 
     private String readResource(String classpathPath) {

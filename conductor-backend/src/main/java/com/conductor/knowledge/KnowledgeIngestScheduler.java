@@ -27,13 +27,19 @@ import java.util.Set;
  * and sweeps PROCESSING sources whose run stalled or failed back to PENDING (with backoff) or DEAD.
  *
  * <p>Concurrency unit is {@code (project, domain lane)}, not the whole project: a lane (a
- * {@code KnowledgeDomain} slug, or {@code null} for the generalist lane) is busy iff it currently has
- * any PROCESSING source, and a busy lane is skipped this tick without affecting any other lane -- so
- * e.g. an in-flight engineering-domain run never blocks a product-domain batch from dispatching in the
- * same tick. The one project-wide block is {@code knowledge-bootstrap}: it writes broadly across the
- * wiki in one large by-hand-triggered run, so no lane dispatches while it's active. (This is a looser
- * concurrency model than the original single global "any active knowledge run blocks everything" --
- * lanes now self-serialize via their own PROCESSING rows instead.)
+ * {@code KnowledgeDomain} slug, or {@code null} for the generalist lane) is treated as busy when it
+ * currently has any PROCESSING source, and a busy lane is skipped this tick without affecting any other
+ * lane -- so e.g. an in-flight engineering-domain run never blocks a product-domain batch from
+ * dispatching in the same tick. This is **best-effort**, not a hard guarantee: the busy-check and the
+ * claim are two separate queries, so two scheduler instances (or two ticks) can race between them
+ * (TOCTOU), and even within one instance a lane briefly reads as free again once
+ * {@code KnowledgeSourceRepository#markProcessed} lands, before the librarian run that wrote it has
+ * actually terminated. Either window can let two writers touch the same lane concurrently; the backstop
+ * is {@code KnowledgePageService}'s optimistic page versioning plus the librarian's retry-once conflict
+ * protocol, not this scheduler's busy-check. The one project-wide block is {@code knowledge-bootstrap}:
+ * it writes broadly across the wiki in one large by-hand-triggered run, so no lane dispatches while it's
+ * active. (This is a looser concurrency model than the original single global "any active knowledge run
+ * blocks everything" -- lanes now serialize best-effort via their own PROCESSING rows instead.)
  *
  * <p>Shape mirrors {@code WebhookRetryScheduler}/{@code ActionInvocationService}'s background sweep:
  * no method-level {@code @Transactional} wraps the whole tick (per-project/per-source failures are

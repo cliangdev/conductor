@@ -124,13 +124,9 @@ public class KnowledgeController implements KnowledgeApi {
         com.conductor.knowledge.domain.KnowledgeDomainState state = request.getState() != null
                 ? com.conductor.knowledge.domain.KnowledgeDomainState.valueOf(request.getState().name())
                 : null;
-        KnowledgeDomain domain = domainService.update(projectId, slug, request.getDisplayName(),
-                request.getDescription(), request.getSourceTypePatterns(), state);
-        if (Boolean.TRUE.equals(request.getClearOwningAgent())) {
-            domain = domainService.updateOwningAgent(projectId, slug, null);
-        } else if (request.getOwningAgentSlug() != null) {
-            domain = domainService.updateOwningAgent(projectId, slug, request.getOwningAgentSlug());
-        }
+        KnowledgeDomain domain = domainService.applyPatch(projectId, slug, request.getDisplayName(),
+                request.getDescription(), request.getSourceTypePatterns(), state,
+                Boolean.TRUE.equals(request.getClearOwningAgent()), request.getOwningAgentSlug());
         Map<String, KnowledgeSourceCountsView> counts = ingestionService.getDomainCounts(projectId);
         return ResponseEntity.ok(toDto(domain, counts.get(domain.getSlug())));
     }

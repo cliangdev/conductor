@@ -85,6 +85,8 @@ public class KnowledgeWorkflowProvisioner {
             "knowledge:read_knowledge_pages", "knowledge:read_knowledge_sources",
             "knowledge:search_knowledge", "knowledge:write_knowledge_pages",
             "knowledge:list_knowledge_domains", "knowledge:suggest_knowledge_domain");
+    /** Shared by the librarian seed here and by {@code KnowledgeDomainService#createSpecialist}. */
+    public static final int LIBRARIAN_MAX_TOOL_TURNS = 40;
     private static final Actor PROVISIONER_ACTOR = new Actor("system", "knowledge-provisioner", null);
 
     /** One registry row + schema page to seed, keyed by slug. {@code patterns} is the
@@ -174,7 +176,7 @@ public class KnowledgeWorkflowProvisioner {
         agent.setSystemPrompt(readResource(LIBRARIAN_SYSTEM_PROMPT_RESOURCE));
         // No "runtime" key -- resolved at execution time (AgentRuntimeResolver auto-detects from
         // project credentials) rather than pinned by the seed.
-        agent.setConfigJson(writeJson(Map.of("maxToolTurns", 40)));
+        agent.setConfigJson(writeJson(Map.of("maxToolTurns", LIBRARIAN_MAX_TOOL_TURNS)));
         agent.setToolIds(writeJson(LIBRARIAN_TOOL_IDS));
         agent.setState("ACTIVE");
         agent.setAvatarEmoji(LIBRARIAN_AVATAR_EMOJI);
@@ -228,6 +230,14 @@ public class KnowledgeWorkflowProvisioner {
      * from the current classpath resource (e.g. a project enabled before {@code agent: ${{ event.agentSlug }}}
      * shipped). {@code LibrarianDispatchService} treats this drift as incomplete seeding and calls
      * {@link #provision} to trigger the refresh before dispatching into a stale workflow.
+     *
+     * <p>A refresh here is not synchronized with any already-running librarian job: a run whose engine
+     * re-parses the live YAML mid-execution (e.g. it reaches the {@code agent} step after this method
+     * updated the row) reads the new template against the *old* dispatch payload -- if that payload
+     * predates {@code agentSlug} (a pre-deploy run), {@code with.agent: ${{ event.agentSlug }}} then
+     * interpolates to empty and the step fails. This is self-correcting at the cost of one attempt: the
+     * scheduler's stale-processing sweep resurrects the batch, and the retry is dispatched with a fresh
+     * payload against the now-refreshed YAML.
      */
     private void upsertWorkflow(Project project, String name, String resource) {
         String classpathYaml = readResource(resource);

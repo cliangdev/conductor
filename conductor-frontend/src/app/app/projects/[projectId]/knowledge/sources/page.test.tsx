@@ -8,7 +8,7 @@ import type { KnowledgeSourceDto } from '@/lib/knowledge-api'
 let listKnowledgeSourcesBehavior: (
   projectId: string,
   token: string,
-  opts?: { status?: string },
+  opts?: { status?: string; domain?: string },
 ) => Promise<KnowledgeSourceDto[]> = () => Promise.resolve([])
 
 const push = vi.fn()
@@ -131,6 +131,43 @@ describe('Knowledge sources page', () => {
 
     expect(await screen.findByText('A note')).toBeInTheDocument()
     expect(screen.queryByText('engineering')).not.toBeInTheDocument()
+  })
+
+  it('reads the ?domain= query param and passes it to listKnowledgeSources', async () => {
+    searchParams = new URLSearchParams({ domain: 'engineering' })
+    listKnowledgeSourcesBehavior = (_projectId, _token, opts) =>
+      opts?.domain === 'engineering'
+        ? Promise.resolve([source({ id: 'src-eng', title: 'Eng source', domain: 'engineering' })])
+        : Promise.resolve([])
+
+    render(<KnowledgeSourcesPage />)
+
+    expect(await screen.findByText('Eng source')).toBeInTheDocument()
+  })
+
+  it('shows the active domain filter and lets it be cleared', async () => {
+    searchParams = new URLSearchParams({ domain: 'engineering' })
+    listKnowledgeSourcesBehavior = () => Promise.resolve([source({ domain: 'engineering' })])
+
+    render(<KnowledgeSourcesPage />)
+    await screen.findByText('A note')
+
+    expect(screen.getByText('Filtered to domain:')).toBeInTheDocument()
+    const clearButton = screen.getByRole('button', { name: 'Clear' })
+    fireEvent.click(clearButton)
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/knowledge/sources')
+    })
+  })
+
+  it('omits the domain filter affordance when no ?domain= param is set', async () => {
+    listKnowledgeSourcesBehavior = () => Promise.resolve([source()])
+
+    render(<KnowledgeSourcesPage />)
+
+    await screen.findByText('A note')
+    expect(screen.queryByText('Filtered to domain:')).not.toBeInTheDocument()
   })
 
   it('shows an alert when the fetch fails', async () => {

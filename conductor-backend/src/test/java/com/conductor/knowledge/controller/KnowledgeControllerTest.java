@@ -297,7 +297,8 @@ class KnowledgeControllerTest {
         updated.setSchemaPagePath("engineering/_schema.md");
         updated.setSourceTypePatterns(List.of("github.*"));
         updated.setState(com.conductor.knowledge.domain.KnowledgeDomainState.ACTIVE);
-        when(domainService.update(eq(PROJECT_ID), eq("engineering"), eq("Eng"), any(), any(), any()))
+        when(domainService.applyPatch(eq(PROJECT_ID), eq("engineering"), eq("Eng"), any(), any(), any(),
+                eq(false), any()))
                 .thenReturn(updated);
         when(ingestionService.getDomainCounts(PROJECT_ID)).thenReturn(java.util.Map.of());
 
@@ -404,6 +405,32 @@ class KnowledgeControllerTest {
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains/engineering/specialist")
                         .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateDomain_projectScopedMcpToken_returns403() throws Exception {
+        // A project-scoped machine principal (project API key / run-scoped MCP token) passes the
+        // generic membership check other knowledge endpoints use, but the domain-admin gate requires an
+        // actual User principal with ADMIN role -- machine callers have no role to check.
+        when(runTokenService.parseMcpToken("eyJ.mcp.matching"))
+                .thenReturn(Optional.of(new RunTokenService.McpTokenClaims(PROJECT_ID, "run-1")));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .patch("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains/engineering")
+                        .header("Authorization", "Bearer eyJ.mcp.matching")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"displayName\":\"Eng\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createSpecialist_projectScopedMcpToken_returns403() throws Exception {
+        when(runTokenService.parseMcpToken("eyJ.mcp.matching"))
+                .thenReturn(Optional.of(new RunTokenService.McpTokenClaims(PROJECT_ID, "run-1")));
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains/engineering/specialist")
+                        .header("Authorization", "Bearer eyJ.mcp.matching"))
                 .andExpect(status().isForbidden());
     }
 

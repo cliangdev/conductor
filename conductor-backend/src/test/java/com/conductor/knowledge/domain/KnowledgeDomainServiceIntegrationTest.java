@@ -197,6 +197,54 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_schema.md")).isEmpty();
     }
 
+    @Test
+    void reApprovingADismissedDomainAlsoSeedsTheSkeletonPage() {
+        createDomain("legal", "Legal", KnowledgeDomainState.DISMISSED);
+
+        domainService.update(projectId, "legal", null, null, null, KnowledgeDomainState.ACTIVE);
+
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_schema.md")).isPresent();
+    }
+
+    // ---- applyPatch atomicity (PATCH endpoint's entry point) ----
+
+    @Test
+    void applyPatchRollsBackMetadataChangeWhenOwningAgentSlugIsInvalid() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+
+        assertThatThrownBy(() -> domainService.applyPatch(projectId, "engineering", "Eng", null, null, null,
+                false, "no-such-agent"))
+                .isInstanceOf(BusinessException.class);
+
+        KnowledgeDomain reloaded = domainRepository.findByProjectIdAndSlug(projectId, "engineering").orElseThrow();
+        assertThat(reloaded.getDisplayName()).isEqualTo("Engineering"); // the rename did NOT commit
+        assertThat(reloaded.getOwningAgentSlug()).isNull();
+    }
+
+    @Test
+    void applyPatchAppliesBothMetadataAndOwningAgentWhenValid() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+        saveAgent("knowledge-engineering");
+
+        KnowledgeDomain updated = domainService.applyPatch(projectId, "engineering", "Eng", null, null, null,
+                false, "knowledge-engineering");
+
+        assertThat(updated.getDisplayName()).isEqualTo("Eng");
+        assertThat(updated.getOwningAgentSlug()).isEqualTo("knowledge-engineering");
+    }
+
+    @Test
+    void applyPatchClearOwningAgentTakesPrecedenceOverOwningAgentSlug() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+        saveAgent("knowledge-engineering");
+        domainService.updateOwningAgent(projectId, "engineering", "knowledge-engineering");
+
+        KnowledgeDomain updated = domainService.applyPatch(projectId, "engineering", null, null, null, null,
+                true, "knowledge-engineering");
+
+        assertThat(updated.getOwningAgentSlug()).isNull();
+    }
+
     // ---- gap-report suggestions (claim-or-return) ----
 
     @Test

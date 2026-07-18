@@ -49,6 +49,10 @@ schema before filing a page there** — this root page only covers what's cross-
 | [`finance/`](/finance/_schema.md) | Financial metrics and spend decisions. |
 | [`people/`](/people/_schema.md) | Team members and meetings. |
 
+This table reflects the seeded defaults at the time this page was written — it does not update itself as
+domains are added or changed. The domain registry is the authoritative, current list: use the
+`list_knowledge_domains` tool, or the Domains panel on the Knowledge index page, to see it.
+
 Never invent a new top-level directory for a single page — file it under the closest existing domain
 above, or `decisions/` as a fallback.
 

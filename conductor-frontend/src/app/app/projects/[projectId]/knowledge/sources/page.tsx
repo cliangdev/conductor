@@ -36,6 +36,7 @@ function KnowledgeSourcesPageContent() {
 
   const statusParam = searchParams.get('status')
   const status: KnowledgeSourceStatus = isKnowledgeSourceStatus(statusParam) ? statusParam : 'PENDING'
+  const domainParam = searchParams.get('domain')
 
   const [sources, setSources] = useState<KnowledgeSourceDto[]>([])
   const [loading, setLoading] = useState(true)
@@ -46,7 +47,7 @@ function KnowledgeSourcesPageContent() {
     let cancelled = false
     setLoading(true)
     setError(null)
-    listKnowledgeSources(projectId, accessToken, { status })
+    listKnowledgeSources(projectId, accessToken, { status, domain: domainParam ?? undefined })
       .then((rows) => {
         if (!cancelled) setSources(rows)
       })
@@ -59,12 +60,19 @@ function KnowledgeSourcesPageContent() {
     return () => {
       cancelled = true
     }
-  }, [projectId, accessToken, status])
+  }, [projectId, accessToken, status, domainParam])
 
   function setStatus(next: string) {
     const sp = new URLSearchParams(searchParams.toString())
     if (next === 'PENDING') sp.delete('status')
     else sp.set('status', next)
+    const qs = sp.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname)
+  }
+
+  function clearDomainFilter() {
+    const sp = new URLSearchParams(searchParams.toString())
+    sp.delete('domain')
     const qs = sp.toString()
     router.replace(qs ? `${pathname}?${qs}` : pathname)
   }
@@ -75,6 +83,18 @@ function KnowledgeSourcesPageContent() {
     <div className="h-full overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
       <div className="max-w-[45rem] mx-auto space-y-4">
         <h1 className="text-xl font-semibold text-foreground">Inbox sources</h1>
+
+        {domainParam && (
+          <div className="flex items-center gap-2 text-[13px] text-foreground-subtle">
+            <span>Filtered to domain:</span>
+            <Badge variant="secondary" className="text-[11px] font-normal">
+              {domainParam}
+            </Badge>
+            <button type="button" onClick={clearDomainFilter} className="hover:text-foreground hover:underline">
+              Clear
+            </button>
+          </div>
+        )}
 
         <Tabs items={tabItems} value={status} onValueChange={setStatus} ariaLabel="Filter sources by status" />
 
@@ -90,7 +110,11 @@ function KnowledgeSourcesPageContent() {
           <EmptyState
             icon={InboxIcon}
             title="No sources"
-            description={`No ${humanizeStatus(status).toLowerCase()} sources in the inbox.`}
+            description={
+              domainParam
+                ? `No ${humanizeStatus(status).toLowerCase()} sources in the "${domainParam}" domain.`
+                : `No ${humanizeStatus(status).toLowerCase()} sources in the inbox.`
+            }
           />
         ) : (
           <div className="border border-border rounded-[10px] divide-y divide-border">

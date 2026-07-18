@@ -110,11 +110,16 @@ for the generalist/unclassified lane; the concurrency unit is `(project, lane)`,
    [`docs/workflows.md`](workflows.md#outputs-and-interpolation) — `event.FIELD` resolves any trigger's
    stored payload). Multiple lanes can dispatch in the same tick — an in-flight engineering-domain batch
    never blocks a product-domain batch.
-2. **Per-lane busy check, project-wide bootstrap block.** A lane is busy iff it currently has any
-   `PROCESSING` source — busy lanes are skipped this tick without affecting any other lane (they
-   self-serialize; a non-terminal `knowledge-librarian` run no longer blocks the whole project). The one
-   project-wide block is `knowledge-bootstrap`: while it has a non-terminal run, no lane dispatches — it
-   writes broadly across the wiki in one large operator-triggered run.
+2. **Per-lane busy check, project-wide bootstrap block.** A lane with any `PROCESSING` source is treated
+   as busy and skipped this tick without affecting any other lane — best-effort per-lane serialization,
+   not a hard guarantee: the busy-check and the claim are separate queries (a TOCTOU race is possible
+   across scheduler instances/ticks), and a lane briefly reads as free again once a batch is marked
+   `PROCESSED`, before its librarian run has actually terminated. Concurrent same-lane writers are
+   backstopped by `KnowledgePageService`'s optimistic page versioning and the retry-once conflict
+   protocol, not by this check — a non-terminal `knowledge-librarian` run no longer blocks the whole
+   project the way it once did. The one project-wide block is `knowledge-bootstrap`: while it has a
+   non-terminal run, no lane dispatches — it writes broadly across the wiki in one large
+   operator-triggered run.
 3. **Agent resolution.** `LibrarianDispatchService` resolves `agentSlug` per dispatch: the lane's domain
    row's `owningAgentSlug` if one is assigned and that agent still exists, else the generalist
    `knowledge-librarian` — a deleted specialist demotes its lane back to the generalist on the next
@@ -202,7 +207,7 @@ wiki schema pages below, which are seed-if-absent only, since those are agent/us
 
 **The librarian is an `Agent` definition, not a hardcoded prompt.** `KnowledgeWorkflowProvisioner` seeds a
 project-scoped `knowledge-librarian` Agent (slug `knowledge-librarian`, provider `claude`, the filing
-procedure from `knowledge/librarian-system-prompt.md` as its system prompt, bound to the four
+procedure from `knowledge/librarian-system-prompt.md` as its system prompt, bound to all six
 `knowledge:*` tools — see [MCP tools](#mcp-tools) — with `configJson: {"maxToolTurns": 40}`) the same way
 it seeds the workflow YAML. The system prompt, model, and tool bindings are all editable afterward under
 **Automation → Agents**, same as any other agent — evolving the librarian's behavior no longer requires a
