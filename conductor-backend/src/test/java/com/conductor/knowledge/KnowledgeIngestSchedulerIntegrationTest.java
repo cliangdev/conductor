@@ -100,8 +100,26 @@ class KnowledgeIngestSchedulerIntegrationTest extends AbstractNoneWebIntegration
 
     private String submitPending(String projectId, String ref) {
         KnowledgeSubmission submission = new KnowledgeSubmission(projectId, "manual-note", ref,
-                "note " + ref, "text/plain", "content for " + ref, OffsetDateTime.now(), null, null, null);
+                "note " + ref, "text/plain", "content for " + ref, OffsetDateTime.now(), null, null, null, null);
         return ingestionService.submit(submission).sourceId();
+    }
+
+    /** Inserts a PENDING source pre-stamped with {@code domain}, bypassing KnowledgeDomainResolver --
+     *  these lane-dispatch tests care about routing *after* the domain is stamped, not resolution itself
+     *  (see KnowledgeIngestionServiceIntegrationTest for resolver coverage), so there's no need to also
+     *  register a real KnowledgeDomain row here. */
+    private String submitPendingInDomain(String projectId, String ref, String domain) {
+        KnowledgeSource source = new KnowledgeSource();
+        source.setProjectId(projectId);
+        source.setSourceType("manual-note");
+        source.setSourceRef(ref);
+        source.setTitle("note " + ref);
+        source.setContentType("text/plain");
+        source.setPayload("content for " + ref);
+        source.setDedupKey("dedup:" + ref);
+        source.setStatus(KnowledgeSourceStatus.PENDING);
+        source.setDomain(domain);
+        return sourceRepository.save(source).getId();
     }
 
     @Test
@@ -143,26 +161,107 @@ class KnowledgeIngestSchedulerIntegrationTest extends AbstractNoneWebIntegration
     }
 
     @Test
-    void activeKnowledgeRun_blocksNewDispatch() {
+    void activeBootstrapRun_blocksAllLanes() {
+        String projectId = newProject(true);
+        provisioner.provision(projectId);
+        WorkflowDefinition bootstrap = workflowRepository
+                .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.BOOTSTRAP_WORKFLOW_NAME)
+                .orElseThrow();
+
+        WorkflowRun activeRun = new WorkflowRun();
+        activeRun.setWorkflow(bootstrap);
+        activeRun.setTriggerType("workflow_dispatch");
+        activeRun.setStatus(WorkflowRunStatus.RUNNING);
+        workflowRunRepository.save(activeRun);
+
+        String nullLaneId = submitPending(projectId, "note://blocked");
+        String engineeringLaneId = submitPendingInDomain(projectId, "note://blocked-eng", "engineering");
+
+        scheduler.poll();
+
+        assertThat(reload(nullLaneId).getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
+        assertThat(reload(nullLaneId).getProcessingRunId()).isNull();
+        assertThat(reload(engineeringLaneId).getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
+        assertThat(reload(engineeringLaneId).getProcessingRunId()).isNull();
+    }
+
+    @Test
+    void laneAlreadyProcessing_blocksOnlyThatLane_othersStillDispatch() {
         String projectId = newProject(true);
         provisioner.provision(projectId);
         WorkflowDefinition librarian = workflowRepository
                 .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME)
                 .orElseThrow();
+        WorkflowRun inFlightRun = new WorkflowRun();
+        inFlightRun.setWorkflow(librarian);
+        inFlightRun.setTriggerType("workflow_dispatch");
+        inFlightRun.setStatus(WorkflowRunStatus.RUNNING);
+        workflowRunRepository.save(inFlightRun);
 
-        WorkflowRun activeRun = new WorkflowRun();
-        activeRun.setWorkflow(librarian);
-        activeRun.setTriggerType("workflow_dispatch");
-        activeRun.setStatus(WorkflowRunStatus.RUNNING);
-        workflowRunRepository.save(activeRun);
-
-        String id = submitPending(projectId, "note://blocked");
+        // Engineering lane already has a PROCESSING source from a prior batch -- busy.
+        String alreadyProcessingId = submitPendingInDomain(projectId, "note://eng-inflight", "engineering");
+        markProcessing(alreadyProcessingId, inFlightRun.getId(), 0);
+        // A second engineering-lane source is due, but the lane is busy -- must stay untouched.
+        String queuedInBusyLaneId = submitPendingInDomain(projectId, "note://eng-queued", "engineering");
+        // The null lane and a product lane have no in-flight work -- both should dispatch this tick.
+        String nullLaneId = submitPending(projectId, "note://free-null");
+        String productLaneId = submitPendingInDomain(projectId, "note://free-product", "product");
 
         scheduler.poll();
 
-        KnowledgeSource source = reload(id);
-        assertThat(source.getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
-        assertThat(source.getProcessingRunId()).isNull();
+        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+            assertThat(reload(queuedInBusyLaneId).getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
+            assertThat(reload(nullLaneId).getStatus()).isEqualTo(KnowledgeSourceStatus.PROCESSING);
+            assertThat(reload(productLaneId).getStatus()).isEqualTo(KnowledgeSourceStatus.PROCESSING);
+        });
+    }
+
+    @Test
+    void twoLanesWithDuePending_bothDispatchInOneTick() {
+        String projectId = newProject(true);
+        provisioner.provision(projectId);
+
+        String engineeringId = submitPendingInDomain(projectId, "note://eng", "engineering");
+        String productId = submitPendingInDomain(projectId, "note://product", "product");
+
+        scheduler.poll();
+
+        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+            KnowledgeSource eng = reload(engineeringId);
+            KnowledgeSource product = reload(productId);
+            assertThat(eng.getStatus()).isEqualTo(KnowledgeSourceStatus.PROCESSING);
+            assertThat(product.getStatus()).isEqualTo(KnowledgeSourceStatus.PROCESSING);
+            assertThat(eng.getProcessingRunId()).isNotBlank();
+            assertThat(product.getProcessingRunId()).isNotBlank();
+            // Separate lanes -> separate librarian runs, not one run batching both domains together.
+            assertThat(eng.getProcessingRunId()).isNotEqualTo(product.getProcessingRunId());
+        });
+    }
+
+    @Test
+    void nullLaneClaimOnlyClaimsNullDomainSources() {
+        String projectId = newProject(true);
+        provisioner.provision(projectId);
+
+        String nullId = submitPending(projectId, "note://unclassified");
+        String engineeringId = submitPendingInDomain(projectId, "note://tagged-eng", "engineering");
+
+        scheduler.poll();
+
+        await().atMost(5, TimeUnit.SECONDS).untilAsserted(() -> {
+            KnowledgeSource nullSource = reload(nullId);
+            KnowledgeSource engSource = reload(engineeringId);
+            assertThat(nullSource.getStatus()).isEqualTo(KnowledgeSourceStatus.PROCESSING);
+            assertThat(engSource.getStatus()).isEqualTo(KnowledgeSourceStatus.PROCESSING);
+            assertThat(nullSource.getProcessingRunId()).isNotEqualTo(engSource.getProcessingRunId());
+
+            WorkflowRun nullRun = workflowRunRepository.findById(nullSource.getProcessingRunId()).orElseThrow();
+            WorkflowRun engRun = workflowRunRepository.findById(engSource.getProcessingRunId()).orElseThrow();
+            // Stored payload formatting (whitespace around ':') isn't guaranteed byte-for-byte, so
+            // compact it before asserting on the domain field's value.
+            assertThat(nullRun.getEventPayload().replaceAll("\\s+", "")).contains("\"domain\":\"\"");
+            assertThat(engRun.getEventPayload().replaceAll("\\s+", "")).contains("\"domain\":\"engineering\"");
+        });
     }
 
     @Test

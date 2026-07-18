@@ -66,7 +66,8 @@ public class KnowledgeEventTap {
                 OffsetDateTime.now(),
                 dedupKey(projectId, workItemRef, fromStatus, toStatus),
                 new KnowledgeSubmission.Origin("EVENT_TAP", workItemRef),
-                Map.of("fromStatus", String.valueOf(fromStatus), "toStatus", String.valueOf(toStatus)));
+                Map.of("fromStatus", String.valueOf(fromStatus), "toStatus", String.valueOf(toStatus)),
+                null); // domain: no hardcoded area->domain map (see plan) -- registry patterns route, or the null lane
 
         ingestionService.submit(submission);
     }

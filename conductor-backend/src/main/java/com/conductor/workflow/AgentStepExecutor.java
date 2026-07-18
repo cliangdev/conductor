@@ -60,6 +60,12 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
         if (agentRef == null || agentRef.isBlank()) {
             return StepResult.failed("", "Step 'with.agent' is required for agent step");
         }
+        // Interpolate ${{ }} refs (e.g. ${{ event.agentSlug }}) so dispatch-time agent selection works;
+        // a literal slug has no ${{ }} pattern so it passes through unchanged (backward compatible).
+        agentRef = interpolator.interpolate(agentRef, ctx);
+        if (agentRef.isBlank()) {
+            return StepResult.failed("", "Step 'with.agent' interpolated to empty");
+        }
 
         Object taskObj = withBlock.get("task");
         if (taskObj == null || taskObj.toString().isBlank()) {

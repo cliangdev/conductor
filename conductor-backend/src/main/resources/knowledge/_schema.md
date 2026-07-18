@@ -1,7 +1,7 @@
 ---
 type: schema
 title: Knowledge Center schema
-description: Frontmatter contract, page-type taxonomy, path layout, and linking conventions for this project's wiki.
+description: Frontmatter contract, path layout, and linking conventions for this project's wiki.
 ---
 
 # Knowledge Center schema
@@ -12,8 +12,9 @@ This page is the librarian's style guide. Read it before writing any page.
 
 Every page is Markdown with a leading YAML frontmatter block (`---` ... `---`).
 
-- `type` (**required**) — one string from the [page-type taxonomy](#page-type-taxonomy) below. A page
-  with no `type` is invalid and will be rejected.
+- `type` (**required**) — one string identifying the page's kind. A page with no `type` is invalid and
+  will be rejected. Root-level types are `schema` and `decision` (see below); every other type is owned
+  by a [domain](#domains) — read that domain's schema page for its taxonomy before picking one.
 - `title` (recommended) — short human-readable name, used in `index.md` and search results.
 - `description` (recommended) — one sentence, used in `index.md` and search results.
 - `resource` (recommended) — a stable external identifier this page tracks, if any (e.g. a Work Item
@@ -34,81 +35,38 @@ Every page is Markdown with a leading YAML frontmatter block (`---` ... `---`).
 - Any other key round-trips verbatim — the parser preserves fields it doesn't know about, so it's safe
   to add page-type-specific fields (e.g. a `decision` page might add `status: accepted`).
 
-## Page-type taxonomy
+## Domains
 
-| `type` | For |
+Every top-level directory except `decisions/` is a **domain**, with its own `<dir>/_schema.md` page
+defining that domain's page-type taxonomy, path layout, and body templates. **Read the relevant domain
+schema before filing a page there** — this root page only covers what's cross-cutting.
+
+| Domain | Purpose |
 |---|---|
-| `person` | A team member or notable external contact. |
-| `project` | A Conductor project/workspace-level summary. |
-| `decision` | A recorded decision — what was decided, why, alternatives considered. |
-| `meeting` | Notes/outcomes from a specific meeting. |
-| `metric` | A tracked metric's definition, current value/trend, and where it comes from. |
-| `feature` | A user-facing product feature. |
-| `architecture` | A system/service/module's design. |
-| `integration` | A third-party integration or connector's setup/behavior. |
+| [`engineering/`](/engineering/_schema.md) | Architecture, runbooks, postmortems, engineering decisions, integrations. |
+| [`product/`](/product/_schema.md) | Features, experiments, feedback synthesis. |
+| [`marketing/`](/marketing/_schema.md) | Campaigns, personas, positioning, competitors. |
+| [`finance/`](/finance/_schema.md) | Financial metrics and spend decisions. |
+| [`people/`](/people/_schema.md) | Team members and meetings. |
 
-If a source doesn't clearly fit one of these, prefer the closest match over inventing a new type;
-raise the gap in your run summary instead.
+This table reflects the seeded defaults at the time this page was written — it does not update itself as
+domains are added or changed. The domain registry is the authoritative, current list: use the
+`list_knowledge_domains` tool, or the Domains panel on the Knowledge index page, to see it.
 
-## Path layout
+Never invent a new top-level directory for a single page — file it under the closest existing domain
+above, or `decisions/` as a fallback.
 
-- `people/` — `person` pages.
-- `decisions/` — `decision` pages.
-- `product/features/` — `feature` pages.
-- `engineering/architecture/` — `architecture` pages.
-- `finance/` — budget/spend/revenue-adjacent `metric`/`decision` pages.
-- `marketing/` — campaign/positioning-adjacent pages.
-- Meetings and cross-cutting metrics that don't fit a specific area: file under the most relevant
-  existing directory above, or `decisions/`/`people/` as a fallback — don't invent a new top-level
-  directory for a single page.
+## `decisions/` — cross-cutting decisions
 
-Use lowercase, hyphenated filenames (e.g. `product/features/knowledge-center.md`).
-
-## Body templates
-
-Every page's body follows its type's template below — stable, predictable structure so readers (human
-or agent) always know where to look. Keep every section; write "None yet." rather than dropping one.
-Diagrams are Mermaid in a fenced ` ```mermaid ` block (the UI renders them natively).
-
-### `architecture` (diagram-first, C4-inspired)
-
-```markdown
-## Purpose
-One paragraph: what this component/service exists to do.
-
-## Diagram
-A Mermaid `flowchart` of the key components and their interactions — 5–10 boxes max, C4
-container/component altitude. Every box is labeled with name + role ("Scheduler<br/>(claims batches)");
-every arrow is labeled with the interaction ("dispatches run"). Zoom out, not in: if it needs more than
-10 boxes, split into linked child pages.
-
-## Components
-One bullet per box in the diagram: name — responsibility, key classes/paths.
-
-## Interactions
-The non-obvious flows: ordering, transactions, failure handling.
-
-## Key decisions
-Bullets linking to /decisions/*.md pages where they exist.
-```
-
-### `feature`
-
-`## What it does` (user-visible behavior) · `## How it works` (mechanics, link architecture pages) ·
-`## Status` (shipped/in-progress + timestamp) · `## Related` (links).
+`decisions/` stays outside the domain system: a decision can span or precede any domain, so it isn't
+owned by one. File a `decision` page here for anything that doesn't clearly belong to one domain's own
+decision log (e.g. `engineering/decisions/` for architecture/tech-stack ADRs, `finance/decisions/` for
+spend calls) — those domain-scoped decision types exist for exactly that narrower case.
 
 ### `decision` (ADR-style)
 
 `## Context` · `## Decision` · `## Alternatives considered` · `## Consequences`. Add
 `status: proposed|accepted|superseded` to frontmatter.
-
-### `person` / `meeting` / `metric` / `integration`
-
-`person`: `## Role` · `## Working on` · `## Notes`.
-`meeting`: `## Attendees` · `## Outcomes` · `## Action items`.
-`metric`: `## Definition` · `## Current` (value + timestamp) · `## Source of truth` (link the system;
-the wiki stores the narrative, never a shadow ledger).
-`integration`: `## What it connects` · `## Setup` · `## Behavior`.
 
 ## Create vs. edit
 

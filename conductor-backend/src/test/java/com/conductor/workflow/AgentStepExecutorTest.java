@@ -158,6 +158,52 @@ class AgentStepExecutorTest {
     }
 
     @Test
+    void interpolatedAgentRefResolvesFromEventPayload() {
+        when(agentExecutionService.resolveDefinition(PROJECT_ID, "knowledge-engineering")).thenReturn(definition());
+        when(runtimeResolver.resolve(PROJECT_ID, definition())).thenReturn("claude-code");
+
+        RuntimeContext ctx = new RuntimeContext(Map.of("agentSlug", "knowledge-engineering"), Map.of(), Map.of(), Map.of());
+        Map<String, Object> with = new LinkedHashMap<>();
+        with.put("agent", "${{ event.agentSlug }}");
+        with.put("task", "File this batch");
+
+        StepResult result = executor.execute(context(with, ctx));
+
+        assertThat(result).isSameAs(claudeCodeRuntime.toReturn);
+        assertThat(claudeCodeRuntime.lastCall).isNotNull();
+    }
+
+    @Test
+    void agentRefInterpolatingToEmptyYieldsFailed() {
+        RuntimeContext ctx = emptyContext(); // no "agentSlug" key in the event payload
+
+        Map<String, Object> with = new LinkedHashMap<>();
+        with.put("agent", "${{ event.agentSlug }}");
+        with.put("task", "File this batch");
+
+        StepResult result = executor.execute(context(with, ctx));
+
+        assertThat(result.getStatus().name()).isEqualTo("FAILED");
+        assertThat(result.getErrorReason()).contains("with.agent").contains("interpolated to empty");
+        assertThat(apiRuntime.lastCall).isNull();
+        assertThat(claudeCodeRuntime.lastCall).isNull();
+    }
+
+    @Test
+    void literalAgentRefPassesThroughUnchanged() {
+        when(agentExecutionService.resolveDefinition(PROJECT_ID, "marketing-agent")).thenReturn(definition());
+        when(runtimeResolver.resolve(PROJECT_ID, definition())).thenReturn("claude-code");
+
+        Map<String, Object> with = new LinkedHashMap<>();
+        with.put("agent", "marketing-agent"); // no ${{ }} pattern -- must resolve unchanged
+        with.put("task", "Do something");
+
+        StepResult result = executor.execute(context(with, emptyContext()));
+
+        assertThat(result).isSameAs(claudeCodeRuntime.toReturn);
+    }
+
+    @Test
     void delegatesToResolverSelectedRuntimeWithInterpolatedCall() {
         when(agentExecutionService.resolveDefinition(PROJECT_ID, "marketing-agent")).thenReturn(definition());
         when(runtimeResolver.resolve(PROJECT_ID, definition())).thenReturn("claude-code");

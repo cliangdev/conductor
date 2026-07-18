@@ -6,6 +6,9 @@ import com.conductor.agent.AgentRepository;
 import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.entity.Project;
 import com.conductor.entity.WorkflowDefinition;
+import com.conductor.knowledge.domain.KnowledgeDomain;
+import com.conductor.knowledge.domain.KnowledgeDomainRepository;
+import com.conductor.knowledge.domain.KnowledgeDomainState;
 import com.conductor.knowledge.page.KnowledgePageRepository;
 import com.conductor.knowledge.page.KnowledgePageService;
 import com.conductor.knowledge.page.PageWrite;
@@ -21,14 +24,17 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 /**
  * Idempotently provisions the two knowledge-domain system workflows (see
- * {@code src/main/resources/knowledge/*.yaml}) and the {@code _schema.md} seed page for a project.
- * Called from {@code ProjectSettingsService} on every settings save that leaves knowledge enabled
+ * {@code src/main/resources/knowledge/*.yaml}), the {@code _schema.md} seed page, and the domain
+ * registry (5 {@link KnowledgeDomain} rows -- engineering/product/marketing/finance/people -- plus each
+ * one's {@code <slug>/_schema.md} page) for a project. Called from {@code ProjectSettingsService} on
+ * every settings save that leaves knowledge enabled
  * (not just the false-&gt;true transition) -- catch-up provisioning for projects that were enabled
  * before a given artifact existed, or where a seeded artifact (most commonly the librarian
  * {@code Agent}) was since deleted -- and from {@code LibrarianDispatchService} as a just-in-time
@@ -73,16 +79,52 @@ public class KnowledgeWorkflowProvisioner {
     private static final String LIBRARIAN_AGENT_PROVIDER = "claude";
     private static final String LIBRARIAN_AVATAR_EMOJI = "📚";
     private static final String LIBRARIAN_AVATAR_COLOR = "violet";
-    private static final List<String> LIBRARIAN_TOOL_IDS = List.of(
+    /** Shared by the librarian seed here and by {@code KnowledgeDomainService#createSpecialist} -- a
+     *  specialist agent gets the same 6 tools as the generalist librarian. */
+    public static final List<String> LIBRARIAN_TOOL_IDS = List.of(
             "knowledge:read_knowledge_pages", "knowledge:read_knowledge_sources",
-            "knowledge:search_knowledge", "knowledge:write_knowledge_pages");
+            "knowledge:search_knowledge", "knowledge:write_knowledge_pages",
+            "knowledge:list_knowledge_domains", "knowledge:suggest_knowledge_domain");
+    /** Shared by the librarian seed here and by {@code KnowledgeDomainService#createSpecialist}. */
+    public static final int LIBRARIAN_MAX_TOOL_TURNS = 40;
     private static final Actor PROVISIONER_ACTOR = new Actor("system", "knowledge-provisioner", null);
+
+    /** One registry row + schema page to seed, keyed by slug. {@code patterns} is the
+     *  {@code sourceTypePatterns} routing escape hatch (Phase 2); empty for every domain but
+     *  engineering, which claims GitHub-sourced material by default. */
+    private record DomainSeed(String slug, String displayName, String description, List<String> patterns) {
+        String pathPrefix() {
+            return slug + "/";
+        }
+
+        String schemaPagePath() {
+            return slug + "/_schema.md";
+        }
+
+        String resource() {
+            return "/knowledge/domains/" + slug + ".md";
+        }
+    }
+
+    private static final List<DomainSeed> DOMAIN_SEEDS = List.of(
+            new DomainSeed("engineering", "Engineering",
+                    "Architecture, runbooks, postmortems, engineering decisions, integrations.",
+                    List.of("github.*")),
+            new DomainSeed("product", "Product",
+                    "Features, experiments, feedback synthesis.", List.of()),
+            new DomainSeed("marketing", "Marketing",
+                    "Campaigns, personas, positioning, competitors.", List.of()),
+            new DomainSeed("finance", "Finance",
+                    "Financial metrics and spend decisions.", List.of()),
+            new DomainSeed("people", "People",
+                    "Team members and meetings.", List.of()));
 
     private final WorkflowDefinitionRepository workflowRepository;
     private final ProjectRepository projectRepository;
     private final KnowledgePageRepository pageRepository;
     private final KnowledgePageService pageService;
     private final AgentRepository agentRepository;
+    private final KnowledgeDomainRepository domainRepository;
     private final ObjectMapper objectMapper;
 
     public KnowledgeWorkflowProvisioner(WorkflowDefinitionRepository workflowRepository,
@@ -90,12 +132,14 @@ public class KnowledgeWorkflowProvisioner {
                                         KnowledgePageRepository pageRepository,
                                         KnowledgePageService pageService,
                                         AgentRepository agentRepository,
+                                        KnowledgeDomainRepository domainRepository,
                                         ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.projectRepository = projectRepository;
         this.pageRepository = pageRepository;
         this.pageService = pageService;
         this.agentRepository = agentRepository;
+        this.domainRepository = domainRepository;
         this.objectMapper = objectMapper;
     }
 
@@ -112,12 +156,15 @@ public class KnowledgeWorkflowProvisioner {
         upsertWorkflow(project, LIBRARIAN_WORKFLOW_NAME, LIBRARIAN_RESOURCE);
         upsertWorkflow(project, BOOTSTRAP_WORKFLOW_NAME, BOOTSTRAP_RESOURCE);
         seedSchemaPage(projectId);
+        seedDomainRegistry(projectId);
+        seedDomainSchemaPages(projectId);
     }
 
     private void seedLibrarianAgent(String projectId) {
         Optional<Agent> existing = agentRepository.findByProjectIdAndSlug(projectId, LIBRARIAN_AGENT_SLUG);
         if (existing.isPresent()) {
             backfillAvatarIfMissing(existing.get());
+            backfillToolIdsIfMissing(existing.get());
             return;
         }
         Agent agent = new Agent();
@@ -129,7 +176,7 @@ public class KnowledgeWorkflowProvisioner {
         agent.setSystemPrompt(readResource(LIBRARIAN_SYSTEM_PROMPT_RESOURCE));
         // No "runtime" key -- resolved at execution time (AgentRuntimeResolver auto-detects from
         // project credentials) rather than pinned by the seed.
-        agent.setConfigJson(writeJson(Map.of("maxToolTurns", 40)));
+        agent.setConfigJson(writeJson(Map.of("maxToolTurns", LIBRARIAN_MAX_TOOL_TURNS)));
         agent.setToolIds(writeJson(LIBRARIAN_TOOL_IDS));
         agent.setState("ACTIVE");
         agent.setAvatarEmoji(LIBRARIAN_AVATAR_EMOJI);
@@ -149,6 +196,26 @@ public class KnowledgeWorkflowProvisioner {
         log.info("Backfilled avatar for '{}' agent in project {}", LIBRARIAN_AGENT_SLUG, agent.getProjectId());
     }
 
+    /** Backfills any of {@link #LIBRARIAN_TOOL_IDS} missing from a pre-existing librarian agent (e.g.
+     *  one seeded before {@code list_knowledge_domains}/{@code suggest_knowledge_domain} existed) --
+     *  adds only what's missing, preserving any custom tool ids an operator added on top. */
+    private void backfillToolIdsIfMissing(Agent agent) {
+        List<String> current;
+        try {
+            current = objectMapper.readValue(agent.getToolIds(), new com.fasterxml.jackson.core.type.TypeReference<List<String>>() { });
+        } catch (Exception e) {
+            current = new ArrayList<>();
+        }
+        java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>(current);
+        boolean changed = merged.addAll(LIBRARIAN_TOOL_IDS);
+        if (!changed) {
+            return;
+        }
+        agent.setToolIds(writeJson(new ArrayList<>(merged)));
+        agentRepository.save(agent);
+        log.info("Backfilled tool ids for '{}' agent in project {}", LIBRARIAN_AGENT_SLUG, agent.getProjectId());
+    }
+
     private String writeJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -157,18 +224,54 @@ public class KnowledgeWorkflowProvisioner {
         }
     }
 
+    /**
+     * Creates the workflow if absent, or -- since these are system-owned, canonical content, unlike the
+     * seed-if-absent wiki schema pages below -- refreshes its stored YAML in place if it has drifted
+     * from the current classpath resource (e.g. a project enabled before {@code agent: ${{ event.agentSlug }}}
+     * shipped). {@code LibrarianDispatchService} treats this drift as incomplete seeding and calls
+     * {@link #provision} to trigger the refresh before dispatching into a stale workflow.
+     *
+     * <p>A refresh here is not synchronized with any already-running librarian job: a run whose engine
+     * re-parses the live YAML mid-execution (e.g. it reaches the {@code agent} step after this method
+     * updated the row) reads the new template against the *old* dispatch payload -- if that payload
+     * predates {@code agentSlug} (a pre-deploy run), {@code with.agent: ${{ event.agentSlug }}} then
+     * interpolates to empty and the step fails. This is self-correcting at the cost of one attempt: the
+     * scheduler's stale-processing sweep resurrects the batch, and the retry is dispatched with a fresh
+     * payload against the now-refreshed YAML.
+     */
     private void upsertWorkflow(Project project, String name, String resource) {
-        if (workflowRepository.findByProjectIdAndName(project.getId(), name).isPresent()) {
+        String classpathYaml = readResource(resource);
+        Optional<WorkflowDefinition> existing = workflowRepository.findByProjectIdAndName(project.getId(), name);
+        if (existing.isPresent()) {
+            WorkflowDefinition def = existing.get();
+            if (!classpathYaml.equals(def.getYaml())) {
+                def.setYaml(classpathYaml);
+                workflowRepository.save(def);
+                log.info("Refreshed drifted system workflow '{}' YAML for project {}", name, project.getId());
+            }
             return;
         }
         WorkflowDefinition def = new WorkflowDefinition();
         def.setProject(project);
         def.setName(name);
-        def.setYaml(readResource(resource));
+        def.setYaml(classpathYaml);
         def.setEnabled(true);
         def.setArea("knowledge");
         workflowRepository.save(def);
         log.info("Provisioned system workflow '{}' for project {}", name, project.getId());
+    }
+
+    /**
+     * True if the project's stored {@code knowledge-librarian} workflow YAML differs from the current
+     * classpath resource -- {@code LibrarianDispatchService} treats drift as "seeding incomplete" and
+     * self-heals via {@link #provision} (whose {@link #upsertWorkflow} refreshes drifted YAML in place)
+     * before dispatching into a stale target. A missing workflow row entirely is not "stale" -- that's
+     * the caller's separate empty-optional check.
+     */
+    public boolean isLibrarianWorkflowStale(String projectId) {
+        return workflowRepository.findByProjectIdAndName(projectId, LIBRARIAN_WORKFLOW_NAME)
+                .map(w -> !readResource(LIBRARIAN_RESOURCE).equals(w.getYaml()))
+                .orElse(false);
     }
 
     private void seedSchemaPage(String projectId) {
@@ -179,6 +282,45 @@ public class KnowledgeWorkflowProvisioner {
         pageService.batchWrite(projectId, List.of(new PageWrite(SCHEMA_PAGE_PATH, content, null, false)),
                 List.of(), PROVISIONER_ACTOR);
         log.info("Seeded {} for project {}", SCHEMA_PAGE_PATH, projectId);
+    }
+
+    /** Seeds the 5 domain registry rows (by natural key {@code (projectId, slug)}) that don't already
+     *  exist -- a surviving row (e.g. one an admin edited) is left untouched, never reset. */
+    private void seedDomainRegistry(String projectId) {
+        for (DomainSeed seed : DOMAIN_SEEDS) {
+            if (domainRepository.findByProjectIdAndSlug(projectId, seed.slug()).isPresent()) {
+                continue;
+            }
+            KnowledgeDomain domain = new KnowledgeDomain();
+            domain.setProjectId(projectId);
+            domain.setSlug(seed.slug());
+            domain.setDisplayName(seed.displayName());
+            domain.setDescription(seed.description());
+            domain.setPathPrefix(seed.pathPrefix());
+            domain.setSchemaPagePath(seed.schemaPagePath());
+            domain.setSourceTypePatterns(seed.patterns());
+            domain.setState(KnowledgeDomainState.ACTIVE);
+            domainRepository.save(domain);
+            log.info("Provisioned '{}' knowledge domain for project {}", seed.slug(), projectId);
+        }
+    }
+
+    /** Seeds whichever domain {@code <slug>/_schema.md} pages are missing, in one batch -- pages are
+     *  agent/user-editable, so (unlike the system workflow YAML) this is seed-if-absent only; an
+     *  existing page (even a stale one) is never overwritten. */
+    private void seedDomainSchemaPages(String projectId) {
+        List<PageWrite> writes = new ArrayList<>();
+        for (DomainSeed seed : DOMAIN_SEEDS) {
+            if (pageRepository.findByProjectIdAndPath(projectId, seed.schemaPagePath()).isPresent()) {
+                continue;
+            }
+            writes.add(new PageWrite(seed.schemaPagePath(), readResource(seed.resource()), null, false));
+        }
+        if (writes.isEmpty()) {
+            return;
+        }
+        pageService.batchWrite(projectId, writes, List.of(), PROVISIONER_ACTOR);
+        log.info("Seeded {} domain schema page(s) for project {}", writes.size(), projectId);
     }
 
     private String readResource(String classpathPath) {

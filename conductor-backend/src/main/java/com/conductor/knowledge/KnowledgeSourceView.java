@@ -25,6 +25,7 @@ public record KnowledgeSourceView(
         KnowledgeSourceStatus status,
         int attempts,
         String errorMessage,
-        OffsetDateTime purgedAt
+        OffsetDateTime purgedAt,
+        String domain
 ) {
 }

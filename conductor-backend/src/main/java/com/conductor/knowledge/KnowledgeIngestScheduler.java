@@ -22,9 +22,24 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Drives the knowledge ingestion inbox to completion: claims due PENDING sources into batches and
- * dispatches a {@code knowledge-librarian} run ({@link LibrarianDispatchService}), and sweeps
- * PROCESSING sources whose run stalled or failed back to PENDING (with backoff) or DEAD.
+ * Drives the knowledge ingestion inbox to completion: claims due PENDING sources into batches, per
+ * domain lane, and dispatches a {@code knowledge-librarian} run for each ({@link LibrarianDispatchService}),
+ * and sweeps PROCESSING sources whose run stalled or failed back to PENDING (with backoff) or DEAD.
+ *
+ * <p>Concurrency unit is {@code (project, domain lane)}, not the whole project: a lane (a
+ * {@code KnowledgeDomain} slug, or {@code null} for the generalist lane) is treated as busy when it
+ * currently has any PROCESSING source, and a busy lane is skipped this tick without affecting any other
+ * lane -- so e.g. an in-flight engineering-domain run never blocks a product-domain batch from
+ * dispatching in the same tick. This is **best-effort**, not a hard guarantee: the busy-check and the
+ * claim are two separate queries, so two scheduler instances (or two ticks) can race between them
+ * (TOCTOU), and even within one instance a lane briefly reads as free again once
+ * {@code KnowledgeSourceRepository#markProcessed} lands, before the librarian run that wrote it has
+ * actually terminated. Either window can let two writers touch the same lane concurrently; the backstop
+ * is {@code KnowledgePageService}'s optimistic page versioning plus the librarian's retry-once conflict
+ * protocol, not this scheduler's busy-check. The one project-wide block is {@code knowledge-bootstrap}:
+ * it writes broadly across the wiki in one large by-hand-triggered run, so no lane dispatches while it's
+ * active. (This is a looser concurrency model than the original single global "any active knowledge run
+ * blocks everything" -- lanes now serialize best-effort via their own PROCESSING rows instead.)
  *
  * <p>Shape mirrors {@code WebhookRetryScheduler}/{@code ActionInvocationService}'s background sweep:
  * no method-level {@code @Transactional} wraps the whole tick (per-project/per-source failures are
@@ -96,34 +111,36 @@ public class KnowledgeIngestScheduler {
         if (!projectSettingsService.isKnowledgeEnabled(projectId)) {
             return;
         }
-        if (hasActiveKnowledgeRun(projectId)) {
+        if (hasActiveBootstrapRun(projectId)) {
             return;
         }
-        List<String> claimedIds = self.claimBatchInNewTx(projectId, now);
-        if (claimedIds.isEmpty()) {
-            return;
-        }
-        dispatchService.dispatch(projectId, claimedIds);
-    }
-
-    /** True if either knowledge workflow already has a non-terminal run for this project. */
-    private boolean hasActiveKnowledgeRun(String projectId) {
-        for (String name : List.of(KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME,
-                KnowledgeWorkflowProvisioner.BOOTSTRAP_WORKFLOW_NAME)) {
-            Optional<WorkflowDefinition> workflow = workflowRepository.findByProjectIdAndName(projectId, name);
-            if (workflow.isEmpty()) {
+        for (String domain : sourceRepository.findLanesWithDuePending(projectId, now)) {
+            if (sourceRepository.existsProcessingInLane(projectId, domain)) {
+                continue; // this lane is busy; other lanes are unaffected
+            }
+            List<String> claimedIds = self.claimBatchInNewTx(projectId, domain, now);
+            if (claimedIds.isEmpty()) {
                 continue;
             }
-            if (!workflowRunRepository.findByWorkflowIdAndStatusIn(workflow.get().getId(), ACTIVE_RUN_STATUSES).isEmpty()) {
-                return true;
-            }
+            dispatchService.dispatch(projectId, domain, claimedIds);
         }
-        return false;
+    }
+
+    /** True if {@code knowledge-bootstrap} already has a non-terminal run for this project -- the one
+     *  project-wide dispatch block (see class javadoc); the librarian workflow no longer blocks, since
+     *  lanes now self-serialize via their own PROCESSING rows. */
+    private boolean hasActiveBootstrapRun(String projectId) {
+        Optional<WorkflowDefinition> workflow = workflowRepository.findByProjectIdAndName(
+                projectId, KnowledgeWorkflowProvisioner.BOOTSTRAP_WORKFLOW_NAME);
+        if (workflow.isEmpty()) {
+            return false;
+        }
+        return !workflowRunRepository.findByWorkflowIdAndStatusIn(workflow.get().getId(), ACTIVE_RUN_STATUSES).isEmpty();
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public List<String> claimBatchInNewTx(String projectId, OffsetDateTime now) {
-        List<KnowledgeSource> due = sourceRepository.findDuePendingForProject(projectId, now, batchSize);
+    public List<String> claimBatchInNewTx(String projectId, String domain, OffsetDateTime now) {
+        List<KnowledgeSource> due = sourceRepository.findDuePendingForProjectAndDomain(projectId, domain, now, batchSize);
         if (due.isEmpty()) {
             return List.of();
         }

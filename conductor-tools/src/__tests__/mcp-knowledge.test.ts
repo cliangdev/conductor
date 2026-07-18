@@ -4,15 +4,18 @@ import type { Config } from '../mcp/config.js'
 vi.mock('../mcp/api.js', () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  apiPostWithStatus: vi.fn(),
 }))
 
-import { apiGet, apiPost } from '../mcp/api.js'
+import { apiGet, apiPost, apiPostWithStatus } from '../mcp/api.js'
 import {
   submitKnowledgeSource,
   readKnowledgeSources,
   searchKnowledge,
   readKnowledgePages,
   writeKnowledgePages,
+  listKnowledgeDomains,
+  suggestKnowledgeDomain,
 } from '../mcp/tools/knowledge.js'
 
 const config: Config = {
@@ -57,6 +60,7 @@ describe('knowledge MCP tools', () => {
         occurredAt: '2026-07-01T00:00:00Z',
         dedupKey: 'pr-1',
         metadata: { repo: 'x/y' },
+        domain: 'engineering',
       },
       config
     )
@@ -70,6 +74,7 @@ describe('knowledge MCP tools', () => {
         occurredAt: '2026-07-01T00:00:00Z',
         dedupKey: 'pr-1',
         metadata: { repo: 'x/y' },
+        domain: 'engineering',
       },
       config
     )
@@ -175,5 +180,103 @@ describe('knowledge MCP tools', () => {
     await expect(
       writeKnowledgePages({ writes: [{ path: 'a.md', content: 'bad' }] }, config)
     ).rejects.toThrow('API error 422')
+  })
+
+  it('list_knowledge_domains GETs the domains resource and shapes registry rows only', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        slug: 'engineering',
+        displayName: 'Engineering',
+        description: 'Architecture and runbooks',
+        pathPrefix: 'engineering/',
+        schemaPagePath: 'engineering/_schema.md',
+        sourceTypePatterns: ['github.*'],
+        owningAgentSlug: null,
+        state: 'ACTIVE',
+        suggestionReason: null,
+        pendingCount: 3,
+        processingCount: 0,
+        processedCount: 10,
+      },
+    ])
+
+    const result = await listKnowledgeDomains(config)
+
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/knowledge/domains', config)
+    expect(result).toEqual([
+      {
+        slug: 'engineering',
+        displayName: 'Engineering',
+        description: 'Architecture and runbooks',
+        pathPrefix: 'engineering/',
+        schemaPagePath: 'engineering/_schema.md',
+        sourceTypePatterns: ['github.*'],
+        state: 'ACTIVE',
+        owningAgentSlug: null,
+      },
+    ])
+  })
+
+  it('suggest_knowledge_domain POSTs the gap report and reports created=true on a 201', async () => {
+    ;(apiPostWithStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { slug: 'legal', state: 'SUGGESTED' },
+      status: 201,
+    })
+
+    const result = await suggestKnowledgeDomain(
+      { slug: 'legal', displayName: 'Legal', reason: 'contracts keep showing up' },
+      config
+    )
+
+    expect(apiPostWithStatus).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/knowledge/domains',
+      { slug: 'legal', displayName: 'Legal', reason: 'contracts keep showing up' },
+      config
+    )
+    expect(result).toEqual({ slug: 'legal', state: 'SUGGESTED', created: true })
+  })
+
+  it('suggest_knowledge_domain reports created=false and surfaces DISMISSED on a 200', async () => {
+    ;(apiPostWithStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { slug: 'legal', state: 'DISMISSED' },
+      status: 200,
+    })
+
+    const result = await suggestKnowledgeDomain(
+      { slug: 'legal', displayName: 'Legal', reason: 'again' },
+      config
+    )
+
+    expect(result).toEqual({ slug: 'legal', state: 'DISMISSED', created: false })
+  })
+
+  it('suggest_knowledge_domain includes optional fields when given', async () => {
+    ;(apiPostWithStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: { slug: 'legal', state: 'SUGGESTED' },
+      status: 201,
+    })
+
+    await suggestKnowledgeDomain(
+      {
+        slug: 'legal',
+        displayName: 'Legal',
+        reason: 'contracts',
+        description: 'Contracts and compliance',
+        sourceTypePatterns: ['legal.*'],
+      },
+      config
+    )
+
+    expect(apiPostWithStatus).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/knowledge/domains',
+      {
+        slug: 'legal',
+        displayName: 'Legal',
+        reason: 'contracts',
+        description: 'Contracts and compliance',
+        sourceTypePatterns: ['legal.*'],
+      },
+      config
+    )
   })
 })

@@ -3,6 +3,8 @@ package com.conductor.knowledge;
 import com.conductor.agent.AgentRepository;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
+import com.conductor.knowledge.domain.KnowledgeDomain;
+import com.conductor.knowledge.domain.KnowledgeDomainRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,9 +22,17 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Fires a {@code knowledge-librarian} run for a batch of claimed {@link KnowledgeSource} ids, and
- * records the resulting run id back onto them ({@code processing_run_id}) so
- * {@link KnowledgeIngestScheduler}'s active-run guard and stale-processing sweep can find it.
+ * Fires a {@code knowledge-librarian} run for a batch of claimed {@link KnowledgeSource} ids in one
+ * domain lane, and records the resulting run id back onto them ({@code processing_run_id}) so
+ * {@link KnowledgeIngestScheduler}'s per-lane busy check and stale-processing sweep can find it.
+ *
+ * <p>Agent resolution: {@code domain}'s {@link KnowledgeDomain#getOwningAgentSlug()} if the domain has
+ * one assigned AND that agent still exists, otherwise falls back to the generalist
+ * {@value KnowledgeWorkflowProvisioner#LIBRARIAN_AGENT_SLUG} -- so a deleted specialist agent never
+ * strands its lane, it just demotes to the generalist on the next dispatch. The resolved slug and the
+ * domain (empty string for the null/generalist lane -- workflow-YAML event payloads don't carry true
+ * null) are always in the fired run's payload, readable in {@code knowledge-librarian.yaml}'s task as
+ * {@code ${{ event.agentSlug }}} / {@code ${{ event.domain }}}.
  *
  * <p>Transaction discipline mirrors {@code ActionInvocationService}/{@code WorkflowExecutionEngine}:
  * {@link #dispatch} itself is deliberately NOT wrapped in one long transaction. {@link
@@ -40,6 +50,7 @@ public class LibrarianDispatchService {
     private final WorkflowTriggerService workflowTriggerService;
     private final KnowledgeSourceRepository sourceRepository;
     private final AgentRepository agentRepository;
+    private final KnowledgeDomainRepository domainRepository;
     private final KnowledgeWorkflowProvisioner provisioner;
     private final ObjectMapper objectMapper;
 
@@ -53,43 +64,48 @@ public class LibrarianDispatchService {
                                     WorkflowTriggerService workflowTriggerService,
                                     KnowledgeSourceRepository sourceRepository,
                                     AgentRepository agentRepository,
+                                    KnowledgeDomainRepository domainRepository,
                                     KnowledgeWorkflowProvisioner provisioner,
                                     ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.workflowTriggerService = workflowTriggerService;
         this.sourceRepository = sourceRepository;
         this.agentRepository = agentRepository;
+        this.domainRepository = domainRepository;
         this.provisioner = provisioner;
         this.objectMapper = objectMapper;
     }
 
     /**
-     * Fires the project's {@code knowledge-librarian} workflow with {@code sourceIds} (comma-joined)
-     * and {@code projectId} as top-level event-payload fields -- readable in the step prompt as
-     * {@code ${{ event.sourceIds }}} / {@code ${{ event.projectId }}} (see docs/workflows.md's
+     * Fires the project's {@code knowledge-librarian} workflow with {@code sourceIds} (comma-joined),
+     * {@code projectId}, the resolved {@code agentSlug}, and {@code domain} as top-level event-payload
+     * fields -- readable in the step prompt as {@code ${{ event.sourceIds }}} etc. (see docs/workflows.md's
      * interpolation table: {@code event.FIELD} resolves any trigger's stored payload, not just
      * webhook). Deliberately NOT passed as {@code workflow_dispatch} {@code inputs} -- those are for a
      * human-authored dispatch form; this is a programmatic fan-out of an arbitrary-length id batch, and
      * a flat top-level field avoids the publish-time "undeclared input" lint entirely.
      *
      * <p>If seeding turns out to be incomplete -- the {@code knowledge-librarian} workflow or its Agent
-     * row is missing (e.g. a race between the enable-settings transaction and this scheduler tick, or
-     * an operator deleted the librarian Agent) -- this self-heals by calling {@link
-     * KnowledgeWorkflowProvisioner#provision} and re-looking-up the workflow, rather than dispatching
-     * into a void. If provisioning itself throws, or the workflow is still missing afterward, the batch
-     * falls back to being released back to PENDING so the next tick retries it once provisioning has
-     * landed.
+     * row is missing (e.g. a race between the enable-settings transaction and this scheduler tick, an
+     * operator deleted the librarian Agent), or the stored workflow YAML has drifted from the current
+     * classpath resource (e.g. this project was enabled before {@code agent: ${{ event.agentSlug }}}
+     * shipped) -- this self-heals by calling {@link KnowledgeWorkflowProvisioner#provision} (which
+     * refreshes drifted system-workflow YAML in place) and re-looking-up the workflow, rather than
+     * dispatching into a stale or missing target. If provisioning itself throws, or the workflow is
+     * still missing afterward, the batch falls back to being released back to PENDING so the next tick
+     * retries it once provisioning has landed.
      */
-    public void dispatch(String projectId, List<String> sourceIds) {
+    public void dispatch(String projectId, String domain, List<String> sourceIds) {
         if (sourceIds == null || sourceIds.isEmpty()) {
             return;
         }
         Optional<WorkflowDefinition> workflow =
                 workflowRepository.findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME);
         boolean agentMissing = !agentRepository.existsByProjectIdAndSlug(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG);
-        if (workflow.isEmpty() || agentMissing) {
-            log.info("Knowledge-librarian seeding incomplete for project {} (workflow missing={}, agent missing={}) "
-                    + "-- self-healing before dispatch", projectId, workflow.isEmpty(), agentMissing);
+        boolean yamlStale = provisioner.isLibrarianWorkflowStale(projectId);
+        if (workflow.isEmpty() || agentMissing || yamlStale) {
+            log.info("Knowledge-librarian seeding incomplete for project {} (workflow missing={}, agent missing={}, "
+                    + "yaml stale={}) -- self-healing before dispatch", projectId, workflow.isEmpty(), agentMissing, yamlStale);
             try {
                 provisioner.provision(projectId);
                 workflow = workflowRepository.findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME);
@@ -108,18 +124,40 @@ public class LibrarianDispatchService {
             return;
         }
 
-        String payloadJson = buildPayload(projectId, sourceIds);
+        String agentSlug = resolveAgentSlug(projectId, domain);
+        String payloadJson = buildPayload(projectId, domain, agentSlug, sourceIds);
         WorkflowRun run = workflowTriggerService.fireTrigger(workflow.get().getId(), "workflow_dispatch", payloadJson);
         self.recordRunIdInNewTx(sourceIds, run.getId());
-        log.info("Dispatched knowledge-librarian run {} for project {} ({} source(s))",
-                run.getId(), projectId, sourceIds.size());
+        log.info("Dispatched knowledge-librarian run {} for project {} domain={} agent={} ({} source(s))",
+                run.getId(), projectId, domain, agentSlug, sourceIds.size());
     }
 
-    private String buildPayload(String projectId, List<String> sourceIds) {
+    /** The domain's assigned specialist if it has one AND that agent still exists, else the generalist
+     *  librarian -- a deleted specialist demotes its lane back to the generalist rather than stranding it. */
+    private String resolveAgentSlug(String projectId, String domain) {
+        if (domain == null) {
+            return KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG;
+        }
+        Optional<KnowledgeDomain> domainRow = domainRepository.findByProjectIdAndSlug(projectId, domain);
+        String owningAgentSlug = domainRow.map(KnowledgeDomain::getOwningAgentSlug).orElse(null);
+        if (owningAgentSlug == null) {
+            return KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG;
+        }
+        if (agentRepository.existsByProjectIdAndSlug(projectId, owningAgentSlug)) {
+            return owningAgentSlug;
+        }
+        log.info("Domain '{}' owning agent '{}' no longer exists for project {} -- falling back to generalist librarian",
+                domain, owningAgentSlug, projectId);
+        return KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG;
+    }
+
+    private String buildPayload(String projectId, String domain, String agentSlug, List<String> sourceIds) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", "workflow_dispatch");
         payload.put("projectId", projectId);
         payload.put("sourceIds", String.join(",", sourceIds));
+        payload.put("agentSlug", agentSlug);
+        payload.put("domain", domain != null ? domain : "");
         try {
             return objectMapper.writeValueAsString(payload);
         } catch (Exception e) {

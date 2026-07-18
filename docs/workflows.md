@@ -413,7 +413,7 @@ Hands a task to a project-scoped **AI agent** (a named persona configured under 
 
 | Field | Description |
 |-------|-------------|
-| `agent` | Slug (or id) of an agent defined in this project (required). |
+| `agent` | Slug (or id) of an agent defined in this project (required). Interpolated, same as `task`/`context` — e.g. `agent: ${{ event.agentSlug }}` picks the agent per dispatch (used by the Knowledge Center's [domain-aware routing](knowledge.md#domains) to resolve a specialist agent or fall back to a generalist). A literal slug with no `${{ }}` passes through unchanged. Blank after interpolation fails the step. |
 | `task` | The instruction for the agent. Interpolated — may reference `${{ steps.* }}` / `${{ needs.* }}`. |
 | `context` | Optional map of structured data passed to the agent. Each value is interpolated; upstream integration outputs (JSON strings) embed as-is. |
 | `output_schema` | Optional shape that requests a structured JSON answer from the agent. |
@@ -605,8 +605,10 @@ Unknown references resolve to an empty string rather than erroring.
 `workflow_dispatch` call's inputs, a Work Item status-change event's `toStatus`/`fromStatus`/`workItemId`,
 or a payload a system process passed programmatically. The Knowledge Center's `knowledge-librarian`
 workflow is an example of the last case — it's dispatched by a scheduler, not a human, and reads
-`${{ event.sourceIds }}` from a payload the dispatcher built directly (see
-[`docs/knowledge.md`](knowledge.md)) rather than declaring `workflow_dispatch` `inputs`.
+`${{ event.sourceIds }}`/`${{ event.projectId }}`/`${{ event.domain }}` from a payload the dispatcher
+built directly (see [`docs/knowledge.md`](knowledge.md)) rather than declaring `workflow_dispatch`
+`inputs`. Its `with.agent: ${{ event.agentSlug }}` is the same dispatcher-built payload driving *which*
+agent runs the step, not just what it's told — `with.agent` is interpolated exactly like `task`/`context`.
 
 **Output merge rule.** `needs.JOB_ID.outputs.*` is the merge of every step's declared outputs across
 that job, in deterministic execution order (start time, then step id as a tiebreak). If two steps in

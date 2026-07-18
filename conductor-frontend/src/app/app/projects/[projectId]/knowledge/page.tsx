@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { KnowledgePageSkeleton } from '@/components/knowledge/KnowledgePageSkeleton'
 import { ClaudeConnectionHint } from '@/components/knowledge/ClaudeConnectionHint'
 import { KnowledgePipelineStrip } from '@/components/knowledge/KnowledgePipelineStrip'
+import { KnowledgeDomainsPanel } from '@/components/knowledge/KnowledgeDomainsPanel'
 import { Alert } from '@/components/ui/alert'
 import { AgentAvatar, isAvatarColorToken, type AvatarColorToken } from '@/components/agents/AgentAvatar'
 import { getKnowledgeIndex, enableKnowledge } from '@/lib/knowledge-api'
@@ -157,6 +158,7 @@ export default function KnowledgeIndexPage() {
     <div className="h-full overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
       <div className="max-w-[45rem] mx-auto space-y-4">
         {accessToken && <KnowledgePipelineStrip projectId={projectId} token={accessToken} />}
+        {accessToken && <KnowledgeDomainsPanel projectId={projectId} token={accessToken} />}
         <MarkdownRenderer content={page!.content ?? ''} onWikiLink={handleWikiLink} basePath="" />
       </div>
     </div>

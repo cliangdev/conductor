@@ -266,7 +266,7 @@ public class GitHubConnector implements WebhookConnector {
                     projectId, "github.pr_merged", sourceRef, title, "application/json",
                     objectMapper.writeValueAsString(payload), OffsetDateTime.now(),
                     "github-pr-merged:" + sourceRef, new KnowledgeSubmission.Origin("GITHUB_CONNECTOR", sourceRef),
-                    null);
+                    null, null); // domain: null -- the engineering domain's "github.*" pattern routes this
             knowledgeIngestionService.submit(submission);
         } catch (Exception e) {
             log.warn("Failed to submit knowledge source for merged PR (project {}): {}", projectId, e.getMessage());

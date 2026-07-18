@@ -1,5 +1,5 @@
 import { Config } from '../config.js'
-import { apiGet, apiPost } from '../api.js'
+import { apiGet, apiPost, apiPostWithStatus } from '../api.js'
 
 /**
  * Knowledge Center MCP tools. The wiki is a set of versioned Markdown pages ("index.md" / "log.md" are
@@ -31,6 +31,7 @@ export async function submitKnowledgeSource(
     occurredAt?: string
     dedupKey?: string
     metadata?: Record<string, unknown>
+    domain?: string
   },
   config: Config
 ): Promise<Record<string, unknown>> {
@@ -42,6 +43,7 @@ export async function submitKnowledgeSource(
   if (params.occurredAt !== undefined) body['occurredAt'] = params.occurredAt
   if (params.dedupKey !== undefined) body['dedupKey'] = params.dedupKey
   if (params.metadata !== undefined) body['metadata'] = params.metadata
+  if (params.domain !== undefined) body['domain'] = params.domain
 
   return apiPost<Record<string, unknown>>(
     `/api/v1/projects/${config.projectId}/knowledge/sources`,
@@ -115,6 +117,68 @@ function parseConflictBody(err: unknown): KnowledgePageConflict[] | null {
   } catch {
     return null
   }
+}
+
+export interface KnowledgeDomainSummary {
+  slug: string
+  displayName: string
+  description?: string | null
+  pathPrefix: string
+  schemaPagePath: string
+  sourceTypePatterns: string[]
+  state: string
+  owningAgentSlug?: string | null
+}
+
+/** Registry rows only — matches the agent-tool-provider's `list_knowledge_domains` shape on the other
+ *  runtime (counts/suggestionReason are REST-only extras, not part of either tool's result). */
+export async function listKnowledgeDomains(config: Config): Promise<KnowledgeDomainSummary[]> {
+  const raw = await apiGet<Record<string, unknown>[]>(
+    `/api/v1/projects/${config.projectId}/knowledge/domains`,
+    config
+  )
+  if (!Array.isArray(raw)) return []
+  return raw.map((d) => ({
+    slug: d['slug'] as string,
+    displayName: d['displayName'] as string,
+    description: (d['description'] as string | null | undefined) ?? null,
+    pathPrefix: d['pathPrefix'] as string,
+    schemaPagePath: d['schemaPagePath'] as string,
+    sourceTypePatterns: Array.isArray(d['sourceTypePatterns']) ? (d['sourceTypePatterns'] as string[]) : [],
+    state: d['state'] as string,
+    owningAgentSlug: (d['owningAgentSlug'] as string | null | undefined) ?? null,
+  }))
+}
+
+/**
+ * Claim-or-return gap report. `created` distinguishes a brand-new SUGGESTED row (true, backend 201)
+ * from an existing row of any state returned as-is (false, backend 200) — the caller should treat a
+ * `state: "DISMISSED"` result as "already declined, don't call again for this slug".
+ */
+export async function suggestKnowledgeDomain(
+  params: {
+    slug: string
+    displayName: string
+    reason: string
+    description?: string
+    sourceTypePatterns?: string[]
+  },
+  config: Config
+): Promise<{ slug: string; state: string; created: boolean }> {
+  const body: Record<string, unknown> = {
+    slug: params.slug,
+    displayName: params.displayName,
+    reason: params.reason,
+  }
+  if (params.description !== undefined) body['description'] = params.description
+  if (params.sourceTypePatterns !== undefined) body['sourceTypePatterns'] = params.sourceTypePatterns
+
+  const { data, status } = await apiPostWithStatus<Record<string, unknown>>(
+    `/api/v1/projects/${config.projectId}/knowledge/domains`,
+    body,
+    config
+  )
+  return { slug: data['slug'] as string, state: data['state'] as string, created: status === 201 }
 }
 
 export async function writeKnowledgePages(

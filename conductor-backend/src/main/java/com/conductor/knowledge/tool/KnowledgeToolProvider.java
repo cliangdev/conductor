@@ -7,6 +7,8 @@ import com.conductor.agent.tool.ToolResult;
 import com.conductor.knowledge.Actor;
 import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSourceView;
+import com.conductor.knowledge.domain.KnowledgeDomain;
+import com.conductor.knowledge.domain.KnowledgeDomainService;
 import com.conductor.knowledge.page.KnowledgeConflictException;
 import com.conductor.knowledge.page.KnowledgePageService;
 import com.conductor.knowledge.page.KnowledgeSearchService;
@@ -27,7 +29,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Tool source {@code "knowledge"} — exposes the Knowledge Center's four MCP tools
+ * Tool source {@code "knowledge"} — exposes the Knowledge Center's six MCP tools
  * ({@code conductor-tools/src/mcp/tools/knowledge.ts}) as {@link AgentTool}s, so the
  * {@code knowledge-librarian} agent (see {@code KnowledgeWorkflowProvisioner}) can call them on either
  * {@code agent}-step runtime. Tool names are bare (no {@code mcp__conductor__} prefix) so the same
@@ -55,6 +57,8 @@ public class KnowledgeToolProvider implements AgentToolProvider {
     private static final String READ_SOURCES = "read_knowledge_sources";
     private static final String SEARCH = "search_knowledge";
     private static final String WRITE_PAGES = "write_knowledge_pages";
+    private static final String LIST_DOMAINS = "list_knowledge_domains";
+    private static final String SUGGEST_DOMAIN = "suggest_knowledge_domain";
 
     /** The conflict-result {@code message} field, verbatim from {@code knowledge.ts#parseConflictBody}'s
      *  caller — the model-facing guidance is identical regardless of which runtime hit the conflict. */
@@ -67,17 +71,20 @@ public class KnowledgeToolProvider implements AgentToolProvider {
     private final KnowledgePageService pageService;
     private final KnowledgeIngestionService ingestionService;
     private final KnowledgeSearchService searchService;
+    private final KnowledgeDomainService domainService;
     private final ObjectMapper objectMapper;
 
     public KnowledgeToolProvider(ProjectSettingsService projectSettingsService,
                                  KnowledgePageService pageService,
                                  KnowledgeIngestionService ingestionService,
                                  KnowledgeSearchService searchService,
+                                 KnowledgeDomainService domainService,
                                  ObjectMapper objectMapper) {
         this.projectSettingsService = projectSettingsService;
         this.pageService = pageService;
         this.ingestionService = ingestionService;
         this.searchService = searchService;
+        this.domainService = domainService;
         this.objectMapper = objectMapper;
     }
 
@@ -91,7 +98,8 @@ public class KnowledgeToolProvider implements AgentToolProvider {
         if (!projectSettingsService.isKnowledgeEnabled(projectId)) {
             return List.of();
         }
-        return List.of(new ReadPagesTool(), new ReadSourcesTool(), new SearchTool(), new WritePagesTool());
+        return List.of(new ReadPagesTool(), new ReadSourcesTool(), new SearchTool(), new WritePagesTool(),
+                new ListDomainsTool(), new SuggestDomainTool());
     }
 
     @Override
@@ -112,7 +120,7 @@ public class KnowledgeToolProvider implements AgentToolProvider {
         if (toolId == null || !toolId.startsWith(SOURCE_ID + ":")) return null;
         String bare = toolId.substring(SOURCE_ID.length() + 1);
         return switch (bare) {
-            case READ_PAGES, READ_SOURCES, SEARCH, WRITE_PAGES -> bare;
+            case READ_PAGES, READ_SOURCES, SEARCH, WRITE_PAGES, LIST_DOMAINS, SUGGEST_DOMAIN -> bare;
             default -> null;
         };
     }
@@ -310,6 +318,97 @@ public class KnowledgeToolProvider implements AgentToolProvider {
                 return "{\"conflict\":true,\"message\":\"" + CONFLICT_MESSAGE + "\"}";
             }
         }
+    }
+
+    private final class ListDomainsTool extends KnowledgeAgentTool {
+        ListDomainsTool() { super(LIST_DOMAINS); }
+
+        @Override
+        public String description() {
+            return "List this project's knowledge domains — slug, displayName, description, pathPrefix, "
+                    + "schemaPagePath, sourceTypePatterns, state, owningAgentSlug. Call before "
+                    + "suggest_knowledge_domain to check whether a domain (including a DISMISSED one) "
+                    + "already exists, and to see each domain's filing conventions.";
+        }
+
+        @Override
+        public Map<String, Object> inputSchema() {
+            return objectSchema(Map.of(), List.of());
+        }
+
+        @Override
+        public ToolResult invoke(Map<String, Object> arguments, ToolInvocationContext context) {
+            try {
+                List<Map<String, Object>> rows = domainService.list(context.projectId()).stream()
+                        .map(KnowledgeToolProvider.this::toDomainRow)
+                        .toList();
+                return ToolResult.ok(objectMapper.writeValueAsString(rows));
+            } catch (Exception e) {
+                log.warn("KnowledgeToolProvider list_knowledge_domains failed: {}", e.getMessage());
+                return ToolResult.error("list_knowledge_domains failed: " + e.getMessage());
+            }
+        }
+    }
+
+    private final class SuggestDomainTool extends KnowledgeAgentTool {
+        SuggestDomainTool() { super(SUGGEST_DOMAIN); }
+
+        @Override
+        public String description() {
+            return "Raise a gap report for a domain not yet in the registry. Claim-or-return on slug — "
+                    + "calling this again for the same slug is safe and returns the existing row instead "
+                    + "of erroring or resetting it. A DISMISSED result means an admin already declined "
+                    + "this slug — do not call again for it. Verify with list_knowledge_domains.";
+        }
+
+        @Override
+        public Map<String, Object> inputSchema() {
+            Map<String, Object> properties = new LinkedHashMap<>();
+            properties.put("slug", Map.of("type", "string",
+                    "description", "Lowercase, hyphenated (^[a-z0-9][a-z0-9-]*$) — becomes the domain's wiki path prefix."));
+            properties.put("displayName", Map.of("type", "string"));
+            properties.put("reason", Map.of("type", "string",
+                    "description", "Why this domain is needed — shown to the admin reviewing the gap report."));
+            properties.put("description", Map.of("type", "string", "description", "Optional longer description of the domain."));
+            properties.put("sourceTypePatterns",
+                    stringArraySchema("Optional glob patterns to seed routing with, if known upfront."));
+            return objectSchema(properties, List.of("slug", "displayName", "reason"));
+        }
+
+        @Override
+        public ToolResult invoke(Map<String, Object> arguments, ToolInvocationContext context) {
+            try {
+                String slug = stringArg(arguments.get("slug"));
+                String displayName = stringArg(arguments.get("displayName"));
+                String reason = stringArg(arguments.get("reason"));
+                String description = stringArg(arguments.get("description"));
+                List<String> patterns = stringList(arguments.get("sourceTypePatterns"));
+                KnowledgeDomainService.SuggestResult result = domainService.suggest(context.projectId(), slug,
+                        displayName, description, reason, patterns, context.agentId());
+
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("slug", result.domain().getSlug());
+                response.put("state", result.domain().getState().name());
+                response.put("created", result.created());
+                return ToolResult.ok(objectMapper.writeValueAsString(response));
+            } catch (Exception e) {
+                log.warn("KnowledgeToolProvider suggest_knowledge_domain failed: {}", e.getMessage());
+                return ToolResult.error("suggest_knowledge_domain failed: " + e.getMessage());
+            }
+        }
+    }
+
+    private Map<String, Object> toDomainRow(KnowledgeDomain d) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("slug", d.getSlug());
+        row.put("displayName", d.getDisplayName());
+        row.put("description", d.getDescription());
+        row.put("pathPrefix", d.getPathPrefix());
+        row.put("schemaPagePath", d.getSchemaPagePath());
+        row.put("sourceTypePatterns", d.getSourceTypePatterns());
+        row.put("state", d.getState().name());
+        row.put("owningAgentSlug", d.getOwningAgentSlug());
+        return row;
     }
 
     // ---- schema/arg helpers ----

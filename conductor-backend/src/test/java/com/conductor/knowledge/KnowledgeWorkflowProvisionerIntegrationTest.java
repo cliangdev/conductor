@@ -7,6 +7,9 @@ import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinition;
+import com.conductor.knowledge.domain.KnowledgeDomain;
+import com.conductor.knowledge.domain.KnowledgeDomainRepository;
+import com.conductor.knowledge.domain.KnowledgeDomainState;
 import com.conductor.knowledge.page.KnowledgePage;
 import com.conductor.knowledge.page.KnowledgePageRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -46,6 +49,8 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
     @Autowired
     private AgentRepository agentRepository;
     @Autowired
+    private KnowledgeDomainRepository domainRepository;
+    @Autowired
     private ProjectMemberRepository projectMemberRepository;
     @Autowired
     private ProjectSettingsService projectSettingsService;
@@ -76,6 +81,32 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
     }
 
     @Test
+    void reprovisionRefreshesDriftedLibrarianWorkflowYaml() {
+        provisioner.provision(projectId);
+        WorkflowDefinition librarian = workflowRepository
+                .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME)
+                .orElseThrow();
+        librarian.setYaml("name: Stale Knowledge Librarian\non:\n  workflow_dispatch: {}\n");
+        workflowRepository.save(librarian);
+        assertThat(provisioner.isLibrarianWorkflowStale(projectId)).isTrue();
+
+        provisioner.provision(projectId);
+
+        WorkflowDefinition refreshed = workflowRepository
+                .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME)
+                .orElseThrow();
+        assertThat(refreshed.getYaml()).contains("agent: ${{ event.agentSlug }}");
+        assertThat(provisioner.isLibrarianWorkflowStale(projectId)).isFalse();
+    }
+
+    @Test
+    void isLibrarianWorkflowStaleIsFalseImmediatelyAfterProvisioning() {
+        provisioner.provision(projectId);
+
+        assertThat(provisioner.isLibrarianWorkflowStale(projectId)).isFalse();
+    }
+
+    @Test
     void provisionCreatesBothWorkflowsAndSchemaPage() {
         provisioner.provision(projectId);
 
@@ -96,6 +127,67 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
     }
 
     @Test
+    void provisionSeedsDomainRegistryAndSchemaPages() {
+        provisioner.provision(projectId);
+
+        List<KnowledgeDomain> domains = domainRepository.findByProjectIdOrderBySlugAsc(projectId);
+        assertThat(domains).extracting(KnowledgeDomain::getSlug)
+                .containsExactly("engineering", "finance", "marketing", "people", "product");
+        assertThat(domains).allSatisfy(d -> {
+            assertThat(d.getState()).isEqualTo(KnowledgeDomainState.ACTIVE);
+            assertThat(d.getDisplayName()).isNotBlank();
+            assertThat(d.getPathPrefix()).isEqualTo(d.getSlug() + "/");
+            assertThat(d.getSchemaPagePath()).isEqualTo(d.getSlug() + "/_schema.md");
+        });
+
+        KnowledgeDomain engineering = domains.stream()
+                .filter(d -> d.getSlug().equals("engineering")).findFirst().orElseThrow();
+        assertThat(engineering.getSourceTypePatterns()).containsExactly("github.*");
+
+        List<KnowledgeDomain> nonEngineering = domains.stream()
+                .filter(d -> !d.getSlug().equals("engineering")).toList();
+        assertThat(nonEngineering).allSatisfy(d -> assertThat(d.getSourceTypePatterns()).isEmpty());
+
+        for (KnowledgeDomain domain : domains) {
+            Optional<KnowledgePage> schemaPage = pageRepository.findByProjectIdAndPath(projectId, domain.getSchemaPagePath());
+            assertThat(schemaPage).as("schema page for domain " + domain.getSlug()).isPresent();
+            assertThat(schemaPage.get().getPageType()).isEqualTo("schema");
+        }
+    }
+
+    @Test
+    void provisionRestoresOnlyMissingDomainArtifactsOnReprovision() {
+        provisioner.provision(projectId);
+
+        KnowledgeDomain engineering = domainRepository.findByProjectIdAndSlug(projectId, "engineering").orElseThrow();
+        engineering.setDisplayName("Eng (customized)");
+        domainRepository.save(engineering);
+
+        domainRepository.delete(domainRepository.findByProjectIdAndSlug(projectId, "product").orElseThrow());
+        assertThat(domainRepository.findByProjectIdAndSlug(projectId, "product")).isEmpty();
+
+        KnowledgePage marketingSchema = pageRepository.findByProjectIdAndPath(projectId, "marketing/_schema.md").orElseThrow();
+        pageRepository.delete(marketingSchema);
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "marketing/_schema.md")).isEmpty();
+
+        provisioner.provision(projectId);
+
+        // Restored: the deleted product domain row and the deleted marketing schema page.
+        assertThat(domainRepository.findByProjectIdAndSlug(projectId, "product")).isPresent();
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "marketing/_schema.md")).isPresent();
+
+        // Untouched: the customized engineering display name was not reset back to the seed default.
+        KnowledgeDomain reloadedEngineering = domainRepository.findByProjectIdAndSlug(projectId, "engineering").orElseThrow();
+        assertThat(reloadedEngineering.getDisplayName()).isEqualTo("Eng (customized)");
+
+        // Still exactly 5 domain rows and 5 domain schema pages (no duplicates from the restore).
+        assertThat(domainRepository.findByProjectIdOrderBySlugAsc(projectId)).hasSize(5);
+        for (String slug : List.of("engineering", "product", "marketing", "finance", "people")) {
+            assertThat(pageRepository.findByProjectIdAndPath(projectId, slug + "/_schema.md")).isPresent();
+        }
+    }
+
+    @Test
     void provisionSeedsLibrarianAgentWithExpectedFields() {
         provisioner.provision(projectId);
 
@@ -110,7 +202,9 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         assertThat(librarian.getToolIds()).contains("knowledge:read_knowledge_pages")
                 .contains("knowledge:read_knowledge_sources")
                 .contains("knowledge:search_knowledge")
-                .contains("knowledge:write_knowledge_pages");
+                .contains("knowledge:write_knowledge_pages")
+                .contains("knowledge:list_knowledge_domains")
+                .contains("knowledge:suggest_knowledge_domain");
         assertThat(librarian.getConfigJson()).contains("\"maxToolTurns\"").contains("40");
         // No runtime key -- resolved at execution time (auto-detect), never pinned by the seed.
         assertThat(librarian.getConfigJson()).doesNotContain("runtime");
@@ -135,6 +229,28 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
                 .orElseThrow();
         assertThat(backfilled.getAvatarEmoji()).isEqualTo("📚");
         assertThat(backfilled.getAvatarColor()).isEqualTo("violet");
+    }
+
+    @Test
+    void provisionBackfillsMissingToolIdsOnPreExistingLibrarianAgent() {
+        provisioner.provision(projectId);
+        Agent librarian = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        // Simulate a librarian seeded before list_knowledge_domains/suggest_knowledge_domain existed --
+        // only the original 4 tool ids, plus a custom addition an operator made on top.
+        librarian.setToolIds("[\"knowledge:read_knowledge_pages\",\"knowledge:read_knowledge_sources\","
+                + "\"knowledge:search_knowledge\",\"knowledge:write_knowledge_pages\",\"custom:my_tool\"]");
+        agentRepository.save(librarian);
+
+        provisioner.provision(projectId);
+
+        Agent backfilled = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        assertThat(backfilled.getToolIds()).contains("knowledge:list_knowledge_domains")
+                .contains("knowledge:suggest_knowledge_domain")
+                .contains("custom:my_tool"); // the operator's custom addition survives the backfill
     }
 
     @Test
@@ -176,6 +292,14 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         List<Agent> agents = agentRepository.findByProjectId(projectId);
         assertThat(agents).extracting(Agent::getSlug)
                 .containsExactly(KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG);
+
+        // Still exactly 5 domain rows and 5 domain schema pages -- the second call double-provisions nothing.
+        assertThat(domainRepository.findByProjectIdOrderBySlugAsc(projectId)).hasSize(5);
+        for (String slug : List.of("engineering", "product", "marketing", "finance", "people")) {
+            Optional<KnowledgePage> page = pageRepository.findByProjectIdAndPath(projectId, slug + "/_schema.md");
+            assertThat(page).isPresent();
+            assertThat(page.get().getVersion()).isEqualTo(1);
+        }
     }
 
     // ---- self-healing via ProjectSettingsService (a project already enabled before/independent of

@@ -5,6 +5,9 @@ import com.conductor.agent.tool.ToolInvocationContext;
 import com.conductor.agent.tool.ToolResult;
 import com.conductor.knowledge.Actor;
 import com.conductor.knowledge.KnowledgeIngestionService;
+import com.conductor.knowledge.domain.KnowledgeDomain;
+import com.conductor.knowledge.domain.KnowledgeDomainService;
+import com.conductor.knowledge.domain.KnowledgeDomainState;
 import com.conductor.knowledge.page.KnowledgeConflictException;
 import com.conductor.knowledge.page.KnowledgePageService;
 import com.conductor.knowledge.page.KnowledgeSearchService;
@@ -41,13 +44,26 @@ class KnowledgeToolProviderTest {
     private KnowledgeIngestionService ingestionService;
     @Mock
     private KnowledgeSearchService searchService;
+    @Mock
+    private KnowledgeDomainService domainService;
 
     private KnowledgeToolProvider provider;
 
     @BeforeEach
     void setUp() {
         provider = new KnowledgeToolProvider(
-                projectSettingsService, pageService, ingestionService, searchService, new ObjectMapper());
+                projectSettingsService, pageService, ingestionService, searchService, domainService, new ObjectMapper());
+    }
+
+    private KnowledgeDomain domain(String slug, String displayName, KnowledgeDomainState state) {
+        KnowledgeDomain d = new KnowledgeDomain();
+        d.setSlug(slug);
+        d.setDisplayName(displayName);
+        d.setPathPrefix(slug + "/");
+        d.setSchemaPagePath(slug + "/_schema.md");
+        d.setSourceTypePatterns(List.of());
+        d.setState(state);
+        return d;
     }
 
     @Test
@@ -68,15 +84,78 @@ class KnowledgeToolProviderTest {
     }
 
     @Test
-    void availableListsExactlyFourTools() {
+    void availableListsExactlySixTools() {
         when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
         List<AgentTool> tools = provider.available(PROJECT_ID);
         assertThat(tools).extracting(AgentTool::id).containsExactlyInAnyOrder(
                 "knowledge:read_knowledge_pages", "knowledge:read_knowledge_sources",
-                "knowledge:search_knowledge", "knowledge:write_knowledge_pages");
+                "knowledge:search_knowledge", "knowledge:write_knowledge_pages",
+                "knowledge:list_knowledge_domains", "knowledge:suggest_knowledge_domain");
         // Bare names (no source prefix) so one system prompt works on both runtimes.
         assertThat(tools).extracting(AgentTool::name).containsExactlyInAnyOrder(
-                "read_knowledge_pages", "read_knowledge_sources", "search_knowledge", "write_knowledge_pages");
+                "read_knowledge_pages", "read_knowledge_sources", "search_knowledge", "write_knowledge_pages",
+                "list_knowledge_domains", "suggest_knowledge_domain");
+    }
+
+    @Test
+    void resolveReturnsEmptyForDomainToolsWhenKnowledgeDisabled() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(false);
+        assertThat(provider.resolve(PROJECT_ID, "knowledge:list_knowledge_domains")).isEmpty();
+        assertThat(provider.resolve(PROJECT_ID, "knowledge:suggest_knowledge_domain")).isEmpty();
+    }
+
+    @Test
+    void listKnowledgeDomainsReturnsRegistryRowShape() throws Exception {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        when(domainService.list(PROJECT_ID)).thenReturn(List.of(domain("engineering", "Engineering", KnowledgeDomainState.ACTIVE)));
+
+        Optional<AgentTool> tool = provider.resolve(PROJECT_ID, "knowledge:list_knowledge_domains");
+        ToolResult result = tool.get().invoke(Map.of(), new ToolInvocationContext(PROJECT_ID, "agent-1", "run-1"));
+
+        assertThat(result.ok()).isTrue();
+        JsonNode json = new ObjectMapper().readTree(result.payload());
+        JsonNode row = json.get(0);
+        assertThat(row.get("slug").asText()).isEqualTo("engineering");
+        assertThat(row.get("displayName").asText()).isEqualTo("Engineering");
+        assertThat(row.get("pathPrefix").asText()).isEqualTo("engineering/");
+        assertThat(row.get("schemaPagePath").asText()).isEqualTo("engineering/_schema.md");
+        assertThat(row.get("state").asText()).isEqualTo("ACTIVE");
+        assertThat(row.has("owningAgentSlug")).isTrue();
+    }
+
+    @Test
+    void suggestKnowledgeDomainCreatesNewSuggestion() throws Exception {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        KnowledgeDomain suggested = domain("legal", "Legal", KnowledgeDomainState.SUGGESTED);
+        when(domainService.suggest(eq(PROJECT_ID), eq("legal"), eq("Legal"), any(), eq("reason"), anyList(), eq("agent-1")))
+                .thenReturn(new KnowledgeDomainService.SuggestResult(suggested, true));
+
+        Optional<AgentTool> tool = provider.resolve(PROJECT_ID, "knowledge:suggest_knowledge_domain");
+        Map<String, Object> args = Map.of("slug", "legal", "displayName", "Legal", "reason", "reason");
+        ToolResult result = tool.get().invoke(args, new ToolInvocationContext(PROJECT_ID, "agent-1", "run-1"));
+
+        assertThat(result.ok()).isTrue();
+        JsonNode json = new ObjectMapper().readTree(result.payload());
+        assertThat(json.get("slug").asText()).isEqualTo("legal");
+        assertThat(json.get("state").asText()).isEqualTo("SUGGESTED");
+        assertThat(json.get("created").asBoolean()).isTrue();
+    }
+
+    @Test
+    void suggestKnowledgeDomainIsIdempotentAndSurfacesDismissedState() throws Exception {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        KnowledgeDomain dismissed = domain("legal", "Legal", KnowledgeDomainState.DISMISSED);
+        when(domainService.suggest(eq(PROJECT_ID), eq("legal"), anyString(), any(), anyString(), anyList(), eq("agent-1")))
+                .thenReturn(new KnowledgeDomainService.SuggestResult(dismissed, false));
+
+        Optional<AgentTool> tool = provider.resolve(PROJECT_ID, "knowledge:suggest_knowledge_domain");
+        Map<String, Object> args = Map.of("slug", "legal", "displayName", "Legal", "reason", "reason again");
+        ToolResult result = tool.get().invoke(args, new ToolInvocationContext(PROJECT_ID, "agent-1", "run-1"));
+
+        assertThat(result.ok()).isTrue();
+        JsonNode json = new ObjectMapper().readTree(result.payload());
+        assertThat(json.get("state").asText()).isEqualTo("DISMISSED");
+        assertThat(json.get("created").asBoolean()).isFalse();
     }
 
     @Test

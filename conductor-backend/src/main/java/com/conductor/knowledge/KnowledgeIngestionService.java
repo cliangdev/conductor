@@ -1,6 +1,7 @@
 package com.conductor.knowledge;
 
 import com.conductor.exception.BusinessException;
+import com.conductor.knowledge.domain.KnowledgeDomainResolver;
 import com.conductor.service.StorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -14,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -35,6 +37,7 @@ public class KnowledgeIngestionService {
 
     private final KnowledgeSourceRepository repository;
     private final StorageService storageService;
+    private final KnowledgeDomainResolver domainResolver;
     private final ObjectMapper objectMapper;
 
     /**
@@ -46,22 +49,25 @@ public class KnowledgeIngestionService {
     KnowledgeIngestionService self;
 
     public KnowledgeIngestionService(KnowledgeSourceRepository repository, StorageService storageService,
-                                     ObjectMapper objectMapper) {
+                                     KnowledgeDomainResolver domainResolver, ObjectMapper objectMapper) {
         this.repository = repository;
         this.storageService = storageService;
+        this.domainResolver = domainResolver;
         this.objectMapper = objectMapper;
     }
 
     /**
      * Accepts a submission into the inbox. Claim-or-return on the dedup key: the first caller for a
      * given key inserts the row (ACCEPTED); any later caller with the same key gets back the original
-     * row's id (DUPLICATE) without inserting again.
+     * row's id (DUPLICATE) without inserting again. The domain lane is resolved once here (see
+     * {@link KnowledgeDomainResolver}) and stamped onto the row -- never re-resolved after the fact.
      */
     public SourceReceipt submit(KnowledgeSubmission submission) {
         validate(submission);
         String dedupKey = submission.dedupKey() != null && !submission.dedupKey().isBlank()
                 ? submission.dedupKey()
                 : computeDedupKey(submission);
+        String domain = domainResolver.resolve(submission.projectId(), submission.domain(), submission.sourceType());
 
         String sourceId = UUID.randomUUID().toString();
         String payload = submission.payload();
@@ -74,7 +80,7 @@ public class KnowledgeIngestionService {
         }
 
         try {
-            KnowledgeSource saved = self.insertPendingInNewTx(sourceId, submission, dedupKey, payload, payloadUri);
+            KnowledgeSource saved = self.insertPendingInNewTx(sourceId, submission, dedupKey, payload, payloadUri, domain);
             return new SourceReceipt(saved.getId(), SourceReceipt.Status.ACCEPTED);
         } catch (DataIntegrityViolationException e) {
             // Lost the insert race (or a genuine re-submit under the same key) -- the winning row exists.
@@ -86,7 +92,7 @@ public class KnowledgeIngestionService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public KnowledgeSource insertPendingInNewTx(String sourceId, KnowledgeSubmission submission, String dedupKey,
-                                                String payload, String payloadUri) {
+                                                String payload, String payloadUri, String domain) {
         KnowledgeSource source = new KnowledgeSource();
         source.setId(sourceId);
         source.setProjectId(submission.projectId());
@@ -101,6 +107,7 @@ public class KnowledgeIngestionService {
         source.setOccurredAt(submission.occurredAt());
         source.setDedupKey(dedupKey);
         source.setStatus(KnowledgeSourceStatus.PENDING);
+        source.setDomain(domain);
         return repository.save(source);
     }
 
@@ -111,11 +118,13 @@ public class KnowledgeIngestionService {
                 .collect(Collectors.toList());
     }
 
-    /** Cheap inbox browse -- never resolves offloaded payload content. */
-    public List<KnowledgeSourceView> listSources(String projectId, KnowledgeSourceStatus status) {
-        return repository.findByProjectIdAndStatusOrderByReceivedAtDesc(projectId, status).stream()
-                .map(s -> toView(s, false))
-                .collect(Collectors.toList());
+    /** Cheap inbox browse -- never resolves offloaded payload content. {@code domain} is an optional
+     *  exact-match filter (null = every lane, including the null/generalist one). */
+    public List<KnowledgeSourceView> listSources(String projectId, KnowledgeSourceStatus status, String domain) {
+        List<KnowledgeSource> sources = domain == null || domain.isBlank()
+                ? repository.findByProjectIdAndStatusOrderByReceivedAtDesc(projectId, status)
+                : repository.findByProjectIdAndStatusAndDomainOrderByReceivedAtDesc(projectId, status, domain);
+        return sources.stream().map(s -> toView(s, false)).collect(Collectors.toList());
     }
 
     /**
@@ -138,6 +147,31 @@ public class KnowledgeIngestionService {
         return new KnowledgeSourceCountsView(pending, processing, processed, dead);
     }
 
+    /**
+     * Per-(domain, status) row counts for a project, keyed by domain slug ({@code null} key = the
+     * generalist lane) -- backs the Domains panel's per-domain pending/processing/processed counts. A
+     * domain absent from the result has zero sources in every status; the caller (see
+     * {@code KnowledgeController}) supplies the zero default.
+     */
+    public Map<String, KnowledgeSourceCountsView> getDomainCounts(String projectId) {
+        Map<String, long[]> byDomain = new HashMap<>(); // [pending, processing, processed, dead]
+        for (Object[] row : repository.countByProjectIdGroupByDomainAndStatus(projectId)) {
+            String domain = (String) row[0];
+            KnowledgeSourceStatus status = (KnowledgeSourceStatus) row[1];
+            long count = (Long) row[2];
+            long[] counts = byDomain.computeIfAbsent(domain, d -> new long[4]);
+            switch (status) {
+                case PENDING -> counts[0] = count;
+                case PROCESSING -> counts[1] = count;
+                case PROCESSED -> counts[2] = count;
+                case DEAD -> counts[3] = count;
+            }
+        }
+        Map<String, KnowledgeSourceCountsView> result = new HashMap<>();
+        byDomain.forEach((domain, c) -> result.put(domain, new KnowledgeSourceCountsView(c[0], c[1], c[2], c[3])));
+        return result;
+    }
+
     private KnowledgeSourceView toView(KnowledgeSource s, boolean resolvePayload) {
         String payload = s.getPayload();
         boolean offloaded = payload == null && s.getPayloadUri() != null;
@@ -148,7 +182,7 @@ public class KnowledgeIngestionService {
                 s.getId(), s.getProjectId(), s.getSourceType(), s.getSourceRef(), s.getTitle(),
                 s.getContentType(), payload, offloaded, s.getMetadata(), toOrigin(s.getOrigin()),
                 s.getOccurredAt(), s.getReceivedAt(), s.getStatus(), s.getAttempts(), s.getErrorMessage(),
-                s.getPurgedAt());
+                s.getPurgedAt(), s.getDomain());
     }
 
     private void validate(KnowledgeSubmission submission) {

@@ -36,6 +36,8 @@ import {
   searchKnowledge,
   readKnowledgePages,
   writeKnowledgePages,
+  listKnowledgeDomains,
+  suggestKnowledgeDomain,
   type KnowledgePageWrite,
 } from './tools/knowledge.js'
 
@@ -368,6 +370,7 @@ const TOOLS = [
         occurredAt: { type: 'string', description: 'ISO-8601 timestamp of when the event occurred (optional)' },
         dedupKey: { type: 'string', description: 'Idempotency key — resubmitting the same key returns status DUPLICATE instead of a second entry (optional)' },
         metadata: { type: 'object', description: 'Arbitrary structured metadata (optional)' },
+        domain: { type: 'string', description: 'Explicit knowledge domain slug to route this into (optional) — omit to let the registry route by sourceType instead' },
       },
       required: ['sourceType'],
     },
@@ -431,6 +434,30 @@ const TOOLS = [
         sourceIds: { type: 'array', items: { type: 'string' }, description: 'Knowledge-inbox source IDs to mark PROCESSED atomically with this write (optional)' },
       },
       required: ['writes'],
+    },
+  },
+  {
+    name: 'list_knowledge_domains',
+    description: "List this project's knowledge domains — slug, displayName, description, pathPrefix, schemaPagePath, sourceTypePatterns, state, owningAgentSlug. Call before suggest_knowledge_domain to check whether a domain (including a DISMISSED one) already exists, and to see each domain's filing conventions.",
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'suggest_knowledge_domain',
+    description: 'Raise a gap report for a domain not yet in the registry. Claim-or-return on slug — calling this again for the same slug is safe and returns the existing row instead of erroring or resetting it. A DISMISSED result means an admin already declined this slug — do not call again for it. Verify with list_knowledge_domains.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        slug: { type: 'string', description: 'Lowercase, hyphenated (^[a-z0-9][a-z0-9-]*$) — becomes the domain\'s wiki path prefix' },
+        displayName: { type: 'string', description: 'Human-readable domain name' },
+        reason: { type: 'string', description: 'Why this domain is needed — shown to the admin reviewing the gap report' },
+        description: { type: 'string', description: 'Optional longer description of the domain' },
+        sourceTypePatterns: { type: 'array', items: { type: 'string' }, description: 'Optional glob patterns to seed routing with, if known upfront' },
+      },
+      required: ['slug', 'displayName', 'reason'],
     },
   },
 ]
@@ -776,6 +803,7 @@ export async function runMcpServer(): Promise<void> {
               occurredAt: params['occurredAt'] as string | undefined,
               dedupKey: params['dedupKey'] as string | undefined,
               metadata: params['metadata'] as Record<string, unknown> | undefined,
+              domain: params['domain'] as string | undefined,
             },
             config
           )
@@ -812,6 +840,23 @@ export async function runMcpServer(): Promise<void> {
             {
               writes: (params['writes'] as KnowledgePageWrite[] | undefined) ?? [],
               sourceIds: params['sourceIds'] as string[] | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'list_knowledge_domains': {
+          const result = await listKnowledgeDomains(config)
+          return successResponse(result)
+        }
+        case 'suggest_knowledge_domain': {
+          const result = await suggestKnowledgeDomain(
+            {
+              slug: params['slug'] as string,
+              displayName: params['displayName'] as string,
+              reason: params['reason'] as string,
+              description: params['description'] as string | undefined,
+              sourceTypePatterns: params['sourceTypePatterns'] as string[] | undefined,
             },
             config
           )
