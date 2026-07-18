@@ -7,6 +7,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.ColumnTransformer;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -39,6 +40,19 @@ public class ProviderCredential {
     @JsonIgnore
     @Column(name = "encrypted_api_key", columnDefinition = "TEXT")
     private String encryptedApiKey;
+
+    /** When {@link com.conductor.service.ProviderVerificationService} last ran a real probe against this credential. */
+    @Column(name = "last_verified_at")
+    private OffsetDateTime lastVerifiedAt;
+
+    /** {@code "verified"} or {@code "error"} — the last probe's overall outcome (never persisted mid-probe). */
+    @Column(name = "last_verification_status", length = 16)
+    private String lastVerificationStatus;
+
+    /** The last {@code VerificationReport} (checks[] with per-check pass/fail/warn + message), as JSON. */
+    @Column(name = "last_verification_report", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
+    private String lastVerificationReport;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -73,6 +87,15 @@ public class ProviderCredential {
 
     public String getEncryptedApiKey() { return encryptedApiKey; }
     public void setEncryptedApiKey(String encryptedApiKey) { this.encryptedApiKey = encryptedApiKey; }
+
+    public OffsetDateTime getLastVerifiedAt() { return lastVerifiedAt; }
+    public void setLastVerifiedAt(OffsetDateTime lastVerifiedAt) { this.lastVerifiedAt = lastVerifiedAt; }
+
+    public String getLastVerificationStatus() { return lastVerificationStatus; }
+    public void setLastVerificationStatus(String lastVerificationStatus) { this.lastVerificationStatus = lastVerificationStatus; }
+
+    public String getLastVerificationReport() { return lastVerificationReport; }
+    public void setLastVerificationReport(String lastVerificationReport) { this.lastVerificationReport = lastVerificationReport; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

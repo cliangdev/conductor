@@ -5,6 +5,7 @@ import com.conductor.exception.BusinessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -61,6 +62,11 @@ public class ProviderCredentialService {
                     c.setProvider(provider);
                     return c;
                 });
+        // A replaced key has never been verified — clear any stale result from the old key rather than
+        // let the UI keep showing a "Verified" badge that no longer means anything.
+        credential.setLastVerifiedAt(null);
+        credential.setLastVerificationStatus(null);
+        credential.setLastVerificationReport(null);
         crypto.putApiKey(credential, apiKey);
         return repository.save(credential);
     }
@@ -82,6 +88,23 @@ public class ProviderCredentialService {
     @Transactional
     public void deleteCredential(String projectId, String provider) {
         repository.findByProjectIdAndProvider(projectId, provider).ifPresent(repository::delete);
+    }
+
+    /**
+     * Persists a {@code com.conductor.service.ProviderVerificationService} probe outcome onto the
+     * existing credential row, if any. A no-op when no row exists — {@code claude-code} runtime
+     * readiness is probeable before any subscription token is ever stored, and there is nothing to
+     * persist onto in that case (the caller still gets the report; it's just not saved).
+     */
+    @Transactional
+    public void recordVerification(String projectId, String provider, OffsetDateTime checkedAt,
+                                   String status, String reportJson) {
+        repository.findByProjectIdAndProvider(projectId, provider).ifPresent(credential -> {
+            credential.setLastVerifiedAt(checkedAt);
+            credential.setLastVerificationStatus(status);
+            credential.setLastVerificationReport(reportJson);
+            repository.save(credential);
+        });
     }
 
     /**

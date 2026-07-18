@@ -9,6 +9,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -69,6 +70,24 @@ class ProviderCredentialServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Unknown provider")
                 .hasMessageContaining("not-a-provider");
+    }
+
+    @Test
+    void setApiKey_replacingExistingCredential_clearsStaleVerificationFields() {
+        ProviderCredential existing = credential("proj-1", "claude");
+        existing.setLastVerifiedAt(OffsetDateTime.now());
+        existing.setLastVerificationStatus("verified");
+        existing.setLastVerificationReport("{\"provider\":\"claude\"}");
+        when(repository.findByProjectIdAndProvider("proj-1", "claude")).thenReturn(Optional.of(existing));
+        when(repository.save(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> inv.getArgument(0));
+
+        ProviderCredential result = service.setApiKey("proj-1", "claude", "sk-ant-new");
+
+        // A replaced key has never been verified — the old key's "Verified" result must not survive
+        // onto the new key.
+        assertThat(result.getLastVerifiedAt()).isNull();
+        assertThat(result.getLastVerificationStatus()).isNull();
+        assertThat(result.getLastVerificationReport()).isNull();
     }
 
     // ---- listStatuses ----
