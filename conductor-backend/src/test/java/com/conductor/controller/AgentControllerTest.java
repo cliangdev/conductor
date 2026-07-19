@@ -12,8 +12,11 @@ import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
+import com.conductor.service.ClaudeRuntimeService;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectSecurityService;
+import com.conductor.service.ProviderVerificationService;
+import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +38,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -50,6 +54,9 @@ class AgentControllerTest {
     // AgentController collaborators
     @MockitoBean private AgentService agentService;
     @MockitoBean private ProviderCredentialService providerCredentialService;
+    @MockitoBean private ProviderVerificationService providerVerificationService;
+    @MockitoBean private ClaudeRuntimeService claudeRuntimeService;
+    @MockitoBean private RuntimeTargetService runtimeTargetService;
     @MockitoBean private ProjectSecurityService projectSecurityService;
     @MockitoBean private ObjectMapper objectMapper;
 
@@ -179,6 +186,169 @@ class AgentControllerTest {
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/credentials")
                         .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listProviderCredentialStatuses_carriesVerificationFields() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        // AgentController's ObjectMapper is a @MockitoBean here (WebMvcTest slice) — delegate readTree
+        // to a real Jackson instance so firstFailingCheckMessage's parsing is genuinely exercised.
+        com.fasterxml.jackson.databind.ObjectMapper realMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        when(objectMapper.readTree(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(inv -> realMapper.readTree((String) inv.getArgument(0)));
+
+        java.time.OffsetDateTime checkedAt = java.time.OffsetDateTime.parse("2026-07-01T00:00:00Z");
+        when(providerCredentialService.listStatuses(PROJECT_ID)).thenReturn(List.of(
+                new ProviderCredentialStatusView("claude", true, "error", checkedAt,
+                        "{\"checks\":[{\"name\":\"anthropic-api\",\"status\":\"fail\",\"message\":\"bad key\"}]}"),
+                new ProviderCredentialStatusView("claude-code", false)));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/credentials")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].verification.status").value("error"))
+                .andExpect(jsonPath("$[0].verification.error").value("bad key"))
+                .andExpect(jsonPath("$[1].verification").doesNotExist());
+    }
+
+    // ---- setProviderCredential / verifyProviderCredential ----
+
+    @Test
+    void setProviderCredential_nonAdmin_returns403() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(put("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude/credential")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"apiKey\":\"sk-test\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void setProviderCredential_savesThenVerifiesAndCarriesVerificationInResponse() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        java.time.OffsetDateTime checkedAt = java.time.OffsetDateTime.parse("2026-07-01T00:00:00Z");
+        when(providerCredentialService.getStatus(PROJECT_ID, "claude")).thenReturn(
+                new ProviderCredentialStatusView("claude", true, "verified", checkedAt, "{\"checks\":[]}"));
+
+        mockMvc.perform(put("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude/credential")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"apiKey\":\"sk-test\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.configured").value(true))
+                .andExpect(jsonPath("$.verification.status").value("verified"));
+
+        verify(providerCredentialService).setApiKey(PROJECT_ID, "claude", "sk-test");
+        verify(providerVerificationService).verify(PROJECT_ID, "claude");
+    }
+
+    @Test
+    void setProviderCredential_verifyThrows_putStillSucceeds() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(providerVerificationService.verify(PROJECT_ID, "claude"))
+                .thenThrow(new RuntimeException("boom"));
+        when(providerCredentialService.getStatus(PROJECT_ID, "claude")).thenReturn(
+                new ProviderCredentialStatusView("claude", true));
+
+        mockMvc.perform(put("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude/credential")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"apiKey\":\"sk-test\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.configured").value(true));
+    }
+
+    @Test
+    void verifyProviderCredential_nonAdmin_returns403() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude/credential/verify")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void verifyProviderCredential_happyPath_returnsReport() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        java.time.OffsetDateTime checkedAt = java.time.OffsetDateTime.parse("2026-07-01T00:00:00Z");
+        when(providerVerificationService.verify(PROJECT_ID, "claude")).thenReturn(
+                new ProviderVerificationService.VerificationReport("claude",
+                        ProviderVerificationService.ReportStatus.VERIFIED, checkedAt,
+                        List.of(new com.conductor.verification.Check("anthropic-api",
+                                com.conductor.verification.CheckStatus.PASS, "ok"))));
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude/credential/verify")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.provider").value("claude"))
+                .andExpect(jsonPath("$.status").value("verified"))
+                .andExpect(jsonPath("$.checks[0].name").value("anthropic-api"))
+                .andExpect(jsonPath("$.checks[0].status").value("pass"));
+    }
+
+    // ---- getClaudeRuntime / setClaudeRuntime ----
+
+    @Test
+    void getClaudeRuntime_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude-code/runtime")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getClaudeRuntime_builtinSource_returnsConfigWithoutTarget() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(claudeRuntimeService.getConfig(PROJECT_ID)).thenReturn(
+                new ClaudeRuntimeService.ClaudeRuntimeConfig("builtin", null, null, true));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude-code/runtime")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value("builtin"))
+                .andExpect(jsonPath("$.builtinConfigured").value(true))
+                .andExpect(jsonPath("$.runtimeTarget").doesNotExist());
+    }
+
+    @Test
+    void setClaudeRuntime_nonAdmin_returns403() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(put("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude-code/runtime")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"runtimeTargetId\":\"target-1\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void setClaudeRuntime_happyPath_returnsDesignatedTargetConfig() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        com.conductor.entity.RuntimeTarget target = new com.conductor.entity.RuntimeTarget();
+        target.setId("target-1");
+        target.setName("my-target");
+        target.setProvider("gcp-cloud-run");
+        target.setStatus(com.conductor.entity.RuntimeTargetStatus.ACTIVE);
+        target.setConfigJson("{}");
+        target.setCreatedAt(java.time.OffsetDateTime.now());
+        target.setUpdatedAt(java.time.OffsetDateTime.now());
+        when(claudeRuntimeService.setTarget(PROJECT_ID, "target-1")).thenReturn(
+                new ClaudeRuntimeService.ClaudeRuntimeConfig("project-target", "target-1", target, true));
+        when(runtimeTargetService.toResponse(target)).thenReturn(
+                new com.conductor.generated.model.RuntimeTargetResponse()
+                        .id("target-1").name("my-target")
+                        .status(com.conductor.generated.model.RuntimeTargetResponse.StatusEnum.ACTIVE));
+
+        mockMvc.perform(put("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude-code/runtime")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"runtimeTargetId\":\"target-1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.source").value("project-target"))
+                .andExpect(jsonPath("$.runtimeTargetId").value("target-1"))
+                .andExpect(jsonPath("$.runtimeTarget.name").value("my-target"));
     }
 
     // ---- avatar ----

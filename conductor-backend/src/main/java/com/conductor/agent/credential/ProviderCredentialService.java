@@ -5,9 +5,11 @@ import com.conductor.exception.BusinessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -31,8 +33,19 @@ public class ProviderCredentialService {
     /** Non-{@link com.conductor.agent.provider.ChatModelProvider} provider ids {@link #setApiKey} also accepts. */
     public static final Set<String> NON_MODEL_PROVIDERS = Set.of("claude-code");
 
-    /** One provider's credential status, for {@link #listStatuses}. */
-    public record ProviderCredentialStatusView(String provider, boolean configured) {}
+    /**
+     * One provider's credential status, for {@link #listStatuses}/{@link #getStatus}. The last three
+     * fields mirror {@link ProviderCredential}'s verification columns — all null when never verified
+     * (or when no credential row exists at all).
+     */
+    public record ProviderCredentialStatusView(String provider, boolean configured,
+            String lastVerificationStatus, OffsetDateTime lastVerifiedAt, String lastVerificationReport) {
+
+        /** Convenience for call sites that don't care about verification (most tests). */
+        public ProviderCredentialStatusView(String provider, boolean configured) {
+            this(provider, configured, null, null, null);
+        }
+    }
 
     private final ProviderCredentialRepository repository;
     private final ProviderCredentialCrypto crypto;
@@ -61,6 +74,9 @@ public class ProviderCredentialService {
                     c.setProvider(provider);
                     return c;
                 });
+        // A replaced key has never been verified — clear any stale result from the old key rather than
+        // let the UI keep showing a "Verified" badge that no longer means anything.
+        clearVerificationFields(credential);
         crypto.putApiKey(credential, apiKey);
         return repository.save(credential);
     }
@@ -85,15 +101,57 @@ public class ProviderCredentialService {
     }
 
     /**
-     * Status (configured or not) for every known provider — registered {@link ModelProviderRegistry}
-     * ids first, then {@link #NON_MODEL_PROVIDERS} — in one query rather than N {@link #hasCredential}
-     * calls.
+     * Persists a {@code com.conductor.service.ProviderVerificationService} probe outcome onto the
+     * existing credential row, if any. A no-op when no row exists — {@code claude-code} runtime
+     * readiness is probeable before any subscription token is ever stored, and there is nothing to
+     * persist onto in that case (the caller still gets the report; it's just not saved). Also a no-op
+     * when the row already carries a newer result: a slow manual verify that started against an
+     * old key must not overwrite the report a key-replacing PUT just recorded against the new one.
+     */
+    @Transactional
+    public void recordVerification(String projectId, String provider, OffsetDateTime checkedAt,
+                                   String status, String reportJson) {
+        repository.findByProjectIdAndProvider(projectId, provider).ifPresent(credential -> {
+            if (credential.getLastVerifiedAt() != null && credential.getLastVerifiedAt().isAfter(checkedAt)) {
+                return;
+            }
+            credential.setLastVerifiedAt(checkedAt);
+            credential.setLastVerificationStatus(status);
+            credential.setLastVerificationReport(reportJson);
+            repository.save(credential);
+        });
+    }
+
+    /**
+     * Clears a stale verification result without touching the key itself — used when something other
+     * than a key replacement invalidates the last probe (e.g. {@code ClaudeRuntimeService.setTarget}
+     * changing which runtime the {@code claude-code} credential's readiness depends on). A no-op when
+     * no row exists.
+     */
+    @Transactional
+    public void clearVerification(String projectId, String provider) {
+        repository.findByProjectIdAndProvider(projectId, provider)
+                .ifPresent(credential -> {
+                    clearVerificationFields(credential);
+                    repository.save(credential);
+                });
+    }
+
+    private void clearVerificationFields(ProviderCredential credential) {
+        credential.setLastVerifiedAt(null);
+        credential.setLastVerificationStatus(null);
+        credential.setLastVerificationReport(null);
+    }
+
+    /**
+     * Status (configured or not, plus last verification) for every known provider — registered
+     * {@link ModelProviderRegistry} ids first, then {@link #NON_MODEL_PROVIDERS} — in one query rather
+     * than N {@link #getStatus} calls.
      */
     @Transactional(readOnly = true)
     public List<ProviderCredentialStatusView> listStatuses(String projectId) {
-        Set<String> configured = repository.findByProjectId(projectId).stream()
-                .map(ProviderCredential::getProvider)
-                .collect(Collectors.toSet());
+        Map<String, ProviderCredential> byProvider = repository.findByProjectId(projectId).stream()
+                .collect(Collectors.toMap(ProviderCredential::getProvider, c -> c));
 
         // LinkedHashSet keeps registry-then-non-model order while guarding against a provider id
         // ever appearing in both sets.
@@ -101,7 +159,21 @@ public class ProviderCredentialService {
         allProviders.addAll(NON_MODEL_PROVIDERS);
 
         return allProviders.stream()
-                .map(provider -> new ProviderCredentialStatusView(provider, configured.contains(provider)))
+                .map(provider -> toView(provider, byProvider.get(provider)))
                 .toList();
+    }
+
+    /** Single-provider counterpart to {@link #listStatuses}, for the per-provider GET/PUT responses. */
+    @Transactional(readOnly = true)
+    public ProviderCredentialStatusView getStatus(String projectId, String provider) {
+        return toView(provider, repository.findByProjectIdAndProvider(projectId, provider).orElse(null));
+    }
+
+    private ProviderCredentialStatusView toView(String provider, ProviderCredential credential) {
+        if (credential == null) {
+            return new ProviderCredentialStatusView(provider, false, null, null, null);
+        }
+        return new ProviderCredentialStatusView(provider, true, credential.getLastVerificationStatus(),
+                credential.getLastVerifiedAt(), credential.getLastVerificationReport());
     }
 }

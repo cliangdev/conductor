@@ -7,37 +7,17 @@ import { Badge } from '@/components/ui/badge'
 import { Alert } from '@/components/ui/alert'
 import { Modal } from '@/components/ui/modal'
 import { RowActionsMenu } from '@/components/ui/RowActionsMenu'
+import { RuntimeTargetCreateModal } from '@/components/runtime/RuntimeTargetCreateModal'
 import { useCan } from '@/contexts/PermissionsContext'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   listRuntimeTargets,
-  createRuntimeTarget,
   updateRuntimeTarget,
   deleteRuntimeTarget,
   provisionRuntimeTarget,
   apiErrorMessage,
 } from '@/lib/api'
 import type { ConnectionSummary, RuntimeTarget } from '@/lib/api'
-
-const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/
-
-interface CreateFormState {
-  name: string
-  connectionId: string
-  gcpProjectId: string
-  region: string
-  image: string
-  jobName: string
-}
-
-const EMPTY_CREATE_FORM: CreateFormState = {
-  name: '',
-  connectionId: '',
-  gcpProjectId: '',
-  region: '',
-  image: '',
-  jobName: '',
-}
 
 interface EditFormState {
   region: string
@@ -62,9 +42,6 @@ export default function RuntimeTargetsPanel({
   const activeGcpConnections = connections.filter((c) => c.status === 'ACTIVE')
 
   const [createOpen, setCreateOpen] = useState(false)
-  const [createForm, setCreateForm] = useState<CreateFormState>(EMPTY_CREATE_FORM)
-  const [creating, setCreating] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
 
   const [editTarget, setEditTarget] = useState<RuntimeTarget | null>(null)
   const [editForm, setEditForm] = useState<EditFormState>({ region: '', image: '', jobName: '' })
@@ -102,63 +79,6 @@ export default function RuntimeTargetsPanel({
     const interval = setInterval(fetchTargets, 5000)
     return () => clearInterval(interval)
   }, [targets, fetchTargets])
-
-  function openCreateModal() {
-    setCreateForm({
-      ...EMPTY_CREATE_FORM,
-      connectionId: activeGcpConnections[0]?.id ?? '',
-    })
-    setCreateError(null)
-    setCreateOpen(true)
-  }
-
-  function nameError(): string | null {
-    if (!createForm.name) return null
-    if (!SLUG_PATTERN.test(createForm.name)) {
-      return 'Lowercase letters, numbers, and hyphens only — must start with a letter or number.'
-    }
-    if (['conductor', 'self-hosted', 'cloud-run'].includes(createForm.name)) {
-      return 'That name is reserved.'
-    }
-    return null
-  }
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    if (!accessToken) return
-    const slugProblem = nameError()
-    if (slugProblem || !SLUG_PATTERN.test(createForm.name)) {
-      setCreateError(slugProblem ?? 'Enter a valid name.')
-      return
-    }
-    if (!createForm.connectionId) {
-      setCreateError('Select a Google Cloud connection.')
-      return
-    }
-    setCreating(true)
-    setCreateError(null)
-    try {
-      const created = await createRuntimeTarget(
-        projectId,
-        {
-          name: createForm.name,
-          provider: 'gcp-cloud-run',
-          connectionId: createForm.connectionId,
-          gcpProjectId: createForm.gcpProjectId,
-          region: createForm.region,
-          image: createForm.image,
-          ...(createForm.jobName ? { jobName: createForm.jobName } : {}),
-        },
-        accessToken,
-      )
-      setTargets((prev) => [...prev, created])
-      setCreateOpen(false)
-    } catch (err) {
-      setCreateError(apiErrorMessage(err, 'Failed to create runtime target.'))
-    } finally {
-      setCreating(false)
-    }
-  }
 
   function openEditModal(target: RuntimeTarget) {
     setEditTarget(target)
@@ -231,7 +151,7 @@ export default function RuntimeTargetsPanel({
         </p>
       </div>
       {canMutate && activeGcpConnections.length > 0 && (
-        <Button size="sm" onClick={openCreateModal}>
+        <Button size="sm" onClick={() => setCreateOpen(true)}>
           <PlusIcon className="h-4 w-4 mr-1.5" />
           Add runtime
         </Button>
@@ -266,7 +186,7 @@ export default function RuntimeTargetsPanel({
               Add a runtime target to run claude-code workflow steps in your own GCP project.
             </p>
             {canMutate && (
-              <Button size="sm" onClick={openCreateModal}>
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
                 <PlusIcon className="h-4 w-4 mr-1.5" />
                 Add runtime
               </Button>
@@ -332,102 +252,13 @@ export default function RuntimeTargetsPanel({
         )
       )}
 
-      {/* Create modal */}
-      <Modal
+      <RuntimeTargetCreateModal
+        projectId={projectId}
+        connections={activeGcpConnections}
         open={createOpen}
-        onOpenChange={(o) => { if (!o) setCreateOpen(false) }}
-        title="Add runtime target"
-        description="Runs claude-code workflow steps as a Cloud Run Job in your GCP project."
-      >
-        <form onSubmit={handleCreate} className="space-y-4">
-          <div>
-            <label htmlFor="runtime-name" className="block text-sm font-medium text-foreground mb-1">Name</label>
-            <input
-              id="runtime-name"
-              type="text"
-              value={createForm.name}
-              onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
-              placeholder="my-cloud-run"
-              required
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            {nameError() && <p className="mt-1 text-xs text-destructive">{nameError()}</p>}
-          </div>
-          <div>
-            <label htmlFor="runtime-connection" className="block text-sm font-medium text-foreground mb-1">Connection</label>
-            <select
-              id="runtime-connection"
-              value={createForm.connectionId}
-              onChange={(e) => setCreateForm((f) => ({ ...f, connectionId: e.target.value }))}
-              required
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="" disabled>Select a connection…</option>
-              {activeGcpConnections.map((c) => (
-                <option key={c.id} value={c.id}>{c.label || c.id}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="runtime-gcp-project-id" className="block text-sm font-medium text-foreground mb-1">GCP Project ID</label>
-            <input
-              id="runtime-gcp-project-id"
-              type="text"
-              value={createForm.gcpProjectId}
-              onChange={(e) => setCreateForm((f) => ({ ...f, gcpProjectId: e.target.value }))}
-              placeholder="my-gcp-project"
-              required
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <div>
-            <label htmlFor="runtime-region" className="block text-sm font-medium text-foreground mb-1">Region</label>
-            <input
-              id="runtime-region"
-              type="text"
-              value={createForm.region}
-              onChange={(e) => setCreateForm((f) => ({ ...f, region: e.target.value }))}
-              placeholder="us-central1"
-              required
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <div>
-            <label htmlFor="runtime-image" className="block text-sm font-medium text-foreground mb-1">Image</label>
-            <input
-              id="runtime-image"
-              type="text"
-              value={createForm.image}
-              onChange={(e) => setCreateForm((f) => ({ ...f, image: e.target.value }))}
-              placeholder="us-central1-docker.pkg.dev/PROJECT/repo/image:tag"
-              required
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <div>
-            <label htmlFor="runtime-job-name" className="block text-sm font-medium text-foreground mb-1">
-              Job name <span className="text-muted-foreground">(optional)</span>
-            </label>
-            <input
-              id="runtime-job-name"
-              type="text"
-              value={createForm.jobName}
-              onChange={(e) => setCreateForm((f) => ({ ...f, jobName: e.target.value }))}
-              placeholder={`defaults to conductor-${createForm.name || '<name>'}`}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          {createError && <p className="text-sm text-destructive" role="alert">{createError}</p>}
-          <div className="flex gap-3 pt-1">
-            <Button type="button" variant="outline" className="flex-1" onClick={() => setCreateOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" className="flex-1" disabled={creating || !!nameError()}>
-              {creating ? 'Creating…' : 'Create'}
-            </Button>
-          </div>
-        </form>
-      </Modal>
+        onOpenChange={setCreateOpen}
+        onCreated={(created) => setTargets((prev) => [...prev, created])}
+      />
 
       {/* Edit modal */}
       <Modal

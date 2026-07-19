@@ -50,7 +50,7 @@ class ClaudeCodeStepExecutorTest {
     @BeforeEach
     void setUp() {
         runtimeTargetResolver = new RuntimeTargetResolver("gcp-proj", "us-central1", "conductor-claude-code",
-                runtimeTargetService);
+                runtimeTargetService, projectSettingsRepository);
         // sleepSeconds seam now lives on the extracted runner (ClaudeCodeStepExecutor delegates all
         // container-execution mechanics to it) — this test still exercises the executor end-to-end
         // through that runner, just with the poll sleep stubbed out for speed.

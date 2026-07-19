@@ -9,6 +9,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -71,6 +72,24 @@ class ProviderCredentialServiceTest {
                 .hasMessageContaining("not-a-provider");
     }
 
+    @Test
+    void setApiKey_replacingExistingCredential_clearsStaleVerificationFields() {
+        ProviderCredential existing = credential("proj-1", "claude");
+        existing.setLastVerifiedAt(OffsetDateTime.now());
+        existing.setLastVerificationStatus("verified");
+        existing.setLastVerificationReport("{\"provider\":\"claude\"}");
+        when(repository.findByProjectIdAndProvider("proj-1", "claude")).thenReturn(Optional.of(existing));
+        when(repository.save(org.mockito.ArgumentMatchers.any())).thenAnswer(inv -> inv.getArgument(0));
+
+        ProviderCredential result = service.setApiKey("proj-1", "claude", "sk-ant-new");
+
+        // A replaced key has never been verified — the old key's "Verified" result must not survive
+        // onto the new key.
+        assertThat(result.getLastVerifiedAt()).isNull();
+        assertThat(result.getLastVerificationStatus()).isNull();
+        assertThat(result.getLastVerificationReport()).isNull();
+    }
+
     // ---- listStatuses ----
 
     @Test
@@ -107,6 +126,21 @@ class ProviderCredentialServiceTest {
         assertThat(result).containsExactly(
                 new ProviderCredentialService.ProviderCredentialStatusView("claude", true),
                 new ProviderCredentialService.ProviderCredentialStatusView("claude-code", true));
+    }
+
+    @Test
+    void recordVerification_skipsWhenRowAlreadyCarriesNewerResult() {
+        ProviderCredential credential = credential("proj-1", "claude");
+        java.time.OffsetDateTime newer = java.time.OffsetDateTime.now();
+        credential.setLastVerifiedAt(newer);
+        credential.setLastVerificationStatus("verified");
+        when(repository.findByProjectIdAndProvider("proj-1", "claude")).thenReturn(Optional.of(credential));
+
+        service.recordVerification("proj-1", "claude", newer.minusSeconds(30), "error", "{}");
+
+        // A slow probe that started against the old key must not overwrite the newer result.
+        org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(org.mockito.ArgumentMatchers.any());
+        assertThat(credential.getLastVerificationStatus()).isEqualTo("verified");
     }
 
     private ProviderCredential credential(String projectId, String provider) {

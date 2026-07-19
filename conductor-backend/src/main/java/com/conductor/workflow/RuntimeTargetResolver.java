@@ -1,7 +1,9 @@
 package com.conductor.workflow;
 
+import com.conductor.entity.ProjectSettings;
 import com.conductor.entity.RuntimeTarget;
 import com.conductor.entity.RuntimeTargetStatus;
+import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.service.RuntimeTargetService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -13,9 +15,18 @@ import java.util.Set;
  * Resolves a job's {@code runs-on} value to the {@link CloudRunTarget} and image to launch it with.
  * Three sources, checked in order:
  * <ol>
- *   <li>the reserved {@code "cloud-run"} scalar — the operator-configured builtin target, backed by
- *       {@code gcp.cloudrun.*} properties (moved here from {@link GcpCloudRunJobLauncher}, which now
- *       takes a target per call instead of holding its own project/region/job-name);</li>
+ *   <li>the reserved {@code "cloud-run"} scalar: the project's <em>designated</em> runtime target
+ *       ({@link ProjectSettings#getClaudeRuntimeTargetId()}, set via {@code ClaudeRuntimeService} —
+ *       must be {@link RuntimeTargetStatus#ACTIVE} with a live connection, else a typed "not ready"
+ *       failure carrying the target's own {@code errorMessage}) if the project has designated one,
+ *       otherwise the operator-configured <em>builtin</em> target backed by {@code gcp.cloudrun.*}
+ *       properties (moved here from {@link GcpCloudRunJobLauncher}, which now takes a target per call
+ *       instead of holding its own project/region/job-name) — a blank builtin project id throws
+ *       {@link #NO_RUNTIME_MESSAGE} rather than silently returning an unusable target (the bug that
+ *       prompted this class: an unset {@code gcp.cloudrun.project-id} surfaced as an opaque Cloud Run
+ *       gRPC {@code INVALID_ARGUMENT} instead of an actionable step error). Explicit
+ *       {@code runs-on: cloud-run} in workflow YAML goes through this same designation — one knob;
+ *       authors wanting a specific BYO target pin it by name (case 3) instead;</li>
  *   <li>{@code "conductor"}/{@code "self-hosted"}/{@code null} — never resolvable here (the orchestrator
  *       routes {@code self-hosted} elsewhere; {@code conductor} and unset don't run claude-code at all)
  *       — returns empty, same as before named targets existed;</li>
@@ -30,36 +41,45 @@ import java.util.Set;
 @Component
 public class RuntimeTargetResolver {
 
+    /** The blank-builtin failure message. Reaches {@code ClaudeCodeRuntimePreflight} via the thrown
+     *  {@link RuntimeTargetNotReadyException}'s message (not by direct reference); public so tests pin
+     *  the exact wording the UI and step errors rely on. */
+    public static final String NO_RUNTIME_MESSAGE = "No Claude runtime configured — link a runtime "
+            + "target in Settings → AI Providers → Runtime, or set GCP_CLOUDRUN_PROJECT_ID on the backend";
+
     private static final Set<String> NEVER_RESOLVABLE = Set.of("conductor", "self-hosted");
+    private static final String CLOUD_RUN = "cloud-run";
 
     private final String gcpProjectId;
     private final String region;
     private final String jobName;
     private final RuntimeTargetService runtimeTargetService;
+    private final ProjectSettingsRepository projectSettingsRepository;
 
     public RuntimeTargetResolver(@Value("${gcp.cloudrun.project-id:}") String gcpProjectId,
                                   @Value("${gcp.cloudrun.region:us-central1}") String region,
                                   @Value("${gcp.cloudrun.claude-job-name:conductor-claude-code}") String jobName,
-                                  RuntimeTargetService runtimeTargetService) {
+                                  RuntimeTargetService runtimeTargetService,
+                                  ProjectSettingsRepository projectSettingsRepository) {
         this.gcpProjectId = gcpProjectId;
         this.region = region;
         this.jobName = jobName;
         this.runtimeTargetService = runtimeTargetService;
+        this.projectSettingsRepository = projectSettingsRepository;
     }
 
     /**
      * @param projectId the Conductor project id — used to scope named {@code RuntimeTarget} lookups
-     *                   (the builtin {@code cloud-run} target isn't project-scoped).
+     *                   and to look up the project's {@code cloud-run} designation.
      * @param runsOn     the job's {@code runs-on} value.
      * @return the resolved target and image, or empty if {@code runsOn} isn't a claude-code-capable
      *         runtime at all (builtin conductor runner, self-hosted, or unset).
      * @throws RuntimeTargetNotFoundException if {@code runsOn} names a target that doesn't exist in the project.
-     * @throws RuntimeTargetNotReadyException if the named target exists but isn't ACTIVE yet.
+     * @throws RuntimeTargetNotReadyException if the resolved target (named, designated, or builtin) isn't usable.
      */
     public Optional<ResolvedRuntime> resolve(String projectId, String runsOn) {
-        if ("cloud-run".equals(runsOn)) {
-            return Optional.of(new ResolvedRuntime(new CloudRunTarget(gcpProjectId, region, jobName, null),
-                    RunnerImage.DEFAULT));
+        if (CLOUD_RUN.equals(runsOn)) {
+            return Optional.of(resolveCloudRun(projectId));
         }
         if (runsOn == null || NEVER_RESOLVABLE.contains(runsOn)) {
             return Optional.empty();
@@ -81,6 +101,56 @@ public class RuntimeTargetResolver {
         CloudRunTarget cloudRunTarget = new CloudRunTarget(
                 config.gcpProjectId(), config.region(), config.jobName(), target.getConnectionId());
         return Optional.of(new ResolvedRuntime(cloudRunTarget, config.image()));
+    }
+
+    /** Cheap, DB-free check of whether the operator-configured builtin target is usable at all — for
+     *  {@code ClaudeRuntimeService.getConfig}'s {@code builtinConfigured} flag, so the UI can tell "no
+     *  builtin fallback either" apart from "a target is designated" without duplicating this property
+     *  binding. */
+    public boolean isBuiltinConfigured() {
+        return gcpProjectId != null && !gcpProjectId.isBlank();
+    }
+
+    /** The project's designated Claude runtime target id, or null when unset/blank — the single
+     *  designation lookup, also used by {@code ClaudeRuntimeService.getConfig}. */
+    public String designatedTargetId(String projectId) {
+        return projectSettingsRepository.findByProjectId(projectId)
+                .map(ProjectSettings::getClaudeRuntimeTargetId)
+                .filter(id -> id != null && !id.isBlank())
+                .orElse(null);
+    }
+
+    private ResolvedRuntime resolveCloudRun(String projectId) {
+        String designatedTargetId = designatedTargetId(projectId);
+
+        if (designatedTargetId != null) {
+            return resolveDesignatedTarget(projectId, designatedTargetId);
+        }
+        if (gcpProjectId == null || gcpProjectId.isBlank()) {
+            throw new RuntimeTargetNotReadyException(CLOUD_RUN, NO_RUNTIME_MESSAGE);
+        }
+        return new ResolvedRuntime(new CloudRunTarget(gcpProjectId, region, jobName, null), RunnerImage.DEFAULT);
+    }
+
+    private ResolvedRuntime resolveDesignatedTarget(String projectId, String targetId) {
+        RuntimeTarget target;
+        try {
+            target = runtimeTargetService.get(projectId, targetId);
+        } catch (jakarta.persistence.EntityNotFoundException e) {
+            // FK is ON DELETE SET NULL, so this should be unreachable in practice — defensive only.
+            // Narrow catch on get()'s not-found contract: any other failure (e.g. DB down) propagates.
+            throw new RuntimeTargetNotReadyException(CLOUD_RUN, "its designated runtime target no longer exists");
+        }
+        if (target.getStatus() != RuntimeTargetStatus.ACTIVE || target.getConnectionId() == null) {
+            String reason = target.getErrorMessage() != null ? target.getErrorMessage()
+                    : "designated runtime target '" + target.getName() + "' is not ready (status: "
+                            + target.getStatus() + ")";
+            throw new RuntimeTargetNotReadyException(CLOUD_RUN, reason);
+        }
+        RuntimeTargetService.TargetRuntimeConfig config = runtimeTargetService.configOf(target);
+        CloudRunTarget cloudRunTarget = new CloudRunTarget(
+                config.gcpProjectId(), config.region(), config.jobName(), target.getConnectionId());
+        return new ResolvedRuntime(cloudRunTarget, config.image());
     }
 
     public record ResolvedRuntime(CloudRunTarget target, String image) {

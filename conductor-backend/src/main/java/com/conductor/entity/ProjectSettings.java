@@ -36,6 +36,13 @@ public class ProjectSettings {
     @Column(name = "knowledge_enabled", nullable = false)
     private boolean knowledgeEnabled = false;
 
+    /** Which named {@link RuntimeTarget} the {@code "cloud-run"} runs-on value resolves to for this
+     *  project, if any — null means fall back to the operator's builtin env-configured target. See
+     *  {@code com.conductor.workflow.RuntimeTargetResolver} and
+     *  {@code com.conductor.service.ClaudeRuntimeService}. */
+    @Column(name = "claude_runtime_target_id", length = 36)
+    private String claudeRuntimeTargetId;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -72,6 +79,9 @@ public class ProjectSettings {
 
     public boolean isKnowledgeEnabled() { return knowledgeEnabled; }
     public void setKnowledgeEnabled(boolean knowledgeEnabled) { this.knowledgeEnabled = knowledgeEnabled; }
+
+    public String getClaudeRuntimeTargetId() { return claudeRuntimeTargetId; }
+    public void setClaudeRuntimeTargetId(String claudeRuntimeTargetId) { this.claudeRuntimeTargetId = claudeRuntimeTargetId; }
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }

@@ -7,6 +7,7 @@ import com.conductor.entity.User;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.generated.model.CreateRuntimeTargetRequest;
+import com.conductor.generated.model.RuntimeTargetResponse;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.workflow.RunTokenService;
@@ -86,6 +87,26 @@ class RuntimeTargetControllerTest {
                 "customer-proj", "us-central1", "conductor-my-target", "img:1", List.of());
     }
 
+    /** Mirrors {@code RuntimeTargetService.toResponse} — the controller now delegates entirely to that
+     *  (mocked here) service method, so tests build the expected response the same way it would. */
+    private RuntimeTargetResponse responseFor(RuntimeTarget target, RuntimeTargetService.TargetRuntimeConfig config) {
+        RuntimeTargetResponse response = new RuntimeTargetResponse()
+                .id(target.getId())
+                .name(target.getName())
+                .provider(target.getProvider())
+                .connectionId(target.getConnectionId())
+                .gcpProjectId(config.gcpProjectId())
+                .region(config.region())
+                .jobName(config.jobName())
+                .image(config.image())
+                .status(RuntimeTargetResponse.StatusEnum.fromValue(target.getStatus().name()))
+                .errorMessage(target.getErrorMessage())
+                .createdAt(target.getCreatedAt())
+                .updatedAt(target.getUpdatedAt());
+        config.warnings().forEach(response::addWarningsItem);
+        return response;
+    }
+
     // ---- listRuntimeTargets ----
 
     @Test
@@ -102,7 +123,7 @@ class RuntimeTargetControllerTest {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
         RuntimeTarget target = targetWithConfig();
         when(runtimeTargetService.list(PROJECT_ID)).thenReturn(List.of(target));
-        when(runtimeTargetService.configOf(target)).thenReturn(config());
+        when(runtimeTargetService.toResponse(target)).thenReturn(responseFor(target, config()));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/runtime-targets")
                         .header("Authorization", "Bearer member-token"))
@@ -138,7 +159,7 @@ class RuntimeTargetControllerTest {
         when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
         RuntimeTarget created = targetWithConfig();
         when(runtimeTargetService.create(eq(PROJECT_ID), any(CreateRuntimeTargetRequest.class))).thenReturn(created);
-        when(runtimeTargetService.configOf(created)).thenReturn(config());
+        when(runtimeTargetService.toResponse(created)).thenReturn(responseFor(created, config()));
 
         String body = """
                 {"name":"my-target","provider":"gcp-cloud-run","connectionId":"conn-1",
@@ -179,7 +200,7 @@ class RuntimeTargetControllerTest {
         errored.setStatus(RuntimeTargetStatus.ERROR);
         errored.setErrorMessage("Image not found in Artifact Registry repository my-repo");
         when(runtimeTargetService.create(eq(PROJECT_ID), any(CreateRuntimeTargetRequest.class))).thenReturn(errored);
-        when(runtimeTargetService.configOf(errored)).thenReturn(config());
+        when(runtimeTargetService.toResponse(errored)).thenReturn(responseFor(errored, config()));
 
         String body = """
                 {"name":"my-target","provider":"gcp-cloud-run","connectionId":"conn-1",
@@ -200,9 +221,10 @@ class RuntimeTargetControllerTest {
         when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
         RuntimeTarget created = targetWithConfig();
         when(runtimeTargetService.create(eq(PROJECT_ID), any(CreateRuntimeTargetRequest.class))).thenReturn(created);
-        when(runtimeTargetService.configOf(created)).thenReturn(new RuntimeTargetService.TargetRuntimeConfig(
+        RuntimeTargetService.TargetRuntimeConfig warningConfig = new RuntimeTargetService.TargetRuntimeConfig(
                 "customer-proj", "us-central1", "conductor-my-target", "img:1",
-                List.of("Image found. Could not verify the dev.conductor.runner.protocol OCI label.")));
+                List.of("Image found. Could not verify the dev.conductor.runner.protocol OCI label."));
+        when(runtimeTargetService.toResponse(created)).thenReturn(responseFor(created, warningConfig));
 
         String body = """
                 {"name":"my-target","provider":"gcp-cloud-run","connectionId":"conn-1",
@@ -236,7 +258,7 @@ class RuntimeTargetControllerTest {
         when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
         RuntimeTarget updated = targetWithConfig();
         when(runtimeTargetService.update(eq(PROJECT_ID), eq("target-1"), any())).thenReturn(updated);
-        when(runtimeTargetService.configOf(updated)).thenReturn(config());
+        when(runtimeTargetService.toResponse(updated)).thenReturn(responseFor(updated, config()));
 
         mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/runtime-targets/target-1")
                         .header("Authorization", "Bearer member-token")
@@ -282,7 +304,7 @@ class RuntimeTargetControllerTest {
         when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
         RuntimeTarget target = targetWithConfig();
         when(runtimeTargetService.provisionById(PROJECT_ID, "target-1")).thenReturn(target);
-        when(runtimeTargetService.configOf(target)).thenReturn(config());
+        when(runtimeTargetService.toResponse(target)).thenReturn(responseFor(target, config()));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/runtime-targets/target-1/provision")
                         .header("Authorization", "Bearer member-token"))

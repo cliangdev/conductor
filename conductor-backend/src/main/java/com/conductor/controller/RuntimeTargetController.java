@@ -75,24 +75,7 @@ public class RuntimeTargetController implements RuntimeTargetsApi {
     // ---- helpers ----
 
     private RuntimeTargetResponse toResponse(RuntimeTarget target) {
-        RuntimeTargetService.TargetRuntimeConfig config = runtimeTargetService.configOf(target);
-        RuntimeTargetResponse response = new RuntimeTargetResponse()
-                .id(target.getId())
-                .name(target.getName())
-                .provider(target.getProvider())
-                .connectionId(target.getConnectionId())
-                .gcpProjectId(config.gcpProjectId())
-                .region(config.region())
-                .jobName(config.jobName())
-                .image(config.image())
-                .status(RuntimeTargetResponse.StatusEnum.fromValue(target.getStatus().name()))
-                .errorMessage(target.getErrorMessage())
-                .createdAt(target.getCreatedAt())
-                .updatedAt(target.getUpdatedAt());
-        if (!config.warnings().isEmpty()) {
-            config.warnings().forEach(response::addWarningsItem);
-        }
-        return response;
+        return runtimeTargetService.toResponse(target);
     }
 
     private void requireMember(String projectId) {
