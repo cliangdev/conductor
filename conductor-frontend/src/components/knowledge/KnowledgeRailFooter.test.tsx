@@ -82,7 +82,7 @@ describe('KnowledgeRailFooter', () => {
 
     expect(await screen.findByText('Librarian · up to date')).toBeInTheDocument()
     const link = screen.getByText('Librarian · up to date').closest('a')
-    expect(link).toHaveAttribute('href', '/app/projects/proj-1/knowledge/sources')
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/knowledge/activity')
   })
 
   it('shows "needs attention" when dead count is above zero, linking to the DEAD filter', async () => {
@@ -92,7 +92,7 @@ describe('KnowledgeRailFooter', () => {
 
     expect(await screen.findByText('Librarian · needs attention')).toBeInTheDocument()
     const link = screen.getByText('Librarian · needs attention').closest('a')
-    expect(link).toHaveAttribute('href', '/app/projects/proj-1/knowledge/sources?status=DEAD')
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/knowledge/activity?tab=inbox&status=DEAD')
   })
 
   it('shows "needs attention" when the last librarian run failed, even with zero dead sources', async () => {

@@ -66,6 +66,7 @@ function KnowledgeRail() {
   }
 
   const onIndex = pathname === `/app/projects/${projectId}/knowledge`
+  const onActivity = pathname === `/app/projects/${projectId}/knowledge/activity`
   const onPageRoute = pathname === `/app/projects/${projectId}/knowledge/page`
   const activePath = onPageRoute ? searchParams.get('path') ?? '' : ''
 
@@ -88,11 +89,11 @@ function KnowledgeRail() {
           Home
         </button>
         <button
-          onClick={() => goToPage('log.md')}
-          aria-current={activePath === 'log.md' ? 'page' : undefined}
+          onClick={() => router.push(`/app/projects/${projectId}/knowledge/activity`)}
+          aria-current={onActivity ? 'page' : undefined}
           className={cn(
             'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-left transition-colors',
-            activePath === 'log.md'
+            onActivity
               ? 'bg-sidebar-active text-sidebar-active-text font-medium'
               : 'text-foreground hover:bg-sidebar-hover'
           )}

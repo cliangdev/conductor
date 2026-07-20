@@ -54,15 +54,23 @@ describe('KnowledgeLayout rail', () => {
     expect(activityButton).not.toHaveAttribute('aria-current')
   })
 
-  it('marks the Activity button as current when viewing log.md', async () => {
-    pathname = '/app/projects/proj-1/knowledge/page'
-    searchParams.set('path', 'log.md')
+  it('marks the Activity button as current when viewing the Activity page', async () => {
+    pathname = '/app/projects/proj-1/knowledge/activity'
     render(<KnowledgeLayout>content</KnowledgeLayout>)
 
     const activityButton = await screen.findByRole('button', { name: /activity/i })
     expect(activityButton).toHaveAttribute('aria-current', 'page')
     const homeButton = screen.getByRole('button', { name: /home/i })
     expect(homeButton).not.toHaveAttribute('aria-current')
+  })
+
+  it('navigates to the Activity page on click', async () => {
+    render(<KnowledgeLayout>content</KnowledgeLayout>)
+    const activityButton = await screen.findByRole('button', { name: /activity/i })
+
+    fireEvent.click(activityButton)
+
+    expect(push).toHaveBeenCalledWith('/app/projects/proj-1/knowledge/activity')
   })
 
   it('shows a quiet empty tree (no error) when the index loads with zero pages', async () => {

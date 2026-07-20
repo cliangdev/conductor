@@ -234,7 +234,7 @@ export default function KnowledgeManagePage() {
 
                         {domain.pendingCount > 0 && (
                           <Link
-                            href={`/app/projects/${projectId}/knowledge/sources?status=PENDING&domain=${encodeURIComponent(domain.slug)}`}
+                            href={`/app/projects/${projectId}/knowledge/activity?tab=inbox&domain=${encodeURIComponent(domain.slug)}`}
                             className="text-foreground-subtle hover:text-foreground hover:underline shrink-0"
                           >
                             {domain.pendingCount} waiting

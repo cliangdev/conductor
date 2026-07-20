@@ -113,8 +113,8 @@ function HealthChip({ projectId, data }: { projectId: string; data: HealthData }
   const state = healthState(data)
   const href =
     state === 'needs-attention'
-      ? `/app/projects/${projectId}/knowledge/sources?status=DEAD`
-      : `/app/projects/${projectId}/knowledge/sources`
+      ? `/app/projects/${projectId}/knowledge/activity?tab=inbox&status=DEAD`
+      : `/app/projects/${projectId}/knowledge/activity`
 
   const badge =
     state === 'needs-attention' ? (
