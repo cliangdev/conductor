@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import type { KnowledgePageView, KnowledgeDomainDto } from '@/lib/knowledge-api'
 import type { Agent } from '@/lib/api'
 
@@ -12,6 +12,7 @@ let getKnowledgeIndexBehavior: () => Promise<KnowledgePageView> = () =>
 let getKnowledgePagesBehavior: (paths: string[]) => Promise<KnowledgePageView[]> = () => Promise.resolve([])
 let listKnowledgeDomainsBehavior: () => Promise<KnowledgeDomainDto[]> = () => Promise.resolve([])
 let listAgentsBehavior: () => Promise<Agent[]> = () => Promise.resolve([])
+let canManage = true
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'proj-1' }),
@@ -23,7 +24,12 @@ vi.mock('@/contexts/AuthContext', () => ({
 }))
 
 vi.mock('@/contexts/PermissionsContext', () => ({
-  usePermissions: () => ({ role: 'ADMIN', loading: false, can: () => true, refresh: vi.fn() }),
+  usePermissions: () => ({
+    role: canManage ? 'ADMIN' : 'CREATOR',
+    loading: false,
+    can: (cap: string) => (cap === 'workspace.manage' ? canManage : false),
+    refresh: vi.fn(),
+  }),
 }))
 
 vi.mock('@/components/ui/toast', () => ({
@@ -55,6 +61,24 @@ function logContent(entries: string): KnowledgePageView {
   return { path: 'log.md', version: 0, type: 'log', content: entries }
 }
 
+function librarianAgent(overrides: Partial<Agent> = {}): Agent {
+  return {
+    id: 'agent-1',
+    projectId: 'proj-1',
+    name: 'Librarian',
+    slug: 'knowledge-librarian',
+    provider: 'claude',
+    toolIds: [],
+    state: 'ACTIVE',
+    avatarEmoji: '📚',
+    avatarColor: 'violet',
+    isDefault: true,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
 function domain(overrides: Partial<KnowledgeDomainDto> = {}): KnowledgeDomainDto {
   return {
     slug: 'engineering',
@@ -74,6 +98,7 @@ function domain(overrides: Partial<KnowledgeDomainDto> = {}): KnowledgeDomainDto
 describe('KnowledgeIndexPage (composed Home)', () => {
   beforeEach(() => {
     mockShowToast.mockClear()
+    canManage = true
     getKnowledgeIndexBehavior = () =>
       Promise.resolve({
         path: 'index.md',
@@ -232,5 +257,58 @@ describe('KnowledgeIndexPage (composed Home)', () => {
 
     expect(await screen.findByText('The knowledge base is empty')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /enable knowledge/i })).toBeInTheDocument()
+  })
+
+  describe('first-run split: not-enabled vs enabled-empty', () => {
+    beforeEach(() => {
+      getKnowledgeIndexBehavior = () =>
+        Promise.resolve({ path: 'index.md', version: 0, type: 'index', content: '# Index\n' })
+    })
+
+    it('shows the not-enabled state when no librarian agent exists yet', async () => {
+      listAgentsBehavior = () => Promise.resolve([])
+
+      render(<KnowledgeIndexPage />)
+
+      expect(await screen.findByText('The knowledge base is empty')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /enable knowledge/i })).toBeInTheDocument()
+      expect(screen.queryByText('The librarian is on duty')).not.toBeInTheDocument()
+    })
+
+    it('shows the enabled-empty onboarding state once the librarian agent is provisioned', async () => {
+      listAgentsBehavior = () => Promise.resolve([librarianAgent()])
+
+      render(<KnowledgeIndexPage />)
+
+      expect(await screen.findByText('The librarian is on duty')).toBeInTheDocument()
+      expect(screen.getByText(/Nobody writes this wiki by hand/)).toBeInTheDocument()
+      expect(screen.getByText(/Work item updates/)).toBeInTheDocument()
+      expect(screen.getByText(/Merged pull requests/)).toBeInTheDocument()
+      expect(screen.getByText(/Your codebase/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /bootstrap from a repo/i })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /enable knowledge/i })).not.toBeInTheDocument()
+    })
+
+    it('hides the Bootstrap CTA for a non-admin in the enabled-empty state, keeping the tiles and waiting line', async () => {
+      canManage = false
+      listAgentsBehavior = () => Promise.resolve([librarianAgent()])
+
+      render(<KnowledgeIndexPage />)
+
+      expect(await screen.findByText('The librarian is on duty')).toBeInTheDocument()
+      expect(screen.getByText(/Work item updates/)).toBeInTheDocument()
+      expect(screen.getByText(/pages appear on their own as work flows in/i)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /bootstrap from a repo/i })).not.toBeInTheDocument()
+    })
+
+    it('opens the bootstrap dialog from the enabled-empty state', async () => {
+      listAgentsBehavior = () => Promise.resolve([librarianAgent()])
+
+      render(<KnowledgeIndexPage />)
+
+      fireEvent.click(await screen.findByRole('button', { name: /bootstrap from a repo/i }))
+
+      expect(await screen.findByLabelText(/repository/i)).toBeInTheDocument()
+    })
   })
 })

@@ -114,4 +114,16 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
     @Query(value = "SELECT EXISTS(SELECT 1 FROM knowledge_revision_sources WHERE source_id = :sourceId)",
             nativeQuery = true)
     boolean isReferencedByRevision(@Param("sourceId") String sourceId);
+
+    /**
+     * Resets every DEAD source in a project back to PENDING (attempts/nextAttemptAt/errorMessage
+     * cleared) in one bulk update -- {@code KnowledgeIngestionService#retryDeadSources}'s backing
+     * query, an ops recovery action for {@code KnowledgeController#retryDeadKnowledgeSources}.
+     * {@code clearAutomatically}: same persistence-context staleness hazard as {@link #markProcessed}.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE KnowledgeSource s SET s.status = com.conductor.knowledge.KnowledgeSourceStatus.PENDING, "
+            + "s.attempts = 0, s.nextAttemptAt = NULL, s.errorMessage = NULL "
+            + "WHERE s.projectId = :projectId AND s.status = com.conductor.knowledge.KnowledgeSourceStatus.DEAD")
+    int retryDeadSources(@Param("projectId") String projectId);
 }

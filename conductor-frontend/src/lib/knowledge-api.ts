@@ -82,6 +82,12 @@ export function enableKnowledge(projectId: string, token: string): Promise<{ kno
   ) as Promise<{ knowledgeEnabled: boolean }>
 }
 
+/** ADMIN-only ops recovery: resets every DEAD source in the project back to PENDING for the scheduler
+ *  to re-claim. Returns the number of sources reset. */
+export function retryDeadKnowledgeSources(projectId: string, token: string): Promise<{ retried: number }> {
+  return apiPost<{ retried: number }>(`/api/v1/projects/${projectId}/knowledge/sources/retry`, {}, token)
+}
+
 // ── Ingestion inbox (sources) ───────────────────────────────────────────────
 
 export type KnowledgeSourceStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'DEAD'

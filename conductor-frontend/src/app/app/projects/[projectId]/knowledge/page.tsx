@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import { CheckIcon, SparklesIcon, type LucideIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { useToast } from '@/components/ui/toast'
@@ -10,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { KnowledgePageSkeleton } from '@/components/knowledge/KnowledgePageSkeleton'
 import { ClaudeConnectionHint } from '@/components/knowledge/ClaudeConnectionHint'
+import { KnowledgeBootstrapDialog } from '@/components/knowledge/KnowledgeBootstrapDialog'
 import { KnowledgeTypeIcon } from '@/components/knowledge/KnowledgeTypeIcon'
 import { Alert } from '@/components/ui/alert'
 import { AgentAvatar, isAvatarColorToken, type AvatarColorToken } from '@/components/agents/AgentAvatar'
@@ -44,6 +46,18 @@ const RING_COLOR_CLASSES: Record<AvatarColorToken, string> = {
   rose: 'ring-avatar-rose',
   slate: 'ring-avatar-slate',
 }
+
+interface OnboardingTile {
+  icon: LucideIcon
+  text: string
+}
+
+// The enabled-empty first-run state's "what's already filing this wiki" tiles.
+const ONBOARDING_TILES: OnboardingTile[] = [
+  { icon: CheckIcon, text: 'Work item updates — filed automatically when items change status. Already on.' },
+  { icon: CheckIcon, text: 'Merged pull requests — filed automatically via the GitHub connection. Already on.' },
+  { icon: SparklesIcon, text: 'Your codebase — seed architecture and feature pages from an existing repo, today.' },
+]
 
 export const dynamic = 'force-dynamic'
 
@@ -168,11 +182,22 @@ export default function KnowledgeIndexPage() {
   const [error, setError] = useState<string | null>(null)
   const [enabling, setEnabling] = useState(false)
   const [librarianAgent, setLibrarianAgent] = useState<Agent | null>(null)
+  // Whether the librarian-agent lookup below has resolved — while false, the empty state defaults to
+  // the "not enabled" composition (see knowledgeEnabled below) rather than flashing the onboarding one.
+  const [agentsChecked, setAgentsChecked] = useState(false)
+  const [bootstrapDialogOpen, setBootstrapDialogOpen] = useState(false)
   const [logEntries, setLogEntries] = useState<KnowledgeLogEntry[] | null>(null)
   const [domains, setDomains] = useState<KnowledgeDomainDto[] | null>(null)
 
   const isAdmin = can('workspace.manage')
   const empty = isEmptyIndex(page?.content)
+  // The index is empty in both the "Knowledge never enabled" and "enabled, wiki just hasn't filled in
+  // yet" cases (both render a bare "# Index"), and `GET /settings` (the only place knowledgeEnabled
+  // lives) is ADMIN-only, so it can't tell every viewer apart. The librarian agent, in contrast, only
+  // exists once enabling has provisioned it (KnowledgeWorkflowProvisioner) and listAgents is a plain
+  // membership-gated read — so its presence is an honest, role-agnostic proxy for "enabled" that works
+  // for admins and non-admins alike.
+  const knowledgeEnabled = agentsChecked && librarianAgent !== null
 
   useEffect(() => {
     if (!accessToken) return
@@ -182,22 +207,28 @@ export default function KnowledgeIndexPage() {
       .finally(() => setLoading(false))
   }, [accessToken, projectId])
 
-  // The librarian avatar only matters for the empty-state admin composition — fetched lazily once
-  // we know that's what's rendering, rather than on every knowledge page visit.
+  // The librarian agent only matters for the empty-state composition (both its avatar and, via
+  // knowledgeEnabled above, which composition to show) — fetched lazily once we know that's what's
+  // rendering, for every role (not just admins — non-admins need knowledgeEnabled too).
   useEffect(() => {
-    if (!accessToken || loading || error || !isAdmin || !empty) return
+    if (!accessToken || loading || error || !empty) return
     let cancelled = false
     listAgents(projectId, accessToken)
       .then((agents) => {
-        if (!cancelled) setLibrarianAgent(agents.find((a) => a.slug === LIBRARIAN_SLUG) ?? null)
+        if (cancelled) return
+        setLibrarianAgent(agents.find((a) => a.slug === LIBRARIAN_SLUG) ?? null)
+        setAgentsChecked(true)
       })
       .catch(() => {
-        if (!cancelled) setLibrarianAgent(null)
+        if (!cancelled) {
+          setLibrarianAgent(null)
+          setAgentsChecked(true)
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [accessToken, projectId, loading, isAdmin, empty])
+  }, [accessToken, projectId, loading, error, empty])
 
   // "Recently updated" and "Browse by area" are auxiliary reading-layer sections — each is its own
   // best-effort fetch; a failure just omits that section rather than blocking or erroring the page.
@@ -273,6 +304,15 @@ export default function KnowledgeIndexPage() {
       await enableKnowledge(projectId, accessToken)
       showToast('Knowledge enabled for this workspace')
       setPage(await getKnowledgeIndex(projectId, accessToken))
+      // Re-check for the newly-provisioned librarian agent immediately so the composition below
+      // flips from "not enabled" to the onboarding state without waiting for a page refresh.
+      try {
+        const agents = await listAgents(projectId, accessToken)
+        setLibrarianAgent(agents.find((a) => a.slug === LIBRARIAN_SLUG) ?? null)
+        setAgentsChecked(true)
+      } catch {
+        // best-effort — the lazy effect above covers this on the next mount
+      }
     } catch (err) {
       showToast(apiErrorMessage(err, 'Failed to enable Knowledge'), 'error')
     } finally {
@@ -297,6 +337,58 @@ export default function KnowledgeIndexPage() {
     const avatarColor = isAvatarColorToken(librarianAgent?.avatarColor)
       ? librarianAgent.avatarColor
       : FALLBACK_AVATAR_COLOR
+    const avatar = (
+      <div className={cn('rounded-full p-1 ring-2', RING_COLOR_CLASSES[avatarColor])}>
+        <AgentAvatar emoji={avatarEmoji} color={avatarColor} size="lg" />
+      </div>
+    )
+
+    if (knowledgeEnabled) {
+      return (
+        <div className="flex flex-col items-center justify-center text-center px-4 py-12 h-full">
+          {avatar}
+          <h2 className="text-lg font-semibold text-foreground mt-6 mb-2">The librarian is on duty</h2>
+          <p className="text-sm text-muted-foreground max-w-sm">
+            Nobody writes this wiki by hand. As your team works, the librarian reads what happened and
+            files it into pages — which get more accurate over time.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-2xl mt-6">
+            {ONBOARDING_TILES.map((tile) => (
+              <Card key={tile.text} className="p-4 text-left">
+                <tile.icon className="h-4 w-4 text-muted-foreground mb-2" />
+                <p className="text-sm text-foreground">{tile.text}</p>
+              </Card>
+            ))}
+          </div>
+
+          {isAdmin ? (
+            <>
+              <Button size="sm" className="mt-6" onClick={() => setBootstrapDialogOpen(true)}>
+                Bootstrap from a repo
+              </Button>
+              <p className="text-xs text-muted-foreground mt-3">
+                Or wait — pages appear on their own as work flows in.
+              </p>
+              {accessToken && (
+                <div className="mt-4 w-full max-w-sm">
+                  <ClaudeConnectionHint projectId={projectId} token={accessToken} />
+                </div>
+              )}
+              {bootstrapDialogOpen && accessToken && (
+                <KnowledgeBootstrapDialog
+                  projectId={projectId}
+                  token={accessToken}
+                  onClose={() => setBootstrapDialogOpen(false)}
+                />
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground mt-6">Pages appear on their own as work flows in.</p>
+          )}
+        </div>
+      )
+    }
 
     return (
       // Mirrors EmptyState's rhythm (icon-tile → title → description → action) — the librarian's
@@ -304,9 +396,7 @@ export default function KnowledgeIndexPage() {
       // the EmptyState primitive (its icon slot assumes a lucide glyph in a bg-muted tile, not an
       // already-tinted circular avatar).
       <div className="flex flex-col items-center justify-center text-center px-4 py-12 h-full">
-        <div className={cn('rounded-full p-1 ring-2', RING_COLOR_CLASSES[avatarColor])}>
-          <AgentAvatar emoji={avatarEmoji} color={avatarColor} size="lg" />
-        </div>
+        {avatar}
         <h2 className="text-lg font-semibold text-foreground mt-6 mb-2">The knowledge base is empty</h2>
         {isAdmin ? (
           <>

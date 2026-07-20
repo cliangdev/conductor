@@ -260,6 +260,40 @@ class KnowledgeControllerTest {
                 .andExpect(status().isForbidden());
     }
 
+    // ---- retryDeadKnowledgeSources ----
+
+    @Test
+    void retryDeadSources_admin_returns200WithCount() throws Exception {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(true);
+        when(ingestionService.retryDeadSources(PROJECT_ID)).thenReturn(3);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/retry")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.retried").value(3));
+    }
+
+    @Test
+    void retryDeadSources_nonAdmin_returns403() throws Exception {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(false);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/retry")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void retryDeadSources_projectScopedMcpToken_returns403() throws Exception {
+        // Same rationale as updateDomain/createSpecialist: an ops recovery action requires an actual
+        // User principal with ADMIN role, not just a project-scoped machine principal.
+        when(runTokenService.parseMcpToken("eyJ.mcp.matching"))
+                .thenReturn(Optional.of(new RunTokenService.McpTokenClaims(PROJECT_ID, "run-1")));
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/retry")
+                        .header("Authorization", "Bearer eyJ.mcp.matching"))
+                .andExpect(status().isForbidden());
+    }
+
     // ---- knowledge domains ----
 
     @Test

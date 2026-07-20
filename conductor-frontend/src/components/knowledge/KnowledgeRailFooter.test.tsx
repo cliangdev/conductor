@@ -165,4 +165,30 @@ describe('KnowledgeRailFooter', () => {
     const manageLink = await screen.findByRole('link', { name: /manage/i })
     await waitFor(() => expect(manageLink).not.toHaveTextContent(/\d/))
   })
+
+  it('shows "waiting for sources" when nothing has ever been processed and the wiki has no content pages', async () => {
+    render(<KnowledgeRailFooter projectId="proj-1" token="tok" hasContent={false} />)
+
+    expect(await screen.findByText('Librarian · waiting for sources')).toBeInTheDocument()
+  })
+
+  it('shows "up to date" instead of "waiting for sources" once the wiki has content pages', async () => {
+    render(<KnowledgeRailFooter projectId="proj-1" token="tok" hasContent={true} />)
+
+    expect(await screen.findByText('Librarian · up to date')).toBeInTheDocument()
+  })
+
+  it('shows "up to date" rather than "waiting for sources" while hasContent is still unknown', async () => {
+    render(<KnowledgeRailFooter projectId="proj-1" token="tok" />)
+
+    expect(await screen.findByText('Librarian · up to date')).toBeInTheDocument()
+  })
+
+  it('prioritizes "needs attention" over "waiting for sources" when both conditions hold', async () => {
+    countsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 0, dead: 1 })
+
+    render(<KnowledgeRailFooter projectId="proj-1" token="tok" hasContent={false} />)
+
+    expect(await screen.findByText('Librarian · needs attention')).toBeInTheDocument()
+  })
 })

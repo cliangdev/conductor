@@ -17,6 +17,8 @@ let listKnowledgeSourcesBehavior: (opts?: { status?: string; domain?: string }) 
   Promise.resolve([])
 let listWorkflowsBehavior: () => Promise<WorkflowDefinitionDto[]> = () => Promise.resolve([])
 let listWorkflowRunsBehavior: () => Promise<WorkflowRunDto[]> = () => Promise.resolve([])
+let retryDeadKnowledgeSourcesBehavior: () => Promise<{ retried: number }> = () => Promise.resolve({ retried: 0 })
+let canManage = true
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'proj-1' }),
@@ -29,11 +31,26 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: 'token' }),
 }))
 
+vi.mock('@/contexts/PermissionsContext', () => ({
+  usePermissions: () => ({
+    role: canManage ? 'ADMIN' : 'CREATOR',
+    loading: false,
+    can: (cap: string) => (cap === 'workspace.manage' ? canManage : false),
+    refresh: vi.fn(),
+  }),
+}))
+
 vi.mock('@/lib/knowledge-api', () => ({
   getKnowledgePages: (_projectId: string, paths: string[]) => getKnowledgePagesBehavior(paths),
   getKnowledgeSourceCounts: () => getKnowledgeSourceCountsBehavior(),
   listKnowledgeSources: (_projectId: string, _token: string, opts?: { status?: string; domain?: string }) =>
     listKnowledgeSourcesBehavior(opts),
+  retryDeadKnowledgeSources: () => retryDeadKnowledgeSourcesBehavior(),
+}))
+
+const mockShowToast = vi.fn()
+vi.mock('@/components/ui/toast', () => ({
+  useToast: () => ({ showToast: mockShowToast }),
 }))
 
 vi.mock('@/lib/workflows', async () => {
@@ -90,6 +107,8 @@ describe('Knowledge Activity page', () => {
   beforeEach(() => {
     push.mockClear()
     replace.mockClear()
+    mockShowToast.mockClear()
+    canManage = true
     pathname = '/app/projects/proj-1/knowledge/activity'
     searchParams = new URLSearchParams()
     getKnowledgePagesBehavior = () => Promise.resolve([])
@@ -97,6 +116,7 @@ describe('Knowledge Activity page', () => {
     listKnowledgeSourcesBehavior = () => Promise.resolve([])
     listWorkflowsBehavior = () => Promise.resolve([])
     listWorkflowRunsBehavior = () => Promise.resolve([])
+    retryDeadKnowledgeSourcesBehavior = () => Promise.resolve({ retried: 0 })
   })
 
   it('defaults to the Page changes tab and renders log.md content', async () => {
@@ -187,5 +207,37 @@ describe('Knowledge Activity page', () => {
 
     await screen.findByRole('tablist', { name: /filter sources by status/i })
     expect(screen.queryByText(/couldn't be filed/)).not.toBeInTheDocument()
+  })
+
+  it('shows the retry button for an admin and refetches the dead count on success', async () => {
+    searchParams = new URLSearchParams({ tab: 'inbox' })
+    let deadCount = 2
+    getKnowledgeSourceCountsBehavior = () =>
+      Promise.resolve({ pending: 0, processing: 0, processed: 5, dead: deadCount })
+    retryDeadKnowledgeSourcesBehavior = () => {
+      deadCount = 0
+      return Promise.resolve({ retried: 2 })
+    }
+
+    render(<KnowledgeActivityPage />)
+
+    const retryButton = await screen.findByRole('button', { name: /retry 2 sources/i })
+    fireEvent.click(retryButton)
+
+    await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('2 sources queued for retry'))
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument()
+    })
+  })
+
+  it('hides the retry button for a non-admin', async () => {
+    searchParams = new URLSearchParams({ tab: 'inbox' })
+    canManage = false
+    getKnowledgeSourceCountsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 5, dead: 2 })
+
+    render(<KnowledgeActivityPage />)
+
+    await screen.findByText(/2 sources couldn't be filed/)
+    expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument()
   })
 })

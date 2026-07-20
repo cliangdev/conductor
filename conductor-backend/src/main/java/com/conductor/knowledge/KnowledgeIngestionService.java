@@ -172,6 +172,17 @@ public class KnowledgeIngestionService {
         return result;
     }
 
+    /**
+     * Ops recovery: resets every DEAD source in a project back to PENDING (attempts, nextAttemptAt,
+     * and errorMessage all cleared) so {@code KnowledgeIngestScheduler} re-claims them on its next
+     * tick -- a bulk update rather than load-and-save-each, since this can touch many rows at once.
+     * See {@code KnowledgeController#retryDeadKnowledgeSources} for the ADMIN-only gate.
+     */
+    @Transactional
+    public int retryDeadSources(String projectId) {
+        return repository.retryDeadSources(projectId);
+    }
+
     private KnowledgeSourceView toView(KnowledgeSource s, boolean resolvePayload) {
         String payload = s.getPayload();
         boolean offloaded = payload == null && s.getPayloadUri() != null;

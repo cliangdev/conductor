@@ -388,11 +388,19 @@ public class KnowledgePageService {
             for (KnowledgePageRevision revision : entry.getValue()) {
                 List<String> refs = refsByRevisionId.getOrDefault(revision.getId(), List.of());
                 String suffix = refs.isEmpty() ? "" : " ← " + String.join(", ", refs);
-                sb.append("* **Update**: ").append(revision.getPage().getPath()).append(suffix).append("\n");
+                sb.append("* **").append(changeLabel(revision.getChangeKind())).append("**: ")
+                        .append(revision.getPage().getPath()).append(suffix).append("\n");
             }
             sb.append('\n');
         }
         return new PageView(VIRTUAL_LOG, 0, "log", "Log", null, sb.toString().stripTrailing() + "\n");
+    }
+
+    /** Title-case label for a revision's changeKind, e.g. CREATE -> "Create" -- matches the frontend
+     *  parser's {@code toAction} in {@code knowledgeLog.ts}. */
+    private static String changeLabel(KnowledgePageRevision.ChangeKind changeKind) {
+        String name = changeKind.name();
+        return name.charAt(0) + name.substring(1).toLowerCase();
     }
 
     /** Revision history for one path, newest first, with actor + linked-source provenance. */

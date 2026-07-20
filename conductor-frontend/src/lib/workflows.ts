@@ -31,6 +31,20 @@ export function listWorkflows(projectId: string, token: string): Promise<Workflo
   return apiGet<WorkflowDefinitionDto[]>(`/api/v1/projects/${projectId}/workflows`, token)
 }
 
+/** Manually trigger a workflow run. `inputs` are exposed to steps as `${{ inputs.KEY }}`. */
+export function dispatchWorkflow(
+  projectId: string,
+  workflowId: string,
+  inputs: Record<string, string> | undefined,
+  token: string,
+): Promise<WorkflowRunDto> {
+  return apiPost<WorkflowRunDto>(
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/dispatch`,
+    inputs ? { inputs } : {},
+    token,
+  )
+}
+
 /** Runs for one Workflow, newest first. */
 export function listWorkflowRuns(
   projectId: string,

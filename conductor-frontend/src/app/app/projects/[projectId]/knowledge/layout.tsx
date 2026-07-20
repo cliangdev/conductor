@@ -28,7 +28,7 @@ function RailSkeleton() {
   )
 }
 
-function KnowledgeRail() {
+function KnowledgeRail({ onHasContentChange }: { onHasContentChange: (hasContent: boolean) => void }) {
   const { projectId } = useParams<{ projectId: string }>()
   const { accessToken } = useAuth()
   const router = useRouter()
@@ -48,7 +48,9 @@ function KnowledgeRail() {
     getKnowledgeIndex(projectId, accessToken)
       .then((page) => {
         if (cancelled) return
-        setSections(groupKnowledgePages(filterContentPages(parseKnowledgeIndexPages(page.content ?? ''))))
+        const grouped = groupKnowledgePages(filterContentPages(parseKnowledgeIndexPages(page.content ?? '')))
+        setSections(grouped)
+        onHasContentChange(grouped.length > 0)
       })
       .catch(() => {
         if (!cancelled) setError(true)
@@ -59,6 +61,7 @@ function KnowledgeRail() {
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onHasContentChange is a stable setState wrapper from the parent
   }, [accessToken, projectId, retryCount])
 
   function goToPage(path: string) {
@@ -135,6 +138,9 @@ function KnowledgeRail() {
 export default function KnowledgeLayout({ children }: { children: React.ReactNode }) {
   const { projectId } = useParams<{ projectId: string }>()
   const { accessToken } = useAuth()
+  // KnowledgeRail already parses the index for the page tree — reuse that fetch's "does the wiki
+  // have any content pages" result for the footer's health chip instead of a second index fetch.
+  const [hasContent, setHasContent] = useState<boolean | undefined>(undefined)
 
   return (
     <div className="flex h-full">
@@ -142,10 +148,10 @@ export default function KnowledgeLayout({ children }: { children: React.ReactNod
       <div className="w-56 shrink-0 border-r border-border bg-sidebar-bg flex flex-col h-full">
         <div className="flex-1 overflow-y-auto">
           <Suspense fallback={<RailSkeleton />}>
-            <KnowledgeRail />
+            <KnowledgeRail onHasContentChange={setHasContent} />
           </Suspense>
         </div>
-        {accessToken && <KnowledgeRailFooter projectId={projectId} token={accessToken} />}
+        {accessToken && <KnowledgeRailFooter projectId={projectId} token={accessToken} hasContent={hasContent} />}
       </div>
 
       {/* Right panel: page content */}

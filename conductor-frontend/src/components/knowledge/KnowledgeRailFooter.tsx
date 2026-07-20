@@ -11,7 +11,7 @@ import { listWorkflows, listWorkflowRuns } from '@/lib/workflows'
 // Matches KnowledgeWorkflowProvisioner's reserved workflow name on the backend.
 const LIBRARIAN_WORKFLOW_NAME = 'knowledge-librarian'
 
-type HealthState = 'needs-attention' | 'working' | 'up-to-date'
+type HealthState = 'needs-attention' | 'working' | 'up-to-date' | 'waiting-for-sources'
 
 interface HealthData {
   counts: KnowledgeSourceCounts
@@ -24,8 +24,20 @@ interface HealthData {
  * independent best-effort fetches (mirroring KnowledgePipelineStrip/KnowledgeDomainsPanel's failure
  * posture — a fetch failure omits just that segment) so a counts outage doesn't also blank the
  * Manage entry. Together they're at most 3-4 calls, and the domains call only runs for admins.
+ *
+ * `hasContent` (whether the wiki has any content pages, from the layout's own index parse — see
+ * KnowledgeLayout) lets the chip tell a brand-new, never-touched wiki apart from one that's
+ * genuinely caught up: both look like "all counts zero" from the pipeline's point of view.
  */
-export function KnowledgeRailFooter({ projectId, token }: { projectId: string; token: string }) {
+export function KnowledgeRailFooter({
+  projectId,
+  token,
+  hasContent,
+}: {
+  projectId: string
+  token: string
+  hasContent?: boolean
+}) {
   const { can } = usePermissions()
   const isAdmin = can('workspace.manage')
 
@@ -83,7 +95,7 @@ export function KnowledgeRailFooter({ projectId, token }: { projectId: string; t
 
   return (
     <div className="mt-auto border-t border-sidebar-border px-1 py-1 space-y-0.5">
-      {health && <HealthChip projectId={projectId} data={health} />}
+      {health && <HealthChip projectId={projectId} data={health} hasContent={hasContent} />}
 
       {isAdmin && (
         <Link
@@ -103,14 +115,26 @@ export function KnowledgeRailFooter({ projectId, token }: { projectId: string; t
   )
 }
 
-function healthState(data: HealthData): HealthState {
+function healthState(data: HealthData, hasContent: boolean | undefined): HealthState {
   if (data.counts.dead > 0 || data.lastRunFailed) return 'needs-attention'
   if (data.counts.processing > 0 || data.counts.pending > 0) return 'working'
+  // Nothing has ever been processed and the wiki has no content pages -- a brand-new, untouched
+  // project, not one that's genuinely "caught up". hasContent undefined (still loading) falls
+  // through to up-to-date rather than flashing this state.
+  if (data.counts.processed === 0 && hasContent === false) return 'waiting-for-sources'
   return 'up-to-date'
 }
 
-function HealthChip({ projectId, data }: { projectId: string; data: HealthData }) {
-  const state = healthState(data)
+function HealthChip({
+  projectId,
+  data,
+  hasContent,
+}: {
+  projectId: string
+  data: HealthData
+  hasContent: boolean | undefined
+}) {
+  const state = healthState(data, hasContent)
   const href =
     state === 'needs-attention'
       ? `/app/projects/${projectId}/knowledge/activity?tab=inbox&status=DEAD`
@@ -124,6 +148,8 @@ function HealthChip({ projectId, data }: { projectId: string; data: HealthData }
         status="running"
         label={`Librarian · filing ${data.counts.processing + data.counts.pending} sources…`}
       />
+    ) : state === 'waiting-for-sources' ? (
+      <StatusBadge status="pending" label="Librarian · waiting for sources" />
     ) : (
       <StatusBadge status="succeeded" label="Librarian · up to date" />
     )

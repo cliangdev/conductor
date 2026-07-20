@@ -31,7 +31,9 @@ vi.mock('@/components/knowledge/KnowledgeSearch', () => ({
 }))
 
 vi.mock('@/components/knowledge/KnowledgeRailFooter', () => ({
-  KnowledgeRailFooter: () => <div data-testid="knowledge-rail-footer" />,
+  KnowledgeRailFooter: ({ hasContent }: { hasContent?: boolean }) => (
+    <div data-testid="knowledge-rail-footer" data-has-content={String(hasContent)} />
+  ),
 }))
 
 import KnowledgeLayout from './layout'
@@ -77,6 +79,27 @@ describe('KnowledgeLayout rail', () => {
     render(<KnowledgeLayout>content</KnowledgeLayout>)
     await waitFor(() => expect(screen.queryByText(/couldn.t load/i)).not.toBeInTheDocument())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('passes hasContent=false to the footer when the index has no content pages', async () => {
+    render(<KnowledgeLayout>content</KnowledgeLayout>)
+    await waitFor(() =>
+      expect(screen.getByTestId('knowledge-rail-footer')).toHaveAttribute('data-has-content', 'false'),
+    )
+  })
+
+  it('passes hasContent=true to the footer once the index has a content page', async () => {
+    getKnowledgeIndexBehavior = () =>
+      Promise.resolve({
+        path: 'index.md',
+        version: 0,
+        type: 'index',
+        content: '* [Design Doc](/architecture/design.md) (type: architecture)\n',
+      })
+    render(<KnowledgeLayout>content</KnowledgeLayout>)
+    await waitFor(() =>
+      expect(screen.getByTestId('knowledge-rail-footer')).toHaveAttribute('data-has-content', 'true'),
+    )
   })
 
   it('filters schema-type pages out of the rail tree', async () => {

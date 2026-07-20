@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useCallback, useEffect, useState } from 'react'
 import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { HistoryIcon } from 'lucide-react'
@@ -146,21 +146,25 @@ function KnowledgeActivityPageContent() {
 
   const tab = searchParams.get('tab') ?? 'changes'
   const [deadCount, setDeadCount] = useState(0)
+  // Bumped after a successful retry to remount KnowledgeInbox (its own list refetch has no other
+  // external trigger) alongside the dead-count reload below.
+  const [inboxRefreshKey, setInboxRefreshKey] = useState(0)
+
+  const loadDeadCount = useCallback(() => {
+    if (!accessToken) return
+    getKnowledgeSourceCounts(projectId, accessToken)
+      .then((counts) => setDeadCount(counts.dead))
+      .catch(() => setDeadCount(0))
+  }, [projectId, accessToken])
 
   useEffect(() => {
-    if (!accessToken) return
-    let cancelled = false
-    getKnowledgeSourceCounts(projectId, accessToken)
-      .then((counts) => {
-        if (!cancelled) setDeadCount(counts.dead)
-      })
-      .catch(() => {
-        if (!cancelled) setDeadCount(0)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [projectId, accessToken])
+    loadDeadCount()
+  }, [loadDeadCount])
+
+  function handleRetried() {
+    loadDeadCount()
+    setInboxRefreshKey((k) => k + 1)
+  }
 
   function setTab(next: string) {
     const sp = new URLSearchParams(searchParams.toString())
@@ -203,8 +207,13 @@ function KnowledgeActivityPageContent() {
         {accessToken && tab === 'changes' && <ChangesTab projectId={projectId} token={accessToken} />}
         {accessToken && tab === 'inbox' && (
           <div className="space-y-4">
-            <KnowledgeAttentionBanner projectId={projectId} token={accessToken} deadCount={deadCount} />
-            <KnowledgeInbox projectId={projectId} token={accessToken} />
+            <KnowledgeAttentionBanner
+              projectId={projectId}
+              token={accessToken}
+              deadCount={deadCount}
+              onRetried={handleRetried}
+            />
+            <KnowledgeInbox key={inboxRefreshKey} projectId={projectId} token={accessToken} />
           </div>
         )}
         {accessToken && tab === 'runs' && <RunsTab projectId={projectId} token={accessToken} />}

@@ -3,10 +3,8 @@ import { parseKnowledgeLog } from './knowledgeLog'
 
 // Fixture derived from KnowledgePageService#buildVirtualLog (conductor-backend/src/main/java/com/
 // conductor/knowledge/page/KnowledgePageService.java): "# Log\n\n" then one "## <LocalDate>" heading
-// per day (createdAt-desc order), each followed by "* **Update**: <path>[ ← ref1, ref2]" lines, one
-// per revision, blank line between day groups. The generator currently hardcodes the literal label
-// "Update" for every revision regardless of its real changeKind — see
-// KnowledgePageServiceIntegrationTest#indexAndLogVirtualPagesAreGenerated.
+// per day (createdAt-desc order), each followed by "* **<Label>**: <path>[ ← ref1, ref2]" lines, one
+// per revision (label is the revision's real changeKind, title-cased), blank line between day groups.
 const FIXTURE = `# Log
 
 ## 2026-07-19

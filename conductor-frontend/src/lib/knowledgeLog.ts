@@ -15,14 +15,9 @@ export interface KnowledgeLogEntry {
 // come back newest-first; entries within a day inherit that same order from the DB).
 const DAY_HEADING_RE = /^##\s+(\d{4}-\d{2}-\d{2})\s*$/
 
-// "* **Update**: notes/a.md ← slack://C123/p456, github://org/repo/pull/7" — mirrors
-// buildVirtualLog's `"* **Update**: " + path + (refs.isEmpty() ? "" : " ← " + join(", ", refs))`.
-// NOTE: as of this writing buildVirtualLog hardcodes the literal label "Update" for every revision
-// regardless of its actual changeKind (CREATE/UPDATE/DELETE) — see
-// KnowledgePageServiceIntegrationTest#indexAndLogVirtualPagesAreGenerated, which asserts
-// `"**Update**: notes/a.md"` even for a page's first (CREATE) revision. The regex still captures
-// whatever label is present so this parser keeps working unchanged if that's ever fixed to emit
-// the real changeKind.
+// "* **Create**: notes/a.md ← slack://C123/p456, github://org/repo/pull/7" — mirrors
+// buildVirtualLog's `"* **" + changeLabel(changeKind) + "**: " + path + (refs.isEmpty() ? "" : " ← " + join(", ", refs))`.
+// The label is the revision's real changeKind (Create/Update/Delete), title-cased.
 const ENTRY_RE = /^\*\s\*\*(\w+)\*\*:\s(\S+)(?:\s←\s(.+))?$/
 
 function toAction(label: string): KnowledgeLogAction {

@@ -17,6 +17,7 @@ import com.conductor.generated.model.KnowledgeSearchHit;
 import com.conductor.generated.model.KnowledgeSourceCounts;
 import com.conductor.generated.model.KnowledgeSourceDto;
 import com.conductor.generated.model.KnowledgeSourceReceipt;
+import com.conductor.generated.model.KnowledgeSourceRetryResult;
 import com.conductor.generated.model.KnowledgeSourceStatus;
 import com.conductor.generated.model.KnowledgeSourceSubmitRequest;
 import com.conductor.generated.model.UpdateKnowledgeDomainRequest;
@@ -105,6 +106,15 @@ public class KnowledgeController implements KnowledgeApi {
     public ResponseEntity<KnowledgeSourceCounts> getKnowledgeSourceCounts(String projectId) {
         requireProjectAccess(projectId);
         return ResponseEntity.ok(toDto(ingestionService.getSourceCounts(projectId)));
+    }
+
+    @Override
+    public ResponseEntity<KnowledgeSourceRetryResult> retryDeadKnowledgeSources(String projectId) {
+        requireProjectAdmin(projectId);
+        int retried = ingestionService.retryDeadSources(projectId);
+        KnowledgeSourceRetryResult result = new KnowledgeSourceRetryResult();
+        result.setRetried(retried);
+        return ResponseEntity.ok(result);
     }
 
     @Override

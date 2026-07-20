@@ -3,8 +3,12 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Alert } from '@/components/ui/alert'
-import { buttonVariants } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { useToast } from '@/components/ui/toast'
+import { usePermissions } from '@/contexts/PermissionsContext'
 import { listWorkflows, listWorkflowRuns } from '@/lib/workflows'
+import { retryDeadKnowledgeSources } from '@/lib/knowledge-api'
+import { apiErrorMessage } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 // Matches KnowledgeWorkflowProvisioner's reserved workflow name on the backend (same constant used
@@ -24,17 +28,28 @@ const LIBRARIAN_WORKFLOW_NAME = 'knowledge-librarian'
  * WorkflowRunDto (the list shape) doesn't expose a run-level error field — only per-step
  * `errorReason` on a fetched run's job detail does. Surfacing that snippet here would mean an extra
  * run-detail fetch per banner render; left as a seam for Phase 3 rather than done speculatively.
+ *
+ * Admins additionally get a "Retry N sources" action — an ops recovery call (ADMIN-only on the
+ * backend too, see `KnowledgeController#retryDeadKnowledgeSources`) that resets every DEAD source
+ * back to PENDING. `onRetried` lets the parent (the Activity page's Inbox tab) refetch the count and
+ * the inbox list after a successful retry.
  */
 export function KnowledgeAttentionBanner({
   projectId,
   token,
   deadCount,
+  onRetried,
 }: {
   projectId: string
   token: string
   deadCount: number
+  onRetried?: () => void
 }) {
+  const { can } = usePermissions()
+  const { showToast } = useToast()
+  const isAdmin = can('workspace.manage')
   const [lastRunSucceeded, setLastRunSucceeded] = useState(false)
+  const [retrying, setRetrying] = useState(false)
 
   useEffect(() => {
     if (deadCount === 0) return
@@ -59,6 +74,19 @@ export function KnowledgeAttentionBanner({
 
   if (deadCount === 0) return null
 
+  async function handleRetry() {
+    setRetrying(true)
+    try {
+      const { retried } = await retryDeadKnowledgeSources(projectId, token)
+      showToast(`${retried} source${retried === 1 ? '' : 's'} queued for retry`)
+      onRetried?.()
+    } catch (err) {
+      showToast(apiErrorMessage(err, 'Failed to retry sources'), 'error')
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   const providersHref = `/app/projects/${projectId}/settings/providers`
   const title = lastRunSucceeded
     ? `${deadCount} source${deadCount === 1 ? '' : 's'} couldn't be filed`
@@ -73,9 +101,16 @@ export function KnowledgeAttentionBanner({
             ? 'Fix the Claude credential in Settings → AI Providers, then these sources can be retried.'
             : 'Recent librarian runs failed. Fix the Claude credential in Settings → AI Providers, then these sources can be retried.'}
         </p>
-        <Link href={providersHref} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'bg-surface')}>
-          Open AI Providers
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href={providersHref} className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'bg-surface')}>
+            Open AI Providers
+          </Link>
+          {isAdmin && (
+            <Button variant="outline" size="sm" className="bg-surface" onClick={handleRetry} disabled={retrying}>
+              {retrying ? 'Retrying…' : `Retry ${deadCount} source${deadCount === 1 ? '' : 's'}`}
+            </Button>
+          )}
+        </div>
       </div>
     </Alert>
   )
