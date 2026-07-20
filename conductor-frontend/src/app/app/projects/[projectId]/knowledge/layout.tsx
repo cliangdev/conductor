@@ -6,10 +6,16 @@ import { HomeIcon, HistoryIcon, RotateCwIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { KnowledgeSearch } from '@/components/knowledge/KnowledgeSearch'
 import { KnowledgePageTree } from '@/components/knowledge/KnowledgePageTree'
+import { KnowledgeRailFooter } from '@/components/knowledge/KnowledgeRailFooter'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert } from '@/components/ui/alert'
 import { getKnowledgeIndex } from '@/lib/knowledge-api'
-import { groupKnowledgePages, parseKnowledgeIndexPages, type KnowledgeTreeSection } from '@/lib/knowledgeTree'
+import {
+  filterContentPages,
+  groupKnowledgePages,
+  parseKnowledgeIndexPages,
+  type KnowledgeTreeSection,
+} from '@/lib/knowledgeTree'
 import { cn } from '@/lib/utils'
 
 function RailSkeleton() {
@@ -42,7 +48,7 @@ function KnowledgeRail() {
     getKnowledgeIndex(projectId, accessToken)
       .then((page) => {
         if (cancelled) return
-        setSections(groupKnowledgePages(parseKnowledgeIndexPages(page.content ?? '')))
+        setSections(groupKnowledgePages(filterContentPages(parseKnowledgeIndexPages(page.content ?? ''))))
       })
       .catch(() => {
         if (!cancelled) setError(true)
@@ -79,7 +85,7 @@ function KnowledgeRail() {
           )}
         >
           <HomeIcon className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          Index
+          Home
         </button>
         <button
           onClick={() => goToPage('log.md')}
@@ -126,13 +132,19 @@ function KnowledgeRail() {
 }
 
 export default function KnowledgeLayout({ children }: { children: React.ReactNode }) {
+  const { projectId } = useParams<{ projectId: string }>()
+  const { accessToken } = useAuth()
+
   return (
     <div className="flex h-full">
-      {/* Left rail: search + page tree + fixed shortcuts */}
-      <div className="w-56 shrink-0 border-r border-border bg-sidebar-bg overflow-y-auto">
-        <Suspense fallback={<RailSkeleton />}>
-          <KnowledgeRail />
-        </Suspense>
+      {/* Left rail: search + page tree + fixed shortcuts, footer pinned to the bottom */}
+      <div className="w-56 shrink-0 border-r border-border bg-sidebar-bg flex flex-col h-full">
+        <div className="flex-1 overflow-y-auto">
+          <Suspense fallback={<RailSkeleton />}>
+            <KnowledgeRail />
+          </Suspense>
+        </div>
+        {accessToken && <KnowledgeRailFooter projectId={projectId} token={accessToken} />}
       </div>
 
       {/* Right panel: page content */}

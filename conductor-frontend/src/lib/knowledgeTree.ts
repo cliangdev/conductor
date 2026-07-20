@@ -44,6 +44,13 @@ export function parseKnowledgeIndexPages(content: string): KnowledgeIndexPage[] 
   return pages
 }
 
+/** Drops schema pages (`type: schema`) — plumbing pages that back a domain's filing rules, not
+ *  reading content. Filtering here (before grouping) means a section that's schema-only just
+ *  disappears rather than showing up with an empty page list. */
+export function filterContentPages(pages: KnowledgeIndexPage[]): KnowledgeIndexPage[] {
+  return pages.filter((page) => page.type !== 'schema')
+}
+
 /** Groups pages by their top-level path segment ("architecture/foo.md" → section "architecture").
  *  Pages with no "/" (flat, e.g. "_schema.md") land in one "Pages" section — the tree degrades to a
  *  flat list when every page is flat. Named/directory sections sort alphabetically by label first;

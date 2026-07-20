@@ -88,7 +88,7 @@ describe('Knowledge sources page', () => {
     render(<KnowledgeSourcesPage />)
     await screen.findByText('A note')
 
-    const deadTab = screen.getByRole('tab', { name: 'Dead' })
+    const deadTab = screen.getByRole('tab', { name: 'Needs attention' })
     fireEvent.click(deadTab)
 
     await waitFor(() => {
@@ -152,7 +152,7 @@ describe('Knowledge sources page', () => {
     render(<KnowledgeSourcesPage />)
     await screen.findByText('A note')
 
-    expect(screen.getByText('Filtered to domain:')).toBeInTheDocument()
+    expect(screen.getByText('Filtered to area:')).toBeInTheDocument()
     const clearButton = screen.getByRole('button', { name: 'Clear' })
     fireEvent.click(clearButton)
 

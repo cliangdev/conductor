@@ -17,8 +17,23 @@ export const dynamic = 'force-dynamic'
 
 const STATUSES: KnowledgeSourceStatus[] = ['PENDING', 'PROCESSING', 'PROCESSED', 'DEAD']
 
+const STATUS_LABELS: Record<KnowledgeSourceStatus, string> = {
+  PENDING: 'Waiting',
+  PROCESSING: 'Filing',
+  PROCESSED: 'Filed',
+  DEAD: 'Needs attention',
+}
+
 function humanizeStatus(status: KnowledgeSourceStatus): string {
-  return status.charAt(0) + status.slice(1).toLowerCase()
+  return STATUS_LABELS[status]
+}
+
+/** Empty-state copy per status — DEAD gets bespoke phrasing since "no needs attention sources"
+ *  reads awkwardly as a lowercased adjective-first sentence. */
+function emptyStateDescription(status: KnowledgeSourceStatus, domain: string | null): string {
+  const location = domain ? `in the "${domain}" area` : 'in the inbox'
+  if (status === 'DEAD') return `No sources need attention ${location}.`
+  return `No ${humanizeStatus(status).toLowerCase()} sources ${location}.`
 }
 
 function isKnowledgeSourceStatus(value: string | null): value is KnowledgeSourceStatus {
@@ -86,7 +101,7 @@ function KnowledgeSourcesPageContent() {
 
         {domainParam && (
           <div className="flex items-center gap-2 text-[13px] text-foreground-subtle">
-            <span>Filtered to domain:</span>
+            <span>Filtered to area:</span>
             <Badge variant="secondary" className="text-[11px] font-normal">
               {domainParam}
             </Badge>
@@ -107,15 +122,7 @@ function KnowledgeSourcesPageContent() {
             ))}
           </div>
         ) : sources.length === 0 ? (
-          <EmptyState
-            icon={InboxIcon}
-            title="No sources"
-            description={
-              domainParam
-                ? `No ${humanizeStatus(status).toLowerCase()} sources in the "${domainParam}" domain.`
-                : `No ${humanizeStatus(status).toLowerCase()} sources in the inbox.`
-            }
-          />
+          <EmptyState icon={InboxIcon} title="No sources" description={emptyStateDescription(status, domainParam)} />
         ) : (
           <div className="border border-border rounded-[10px] divide-y divide-border">
             {sources.map((source) => (

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { groupKnowledgePages, parseKnowledgeIndexPages } from '@/lib/knowledgeTree'
+import { filterContentPages, groupKnowledgePages, parseKnowledgeIndexPages } from '@/lib/knowledgeTree'
 
 const INDEX_CONTENT = `# Index
 
@@ -62,6 +62,29 @@ describe('parseKnowledgeIndexPages', () => {
       parseKnowledgeIndexPages('* [broken bullet with no closing paren(/foo.md\n')
       expect(warn).not.toHaveBeenCalled()
     })
+  })
+})
+
+describe('filterContentPages', () => {
+  it('drops pages whose type is schema', () => {
+    const pages = [
+      { path: '_schema.md', title: 'Schema Guide', type: 'schema' },
+      { path: 'engineering/_schema.md', title: 'Engineering Schema', type: 'schema' },
+      { path: 'architecture/design.md', title: 'Design', type: 'architecture' },
+    ]
+    expect(filterContentPages(pages)).toEqual([{ path: 'architecture/design.md', title: 'Design', type: 'architecture' }])
+  })
+
+  it('leaves non-schema pages untouched, including ones with no type', () => {
+    const pages = [
+      { path: 'readme.md', title: 'Readme', type: 'project' },
+      { path: 'misc/no-type.md', title: 'No Type Page', type: '' },
+    ]
+    expect(filterContentPages(pages)).toEqual(pages)
+  })
+
+  it('returns an empty list unchanged', () => {
+    expect(filterContentPages([])).toEqual([])
   })
 })
 
