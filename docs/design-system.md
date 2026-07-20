@@ -92,6 +92,24 @@ Beyond the existing `Button`/`Badge`/`Avatar`/`DropdownMenu`/`Tabs`/`Toast`:
 - `StatusBadge` — the **only** source of status color; replaces every local `STATUS_COLORS` map.
 - Shared `timeAgo`/`formatDuration` in `lib/format.ts` — no per-file copies.
 
+## Audience layers (IA)
+
+Before adding chrome to any surface, sort every element into one of three layers — they have very
+different audiences and visit frequencies, and each gets its own home:
+
+1. **Do / read** — the daily-work layer (everyone, daily). This *is* the page. Content and the one
+   primary action only.
+2. **Trust / health** — "is the system keeping up?" (anyone, occasionally). At most **one quiet
+   indicator** on the daily surface, linking to a dedicated detail page (e.g. Knowledge's rail
+   health chip → Activity).
+3. **Configure** — registries, credentials, provisioning, agent assignment (admins, rarely).
+   Behind one admin-only entry (e.g. Knowledge → Manage), never inline on the daily surface.
+
+Rules: a lower layer never leaks upward beyond its single indicator; nav entries a role can't use
+are hidden, not disabled; system vocabulary is translated to human words at the UI boundary
+(Waiting / Filing / Filed / Needs attention — never `DEAD`, `dispatch`, or schema jargon). The
+Knowledge Center is the reference implementation (July 2026 redesign).
+
 ## Page chrome patterns
 
 - **Work Items are authored by agents** (Conductor skill / MCP tools), not in the UI — intentionally no create/edit forms. The UI is the review, triage, and approval surface; its primary actions are review verdicts, status transitions, and assignment.

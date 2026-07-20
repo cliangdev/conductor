@@ -146,7 +146,9 @@ for the generalist/unclassified lane; the concurrency unit is `(project, lane)`,
    straight back to `PENDING` instead of being dispatched into a stale or missing target.
 
 Source lifecycle: `PENDING → PROCESSING → PROCESSED` (success) or `PENDING → PROCESSING → PENDING`
-(retried, backoff) `→ … → DEAD` (exhausted).
+(retried, backoff) `→ … → DEAD` (exhausted). `DEAD` isn't necessarily final — an admin can reset a
+project's dead sources back to `PENDING` via [`POST /sources/retry`](#rest-endpoints) after fixing
+the underlying cause.
 
 ---
 
@@ -370,7 +372,8 @@ are `ProjectScopedPrincipal` — see [`docs/workflows.md`](workflows.md)):
 |---|---|---|
 | `POST` | `/sources` | Submit a source. `202` with `{sourceId, status}`. Optional `domain` requests an explicit lane. |
 | `GET` | `/sources` | List by `status` (default `PENDING`), optionally filtered by `domain` (exact match), or multi-get via `ids` (`ids` wins over both filters). |
-| `GET` | `/sources/counts` | Per-status inbox counts (`pending`/`processing`/`processed`/`dead`), zero-defaulted — the cheap summary the frontend's pipeline strip polls instead of a full `listSources` per status. |
+| `GET` | `/sources/counts` | Per-status inbox counts (`pending`/`processing`/`processed`/`dead`), zero-defaulted — the cheap summary the frontend's health chip and Activity badges poll instead of a full `listSources` per status. |
+| `POST` | `/sources/retry` | Reset every `DEAD` source in the project back to `PENDING` (attempts 0, backoff/error cleared) for the scheduler to re-claim. ADMIN-only — an ops recovery action for after fixing the underlying cause (usually the librarian's credential). Returns `{retried}`. |
 | `GET` | `/domains` | List the [domain](#domains) registry, slug-ordered, each with live pending/processing/processed counts. Membership-gated, no admin requirement. |
 | `POST` | `/domains` | Raise a [gap report](#gap-reports). Claim-or-return on slug — `201` for a new SUGGESTED row, `200` for an existing one (any state). Membership-gated, not admin-only. |
 | `PATCH` | `/domains/{slug}` | Update a domain's metadata, owning agent, or state. ADMIN-only. Approving (`state: ACTIVE`) from SUGGESTED also seeds a skeleton schema page if absent. |
@@ -385,28 +388,39 @@ are `ProjectScopedPrincipal` — see [`docs/workflows.md`](workflows.md)):
 
 ## Frontend surfaces
 
-- **Connect Claude hint.** The Knowledge index page's empty state (admins only) no longer shows the old
-  multi-row checklist (Claude credential + project API key row) — a single `listProviderCredentialStatuses`
-  call checks Claude connectivity directly (`claude-code` subscription or a `claude` provider API key); the
-  project-API-key row is gone entirely, since Conductor MCP access no longer needs one (see
-  [`docs/workflows.md`](workflows.md)). Connected: just the `Enable Knowledge` action. Not connected: a
-  hint links to **Settings → AI Providers** to connect one. Guidance, not a gate — `Enable Knowledge` stays
-  clickable regardless of connection state, since the pipeline self-heals (see
-  [System workflows](#system-workflows)).
-- **Pipeline strip.** Once the wiki has content, the index page shows a one-line summary above it:
-  pending/dead inbox counts (linking to the source list below), the librarian's last run status, and a
-  link to the librarian `Agent`. Best-effort and auxiliary — a fetch failure renders nothing rather than
-  breaking the wiki page.
-- **Domains panel.** Directly below the pipeline strip, `KnowledgeDomainsPanel` lists ACTIVE domains
-  (display name linking to its schema page, owning-agent chip — "Librarian" when none assigned, pending/
-  processed counts, an admin-only "Create specialist" action when unowned) and SUGGESTED domains (amber
-  badge + reason, admin-only Approve/Dismiss). DISMISSED domains are omitted entirely — nothing
-  actionable to show. No per-domain last-run column — run history isn't tracked per domain, and this is
-  deliberately omitted rather than faked. Same chrome and best-effort behavior as the pipeline strip.
-- **Source list.** `knowledge/sources` is a read-only, status-filtered browse of the ingestion inbox
-  (`GET /sources`) — no actions; the scheduler and librarian own the lifecycle. Rows show the domain
-  lane as a small badge next to the source-type badge when the source was routed to one (nothing shown
-  for the null/generalist lane).
+The July 2026 redesign organizes the whole surface around the
+[audience-layers model](design-system.md#audience-layers-ia): the reading layer shows content only,
+pipeline health compresses to one chip, and configuration lives behind an admin-only Manage page.
+UI vocabulary is humanized everywhere: *area* (not domain), inbox statuses *Waiting / Filing /
+Filed / Needs attention* (never "dead"), *filing rules* (schema pages), *Assign specialist*.
+
+- **Rail.** Search, **Home**, **Activity**, then the page tree — content pages only
+  (`filterContentPages` drops `type: schema` pages; schema-only sections disappear). Pinned footer
+  (`KnowledgeRailFooter`): a one-chip health summary — *needs attention* (dead sources or a failed
+  last run), *filing n sources…*, *waiting for sources* (enabled but empty wiki), or *up to date* —
+  linking into Activity, plus an admin-only **Manage** entry with an amber badge when SUGGESTED
+  areas await review. All segments independently best-effort.
+- **Home** (`knowledge/`). Header (page count, last-updated from the revision log), **Recently
+  updated** (newest log entries deduped per page, cross-referenced against the index for
+  title/type; each row links to the page and names its first source ref), and **Browse by area**
+  (ACTIVE areas joined with the index; areas with no pages collapse into one muted card). Both
+  sections are auxiliary and best-effort. Empty-wiki and not-enabled states are distinct — since
+  `GET /settings` is admin-only, enabled-ness is inferred role-agnostically from the seeded
+  librarian agent's presence (`listAgents` is membership-gated): not enabled shows the Enable
+  action + Claude connection hint (`listProviderCredentialStatuses` — guidance, not a gate);
+  enabled-but-empty shows the **first-run onboarding** — "The librarian is
+  on duty", the three source tiles (work items / merged PRs / codebase), and an admin-only
+  **Bootstrap from a repo** dialog that dispatches `knowledge-bootstrap` directly.
+- **Activity** (`knowledge/activity`, tab param). One destination for "what is the librarian
+  doing": **Page changes** (rendered virtual `log.md`), **Inbox** (the status-filtered source
+  browse, moved from `knowledge/sources` which now redirects here; red count badge when sources
+  need attention), and **Runs** (librarian run history). When sources are stuck, the Inbox shows an
+  attention banner pairing the diagnosis with its fixes — **Open AI Providers** and an admin-only
+  **Retry n sources** (`POST /sources/retry`).
+- **Manage** (`knowledge/manage`, admin-only). The registry: SUGGESTED areas as approval cards
+  (Approve seeds the skeleton schema, Dismiss declines), then ACTIVE areas with routing patterns,
+  owning agent ("Librarian" fallback), waiting counts, **Assign specialist** where unowned, and a
+  **Filing rules** link to each area's schema page.
 - **Default agent chip.** The Agents list, an agent's detail header, and `AgentResponse.isDefault`
   together surface which agents (e.g. the librarian) are seeded by Conductor rather than user-created.
   Deleting one is allowed — the chip's tooltip says it will be recreated. The librarian's Overview tab
