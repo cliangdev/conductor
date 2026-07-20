@@ -22,12 +22,21 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: 'token' }),
 }))
 
-vi.mock('@/lib/knowledge-api', () => ({
+vi.mock('@/lib/knowledge-api', async () => ({
+  // Preserve real exports (KNOWLEDGE_LIBRARIAN_SLUG etc.) — components under test import
+  // constants from this module, not just the network functions overridden below.
+  ...(await vi.importActual<typeof import('@/lib/knowledge-api')>('@/lib/knowledge-api')),
   getKnowledgeIndex: (...args: unknown[]) => getKnowledgeIndexBehavior.call(null, ...(args as [])),
 }))
 
 vi.mock('@/components/knowledge/KnowledgeSearch', () => ({
   KnowledgeSearch: () => <div data-testid="knowledge-search" />,
+}))
+
+vi.mock('@/components/knowledge/KnowledgeRailFooter', () => ({
+  KnowledgeRailFooter: ({ hasContent }: { hasContent?: boolean }) => (
+    <div data-testid="knowledge-rail-footer" data-has-content={String(hasContent)} />
+  ),
 }))
 
 import KnowledgeLayout from './layout'
@@ -41,30 +50,75 @@ describe('KnowledgeLayout rail', () => {
       Promise.resolve({ path: 'index.md', version: 0, type: 'index', content: '# Index\n' })
   })
 
-  it('marks the Index button as the current page via aria-current', async () => {
+  it('marks the Home button as the current page via aria-current', async () => {
     render(<KnowledgeLayout>content</KnowledgeLayout>)
-    const indexButton = await screen.findByRole('button', { name: /index/i })
-    expect(indexButton).toHaveAttribute('aria-current', 'page')
+    const homeButton = await screen.findByRole('button', { name: /home/i })
+    expect(homeButton).toHaveAttribute('aria-current', 'page')
 
     const activityButton = screen.getByRole('button', { name: /activity/i })
     expect(activityButton).not.toHaveAttribute('aria-current')
   })
 
-  it('marks the Activity button as current when viewing log.md', async () => {
-    pathname = '/app/projects/proj-1/knowledge/page'
-    searchParams.set('path', 'log.md')
+  it('marks the Activity button as current when viewing the Activity page', async () => {
+    pathname = '/app/projects/proj-1/knowledge/activity'
     render(<KnowledgeLayout>content</KnowledgeLayout>)
 
     const activityButton = await screen.findByRole('button', { name: /activity/i })
     expect(activityButton).toHaveAttribute('aria-current', 'page')
-    const indexButton = screen.getByRole('button', { name: /index/i })
-    expect(indexButton).not.toHaveAttribute('aria-current')
+    const homeButton = screen.getByRole('button', { name: /home/i })
+    expect(homeButton).not.toHaveAttribute('aria-current')
+  })
+
+  it('navigates to the Activity page on click', async () => {
+    render(<KnowledgeLayout>content</KnowledgeLayout>)
+    const activityButton = await screen.findByRole('button', { name: /activity/i })
+
+    fireEvent.click(activityButton)
+
+    expect(push).toHaveBeenCalledWith('/app/projects/proj-1/knowledge/activity')
   })
 
   it('shows a quiet empty tree (no error) when the index loads with zero pages', async () => {
     render(<KnowledgeLayout>content</KnowledgeLayout>)
     await waitFor(() => expect(screen.queryByText(/couldn.t load/i)).not.toBeInTheDocument())
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('passes hasContent=false to the footer when the index has no content pages', async () => {
+    render(<KnowledgeLayout>content</KnowledgeLayout>)
+    await waitFor(() =>
+      expect(screen.getByTestId('knowledge-rail-footer')).toHaveAttribute('data-has-content', 'false'),
+    )
+  })
+
+  it('passes hasContent=true to the footer once the index has a content page', async () => {
+    getKnowledgeIndexBehavior = () =>
+      Promise.resolve({
+        path: 'index.md',
+        version: 0,
+        type: 'index',
+        content: '* [Design Doc](/architecture/design.md) (type: architecture)\n',
+      })
+    render(<KnowledgeLayout>content</KnowledgeLayout>)
+    await waitFor(() =>
+      expect(screen.getByTestId('knowledge-rail-footer')).toHaveAttribute('data-has-content', 'true'),
+    )
+  })
+
+  it('filters schema-type pages out of the rail tree', async () => {
+    getKnowledgeIndexBehavior = () =>
+      Promise.resolve({
+        path: 'index.md',
+        version: 0,
+        type: 'index',
+        content:
+          '* [Schema Guide](/_schema.md) (type: schema)\n' +
+          '* [Design Doc](/architecture/design.md) (type: architecture)\n',
+      })
+    render(<KnowledgeLayout>content</KnowledgeLayout>)
+
+    expect(await screen.findByText('Design Doc')).toBeInTheDocument()
+    expect(screen.queryByText('Schema Guide')).not.toBeInTheDocument()
   })
 
   it('shows an error notice with a Retry button when the index fetch fails, and recovers on retry', async () => {

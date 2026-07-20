@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   categoriesForView,
+  dispatchWorkflow,
   humanizeId,
   isLifecycleWorkflow,
   pluralizeNoun,
@@ -13,15 +14,41 @@ import {
   workItemListPath,
 } from '@/lib/workflows'
 import { definitionFromWorkflowView } from '@/lib/workflowDefinition'
-import { apiGet } from '@/lib/api'
+import { apiGet, apiPost } from '@/lib/api'
 import type { WorkflowView } from '@/types/workItem'
-import type { WorkflowDefinitionDto } from '@/types/workflow'
+import type { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow'
 
 vi.mock('@/lib/api', () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
   apiPut: vi.fn(),
 }))
+
+describe('dispatchWorkflow', () => {
+  it('POSTs to the dispatch endpoint with inputs wrapped', async () => {
+    const run: WorkflowRunDto = { id: 'run-1', workflowId: 'wf-1', triggerType: 'workflow_dispatch', status: 'RUNNING', startedAt: '2026-07-19T00:00:00Z' }
+    vi.mocked(apiPost).mockResolvedValueOnce(run)
+
+    const result = await dispatchWorkflow('proj-1', 'wf-1', { repo: 'org/repo' }, 'tok')
+
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/workflows/wf-1/dispatch',
+      { inputs: { repo: 'org/repo' } },
+      'tok',
+    )
+    expect(result).toBe(run)
+  })
+
+  it('omits inputs from the body when none are given', async () => {
+    vi.mocked(apiPost).mockResolvedValueOnce({
+      id: 'run-1', workflowId: 'wf-1', triggerType: 'workflow_dispatch', status: 'RUNNING', startedAt: '2026-07-19T00:00:00Z',
+    })
+
+    await dispatchWorkflow('proj-1', 'wf-1', undefined, 'tok')
+
+    expect(apiPost).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/dispatch', {}, 'tok')
+  })
+})
 
 const VIEW: WorkflowView = {
   slug: 'ENGINEERING',

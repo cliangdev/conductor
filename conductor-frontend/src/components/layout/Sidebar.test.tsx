@@ -56,6 +56,23 @@ vi.mock('@/contexts/AuthContext', () => ({
   }),
 }))
 
+// Defaults to ADMIN (all capabilities) so existing tests see the full nav; permission-gating tests
+// override this per-test.
+let mockRole: 'ADMIN' | 'CREATOR' | 'REVIEWER' = 'ADMIN'
+vi.mock('@/contexts/PermissionsContext', () => ({
+  usePermissions: () => ({
+    role: mockRole,
+    loading: false,
+    can: (capability: string) => {
+      if (mockRole === 'REVIEWER') return false
+      if (mockRole === 'ADMIN') return true
+      // CREATOR holds every capability except the admin-only set.
+      return !['workspace.manage', 'members.manage', 'notifications.manage'].includes(capability)
+    },
+    refresh: vi.fn(),
+  }),
+}))
+
 vi.mock('next-themes', () => ({
   useTheme: () => ({ theme: 'light', setTheme: mockSetTheme }),
 }))
@@ -103,6 +120,7 @@ describe('Sidebar', () => {
     mockSetPaletteOpen.mockClear()
     mockSignOut.mockClear()
     mockSetTheme.mockClear()
+    mockRole = 'ADMIN'
   })
 
   it('renders the active workspace name in the quiet switcher', () => {
@@ -128,36 +146,20 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('link', { name: /connect apps/i })).not.toBeInTheDocument()
   })
 
-  it('renders Settings group when on a workspace settings page', () => {
-    render(<Sidebar />)
-    expect(screen.getAllByText('Settings').length).toBeGreaterThanOrEqual(1)
-  })
+  // ── COND-290: Settings is a door, not a tree ──────────────────────────────
 
-  it('renders General link under Settings pointing to settings/general', () => {
+  it('renders exactly one Settings row linking to the settings door, with no sub-links inline', () => {
     render(<Sidebar />)
-    const generalLink = screen.getByRole('link', { name: /general/i })
-    expect(generalLink).toHaveAttribute('href', '/app/projects/proj-1/settings/general')
-  })
+    const settingsLinks = screen.getAllByRole('link', { name: /^settings$/i })
+    expect(settingsLinks).toHaveLength(1)
+    expect(settingsLinks[0]).toHaveAttribute('href', '/app/projects/proj-1/settings')
 
-  it('renders Members link under Settings pointing to settings/members', () => {
-    render(<Sidebar />)
-    const membersLinks = screen.getAllByRole('link', { name: /members/i })
-    const settingsMembersLink = membersLinks.find((l) =>
-      l.getAttribute('href')?.includes('settings/members')
-    )
-    expect(settingsMembersLink).toHaveAttribute('href', '/app/projects/proj-1/settings/members')
-  })
-
-  it('renders API Keys link pointing to workspace settings/api-keys', () => {
-    render(<Sidebar />)
-    const apiKeysLink = screen.getByRole('link', { name: /api keys/i })
-    expect(apiKeysLink).toHaveAttribute('href', '/app/projects/proj-1/settings/api-keys')
-  })
-
-  it('renders Notifications link under Settings', () => {
-    render(<Sidebar />)
-    const notificationsLink = screen.getByRole('link', { name: /notifications/i })
-    expect(notificationsLink).toHaveAttribute('href', '/app/projects/proj-1/settings/notifications')
+    // None of the settings section labels appear as sidebar links anymore — they live in the
+    // settings area's own sub-nav rail now.
+    expect(screen.queryByRole('link', { name: /^general$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /members & roles/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^api keys$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^notifications$/i })).not.toBeInTheDocument()
   })
 
   it('does not render a standalone GitHub settings link (folded into Integrations hub)', () => {
@@ -225,6 +227,20 @@ describe('Sidebar', () => {
     expect(deals).toHaveAttribute('href', '/app/projects/proj-1/sales_ops/deals')
     // Area slug is humanized into a section label.
     expect(screen.getByText('Sales Ops')).toBeInTheDocument()
+  })
+
+  // ── COND-290 acceptance: compact rail + no admin-only entries for a REVIEWER ──────────
+
+  it('shows 8 or fewer top-level sidebar rows with no sidebar-enabled Work nav', () => {
+    render(<Sidebar />)
+    // Docs, Knowledge (Workspace) + Workflows, Agents, Integrations (Automation) + Settings door.
+    expect(screen.getAllByRole('link').length).toBeLessThanOrEqual(8)
+  })
+
+  it('keeps the Settings door visible for a REVIEWER (General/Members/API Keys/Notifications/CLI stay reachable)', () => {
+    mockRole = 'REVIEWER'
+    render(<Sidebar />)
+    expect(screen.getByRole('link', { name: /^settings$/i })).toBeInTheDocument()
   })
 
   // ── User account menu ──────────────────────────────────────────────────────

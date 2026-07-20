@@ -161,6 +161,75 @@ class KnowledgeIngestionServiceIntegrationTest extends AbstractNoneWebIntegratio
         assertThat(stored.getDomain()).isEqualTo("engineering");
     }
 
+    // ---- retryDeadSources ----
+
+    @Test
+    void retryDeadSourcesResetsDeadSourcesToPendingAndReturnsCount() {
+        KnowledgeSource dead1 = newSourceWithStatus(projectId, KnowledgeSourceStatus.DEAD);
+        KnowledgeSource dead2 = newSourceWithStatus(projectId, KnowledgeSourceStatus.DEAD);
+        dead1.setAttempts(5);
+        dead1.setNextAttemptAt(OffsetDateTime.now().plusHours(1));
+        dead1.setErrorMessage("boom");
+        sourceRepository.save(dead1);
+
+        int retried = ingestionService.retryDeadSources(projectId);
+
+        assertThat(retried).isEqualTo(2);
+        KnowledgeSource reloaded1 = sourceRepository.findById(dead1.getId()).orElseThrow();
+        assertThat(reloaded1.getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
+        assertThat(reloaded1.getAttempts()).isZero();
+        assertThat(reloaded1.getNextAttemptAt()).isNull();
+        assertThat(reloaded1.getErrorMessage()).isNull();
+        assertThat(sourceRepository.findById(dead2.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.PENDING);
+    }
+
+    @Test
+    void retryDeadSourcesLeavesOtherStatusesUntouched() {
+        KnowledgeSource pending = newSourceWithStatus(projectId, KnowledgeSourceStatus.PENDING);
+        KnowledgeSource processed = newSourceWithStatus(projectId, KnowledgeSourceStatus.PROCESSED);
+        KnowledgeSource dead = newSourceWithStatus(projectId, KnowledgeSourceStatus.DEAD);
+
+        int retried = ingestionService.retryDeadSources(projectId);
+
+        assertThat(retried).isEqualTo(1);
+        assertThat(sourceRepository.findById(pending.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.PENDING);
+        assertThat(sourceRepository.findById(processed.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.PROCESSED);
+        assertThat(sourceRepository.findById(dead.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.PENDING);
+    }
+
+    @Test
+    void retryDeadSourcesDoesNotTouchOtherProjects() {
+        User otherUser = new User();
+        otherUser.setFirebaseUid("test-uid-" + UUID.randomUUID());
+        otherUser.setEmail("test-" + UUID.randomUUID() + "@example.com");
+        userRepository.save(otherUser);
+        Project otherProject = new Project();
+        otherProject.setName("Other Project");
+        otherProject.setKey("OT" + String.valueOf(UUID.randomUUID()).substring(0, 6).toUpperCase());
+        otherProject.setCreatedBy(otherUser);
+        String otherProjectId = projectRepository.save(otherProject).getId();
+        KnowledgeSource otherDead = newSourceWithStatus(otherProjectId, KnowledgeSourceStatus.DEAD);
+
+        int retried = ingestionService.retryDeadSources(projectId);
+
+        assertThat(retried).isZero();
+        assertThat(sourceRepository.findById(otherDead.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.DEAD);
+    }
+
+    private KnowledgeSource newSourceWithStatus(String forProjectId, KnowledgeSourceStatus status) {
+        KnowledgeSource source = new KnowledgeSource();
+        source.setProjectId(forProjectId);
+        source.setSourceType("manual-note");
+        source.setDedupKey(UUID.randomUUID().toString());
+        source.setStatus(status);
+        return sourceRepository.saveAndFlush(source);
+    }
+
     private com.conductor.knowledge.domain.KnowledgeDomain activeDomain(String slug, List<String> patterns) {
         com.conductor.knowledge.domain.KnowledgeDomain domain = new com.conductor.knowledge.domain.KnowledgeDomain();
         domain.setProjectId(projectId);

@@ -20,6 +20,20 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: 'test-token' }),
 }))
 
+let mockRole: 'ADMIN' | 'CREATOR' | 'REVIEWER' = 'ADMIN'
+vi.mock('@/contexts/PermissionsContext', () => ({
+  usePermissions: () => ({
+    role: mockRole,
+    loading: false,
+    can: (capability: string) => {
+      if (mockRole === 'REVIEWER') return false
+      if (mockRole === 'ADMIN') return true
+      return !['workspace.manage', 'members.manage', 'notifications.manage'].includes(capability)
+    },
+    refresh: vi.fn(),
+  }),
+}))
+
 vi.mock('@/contexts/ProjectContext', () => ({
   useProject: () => ({
     projects: [{ id: 'proj-1', name: 'Test Workspace' }],
@@ -110,6 +124,7 @@ describe('CommandPalette', () => {
     mockCloseSidebar.mockClear()
     mockSetPaletteOpen.mockClear()
     mockSetTheme.mockClear()
+    mockRole = 'ADMIN'
   })
 
   it('opens via the ⌘K keyboard shortcut', async () => {
@@ -154,6 +169,31 @@ describe('CommandPalette', () => {
     await openPalette()
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('combobox')).not.toBeInTheDocument())
+  })
+
+  // ── COND-290: permission-gated Settings entries ────────────────────────────
+
+  it('lists AI Providers and Secrets for an admin', async () => {
+    render(<CommandPalette />)
+    const input = await openPalette()
+    fireEvent.change(input, { target: { value: 'ai providers' } })
+    expect(await screen.findByRole('option', { name: /ai providers/i })).toBeInTheDocument()
+    fireEvent.change(input, { target: { value: 'secrets' } })
+    expect(await screen.findByRole('option', { name: /^secrets$/i })).toBeInTheDocument()
+  })
+
+  it('omits AI Providers and Secrets for a REVIEWER but keeps Members & Roles and Notifications', async () => {
+    mockRole = 'REVIEWER'
+    render(<CommandPalette />)
+    const input = await openPalette()
+    fireEvent.change(input, { target: { value: 'ai providers' } })
+    expect(screen.queryByRole('option', { name: /ai providers/i })).not.toBeInTheDocument()
+    fireEvent.change(input, { target: { value: 'secrets' } })
+    expect(screen.queryByRole('option', { name: /^secrets$/i })).not.toBeInTheDocument()
+    fireEvent.change(input, { target: { value: 'members' } })
+    expect(await screen.findByRole('option', { name: /members & roles/i })).toBeInTheDocument()
+    fireEvent.change(input, { target: { value: 'notifications' } })
+    expect(await screen.findByRole('option', { name: /notifications/i })).toBeInTheDocument()
   })
 
   it('shows a registered extra group\'s actions (registry API)', async () => {

@@ -187,6 +187,8 @@ class KnowledgePageServiceIntegrationTest extends AbstractNoneWebIntegrationTest
         assertThat(index.content()).contains("notes/a.md").contains("A");
 
         PageView log = views.stream().filter(v -> v.path().equals("log.md")).findFirst().orElseThrow();
-        assertThat(log.content()).contains("**Update**: notes/a.md");
+        // First revision on a brand-new page is a CREATE, not an UPDATE -- buildVirtualLog now emits
+        // the real changeKind label instead of hardcoding "Update" for every revision.
+        assertThat(log.content()).contains("**Create**: notes/a.md");
     }
 }

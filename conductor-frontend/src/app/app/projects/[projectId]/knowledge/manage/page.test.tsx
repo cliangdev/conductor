@@ -13,6 +13,14 @@ let listAgentsBehavior: () => Promise<Agent[]> = () => Promise.resolve([])
 const updateDomainMock = vi.fn()
 const createSpecialistMock = vi.fn()
 
+vi.mock('next/navigation', () => ({
+  useParams: () => ({ projectId: 'proj-1' }),
+}))
+
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ accessToken: 'tok' }),
+}))
+
 vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({
     role: canManage ? 'ADMIN' : 'CREATOR',
@@ -26,7 +34,10 @@ vi.mock('@/components/ui/toast', () => ({
   useToast: () => ({ showToast: mockShowToast }),
 }))
 
-vi.mock('@/lib/knowledge-api', () => ({
+vi.mock('@/lib/knowledge-api', async () => ({
+  // Preserve real exports (KNOWLEDGE_LIBRARIAN_SLUG etc.) — components under test import
+  // constants from this module, not just the network functions overridden below.
+  ...(await vi.importActual<typeof import('@/lib/knowledge-api')>('@/lib/knowledge-api')),
   listKnowledgeDomains: () => listDomainsBehavior(),
   updateKnowledgeDomain: (...args: unknown[]) => updateDomainMock(...args),
   createKnowledgeDomainSpecialist: (...args: unknown[]) => createSpecialistMock(...args),
@@ -40,7 +51,7 @@ vi.mock('@/lib/api', async () => {
   }
 })
 
-import { KnowledgeDomainsPanel } from './KnowledgeDomainsPanel'
+import KnowledgeManagePage from './page'
 
 function domain(overrides: Partial<KnowledgeDomainDto> = {}): KnowledgeDomainDto {
   return {
@@ -76,7 +87,7 @@ function agent(overrides: Partial<Agent> = {}): Agent {
   }
 }
 
-describe('KnowledgeDomainsPanel', () => {
+describe('KnowledgeManagePage', () => {
   beforeEach(() => {
     canManage = true
     mockShowToast.mockClear()
@@ -86,16 +97,24 @@ describe('KnowledgeDomainsPanel', () => {
     listAgentsBehavior = () => Promise.resolve([])
   })
 
-  it('renders an ACTIVE domain with display name, librarian default, pending/processed counts', async () => {
+  it('shows an admins-only empty state for a non-admin', async () => {
+    canManage = false
+
+    render(<KnowledgeManagePage />)
+
+    expect(await screen.findByText('Admins only')).toBeInTheDocument()
+    expect(screen.queryByText('Manage knowledge')).not.toBeInTheDocument()
+  })
+
+  it('renders an ACTIVE domain with display name, librarian default, and a waiting count', async () => {
     listDomainsBehavior = () => Promise.resolve([domain()])
 
-    render(<KnowledgeDomainsPanel projectId="proj-1" token="tok" />)
+    render(<KnowledgeManagePage />)
 
     expect(await screen.findByText('Engineering')).toBeInTheDocument()
     expect(screen.getByText('Librarian')).toBeInTheDocument()
-    expect(screen.getByText('3 pending')).toBeInTheDocument()
-    expect(screen.getByText('12 processed')).toBeInTheDocument()
-    const schemaLink = screen.getByRole('link', { name: 'Engineering' })
+    expect(screen.getByText('3 waiting')).toBeInTheDocument()
+    const schemaLink = screen.getByRole('link', { name: 'Filing rules' })
     expect(schemaLink).toHaveAttribute('href', '/app/projects/proj-1/knowledge/page?path=engineering%2F_schema.md')
   })
 
@@ -103,32 +122,26 @@ describe('KnowledgeDomainsPanel', () => {
     listDomainsBehavior = () => Promise.resolve([domain({ owningAgentSlug: 'knowledge-engineering' })])
     listAgentsBehavior = () => Promise.resolve([agent()])
 
-    render(<KnowledgeDomainsPanel projectId="proj-1" token="tok" />)
+    render(<KnowledgeManagePage />)
 
     expect(await screen.findByText('Knowledge Engineering')).toBeInTheDocument()
     expect(screen.queryByText('Librarian')).not.toBeInTheDocument()
   })
 
-  it('shows Create specialist for an admin when no owning agent is assigned', async () => {
-    canManage = true
+  it('shows Assign specialist when no owning agent is assigned, and calls createKnowledgeDomainSpecialist', async () => {
     listDomainsBehavior = () => Promise.resolve([domain({ owningAgentSlug: null })])
 
-    render(<KnowledgeDomainsPanel projectId="proj-1" token="tok" />)
+    render(<KnowledgeManagePage />)
+    const assignButton = await screen.findByRole('button', { name: 'Assign specialist' })
+    fireEvent.click(assignButton)
 
-    expect(await screen.findByRole('button', { name: 'Create specialist' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(createSpecialistMock).toHaveBeenCalledWith('proj-1', 'engineering', 'tok')
+    })
+    expect(mockShowToast).toHaveBeenCalled()
   })
 
-  it('hides Create specialist for a non-admin', async () => {
-    canManage = false
-    listDomainsBehavior = () => Promise.resolve([domain({ owningAgentSlug: null })])
-
-    render(<KnowledgeDomainsPanel projectId="proj-1" token="tok" />)
-
-    await screen.findByText('Engineering')
-    expect(screen.queryByRole('button', { name: 'Create specialist' })).not.toBeInTheDocument()
-  })
-
-  it('renders a SUGGESTED domain with an amber badge and its reason', async () => {
+  it('renders a SUGGESTED domain as an approval card with its reason', async () => {
     listDomainsBehavior = () =>
       Promise.resolve([
         domain({
@@ -139,17 +152,16 @@ describe('KnowledgeDomainsPanel', () => {
         }),
       ])
 
-    render(<KnowledgeDomainsPanel projectId="proj-1" token="tok" />)
+    render(<KnowledgeManagePage />)
 
-    expect(await screen.findByText('Legal')).toBeInTheDocument()
-    expect(screen.getByText('Suggested')).toBeInTheDocument()
-    expect(screen.getByText('Contracts keep showing up with nowhere to go')).toBeInTheDocument()
+    expect(await screen.findByText('The librarian suggests a new area: "Legal"')).toBeInTheDocument()
+    expect(screen.getByText('“Contracts keep showing up with nowhere to go”')).toBeInTheDocument()
   })
 
-  it('shows Approve/Dismiss for a SUGGESTED domain to an admin, and calls updateKnowledgeDomain on approve', async () => {
+  it('calls updateKnowledgeDomain with ACTIVE on Approve', async () => {
     listDomainsBehavior = () => Promise.resolve([domain({ slug: 'legal', displayName: 'Legal', state: 'SUGGESTED' })])
 
-    render(<KnowledgeDomainsPanel projectId="proj-1" token="tok" />)
+    render(<KnowledgeManagePage />)
     const approveButton = await screen.findByRole('button', { name: 'Approve' })
     fireEvent.click(approveButton)
 
@@ -159,45 +171,43 @@ describe('KnowledgeDomainsPanel', () => {
     expect(mockShowToast).toHaveBeenCalled()
   })
 
-  it('hides Approve/Dismiss for a SUGGESTED domain from a non-admin', async () => {
-    canManage = false
+  it('calls updateKnowledgeDomain with DISMISSED on Dismiss', async () => {
     listDomainsBehavior = () => Promise.resolve([domain({ slug: 'legal', displayName: 'Legal', state: 'SUGGESTED' })])
 
-    render(<KnowledgeDomainsPanel projectId="proj-1" token="tok" />)
+    render(<KnowledgeManagePage />)
+    const dismissButton = await screen.findByRole('button', { name: 'Dismiss' })
+    fireEvent.click(dismissButton)
 
-    await screen.findByText('Legal')
-    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(updateDomainMock).toHaveBeenCalledWith('proj-1', 'legal', { state: 'DISMISSED' }, 'tok')
+    })
   })
 
   it('never renders a DISMISSED domain', async () => {
     listDomainsBehavior = () =>
       Promise.resolve([domain({ slug: 'old-idea', displayName: 'Old Idea', state: 'DISMISSED' })])
 
-    render(<KnowledgeDomainsPanel projectId="proj-1" token="tok" />)
+    render(<KnowledgeManagePage />)
 
-    await waitFor(() => {
-      expect(screen.queryByText('Old Idea')).not.toBeInTheDocument()
-    })
+    await screen.findByText('Manage knowledge')
+    expect(screen.queryByText('Old Idea')).not.toBeInTheDocument()
   })
 
-  it('renders nothing when there are no ACTIVE or SUGGESTED domains', async () => {
-    listDomainsBehavior = () => Promise.resolve([domain({ state: 'DISMISSED' })])
+  it('shows the footer hint text', async () => {
+    listDomainsBehavior = () => Promise.resolve([domain()])
 
-    const { container } = render(<KnowledgeDomainsPanel projectId="proj-1" token="tok" />)
+    render(<KnowledgeManagePage />)
 
-    await waitFor(() => {
-      expect(container).toBeEmptyDOMElement()
-    })
+    expect(
+      await screen.findByText(/Every area is maintained by the Librarian until you assign a specialist/)
+    ).toBeInTheDocument()
   })
 
-  it('renders nothing when the domains fetch fails', async () => {
+  it('shows an alert when the domains fetch fails', async () => {
     listDomainsBehavior = () => Promise.reject(new Error('boom'))
 
-    const { container } = render(<KnowledgeDomainsPanel projectId="proj-1" token="tok" />)
+    render(<KnowledgeManagePage />)
 
-    await waitFor(() => {
-      expect(container).toBeEmptyDOMElement()
-    })
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
   })
 })

@@ -4453,6 +4453,32 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /projects/{projectId}/knowledge/sources/retry:
+    post:
+      tags: [knowledge]
+      summary: Retry every needs-attention (DEAD) source in a project
+      description: >-
+        ADMIN only. An ops recovery action, not a member action — resets every DEAD source in the
+        project back to PENDING (attempts, nextAttemptAt, and errorMessage all cleared) so the
+        ingestion scheduler re-claims them on its next tick. No request body.
+      operationId: retryDeadKnowledgeSources
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Sources reset to PENDING
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeSourceRetryResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /projects/{projectId}/knowledge/domains:
     get:
       tags: [knowledge]
@@ -7187,6 +7213,16 @@ components:
         dead:
           type: integer
           format: int64
+
+    KnowledgeSourceRetryResult:
+      type: object
+      description: Result of resetting a project's DEAD sources back to PENDING.
+      required:
+        - retried
+      properties:
+        retried:
+          type: integer
+          description: Number of sources moved from DEAD to PENDING.
 
     KnowledgeDomainState:
       type: string

@@ -6,10 +6,16 @@ import { HomeIcon, HistoryIcon, RotateCwIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { KnowledgeSearch } from '@/components/knowledge/KnowledgeSearch'
 import { KnowledgePageTree } from '@/components/knowledge/KnowledgePageTree'
+import { KnowledgeRailFooter } from '@/components/knowledge/KnowledgeRailFooter'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert } from '@/components/ui/alert'
 import { getKnowledgeIndex } from '@/lib/knowledge-api'
-import { groupKnowledgePages, parseKnowledgeIndexPages, type KnowledgeTreeSection } from '@/lib/knowledgeTree'
+import {
+  filterContentPages,
+  groupKnowledgePages,
+  parseKnowledgeIndexPages,
+  type KnowledgeTreeSection,
+} from '@/lib/knowledgeTree'
 import { cn } from '@/lib/utils'
 
 function RailSkeleton() {
@@ -22,7 +28,7 @@ function RailSkeleton() {
   )
 }
 
-function KnowledgeRail() {
+function KnowledgeRail({ onHasContentChange }: { onHasContentChange: (hasContent: boolean) => void }) {
   const { projectId } = useParams<{ projectId: string }>()
   const { accessToken } = useAuth()
   const router = useRouter()
@@ -42,7 +48,9 @@ function KnowledgeRail() {
     getKnowledgeIndex(projectId, accessToken)
       .then((page) => {
         if (cancelled) return
-        setSections(groupKnowledgePages(parseKnowledgeIndexPages(page.content ?? '')))
+        const grouped = groupKnowledgePages(filterContentPages(parseKnowledgeIndexPages(page.content ?? '')))
+        setSections(grouped)
+        onHasContentChange(grouped.length > 0)
       })
       .catch(() => {
         if (!cancelled) setError(true)
@@ -53,6 +61,7 @@ function KnowledgeRail() {
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onHasContentChange is a stable setState wrapper from the parent
   }, [accessToken, projectId, retryCount])
 
   function goToPage(path: string) {
@@ -60,6 +69,7 @@ function KnowledgeRail() {
   }
 
   const onIndex = pathname === `/app/projects/${projectId}/knowledge`
+  const onActivity = pathname === `/app/projects/${projectId}/knowledge/activity`
   const onPageRoute = pathname === `/app/projects/${projectId}/knowledge/page`
   const activePath = onPageRoute ? searchParams.get('path') ?? '' : ''
 
@@ -79,14 +89,14 @@ function KnowledgeRail() {
           )}
         >
           <HomeIcon className="h-3.5 w-3.5 shrink-0 opacity-70" />
-          Index
+          Home
         </button>
         <button
-          onClick={() => goToPage('log.md')}
-          aria-current={activePath === 'log.md' ? 'page' : undefined}
+          onClick={() => router.push(`/app/projects/${projectId}/knowledge/activity`)}
+          aria-current={onActivity ? 'page' : undefined}
           className={cn(
             'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-left transition-colors',
-            activePath === 'log.md'
+            onActivity
               ? 'bg-sidebar-active text-sidebar-active-text font-medium'
               : 'text-foreground hover:bg-sidebar-hover'
           )}
@@ -126,13 +136,22 @@ function KnowledgeRail() {
 }
 
 export default function KnowledgeLayout({ children }: { children: React.ReactNode }) {
+  const { projectId } = useParams<{ projectId: string }>()
+  const { accessToken } = useAuth()
+  // KnowledgeRail already parses the index for the page tree — reuse that fetch's "does the wiki
+  // have any content pages" result for the footer's health chip instead of a second index fetch.
+  const [hasContent, setHasContent] = useState<boolean | undefined>(undefined)
+
   return (
     <div className="flex h-full">
-      {/* Left rail: search + page tree + fixed shortcuts */}
-      <div className="w-56 shrink-0 border-r border-border bg-sidebar-bg overflow-y-auto">
-        <Suspense fallback={<RailSkeleton />}>
-          <KnowledgeRail />
-        </Suspense>
+      {/* Left rail: search + page tree + fixed shortcuts, footer pinned to the bottom */}
+      <div className="w-56 shrink-0 border-r border-border bg-sidebar-bg flex flex-col h-full">
+        <div className="flex-1 overflow-y-auto">
+          <Suspense fallback={<RailSkeleton />}>
+            <KnowledgeRail onHasContentChange={setHasContent} />
+          </Suspense>
+        </div>
+        {accessToken && <KnowledgeRailFooter projectId={projectId} token={accessToken} hasContent={hasContent} />}
       </div>
 
       {/* Right panel: page content */}
