@@ -5,7 +5,7 @@ import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigat
 import Link from 'next/link'
 import { HistoryIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getKnowledgePages, getKnowledgeSourceCounts } from '@/lib/knowledge-api'
+import { getKnowledgePages, getKnowledgeSourceCounts, KNOWLEDGE_LIBRARIAN_SLUG } from '@/lib/knowledge-api'
 import { listWorkflows, listWorkflowRuns } from '@/lib/workflows'
 import type { WorkflowRunDto } from '@/types/workflow'
 import { apiErrorMessage } from '@/lib/api'
@@ -21,9 +21,6 @@ import { KnowledgeAttentionBanner } from '@/components/knowledge/KnowledgeAttent
 import { timeAgo, formatElapsed } from '@/lib/format'
 
 export const dynamic = 'force-dynamic'
-
-// Matches KnowledgeWorkflowProvisioner's reserved workflow name on the backend.
-const LIBRARIAN_WORKFLOW_NAME = 'knowledge-librarian'
 
 function ChangesTab({ projectId, token }: { projectId: string; token: string }) {
   const router = useRouter()
@@ -79,7 +76,7 @@ function RunsTab({ projectId, token }: { projectId: string; token: string }) {
     setError(null)
     listWorkflows(projectId, token)
       .then((workflows) => {
-        const librarian = workflows.find((w) => w.name === LIBRARIAN_WORKFLOW_NAME)
+        const librarian = workflows.find((w) => w.name === KNOWLEDGE_LIBRARIAN_SLUG)
         if (!librarian) return []
         if (!cancelled) setWorkflowId(librarian.id)
         return listWorkflowRuns(projectId, librarian.id, token, { page: 0, size: 20 })

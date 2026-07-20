@@ -24,7 +24,10 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: 'token' }),
 }))
 
-vi.mock('@/lib/knowledge-api', () => ({
+vi.mock('@/lib/knowledge-api', async () => ({
+  // Preserve real exports (KNOWLEDGE_LIBRARIAN_SLUG etc.) — components under test import
+  // constants from this module, not just the network functions overridden below.
+  ...(await vi.importActual<typeof import('@/lib/knowledge-api')>('@/lib/knowledge-api')),
   getKnowledgePage: (...args: unknown[]) => getKnowledgePageBehavior.call(null, ...(args as [string, string])),
   listKnowledgeRevisions: (...args: unknown[]) =>
     listKnowledgeRevisionsBehavior.call(null, ...(args as [string, string])),

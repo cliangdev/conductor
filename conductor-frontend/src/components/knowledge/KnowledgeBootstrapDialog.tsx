@@ -8,10 +8,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/components/ui/toast'
 import { listWorkflows, dispatchWorkflow } from '@/lib/workflows'
+import { KNOWLEDGE_BOOTSTRAP_WORKFLOW } from '@/lib/knowledge-api'
 import { apiErrorMessage } from '@/lib/api'
-
-// Matches KnowledgeWorkflowProvisioner's reserved workflow name on the backend.
-const BOOTSTRAP_WORKFLOW_NAME = 'knowledge-bootstrap'
 
 // "owner/repo" — mirrors the GitHub repo shape the knowledge-bootstrap workflow's `repo` input expects.
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/
@@ -46,7 +44,7 @@ export function KnowledgeBootstrapDialog({
     setSubmitting(true)
     try {
       const workflows = await listWorkflows(projectId, token)
-      const bootstrap = workflows.find((w) => w.name === BOOTSTRAP_WORKFLOW_NAME)
+      const bootstrap = workflows.find((w) => w.name === KNOWLEDGE_BOOTSTRAP_WORKFLOW)
       if (!bootstrap) {
         showToast(
           'Bootstrap workflow not found — try disabling and re-enabling Knowledge to finish provisioning.',

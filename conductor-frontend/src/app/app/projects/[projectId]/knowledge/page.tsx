@@ -20,6 +20,8 @@ import {
   getKnowledgePages,
   enableKnowledge,
   listKnowledgeDomains,
+  KNOWLEDGE_LIBRARIAN_SLUG,
+  LIBRARIAN_FALLBACK_AVATAR,
   type KnowledgeDomainDto,
 } from '@/lib/knowledge-api'
 import type { KnowledgePageView } from '@/lib/knowledge-api'
@@ -29,9 +31,6 @@ import { parseKnowledgeLog, type KnowledgeLogEntry } from '@/lib/knowledgeLog'
 import { timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-const LIBRARIAN_SLUG = 'knowledge-librarian'
-const FALLBACK_AVATAR_EMOJI = '📚'
-const FALLBACK_AVATAR_COLOR: AvatarColorToken = 'violet'
 const RECENTLY_UPDATED_LIMIT = 5
 
 // Static lookup, not an interpolated class string — Tailwind can't see a `` `ring-avatar-${color}` ``
@@ -216,7 +215,7 @@ export default function KnowledgeIndexPage() {
     listAgents(projectId, accessToken)
       .then((agents) => {
         if (cancelled) return
-        setLibrarianAgent(agents.find((a) => a.slug === LIBRARIAN_SLUG) ?? null)
+        setLibrarianAgent(agents.find((a) => a.slug === KNOWLEDGE_LIBRARIAN_SLUG) ?? null)
         setAgentsChecked(true)
       })
       .catch(() => {
@@ -292,10 +291,14 @@ export default function KnowledgeIndexPage() {
       .filter((d) => d.state === 'ACTIVE')
       .map((domain) => {
         const pages = contentPages.filter((p) => p.path.startsWith(domain.pathPrefix))
-        const newestEntry = logEntries?.find((e) => e.path.startsWith(domain.pathPrefix))
+        // Only revisions of live content pages count — otherwise a filing-rules (_schema.md)
+        // edit or a deletion would bump the area's "updated" stamp.
+        const newestEntry = logEntries?.find(
+          (e) => e.path.startsWith(domain.pathPrefix) && pagesByPath.has(e.path),
+        )
         return { domain, pages, updatedDay: newestEntry?.day ?? null }
       })
-  }, [domains, contentPages, logEntries])
+  }, [domains, contentPages, logEntries, pagesByPath])
 
   async function handleEnable() {
     if (!accessToken) return
@@ -308,7 +311,7 @@ export default function KnowledgeIndexPage() {
       // flips from "not enabled" to the onboarding state without waiting for a page refresh.
       try {
         const agents = await listAgents(projectId, accessToken)
-        setLibrarianAgent(agents.find((a) => a.slug === LIBRARIAN_SLUG) ?? null)
+        setLibrarianAgent(agents.find((a) => a.slug === KNOWLEDGE_LIBRARIAN_SLUG) ?? null)
         setAgentsChecked(true)
       } catch {
         // best-effort — the lazy effect above covers this on the next mount
@@ -333,10 +336,10 @@ export default function KnowledgeIndexPage() {
   }
 
   if (empty) {
-    const avatarEmoji = librarianAgent?.avatarEmoji ?? FALLBACK_AVATAR_EMOJI
+    const avatarEmoji = librarianAgent?.avatarEmoji ?? LIBRARIAN_FALLBACK_AVATAR.emoji
     const avatarColor = isAvatarColorToken(librarianAgent?.avatarColor)
       ? librarianAgent.avatarColor
-      : FALLBACK_AVATAR_COLOR
+      : LIBRARIAN_FALLBACK_AVATAR.color
     const avatar = (
       <div className={cn('rounded-full p-1 ring-2', RING_COLOR_CLASSES[avatarColor])}>
         <AgentAvatar emoji={avatarEmoji} color={avatarColor} size="lg" />

@@ -12,11 +12,12 @@ import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Alert } from '@/components/ui/alert'
-import { AgentAvatar, isAvatarColorToken, type AvatarColorToken } from '@/components/agents/AgentAvatar'
+import { AgentAvatar, isAvatarColorToken } from '@/components/agents/AgentAvatar'
 import {
   listKnowledgeDomains,
   updateKnowledgeDomain,
   createKnowledgeDomainSpecialist,
+  LIBRARIAN_FALLBACK_AVATAR,
   type KnowledgeDomainDto,
 } from '@/lib/knowledge-api'
 import { listAgents, apiErrorMessage, type Agent } from '@/lib/api'
@@ -24,8 +25,6 @@ import { cn } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
-const LIBRARIAN_AVATAR_EMOJI = '📚'
-const LIBRARIAN_AVATAR_COLOR: AvatarColorToken = 'violet'
 
 /** Admin-only registry surface for the areas the librarian files into: approve/dismiss suggested
  *  areas (gap reports), see who owns each active area, and jump to its filing rules. Moved here
@@ -210,10 +209,10 @@ export default function KnowledgeManagePage() {
                 <Card className="divide-y divide-border">
                   {active.map((domain) => {
                     const owningAgent = domain.owningAgentSlug ? agentsBySlug.get(domain.owningAgentSlug) : undefined
-                    const avatarEmoji = owningAgent?.avatarEmoji ?? LIBRARIAN_AVATAR_EMOJI
+                    const avatarEmoji = owningAgent?.avatarEmoji ?? LIBRARIAN_FALLBACK_AVATAR.emoji
                     const avatarColor = isAvatarColorToken(owningAgent?.avatarColor)
                       ? owningAgent.avatarColor
-                      : LIBRARIAN_AVATAR_COLOR
+                      : LIBRARIAN_FALLBACK_AVATAR.color
                     const agentName = owningAgent?.name ?? 'Librarian'
 
                     return (

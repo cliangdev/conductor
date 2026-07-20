@@ -34,7 +34,10 @@ vi.mock('@/components/ui/toast', () => ({
   useToast: () => ({ showToast: mockShowToast }),
 }))
 
-vi.mock('@/lib/knowledge-api', () => ({
+vi.mock('@/lib/knowledge-api', async () => ({
+  // Preserve real exports (KNOWLEDGE_LIBRARIAN_SLUG etc.) — components under test import
+  // constants from this module, not just the network functions overridden below.
+  ...(await vi.importActual<typeof import('@/lib/knowledge-api')>('@/lib/knowledge-api')),
   listKnowledgeDomains: () => listDomainsBehavior(),
   updateKnowledgeDomain: (...args: unknown[]) => updateDomainMock(...args),
   createKnowledgeDomainSpecialist: (...args: unknown[]) => createSpecialistMock(...args),

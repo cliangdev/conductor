@@ -5,11 +5,13 @@ import Link from 'next/link'
 import { SettingsIcon } from 'lucide-react'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { StatusBadge } from '@/components/ui/status-badge'
-import { getKnowledgeSourceCounts, listKnowledgeDomains, type KnowledgeSourceCounts } from '@/lib/knowledge-api'
+import {
+  getKnowledgeSourceCounts,
+  listKnowledgeDomains,
+  KNOWLEDGE_LIBRARIAN_SLUG,
+  type KnowledgeSourceCounts,
+} from '@/lib/knowledge-api'
 import { listWorkflows, listWorkflowRuns } from '@/lib/workflows'
-
-// Matches KnowledgeWorkflowProvisioner's reserved workflow name on the backend.
-const LIBRARIAN_WORKFLOW_NAME = 'knowledge-librarian'
 
 type HealthState = 'needs-attention' | 'working' | 'up-to-date' | 'waiting-for-sources'
 
@@ -21,8 +23,7 @@ interface HealthData {
 /**
  * Rail footer, pinned to the bottom of the Knowledge nav: a one-chip pipeline health summary and,
  * for admins, the entry point into the Manage registry. The health chip and the Manage badge are
- * independent best-effort fetches (mirroring KnowledgePipelineStrip/KnowledgeDomainsPanel's failure
- * posture — a fetch failure omits just that segment) so a counts outage doesn't also blank the
+ * independent best-effort fetches (a fetch failure omits just that segment) so a counts outage doesn't also blank the
  * Manage entry. Together they're at most 3-4 calls, and the domains call only runs for admins.
  *
  * `hasContent` (whether the wiki has any content pages, from the layout's own index parse — see
@@ -53,7 +54,7 @@ export function KnowledgeRailFooter({
       let lastRunFailed = false
       try {
         const workflows = await listWorkflows(projectId, token)
-        const librarian = workflows.find((w) => w.name === LIBRARIAN_WORKFLOW_NAME)
+        const librarian = workflows.find((w) => w.name === KNOWLEDGE_LIBRARIAN_SLUG)
         if (librarian) {
           const runs = await listWorkflowRuns(projectId, librarian.id, token, { page: 0, size: 1 })
           lastRunFailed = runs[0]?.status === 'FAILED'

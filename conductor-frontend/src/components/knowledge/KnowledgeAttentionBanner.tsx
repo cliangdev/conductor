@@ -7,13 +7,9 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { useToast } from '@/components/ui/toast'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { listWorkflows, listWorkflowRuns } from '@/lib/workflows'
-import { retryDeadKnowledgeSources } from '@/lib/knowledge-api'
+import { retryDeadKnowledgeSources, KNOWLEDGE_LIBRARIAN_SLUG } from '@/lib/knowledge-api'
 import { apiErrorMessage } from '@/lib/api'
 import { cn } from '@/lib/utils'
-
-// Matches KnowledgeWorkflowProvisioner's reserved workflow name on the backend (same constant used
-// by KnowledgeRailFooter's health chip).
-const LIBRARIAN_WORKFLOW_NAME = 'knowledge-librarian'
 
 /**
  * Attention banner for the Activity page's Inbox tab, shown when there are DEAD sources. Own
@@ -56,7 +52,7 @@ export function KnowledgeAttentionBanner({
     let cancelled = false
     listWorkflows(projectId, token)
       .then((workflows) => {
-        const librarian = workflows.find((w) => w.name === LIBRARIAN_WORKFLOW_NAME)
+        const librarian = workflows.find((w) => w.name === KNOWLEDGE_LIBRARIAN_SLUG)
         if (!librarian) return []
         return listWorkflowRuns(projectId, librarian.id, token, { page: 0, size: 1 })
       })

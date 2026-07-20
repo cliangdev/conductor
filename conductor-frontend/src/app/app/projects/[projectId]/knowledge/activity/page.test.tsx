@@ -40,7 +40,10 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   }),
 }))
 
-vi.mock('@/lib/knowledge-api', () => ({
+vi.mock('@/lib/knowledge-api', async () => ({
+  // Preserve real exports (KNOWLEDGE_LIBRARIAN_SLUG etc.) — components under test import
+  // constants from this module, not just the network functions overridden below.
+  ...(await vi.importActual<typeof import('@/lib/knowledge-api')>('@/lib/knowledge-api')),
   getKnowledgePages: (_projectId: string, paths: string[]) => getKnowledgePagesBehavior(paths),
   getKnowledgeSourceCounts: () => getKnowledgeSourceCountsBehavior(),
   listKnowledgeSources: (_projectId: string, _token: string, opts?: { status?: string; domain?: string }) =>

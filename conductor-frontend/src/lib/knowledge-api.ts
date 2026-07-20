@@ -1,5 +1,15 @@
 import { apiGet, apiPatch, apiPost } from '@/lib/api'
 
+// Reserved names seeded by the backend's KnowledgeWorkflowProvisioner — the librarian's workflow
+// name and agent slug are the same string on purpose. Single-sourced here so a backend rename
+// breaks one constant, not a lookup in every consumer.
+export const KNOWLEDGE_LIBRARIAN_SLUG = 'knowledge-librarian'
+export const KNOWLEDGE_BOOTSTRAP_WORKFLOW = 'knowledge-bootstrap'
+/** The seeded librarian's avatar (mirrors the provisioner) — the fallback wherever an owning
+ *  agent is missing. `color` is a valid AvatarColorToken; typed as its literal to avoid a
+ *  lib → components import. */
+export const LIBRARIAN_FALLBACK_AVATAR = { emoji: '📚', color: 'violet' } as const
+
 export interface KnowledgePageView {
   path: string
   /** 0 for generated virtual pages (index.md, log.md). */
