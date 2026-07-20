@@ -18,8 +18,8 @@ vi.mock('@/contexts/ProjectContext', () => ({
   useProject: () => projectCtx,
 }))
 
-// ProjectLayout now mounts PermissionsProvider, which reads auth. No token → it skips
-// the members fetch, so a minimal stub is enough for these URL-sync tests.
+// PermissionsProvider mounts at the app shell (AppPermissionsProvider), not here — this stub
+// just satisfies any transitive useAuth() import in the layout's own dependency chain.
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: null, user: null }),
 }))

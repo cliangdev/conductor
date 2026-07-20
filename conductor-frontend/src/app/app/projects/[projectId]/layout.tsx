@@ -4,7 +4,6 @@ import { useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { useProject } from '@/contexts/ProjectContext'
 import { useAuth } from '@/contexts/AuthContext'
-import { PermissionsProvider } from '@/contexts/PermissionsContext'
 import { fetchSidebarWorkflows } from '@/lib/workflows'
 
 export default function ProjectLayout({ children }: { children: React.ReactNode }) {
@@ -31,5 +30,8 @@ export default function ProjectLayout({ children }: { children: React.ReactNode 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, projects, activeProject?.id, setActiveProject])
 
-  return <PermissionsProvider projectId={projectId}>{children}</PermissionsProvider>
+  // PermissionsProvider now mounts once at the app shell (AppPermissionsProvider in
+  // app/layout.tsx) so the Sidebar and CommandPalette — which render as siblings of this layout's
+  // children, not descendants — can call usePermissions() too.
+  return <>{children}</>
 }

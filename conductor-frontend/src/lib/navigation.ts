@@ -21,6 +21,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useProject } from '@/contexts/ProjectContext'
+import type { Capability } from '@/lib/permissions'
 import type { Project } from '@/types'
 
 export interface StaticNavEntry {
@@ -28,6 +29,17 @@ export interface StaticNavEntry {
   label: string
   icon: LucideIcon
   path: (workspaceId: string) => string
+  /**
+   * Capability required to see this entry in nav (sidebar rail, Settings door, command palette).
+   * Omit for entries every role should see. Per the audience-layers IA rule (docs/design-system.md),
+   * a role that can't use an entry doesn't see it at all — never a disabled/greyed-out row.
+   */
+  permission?: Capability
+}
+
+/** Filter nav entries down to the ones the current role can see — the one gating rule, reused by every nav surface. */
+export function visibleNavEntries(entries: StaticNavEntry[], can: (capability: Capability) => boolean): StaticNavEntry[] {
+  return entries.filter((entry) => !entry.permission || can(entry.permission))
 }
 
 export const WORKSPACE_NAV: StaticNavEntry[] = [
@@ -41,18 +53,21 @@ export const AUTOMATION_NAV: StaticNavEntry[] = [
   { key: 'integrations', label: 'Integrations', icon: PuzzleIcon, path: (id) => `/app/projects/${id}/integrations` },
 ]
 
+// Members & Roles and API Keys are deliberately ungated despite the "admin-flavored" label they're
+// sometimes given: Members' roster is read-only-usable by every role (only invite/remove/role-change
+// are capability-gated inside the page), and API Keys has no capability check at all — the keys are
+// personal, tied to the signed-in user, not the workspace. AI Providers and Secrets *are* gated:
+// both are credential/provisioning surfaces (the Configure layer's own definition) whose read-only
+// view (connection badges, secret key names) isn't the reason anyone would visit.
 export const SETTINGS_NAV: StaticNavEntry[] = [
   { key: 'settings-general', label: 'General', icon: SlidersHorizontalIcon, path: (id) => `/app/projects/${id}/settings/general` },
   { key: 'settings-members', label: 'Members & Roles', icon: UsersIcon, path: (id) => `/app/projects/${id}/settings/members` },
   { key: 'settings-api-keys', label: 'API Keys', icon: KeyIcon, path: (id) => `/app/projects/${id}/settings/api-keys` },
-  { key: 'settings-providers', label: 'AI Providers', icon: SparklesIcon, path: (id) => `/app/projects/${id}/settings/providers` },
-  { key: 'settings-secrets', label: 'Secrets', icon: LockIcon, path: (id) => `/app/projects/${id}/settings/secrets` },
+  { key: 'settings-providers', label: 'AI Providers', icon: SparklesIcon, path: (id) => `/app/projects/${id}/settings/providers`, permission: 'agent.manage' },
+  { key: 'settings-secrets', label: 'Secrets', icon: LockIcon, path: (id) => `/app/projects/${id}/settings/secrets`, permission: 'workflow.manage' },
   { key: 'settings-notifications', label: 'Notifications', icon: BellIcon, path: (id) => `/app/projects/${id}/settings/notifications` },
   { key: 'settings-cli', label: 'CLI', icon: TerminalIcon, path: (id) => `/app/projects/${id}/settings/cli` },
 ]
-
-/** The URL segment under `/settings/` for each SETTINGS_NAV entry (`settings-api-keys` → `api-keys`). */
-export const SETTINGS_SECTION_KEYS: string[] = SETTINGS_NAV.map((entry) => entry.key.replace(/^settings-/, ''))
 
 /** Where switching to a workspace lands — mirrors the sidebar's workspace switcher. */
 export function workspaceHomePath(workspaceId: string): string {

@@ -12,9 +12,17 @@ import { useTheme } from 'next-themes'
 import { CheckIcon, FileTextIcon, type LucideIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
+import { usePermissions } from '@/contexts/PermissionsContext'
 import { useSidebar } from '@/contexts/SidebarContext'
 import { useSidebarWorkNav, workItemListPath } from '@/lib/workflows'
-import { AUTOMATION_NAV, SETTINGS_NAV, WORKSPACE_NAV, useCurrentWorkspace, workspaceHomePath } from '@/lib/navigation'
+import {
+  AUTOMATION_NAV,
+  SETTINGS_NAV,
+  WORKSPACE_NAV,
+  useCurrentWorkspace,
+  visibleNavEntries,
+  workspaceHomePath,
+} from '@/lib/navigation'
 import { THEME_OPTIONS } from '@/lib/theme'
 import { ShortcutKbd } from '@/components/ui/shortcut-kbd'
 import { cn } from '@/lib/utils'
@@ -89,6 +97,7 @@ export function CommandPalette() {
   const pathname = usePathname()
   const { accessToken } = useAuth()
   const { projects, setActiveProject } = useProject()
+  const { can } = usePermissions()
   const currentWorkspace = useCurrentWorkspace()
   const { theme, setTheme } = useTheme()
   const registeredGroups = useSyncExternalStore(subscribe, snapshot, snapshot)
@@ -143,7 +152,7 @@ export function CommandPalette() {
           keywords: [entry.area, entry.noun],
           perform: () => router.push(workItemListPath(workspaceId, entry.area, entry.noun)),
         })),
-        ...[...WORKSPACE_NAV, ...AUTOMATION_NAV, ...SETTINGS_NAV].map((entry) => ({
+        ...[...WORKSPACE_NAV, ...AUTOMATION_NAV, ...visibleNavEntries(SETTINGS_NAV, can)].map((entry) => ({
           id: `nav-${entry.key}`,
           label: entry.label,
           icon: entry.icon,
@@ -179,7 +188,7 @@ export function CommandPalette() {
 
     return [...result, ...registeredGroups]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentWorkspace, workNav, projects, theme, registeredGroups])
+  }, [currentWorkspace, workNav, projects, theme, registeredGroups, can])
 
   const filteredGroups = useMemo(
     () =>

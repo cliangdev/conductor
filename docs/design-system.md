@@ -114,7 +114,7 @@ Knowledge Center is the reference implementation (July 2026 redesign).
 
 - **Work Items are authored by agents** (Conductor skill / MCP tools), not in the UI — intentionally no create/edit forms. The UI is the review, triage, and approval surface; its primary actions are review verdicts, status transitions, and assignment.
 - **Every route** uses `PageContainer` + `PageHeader` (breadcrumb · title · status chip · actions). Detail pages included — no full-bleed exceptions; no duplicate breadcrumb-plus-H1 stacks. Exception: the Knowledge page detail view (`knowledge/page/page.tsx`) deliberately uses a Notion-style icon+title header instead of `PageHeader` — approved, not a review finding.
-- **Shell:** sidebar owns workspace switcher, search/⌘K, nav sections, and the single user menu. No top navbar.
+- **Shell:** sidebar owns workspace switcher, search/⌘K, nav sections, and the single user menu. No top navbar. Settings is a door, not a tree: one sidebar row, with its own area-internal sub-nav rail (same idiom as Knowledge) behind it — the Configure layer of the audience-layers model above.
 - **List views:** grouped single-line rows (status ring · mono ID · title · type tag · right-aligned meta), removable filter pills, explicit sort.
 - **Detail views:** reading column + right properties panel (status, assignee, reviewers with per-person verdict icons, links). Review uses the batch model: pending comments → one verdict (Approve / Request changes / Comment).
 - **Editors:** Monaco theme follows `next-themes` (`vs` / `vs-dark`) — never hardcoded.

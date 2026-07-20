@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   CheckIcon,
-  ChevronRightIcon,
   ChevronsUpDownIcon,
   FileTextIcon,
   FolderIcon,
@@ -16,7 +15,7 @@ import {
   SettingsIcon,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { CreateWorkspaceDialog } from '@/components/layout/CreateWorkspaceDialog'
 import {
   DropdownMenu,
@@ -32,8 +31,16 @@ import { useSidebar } from '@/contexts/SidebarContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useEditorChrome } from '@/contexts/EditorChromeContext'
+import { usePermissions } from '@/contexts/PermissionsContext'
 import { humanizeId, useSidebarWorkNav, workItemListPath, groupByArea } from '@/lib/workflows'
-import { AUTOMATION_NAV, SETTINGS_NAV, WORKSPACE_NAV, useCurrentWorkspace, workspaceHomePath } from '@/lib/navigation'
+import {
+  AUTOMATION_NAV,
+  SETTINGS_NAV,
+  WORKSPACE_NAV,
+  useCurrentWorkspace,
+  visibleNavEntries,
+  workspaceHomePath,
+} from '@/lib/navigation'
 import { THEME_OPTIONS } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 import type { Project } from '@/types'
@@ -69,51 +76,6 @@ function NavItem({
       {icon && <span className="h-4 w-4 shrink-0 opacity-70">{icon}</span>}
       <span className="truncate flex-1">{children}</span>
     </Link>
-  )
-}
-
-function NavGroup({
-  href,
-  icon,
-  label,
-  subLinks,
-  onNavigate,
-}: {
-  href: string
-  icon?: React.ReactNode
-  label: string
-  subLinks: React.ReactNode
-  onNavigate?: () => void
-}) {
-  const pathname = usePathname()
-  const isActive = pathname.startsWith(href)
-  const [expanded, setExpanded] = useState(isActive)
-
-  useEffect(() => {
-    if (isActive) setExpanded(true)
-  }, [isActive])
-
-  return (
-    <div>
-      <button
-        onClick={() => setExpanded((e) => !e)}
-        className={cn(
-          'flex items-center gap-3 px-3 py-2 rounded-md text-sm w-full transition-colors',
-          isActive
-            ? 'bg-sidebar-active text-sidebar-active-text font-medium'
-            : 'text-foreground hover:bg-sidebar-hover'
-        )}
-      >
-        {icon && <span className="h-4 w-4 shrink-0 opacity-70">{icon}</span>}
-        <span className="flex-1 truncate text-left">{label}</span>
-        <ChevronRightIcon className={cn('h-3 w-3 transition-transform shrink-0 opacity-50', expanded && 'rotate-90')} />
-      </button>
-      {expanded && (
-        <div className="ml-7 mt-0.5 space-y-0.5 border-l border-sidebar-border pl-2">
-          {subLinks}
-        </div>
-      )}
-    </div>
   )
 }
 
@@ -313,6 +275,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const { projects } = useProject()
   const { accessToken } = useAuth()
+  const { can } = usePermissions()
   const currentWorkspace = useCurrentWorkspace()
 
   // Dynamic Work nav: one entry per sidebar-enabled, published lifecycle Workflow, grouped by area.
@@ -383,23 +346,27 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               ))}
             </div>
 
-            <div className="space-y-0.5">
-              <NavGroup
-                href={`/app/projects/${currentWorkspace.id}/settings`}
-                icon={<SettingsIcon className="h-4 w-4" />}
-                label="Settings"
-                onNavigate={onNavigate}
-                subLinks={
-                  <>
-                    {SETTINGS_NAV.map(({ key, label, icon: Icon, path }) => (
-                      <NavItem key={key} href={path(currentWorkspace.id)} icon={<Icon className="h-4 w-4" />} onNavigate={onNavigate}>
-                        {label}
-                      </NavItem>
-                    ))}
-                  </>
-                }
-              />
-            </div>
+            {(() => {
+              // Settings is a door, not a tree (issue #290): one row here, regardless of how many
+              // sections exist behind it — the settings area owns its own sub-nav rail. The door
+              // itself stays visible as long as at least one section is reachable (General/
+              // Notifications/CLI/Members/API Keys always are). Links to /settings, which redirects
+              // to the first section — kept as the href (rather than jumping straight to a section)
+              // so `startsWith` activation lights up the door for every settings sub-route.
+              const visibleSettings = visibleNavEntries(SETTINGS_NAV, can)
+              if (visibleSettings.length === 0) return null
+              return (
+                <div className="space-y-0.5">
+                  <NavItem
+                    href={`/app/projects/${currentWorkspace.id}/settings`}
+                    icon={<SettingsIcon className="h-4 w-4" />}
+                    onNavigate={onNavigate}
+                  >
+                    Settings
+                  </NavItem>
+                </div>
+              )
+            })()}
           </div>
         )}
       </div>
