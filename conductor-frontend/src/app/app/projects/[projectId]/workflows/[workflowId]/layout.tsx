@@ -3,17 +3,22 @@
 import { useState } from 'react'
 import { useParams, usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiPost } from '@/lib/api'
-import { WorkflowRunDto } from '@/types/workflow'
+import { apiPost, apiPatch, apiErrorMessage } from '@/lib/api'
+import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
+import { Alert } from '@/components/ui/alert'
+import { CopyableId } from '@/components/ui/copyable-id'
 import { PlayIcon } from 'lucide-react'
 import { Can } from '@/components/auth/Can'
 import { WorkflowStatusBadge } from '@/components/workflow/WorkflowStatusBadge'
 import { WorkflowProvider, useWorkflow } from '@/contexts/WorkflowContext'
 import { useCan } from '@/contexts/PermissionsContext'
+import { allowsManualDispatch } from '@/lib/workflows'
+import { useToast } from '@/components/ui/toast'
+import { timeAgo } from '@/lib/format'
 
 function parseTriggers(yaml: string): string[] {
   const triggers: string[] = []
@@ -52,6 +57,7 @@ function WorkflowDetailHeader() {
   }
 
   const triggers = parseTriggers(workflow.yaml ?? '')
+  const canDispatch = allowsManualDispatch(workflow.yaml)
 
   const handleRun = async () => {
     if (!accessToken) return
@@ -75,13 +81,76 @@ function WorkflowDetailHeader() {
       status={<WorkflowStatusBadge workflow={workflow} />}
       description={triggers.length > 0 ? `Triggers: ${triggers.join(', ')}` : undefined}
       actions={
-        <Can do="workflow.run">
-          <Button onClick={handleRun} disabled={!workflow.enabled || dispatching} className="gap-1.5">
-            {dispatching ? 'Starting…' : (<><PlayIcon className="h-3.5 w-3.5" /> Run</>)}
-          </Button>
-        </Can>
+        canDispatch && (
+          <Can do="workflow.run">
+            <Button onClick={handleRun} disabled={!workflow.enabled || dispatching} className="gap-1.5">
+              {dispatching ? 'Starting…' : (<><PlayIcon className="h-3.5 w-3.5" /> Run</>)}
+            </Button>
+          </Can>
+        )
       }
     />
+  )
+}
+
+/** Explains why a workflow stopped running (auto-paused by WorkflowFailureCircuitBreaker vs a human
+ *  disabling it) and lets a manager clear the pause in one click — shown on every tab so it's visible
+ *  no matter where someone lands. */
+function WorkflowAutoPauseBanner() {
+  const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>()
+  const { accessToken } = useAuth()
+  const { workflow, setWorkflow } = useWorkflow()
+  const { showToast } = useToast()
+  const canManage = useCan('workflow.manage')
+  const [resuming, setResuming] = useState(false)
+
+  if (!workflow?.autoPausedAt) return null
+
+  const handleResume = async () => {
+    if (!accessToken) return
+    setResuming(true)
+    try {
+      const updated = await apiPatch<WorkflowDefinitionDto>(
+        `/api/v1/projects/${projectId}/workflows/${workflowId}/enabled`,
+        { enabled: true },
+        accessToken,
+      )
+      if (updated) setWorkflow(updated)
+      showToast('Workflow re-enabled.', 'success')
+    } catch (e) {
+      showToast(apiErrorMessage(e, "Couldn't re-enable workflow — try again."), 'error')
+    } finally {
+      setResuming(false)
+    }
+  }
+
+  return (
+    <Alert variant="warning" className="mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p>
+          Auto-paused after <strong>{workflow.consecutiveFailures ?? 5}</strong> consecutive failed runs,{' '}
+          {timeAgo(workflow.autoPausedAt)}
+          {workflow.autoPausedRunId && (
+            <>
+              {' — '}
+              <a
+                href={`/app/projects/${projectId}/workflows/${workflowId}/runs/${workflow.autoPausedRunId}`}
+                className="underline underline-offset-2"
+              >
+                see the failing run
+              </a>{' '}
+              (<CopyableId id={workflow.autoPausedRunId} />)
+            </>
+          )}
+          . No new runs will start until it&apos;s re-enabled.
+        </p>
+        {canManage && (
+          <Button size="sm" variant="outline" onClick={handleResume} disabled={resuming} className="shrink-0">
+            {resuming ? 'Re-enabling…' : 'Re-enable'}
+          </Button>
+        )}
+      </div>
+    </Alert>
   )
 }
 
@@ -111,6 +180,7 @@ export default function WorkflowLayout({ children }: { children: React.ReactNode
     <WorkflowProvider>
       <PageContainer>
         <WorkflowDetailHeader />
+        <WorkflowAutoPauseBanner />
         <WorkflowTabs />
         {children}
       </PageContainer>

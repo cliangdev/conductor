@@ -42,6 +42,17 @@ export interface WorkflowDefinitionDto {
   warnings?: WorkflowValidationWarning[];
   createdAt: string;
   updatedAt: string;
+  /** Consecutive FAILED run completions since the last SUCCESS (or since last re-enabled). */
+  consecutiveFailures?: number;
+  /**
+   * Set when WorkflowFailureCircuitBreaker auto-disabled this workflow after repeated failures —
+   * distinguishes "the system paused this" from a human unchecking `enabled`. Re-enabling clears it.
+   */
+  autoPausedAt?: string;
+  /** Why autoPausedAt is set — a free-form code (only "CONSECUTIVE_FAILURES" today). */
+  autoPauseReason?: string;
+  /** The run that tripped the circuit breaker, so the UI can link straight to the failure. */
+  autoPausedRunId?: string;
 }
 
 export interface WorkflowValidationWarning {

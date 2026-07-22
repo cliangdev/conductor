@@ -285,6 +285,37 @@ export function isLifecycleWorkflow(wf: WorkflowDefinitionDto): boolean {
 }
 
 /**
+ * Whether the Run button / dispatch endpoint should be offered for this workflow's YAML — mirrors
+ * the backend's `TriggersSpec#allowsManualDispatch` (WorkflowController rejects the dispatch either
+ * way; this just keeps the button from being shown for a click that can only fail). False when there's
+ * no `workflow_dispatch:` trigger at all, or when it opts out with `manual: false` — used by
+ * system-managed workflows like knowledge-librarian whose event payload is built by the process that
+ * dispatches them, not by a human clicking Run.
+ *
+ * Deliberately the opposite default from the backend's private `allowsManualDispatch` in
+ * WorkflowController (true for null yaml) — currently unreachable either way since a null/empty yaml
+ * only happens for a lifecycle workflow, which never renders a Run button in the first place. Don't
+ * "fix" one side to match the other without re-checking that still holds.
+ */
+export function allowsManualDispatch(yaml: string | null | undefined): boolean {
+  if (!yaml) return false
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const jsYaml = require('js-yaml') as typeof import('js-yaml')
+    const parsed = jsYaml.load(yaml) as Record<string, unknown> | null
+    const on = parsed?.['on'] as Record<string, unknown> | undefined
+    const workflowDispatch = on?.['workflow_dispatch']
+    if (workflowDispatch === undefined) return false
+    if (workflowDispatch && typeof workflowDispatch === 'object' && 'manual' in workflowDispatch) {
+      return (workflowDispatch as { manual?: unknown }).manual !== false
+    }
+    return true
+  } catch {
+    return true
+  }
+}
+
+/**
  * Published lifecycle workflows flagged for the sidebar nav (COND-22). Keeps the list query contract
  * co-located here rather than hand-built at the call site.
  */

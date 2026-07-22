@@ -10,6 +10,7 @@ import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { StepRow } from '@/components/workflow/StepRow';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { CopyableId } from '@/components/ui/copyable-id';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatElapsed } from '@/lib/format';
@@ -124,7 +125,13 @@ export default function RunDetailPage() {
         className="mb-0"
         title="Run Detail"
         status={<StatusBadge status={run.status} />}
-        description={`Trigger: ${run.triggerType} · Duration: ${formatElapsed(run.startedAt, run.completedAt)}`}
+        description={
+          <span className="inline-flex items-center gap-1.5 flex-wrap">
+            <span>Run <CopyableId id={run.id} /></span>
+            <span>· Trigger: {run.triggerType}</span>
+            <span>· Duration: {formatElapsed(run.startedAt, run.completedAt)}</span>
+          </span>
+        }
       />
 
       <div className="border rounded-lg bg-muted/20 h-64">
