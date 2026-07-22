@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api';
 import { BanIcon, CheckCircleIcon, GitBranchIcon, PlayIcon } from 'lucide-react';
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow';
-import { isLifecycleWorkflow, disableWorkflow, enableWorkflow, invalidateSidebarCache } from '@/lib/workflows';
+import { isLifecycleWorkflow, disableWorkflow, enableWorkflow, invalidateSidebarCache, allowsManualDispatch } from '@/lib/workflows';
 import { timeAgo } from '@/lib/format';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -34,8 +34,11 @@ type WorkflowTab = 'automation' | 'lifecycle';
 
 const THEAD_CELL = 'text-left px-3 py-2 text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground';
 
-function EnabledIndicator({ enabled }: { enabled: boolean }) {
-  return <StatusBadge status={enabled ? 'done' : 'draft'} label={enabled ? 'Enabled' : 'Disabled'} />;
+function EnabledIndicator({ workflow }: { workflow: WorkflowDefinitionDto }) {
+  if (workflow.autoPausedAt) {
+    return <StatusBadge status="failed" label="Auto-paused" />;
+  }
+  return <StatusBadge status={workflow.enabled ? 'done' : 'draft'} label={workflow.enabled ? 'Enabled' : 'Disabled'} />;
 }
 
 /** Lifecycle vs automation via the authoritative server-derived `kind` (never the `definition` shape). */
@@ -281,25 +284,30 @@ function WorkflowsPageContent() {
                         <TriggerBadges yaml={workflow.yaml ?? ''} />
                       </td>
                       <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
-                        <Can do="workflow.manage" fallback={<EnabledIndicator enabled={workflow.enabled} />}>
-                          <Switch
-                            checked={workflow.enabled}
-                            onCheckedChange={() => handleToggleEnabled(workflow)}
-                            aria-label={workflow.enabled ? 'Disable workflow' : 'Enable workflow'}
-                          />
+                        <Can do="workflow.manage" fallback={<EnabledIndicator workflow={workflow} />}>
+                          <div className="flex items-center gap-2">
+                            <Switch
+                              checked={workflow.enabled}
+                              onCheckedChange={() => handleToggleEnabled(workflow)}
+                              aria-label={workflow.enabled ? 'Disable workflow' : 'Enable workflow'}
+                            />
+                            {workflow.autoPausedAt && <StatusBadge status="failed" label="Auto-paused" />}
+                          </div>
                         </Can>
                       </td>
                       <td className="px-3 py-2 text-right" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1">
-                          <Can do="workflow.run">
-                            <button
-                              onClick={() => handleRun(workflow)}
-                              disabled={!workflow.enabled || runningId === workflow.id}
-                              className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
-                            >
-                              {runningId === workflow.id ? 'Starting…' : (<><PlayIcon className="h-3.5 w-3.5" /> Run</>)}
-                            </button>
-                          </Can>
+                          {allowsManualDispatch(workflow.yaml) && (
+                            <Can do="workflow.run">
+                              <button
+                                onClick={() => handleRun(workflow)}
+                                disabled={!workflow.enabled || runningId === workflow.id}
+                                className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline disabled:opacity-40 disabled:no-underline disabled:cursor-not-allowed"
+                              >
+                                {runningId === workflow.id ? 'Starting…' : (<><PlayIcon className="h-3.5 w-3.5" /> Run</>)}
+                              </button>
+                            </Can>
+                          )}
                           <Can do="workflow.manage">
                             <RowActionsMenu
                               onEdit={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/settings`)}

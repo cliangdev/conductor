@@ -9,6 +9,7 @@ import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.entity.WorkflowSchedule;
 import com.conductor.entity.WorkflowScheduleSkip;
 import com.conductor.entity.WorkflowStepRun;
+import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.WorkflowsApi;
 import com.conductor.generated.model.DispatchWorkflowRequest;
@@ -39,6 +40,7 @@ import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.WorkflowDefinitionLifecycleService;
 import com.conductor.service.WorkflowService;
 import com.conductor.service.WorkflowViewService;
+import com.conductor.workflow.WorkflowFailureCircuitBreaker;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
@@ -87,6 +89,7 @@ public class WorkflowController implements WorkflowsApi {
     private final WorkflowViewService workflowViewService;
     private final ObjectMapper objectMapper;
     private final WorkflowYamlParser yamlParser;
+    private final WorkflowFailureCircuitBreaker circuitBreaker;
 
     public WorkflowController(WorkflowService workflowService,
                                WorkflowTriggerService workflowTriggerService,
@@ -101,7 +104,8 @@ public class WorkflowController implements WorkflowsApi {
                                WorkflowDefinitionLifecycleService lifecycleService,
                                WorkflowViewService workflowViewService,
                                ObjectMapper objectMapper,
-                               WorkflowYamlParser yamlParser) {
+                               WorkflowYamlParser yamlParser,
+                               WorkflowFailureCircuitBreaker circuitBreaker) {
         this.workflowService = workflowService;
         this.workflowTriggerService = workflowTriggerService;
         this.workflowJobOrchestrator = workflowJobOrchestrator;
@@ -116,6 +120,7 @@ public class WorkflowController implements WorkflowsApi {
         this.workflowViewService = workflowViewService;
         this.objectMapper = objectMapper;
         this.yamlParser = yamlParser;
+        this.circuitBreaker = circuitBreaker;
     }
 
     @Override
@@ -223,9 +228,36 @@ public class WorkflowController implements WorkflowsApi {
             throw new EntityNotFoundException("Project not found");
         }
         WorkflowDefinition workflow = workflowService.getWorkflow(projectId, workflowId);
+        if (!workflow.isEnabled()) {
+            String reason = workflow.getAutoPausedAt() != null
+                    ? " — it was auto-paused after " + workflow.getConsecutiveFailures() + " consecutive failed "
+                            + "runs. Re-enable it to clear the pause and try again."
+                    : " — enable it first.";
+            throw new BusinessException("'" + workflow.getName() + "' is disabled" + reason);
+        }
+        if (!allowsManualDispatch(workflow.getYaml())) {
+            throw new BusinessException("'" + workflow.getName() + "' is managed automatically and can't be run "
+                    + "manually — its trigger data is supplied by the process that dispatches it.");
+        }
         Map<String, String> inputs = body != null ? body.getInputs() : null;
         WorkflowRun run = workflowTriggerService.triggerManual(workflow, userId, inputs);
         return ResponseEntity.status(202).body(toRunDto(run));
+    }
+
+    /** True unless the stored YAML explicitly opts out via {@code on.workflow_dispatch.manual: false}
+     *  (see {@link com.conductor.workflow.model.TriggersSpec#allowsManualDispatch}). A null/unparsable
+     *  yaml (lifecycle workflow, or drift) defaults to true — this is a UX guard against a known-empty
+     *  dispatch, not the sole enforcement of workflow validity. Deliberately the opposite default from
+     *  the frontend's {@code allowsManualDispatch} in lib/workflows.ts (false for missing yaml) — that
+     *  asymmetry is currently unreachable (a lifecycle workflow, the only null-yaml case, never renders
+     *  a Run button at all) but don't "fix" one side to match the other without re-checking that. */
+    private boolean allowsManualDispatch(String yaml) {
+        if (yaml == null) return true;
+        try {
+            return yamlParser.parse(yaml).triggers().allowsManualDispatch();
+        } catch (WorkflowYamlException e) {
+            return true;
+        }
     }
 
     /**
@@ -240,6 +272,7 @@ public class WorkflowController implements WorkflowsApi {
                 .orElseThrow(() -> new EntityNotFoundException("WorkflowRun not found: " + runId));
         WorkflowRunStatus newStatus = WorkflowRunStatus.valueOf(request.getStatus());
 
+        boolean alreadyFinalizedByJobCompletion = false;
         if (newStatus == WorkflowRunStatus.SUCCESS || newStatus == WorkflowRunStatus.FAILED) {
             WorkflowJobStatus terminalJobStatus = newStatus == WorkflowRunStatus.SUCCESS
                     ? WorkflowJobStatus.SUCCESS : WorkflowJobStatus.FAILED;
@@ -251,14 +284,26 @@ public class WorkflowController implements WorkflowsApi {
                 workflowJobOrchestrator.completeRemoteJob(runId, jobId, terminalJobStatus, null);
             }
             // Re-fetch: completeRemoteJob (and its checkRunCompletion) may have already updated/saved
-            // this row in its own transaction, so the in-memory `run` above could be stale.
+            // this row in its own transaction, so the in-memory `run` above could be stale. Whether
+            // completeRemoteJob's checkRunCompletion already recorded this outcome with the circuit
+            // breaker depends on whether it actually finalized the run (every job terminal), NOT on
+            // whether awaitingPickupJobIds was non-empty — a run with a second job still RUNNING never
+            // gets finalized there even though a job was dispatched to completeRemoteJob. The re-fetched
+            // status is the only reliable signal: if it's already terminal, checkRunCompletion got there
+            // first; recordOutcome below must not double-count that run.
             run = runRepository.findByIdWithWorkflow(runId)
                     .orElseThrow(() -> new EntityNotFoundException("WorkflowRun not found: " + runId));
+            alreadyFinalizedByJobCompletion = run.getStatus() == WorkflowRunStatus.SUCCESS
+                    || run.getStatus() == WorkflowRunStatus.FAILED;
             run.setCompletedAt(java.time.OffsetDateTime.now());
         }
 
         run.setStatus(newStatus);
         runRepository.save(run);
+        if (!alreadyFinalizedByJobCompletion
+                && (newStatus == WorkflowRunStatus.SUCCESS || newStatus == WorkflowRunStatus.FAILED)) {
+            circuitBreaker.recordOutcome(run);
+        }
         return ResponseEntity.ok(toRunDto(run));
     }
 
@@ -467,6 +512,10 @@ public class WorkflowController implements WorkflowsApi {
                 : objectMapper.convertValue(def.getDefinition(), new TypeReference<Map<String, Object>>() {}));
         dto.setCreatedAt(def.getCreatedAt());
         dto.setUpdatedAt(def.getUpdatedAt());
+        dto.setConsecutiveFailures(def.getConsecutiveFailures());
+        dto.setAutoPausedAt(def.getAutoPausedAt());
+        dto.setAutoPauseReason(def.getAutoPauseReason());
+        dto.setAutoPausedRunId(def.getAutoPausedRunId());
         return dto;
     }
 

@@ -27,6 +27,7 @@ class WorkflowExecutionEngineCleanupTest {
     @Mock WorkflowStepRunRepository stepRunRepository;
     @Mock WorkflowDefinitionRepository workflowRepository;
     @Mock WorkflowJobOrchestrator orchestrator;
+    @Mock WorkflowFailureCircuitBreaker circuitBreaker;
 
     WorkflowExecutionEngine engine;
 
@@ -34,7 +35,8 @@ class WorkflowExecutionEngineCleanupTest {
     void setUp() {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
-                stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser());
+                stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
+                circuitBreaker);
     }
 
     @Test

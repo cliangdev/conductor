@@ -93,6 +93,54 @@ class WorkflowServiceTest {
     }
 
     @Test
+    void setEnabledTrue_clearsCircuitBreakerState() {
+        WorkflowDefinition def = new WorkflowDefinition();
+        def.setId("wf-auto");
+        def.setProject(projectWithId("proj-1"));
+        def.setName("Knowledge Librarian");
+        def.setYaml("on: { workflow_dispatch: { manual: false } }");
+        def.setEnabled(false);
+        def.setConsecutiveFailures(5);
+        def.setAutoPausedAt(java.time.OffsetDateTime.now());
+        def.setAutoPauseReason("CONSECUTIVE_FAILURES");
+        def.setAutoPausedRunId("run-that-tripped-it");
+
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(workflowRepository.findById("wf-auto")).thenReturn(Optional.of(def));
+        when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        WorkflowDefinition result = service.setEnabled("proj-1", "wf-auto", "user-1", true);
+
+        assertThat(result.isEnabled()).isTrue();
+        assertThat(result.getConsecutiveFailures()).isZero();
+        assertThat(result.getAutoPausedAt()).isNull();
+        assertThat(result.getAutoPauseReason()).isNull();
+        assertThat(result.getAutoPausedRunId()).isNull();
+    }
+
+    @Test
+    void setEnabledFalse_leavesCircuitBreakerStateUntouched() {
+        // A human manually disabling a healthy workflow shouldn't wipe failure history it doesn't have,
+        // and disabling an already-auto-paused one shouldn't erase the pause record either.
+        WorkflowDefinition def = new WorkflowDefinition();
+        def.setId("wf-auto");
+        def.setProject(projectWithId("proj-1"));
+        def.setName("my-workflow");
+        def.setYaml("on: { workflow_dispatch: {} }");
+        def.setEnabled(true);
+        def.setConsecutiveFailures(2);
+
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(workflowRepository.findById("wf-auto")).thenReturn(Optional.of(def));
+        when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        WorkflowDefinition result = service.setEnabled("proj-1", "wf-auto", "user-1", false);
+
+        assertThat(result.isEnabled()).isFalse();
+        assertThat(result.getConsecutiveFailures()).isEqualTo(2);
+    }
+
+    @Test
     void listWorkflowsFiltersAreAuthoritativeAndCompose() throws Exception {
         WorkflowDefinition lifecycle = new WorkflowDefinition();
         lifecycle.setId("wf-life");

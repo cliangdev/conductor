@@ -89,7 +89,9 @@ export default function WorkflowSettingsPage() {
             onCheckedChange={handleToggleEnabled}
             aria-label={workflow.enabled ? 'Disable workflow' : 'Enable workflow'}
           />
-          <span className="text-sm font-medium">{workflow.enabled ? 'Enabled' : 'Disabled'}</span>
+          <span className="text-sm font-medium">
+            {workflow.enabled ? 'Enabled' : workflow.autoPausedAt ? 'Auto-paused' : 'Disabled'}
+          </span>
         </div>
         <Button
           variant="outline"

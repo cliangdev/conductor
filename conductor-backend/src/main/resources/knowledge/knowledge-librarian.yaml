@@ -6,6 +6,11 @@ name: Knowledge Librarian
 # sourceIds/projectId/agentSlug/domain as top-level event payload fields (${{ event.* }}), not
 # workflow_dispatch inputs, so there is nothing to declare under `inputs:`.
 #
+# `manual: false` opts this workflow out of the generic manual-dispatch UI/API/MCP path (see
+# TriggersSpec#allowsManualDispatch): a plain "Run" click can never supply agentSlug/sourceIds/etc,
+# so it would always fail the agent step with a cryptic interpolation error. The real pipeline
+# (KnowledgeIngestScheduler) already ticks every 30s, so nothing is lost by blocking this.
+#
 # `agent: ${{ event.agentSlug }}` is resolved per dispatch by LibrarianDispatchService: the domain's
 # assigned specialist if one exists, else the generalist knowledge-librarian agent (AgentStepExecutor
 # interpolates with.agent same as task/context; a fixed literal slug still works unchanged for any
@@ -15,7 +20,8 @@ name: Knowledge Librarian
 # cron WorkflowScheduler. Real serialization is per (project, domain lane) via KnowledgeIngestScheduler
 # checking each lane's own PROCESSING rows, so multiple lanes can dispatch concurrently in one tick.
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    manual: false
 
 concurrency: single
 

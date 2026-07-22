@@ -20,6 +20,7 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Self-hosted](#self-hosted)
   - [Cloud Run](#cloud-run)
   - [Runtime targets (bring your own Cloud Run)](#runtime-targets-bring-your-own-cloud-run)
+- [Auto-pause on repeated failures](#auto-pause-on-repeated-failures)
 - [System-managed workflows](#system-managed-workflows)
 - [Self-hosted setup](#self-hosted-setup)
   - [Prerequisites](#prerequisites)
@@ -119,6 +120,20 @@ and the **Run Now** UI pass them):
 Reference them anywhere with `${{ inputs.environment }}`. `inputs:` is declarative only — it isn't
 enforced at dispatch time (an omitted or extra key doesn't fail the run); referencing an
 undeclared input produces a publish-time lint warning (see [Outputs and interpolation](#outputs-and-interpolation)).
+
+A workflow that's fired programmatically (e.g. by another service, not a human) can still declare
+`workflow_dispatch: {}` to get a recognized trigger kind, while opting out of the **Run Now** button
+and the `POST .../dispatch` endpoint/`dispatch_workflow` MCP tool with `manual: false`:
+
+```yaml
+on:
+  workflow_dispatch:
+    manual: false
+```
+
+Use this when a step's `${{ event.* }}` references are populated by the code that dispatches the
+run, not by a human — a manual click can't supply that data and would only produce a confusing
+failure. Defaults to `true` (dispatchable) when omitted, so `inputs:`-only workflows are unaffected.
 
 #### Webhook
 
@@ -1042,6 +1057,29 @@ Credential-wise a runtime-target job behaves like `cloud-run`: the project's Cla
 
 ---
 
+## Auto-pause on repeated failures
+
+A workflow whose runs fail 5 times **in a row** (any trigger type — schedule, webhook, manual, or a
+programmatic dispatcher) is automatically disabled (`enabled: false`) so it stops retrying — and
+failing — indefinitely while someone investigates, rather than e.g. re-firing every 30 seconds off a
+cron-driven dispatcher. This is the same `enabled` flag as the manual on/off toggle; the workflow row
+additionally records *why* it went off:
+
+| Field | Meaning |
+|---|---|
+| `autoPausedAt` | Timestamp the breaker tripped. Null for a plain human disable. |
+| `autoPauseReason` | A free-form code — only `CONSECUTIVE_FAILURES` today, but not an enum, so a future trip condition doesn't need an API change. |
+| `autoPausedRunId` | The run that tripped it, so the UI can link straight to the failure. |
+| `consecutiveFailures` | Running count since the last `SUCCESS` (or since last re-enabled). |
+
+Every trigger path that checks `enabled` before creating a run stops on its own once this trips —
+including `knowledge-librarian`'s scheduler (see below), which otherwise has no other gate. A single
+`SUCCESS` resets `consecutiveFailures` to 0. Re-enabling (`PATCH .../enabled` with `{"enabled": true}` —
+the same toggle a human uses to manually disable/enable) always clears `autoPausedAt`/`autoPauseReason`/
+`autoPausedRunId` and resets the counter, whether the workflow was auto-paused or manually disabled —
+one action always gives a clean slate to retry. The workflow list and detail pages show a distinct
+"Auto-paused" state (vs. plain "Disabled") with a banner linking to the failing run.
+
 ## System-managed workflows
 
 Some automation workflows are provisioned automatically by a Conductor feature rather than authored by a
@@ -1052,7 +1090,7 @@ Two ship today, both seeded the first time a project turns on the **Knowledge Ce
 
 | Workflow name | Trigger | Purpose |
 |---|---|---|
-| `knowledge-librarian` | `workflow_dispatch`, fired programmatically — never by a human | Files a batch of newly-ingested knowledge sources into wiki pages. `concurrency: single`. |
+| `knowledge-librarian` | `workflow_dispatch` (`manual: false` — fired only by `LibrarianDispatchService`, see [Manual dispatch](#manual-dispatch)) | Files a batch of newly-ingested knowledge sources into wiki pages. `concurrency: single`. Its scheduler (`KnowledgeIngestScheduler`, 30s tick) also checks `enabled` before claiming sources, so an [auto-paused](#auto-pause-on-repeated-failures) librarian leaves sources untouched (not stuck mid-claim) until re-enabled. |
 | `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input | Operator-triggered, once, to seed the wiki from an existing GitHub codebase. |
 
 Both are ordinary workflows once created — visible and re-editable in the workflow list like any other —

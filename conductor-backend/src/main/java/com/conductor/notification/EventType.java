@@ -61,7 +61,17 @@ public enum EventType {
      *
      * <p>Required metadata keys: {@code workItemId}, {@code workItemTitle}, {@code assetType}
      */
-    ASSET_ADDED("Asset added to a Work Item");
+    ASSET_ADDED("Asset added to a Work Item"),
+
+    /**
+     * A workflow was auto-disabled after its runs failed consecutively too many times (see
+     * {@code WorkflowFailureCircuitBreaker}) -- no channel renders this with a bespoke template yet
+     * (falls back to the generic description below), so wiring one is a pure additive change later.
+     *
+     * <p>Required metadata keys: {@code workflowId}, {@code workflowName}, {@code consecutiveFailures},
+     * {@code runId} (the run that tripped it)
+     */
+    WORKFLOW_AUTO_PAUSED("Workflow auto-paused after repeated failures");
 
     private final String description;
 

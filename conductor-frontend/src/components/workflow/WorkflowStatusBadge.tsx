@@ -22,6 +22,9 @@ export function WorkflowStatusBadge({ workflow }: { workflow: WorkflowDefinition
       </span>
     )
   }
+  if (workflow.autoPausedAt) {
+    return <Badge variant="status-failed">Auto-paused</Badge>
+  }
   return (
     <Badge variant={workflow.enabled ? 'status-done' : 'secondary'}>
       {workflow.enabled ? 'Enabled' : 'Disabled'}

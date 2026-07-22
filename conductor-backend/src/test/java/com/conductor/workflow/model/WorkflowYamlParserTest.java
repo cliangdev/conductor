@@ -37,6 +37,71 @@ class WorkflowYamlParserTest {
     }
 
     @Test
+    void allowsManualDispatch_defaultsTrueWhenWorkflowDispatchDeclared() {
+        WorkflowSpec spec = parser.parse("""
+                on:
+                  workflow_dispatch: {}
+                jobs:
+                  greet:
+                    steps:
+                      - type: http
+                        url: https://example.com
+                """);
+        assertThat(spec.triggers().allowsManualDispatch()).isTrue();
+    }
+
+    @Test
+    void allowsManualDispatch_falseWhenNoWorkflowDispatchTriggerAtAll() {
+        WorkflowSpec spec = parser.parse("""
+                on:
+                  schedule:
+                    cron: "0 0 * * *"
+                jobs:
+                  greet:
+                    steps:
+                      - type: http
+                        url: https://example.com
+                """);
+        assertThat(spec.triggers().allowsManualDispatch()).isFalse();
+    }
+
+    @Test
+    void allowsManualDispatch_falseWhenExplicitlyOptedOut() {
+        // Mirrors knowledge-librarian.yaml: a system-managed workflow whose event payload is built
+        // programmatically, so a plain manual dispatch can never supply the data its steps expect.
+        WorkflowSpec spec = parser.parse("""
+                on:
+                  workflow_dispatch:
+                    manual: false
+                jobs:
+                  greet:
+                    steps:
+                      - type: http
+                        url: https://example.com
+                """);
+        assertThat(spec.triggers().allowsManualDispatch()).isFalse();
+    }
+
+    @Test
+    void allowsManualDispatch_trueWithDeclaredInputs() {
+        // Mirrors knowledge-bootstrap.yaml: declared inputs is orthogonal to the manual opt-out —
+        // still dispatchable by default.
+        WorkflowSpec spec = parser.parse("""
+                on:
+                  workflow_dispatch:
+                    inputs:
+                      repo:
+                        required: true
+                jobs:
+                  greet:
+                    steps:
+                      - type: http
+                        url: https://example.com
+                """);
+        assertThat(spec.triggers().allowsManualDispatch()).isTrue();
+    }
+
+    @Test
     void webhookTrigger_parsesSecret() {
         String yaml = """
                 on:

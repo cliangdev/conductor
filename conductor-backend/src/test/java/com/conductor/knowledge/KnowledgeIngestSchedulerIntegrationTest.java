@@ -186,6 +186,30 @@ class KnowledgeIngestSchedulerIntegrationTest extends AbstractNoneWebIntegration
     }
 
     @Test
+    void librarianAutoPaused_leavesSourcesPendingUntouched() {
+        // Mirrors what WorkflowFailureCircuitBreaker leaves behind on the workflow row after tripping --
+        // the point of the gate in KnowledgeIngestScheduler#dispatchProject is exactly this: don't keep
+        // claiming (and immediately failing) sources every 30s tick while someone fixes the workflow.
+        String projectId = newProject(true);
+        provisioner.provision(projectId);
+        WorkflowDefinition librarian = workflowRepository
+                .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME)
+                .orElseThrow();
+        librarian.setEnabled(false);
+        librarian.setAutoPausedAt(OffsetDateTime.now());
+        librarian.setAutoPauseReason("CONSECUTIVE_FAILURES");
+        workflowRepository.save(librarian);
+
+        String id = submitPending(projectId, "note://paused");
+
+        scheduler.poll();
+
+        KnowledgeSource source = reload(id);
+        assertThat(source.getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
+        assertThat(source.getProcessingRunId()).isNull();
+    }
+
+    @Test
     void laneAlreadyProcessing_blocksOnlyThatLane_othersStillDispatch() {
         String projectId = newProject(true);
         provisioner.provision(projectId);

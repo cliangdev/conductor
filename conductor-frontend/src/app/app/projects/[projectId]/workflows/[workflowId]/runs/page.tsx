@@ -7,6 +7,7 @@ import { apiGet } from '@/lib/api';
 import { WorkflowRunDto } from '@/types/workflow';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { CopyableId } from '@/components/ui/copyable-id';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ListIcon } from 'lucide-react';
@@ -51,6 +52,7 @@ export default function RunListPage() {
             <thead className="bg-muted/50">
               <tr>
                 <th className="text-left p-3 font-medium">Status</th>
+                <th className="text-left p-3 font-medium">Run ID</th>
                 <th className="text-left p-3 font-medium">Trigger</th>
                 <th className="text-left p-3 font-medium">Started</th>
                 <th className="text-left p-3 font-medium">Duration</th>
@@ -65,6 +67,9 @@ export default function RunListPage() {
                 >
                   <td className="p-3">
                     <StatusBadge status={run.status} />
+                  </td>
+                  <td className="p-3">
+                    <CopyableId id={run.id} />
                   </td>
                   <td className="p-3 text-sm text-muted-foreground">{run.triggerType}</td>
                   <td className="p-3 text-sm">{formatDate(run.startedAt)}</td>
