@@ -24,4 +24,23 @@ public record TriggersSpec(ScheduleTrigger schedule, WebhookTrigger webhook,
         events = Copies.list(events);
         raw = Copies.map(raw);
     }
+
+    /**
+     * Whether a human (or an external caller like the {@code dispatch_workflow} MCP tool) can fire
+     * this workflow via {@code POST .../dispatch}. True whenever {@code workflow_dispatch:} is
+     * declared, unless the workflow opts out with {@code on.workflow_dispatch.manual: false} — for a
+     * system-managed workflow whose event payload is built programmatically (e.g. the Knowledge
+     * Center's librarian, which expects a dispatcher-supplied {@code agentSlug}/{@code sourceIds} that
+     * a manual click can never provide). Defaults to true so existing workflows (including ones with
+     * {@code workflow_dispatch: {}} and declared {@code inputs:}, like knowledge-bootstrap) are
+     * unaffected.
+     */
+    public boolean allowsManualDispatch() {
+        if (!hasWorkflowDispatch) return false;
+        Object workflowDispatch = raw.get("workflow_dispatch");
+        if (workflowDispatch instanceof Map<?, ?> wd && Boolean.FALSE.equals(wd.get("manual"))) {
+            return false;
+        }
+        return true;
+    }
 }

@@ -4,9 +4,12 @@ import com.conductor.config.SecurityConfig;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinition;
+import com.conductor.entity.WorkflowJobRun;
+import com.conductor.entity.WorkflowJobStatus;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.exception.GlobalExceptionHandler;
+import com.conductor.generated.model.UpdateWorkflowRunStatusRequest;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.workflow.RunTokenService;
@@ -22,6 +25,7 @@ import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.WorkflowDefinitionLifecycleService;
 import com.conductor.service.WorkflowService;
 import com.conductor.service.WorkflowViewService;
+import com.conductor.workflow.WorkflowFailureCircuitBreaker;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.model.WorkflowYamlParser;
@@ -41,6 +45,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -80,6 +85,7 @@ class WorkflowControllerTest {
 
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private WorkflowController controller;
 
     @MockitoBean private WorkflowService workflowService;
     @MockitoBean private WorkflowTriggerService workflowTriggerService;
@@ -93,6 +99,7 @@ class WorkflowControllerTest {
     @MockitoBean private WorkflowScheduleSkipRepository scheduleSkipRepository;
     @MockitoBean private WorkflowDefinitionLifecycleService lifecycleService;
     @MockitoBean private WorkflowViewService workflowViewService;
+    @MockitoBean private WorkflowFailureCircuitBreaker circuitBreaker;
 
     // Security-filter collaborators
     @MockitoBean private JwtService jwtService;
@@ -245,5 +252,101 @@ class WorkflowControllerTest {
                 .andExpect(jsonPath("$.id").value("run-1"));
 
         verify(workflowTriggerService).triggerManual(any(), eq("user-1"), isNull());
+    }
+
+    @Test
+    void dispatchWorkflow_rejectsWhenAutoPaused_withPauseSpecificMessage() throws Exception {
+        // Mirrors what WorkflowFailureCircuitBreaker leaves behind on the workflow row after tripping.
+        WorkflowDefinition workflow = automationWorkflow();
+        workflow.setEnabled(false);
+        workflow.setConsecutiveFailures(5);
+        workflow.setAutoPausedAt(OffsetDateTime.now());
+        workflow.setAutoPauseReason("CONSECUTIVE_FAILURES");
+        workflow.setAutoPausedRunId("run-that-tripped-it");
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(workflow);
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+
+        mockMvc.perform(post("/api/v1/projects/{p}/workflows/{w}/dispatch", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        "'my-workflow' is disabled — it was auto-paused after 5 consecutive failed runs. "
+                                + "Re-enable it to clear the pause and try again."));
+
+        verify(workflowTriggerService, org.mockito.Mockito.never()).triggerManual(any(), anyString(), any());
+    }
+
+    @Test
+    void dispatchWorkflow_rejectsWhenYamlOptsOutOfManualDispatch() throws Exception {
+        // Mirrors knowledge-librarian.yaml: workflow_dispatch declared (so it's a recognized trigger
+        // kind for programmatic fireTrigger() calls) but manual: false opts out of this endpoint.
+        WorkflowDefinition workflow = automationWorkflow();
+        workflow.setName("Knowledge Librarian");
+        workflow.setYaml("on:\n  workflow_dispatch:\n    manual: false\n");
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(workflow);
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+
+        mockMvc.perform(post("/api/v1/projects/{p}/workflows/{w}/dispatch", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        "'Knowledge Librarian' is managed automatically and can't be run manually — "
+                                + "its trigger data is supplied by the process that dispatches it."));
+
+        verify(workflowTriggerService, org.mockito.Mockito.never()).triggerManual(any(), anyString(), any());
+    }
+
+    @Test
+    void updateWorkflowRunStatus_recordsOutcome_whenJobCompletionDidNotFinalizeTheRun() {
+        // A run with a second job still RUNNING: completeRemoteJob is dispatched for the AWAITING_PICKUP
+        // job, but its internal checkRunCompletion sees the other job non-terminal and does NOT finalize
+        // the run — so this method's own status assignment below is the actual, only, finalization, and
+        // must be the one to call recordOutcome (regression test for a bug where the "already finalized"
+        // guard was inferred from awaitingPickupJobIds being non-empty instead of the run's real status).
+        WorkflowDefinition workflow = automationWorkflow();
+        WorkflowRun run = new WorkflowRun();
+        run.setId("run-1");
+        run.setWorkflow(workflow);
+        run.setStatus(WorkflowRunStatus.RUNNING);
+        when(runRepository.findByIdWithWorkflow("run-1")).thenReturn(Optional.of(run));
+
+        WorkflowJobRun awaitingJob = new WorkflowJobRun();
+        awaitingJob.setJobId("deploy");
+        awaitingJob.setStatus(WorkflowJobStatus.AWAITING_PICKUP);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(awaitingJob));
+
+        UpdateWorkflowRunStatusRequest request = new UpdateWorkflowRunStatusRequest();
+        request.setStatus("FAILED");
+
+        controller.updateWorkflowRunStatus("run-1", request);
+
+        verify(workflowJobOrchestrator).completeRemoteJob("run-1", "deploy", WorkflowJobStatus.FAILED, null);
+        verify(circuitBreaker).recordOutcome(run);
+        assertThat(run.getStatus()).isEqualTo(WorkflowRunStatus.FAILED);
+    }
+
+    @Test
+    void updateWorkflowRunStatus_skipsRecordOutcome_whenJobCompletionAlreadyFinalizedTheRun() {
+        // completeRemoteJob's own checkRunCompletion already finalized (all jobs terminal) and recorded
+        // the outcome in its own transaction — simulated here by the re-fetch returning an already-FAILED
+        // run. recordOutcome must not fire a second time for the same run.
+        WorkflowDefinition workflow = automationWorkflow();
+        WorkflowRun alreadyFinalizedRun = new WorkflowRun();
+        alreadyFinalizedRun.setId("run-1");
+        alreadyFinalizedRun.setWorkflow(workflow);
+        alreadyFinalizedRun.setStatus(WorkflowRunStatus.FAILED);
+        when(runRepository.findByIdWithWorkflow("run-1")).thenReturn(Optional.of(alreadyFinalizedRun));
+
+        WorkflowJobRun awaitingJob = new WorkflowJobRun();
+        awaitingJob.setJobId("deploy");
+        awaitingJob.setStatus(WorkflowJobStatus.AWAITING_PICKUP);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(awaitingJob));
+
+        UpdateWorkflowRunStatusRequest request = new UpdateWorkflowRunStatusRequest();
+        request.setStatus("FAILED");
+
+        controller.updateWorkflowRunStatus("run-1", request);
+
+        verify(circuitBreaker, org.mockito.Mockito.never()).recordOutcome(any());
     }
 }

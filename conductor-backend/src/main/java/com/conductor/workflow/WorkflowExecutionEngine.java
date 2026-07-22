@@ -33,6 +33,7 @@ public class WorkflowExecutionEngine {
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowJobOrchestrator orchestrator;
     private final WorkflowYamlParser yamlParser;
+    private final WorkflowFailureCircuitBreaker circuitBreaker;
 
     // Adaptive poll backoff (in 500ms ticks). Busy (work found last poll) → every tick (500ms).
     // Idle → exponentially back off up to MAX_BACKOFF_TICKS * 500ms = 5s between DB queries.
@@ -52,7 +53,8 @@ public class WorkflowExecutionEngine {
                                    WorkflowStepRunRepository stepRunRepository,
                                    WorkflowDefinitionRepository workflowRepository,
                                    WorkflowJobOrchestrator orchestrator,
-                                   WorkflowYamlParser yamlParser) {
+                                   WorkflowYamlParser yamlParser,
+                                   WorkflowFailureCircuitBreaker circuitBreaker) {
         this.queueRepository = queueRepository;
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
@@ -60,6 +62,7 @@ public class WorkflowExecutionEngine {
         this.workflowRepository = workflowRepository;
         this.orchestrator = orchestrator;
         this.yamlParser = yamlParser;
+        this.circuitBreaker = circuitBreaker;
     }
 
     /**
@@ -245,6 +248,7 @@ public class WorkflowExecutionEngine {
         run.setCompletedAt(OffsetDateTime.now());
         runRepository.save(run);
         log.info("Run {} completed with status {}", run.getId(), run.getStatus());
+        circuitBreaker.recordOutcome(run);
     }
 
     private boolean isTerminal(WorkflowJobStatus status) {

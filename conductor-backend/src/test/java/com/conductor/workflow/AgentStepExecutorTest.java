@@ -184,7 +184,7 @@ class AgentStepExecutorTest {
         StepResult result = executor.execute(context(with, ctx));
 
         assertThat(result.getStatus().name()).isEqualTo("FAILED");
-        assertThat(result.getErrorReason()).contains("with.agent").contains("interpolated to empty");
+        assertThat(result.getErrorReason()).contains("with.agent").contains("${{ event.agentSlug }}");
         assertThat(apiRuntime.lastCall).isNull();
         assertThat(claudeCodeRuntime.lastCall).isNull();
     }

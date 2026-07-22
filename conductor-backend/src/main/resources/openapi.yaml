@@ -6024,6 +6024,24 @@ components:
         updatedAt:
           type: string
           format: date-time
+        autoPausedAt:
+          type: string
+          format: date-time
+          description: >-
+            Set when WorkflowFailureCircuitBreaker auto-disabled this workflow after consecutiveFailures
+            reached its trip threshold — distinguishes "the system paused this" from a human unchecking
+            `enabled`. Null unless auto-paused; re-enabling (PATCH .../enabled) clears it.
+        autoPauseReason:
+          type: string
+          description: >-
+            Why autoPausedAt is set — a free-form code (only "CONSECUTIVE_FAILURES" today) rather than
+            an enum, so a future trip condition doesn't need an API change. Null unless auto-paused.
+        autoPausedRunId:
+          type: string
+          description: The WorkflowRun that tripped the breaker, so the UI can link straight to the failure.
+        consecutiveFailures:
+          type: integer
+          description: Consecutive FAILED run completions since the last SUCCESS (or since last re-enabled).
 
     WorkflowCreateRequest:
       type: object

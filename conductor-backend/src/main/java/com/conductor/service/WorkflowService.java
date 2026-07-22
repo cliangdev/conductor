@@ -221,6 +221,15 @@ public class WorkflowService {
         requireAdminOrCreator(projectId, userId);
         WorkflowDefinition def = findInProject(projectId, workflowId);
         def.setEnabled(enabled);
+        if (enabled) {
+            // A human re-enabling is the one action that always gives a clean slate, whether this was
+            // manually disabled or auto-paused by WorkflowFailureCircuitBreaker — otherwise a single
+            // extra failure right after re-enabling would immediately re-trip the breaker.
+            def.setConsecutiveFailures(0);
+            def.setAutoPausedAt(null);
+            def.setAutoPauseReason(null);
+            def.setAutoPausedRunId(null);
+        }
         return workflowRepository.save(def);
     }
 

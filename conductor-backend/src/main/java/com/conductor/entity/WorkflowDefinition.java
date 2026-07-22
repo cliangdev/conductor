@@ -79,6 +79,27 @@ public class WorkflowDefinition {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    // --- Failure circuit breaker (see WorkflowFailureCircuitBreaker) ---
+
+    /** Consecutive FAILED run completions since the last SUCCESS (or since the breaker last tripped
+     *  and was cleared by re-enabling). Reset to 0 on any SUCCESS. */
+    @Column(name = "consecutive_failures", nullable = false)
+    private int consecutiveFailures = 0;
+
+    /** Set when the breaker trips (auto-disables this workflow); cleared when a human re-enables it. */
+    @Column(name = "auto_paused_at")
+    private OffsetDateTime autoPausedAt;
+
+    /** Free-form trip reason code (e.g. {@code CONSECUTIVE_FAILURES}) -- not an enum column so a
+     *  future trip condition doesn't need a migration. Null unless {@link #autoPausedAt} is set. */
+    @Column(name = "auto_pause_reason", length = 64)
+    private String autoPauseReason;
+
+    /** The WorkflowRun that tripped the breaker, so the UI can link straight to the failure. No FK
+     *  (same style as {@code KnowledgeSource#processingRunId}) -- a pruned run shouldn't block this. */
+    @Column(name = "auto_paused_run_id", length = 36)
+    private String autoPausedRunId;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -142,4 +163,16 @@ public class WorkflowDefinition {
 
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public int getConsecutiveFailures() { return consecutiveFailures; }
+    public void setConsecutiveFailures(int consecutiveFailures) { this.consecutiveFailures = consecutiveFailures; }
+
+    public OffsetDateTime getAutoPausedAt() { return autoPausedAt; }
+    public void setAutoPausedAt(OffsetDateTime autoPausedAt) { this.autoPausedAt = autoPausedAt; }
+
+    public String getAutoPauseReason() { return autoPauseReason; }
+    public void setAutoPauseReason(String autoPauseReason) { this.autoPauseReason = autoPauseReason; }
+
+    public String getAutoPausedRunId() { return autoPausedRunId; }
+    public void setAutoPausedRunId(String autoPausedRunId) { this.autoPausedRunId = autoPausedRunId; }
 }

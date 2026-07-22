@@ -114,6 +114,11 @@ public class KnowledgeIngestScheduler {
         if (hasActiveBootstrapRun(projectId)) {
             return;
         }
+        if (isLibrarianDisabled(projectId)) {
+            return; // auto-paused (or manually disabled) -- leave sources PENDING untouched rather
+                     // than claiming into a batch that would just fail again every tick; a re-enable
+                     // (WorkflowService#setEnabled) clears the pause and the next tick resumes normally.
+        }
         for (String domain : sourceRepository.findLanesWithDuePending(projectId, now)) {
             if (sourceRepository.existsProcessingInLane(projectId, domain)) {
                 continue; // this lane is busy; other lanes are unaffected
@@ -136,6 +141,16 @@ public class KnowledgeIngestScheduler {
             return false;
         }
         return !workflowRunRepository.findByWorkflowIdAndStatusIn(workflow.get().getId(), ACTIVE_RUN_STATUSES).isEmpty();
+    }
+
+    /** True if the project's {@code knowledge-librarian} workflow exists and is disabled -- most
+     *  commonly {@link com.conductor.workflow.WorkflowFailureCircuitBreaker} auto-pausing it after
+     *  repeated failures. An unprovisioned workflow (empty) is NOT treated as disabled here --
+     *  {@link LibrarianDispatchService#dispatch} still needs to run once to self-heal provisioning. */
+    private boolean isLibrarianDisabled(String projectId) {
+        return workflowRepository.findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME)
+                .map(wf -> !wf.isEnabled())
+                .orElse(false);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

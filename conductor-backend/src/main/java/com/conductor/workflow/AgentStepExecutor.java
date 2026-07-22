@@ -56,15 +56,21 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
             return StepResult.failed("", "Step 'with' block is required for agent step");
         }
 
-        String agentRef = (String) withBlock.get("agent");
-        if (agentRef == null || agentRef.isBlank()) {
+        String rawAgentRef = (String) withBlock.get("agent");
+        if (rawAgentRef == null || rawAgentRef.isBlank()) {
             return StepResult.failed("", "Step 'with.agent' is required for agent step");
         }
         // Interpolate ${{ }} refs (e.g. ${{ event.agentSlug }}) so dispatch-time agent selection works;
         // a literal slug has no ${{ }} pattern so it passes through unchanged (backward compatible).
-        agentRef = interpolator.interpolate(agentRef, ctx);
+        String agentRef = interpolator.interpolate(rawAgentRef, ctx);
         if (agentRef.isBlank()) {
-            return StepResult.failed("", "Step 'with.agent' interpolated to empty");
+            // Name the unresolved expression rather than just "empty" — WorkflowInterpolator silently
+            // resolves any unknown/missing reference to "", so this is the only signal of which field
+            // was missing and where it should have come from (this run's trigger payload, a prior
+            // step/job output, etc).
+            return StepResult.failed("", "Step 'with.agent' resolved to empty from '" + rawAgentRef.trim()
+                    + "' — the referenced field wasn't present in this run's data. If this workflow expects "
+                    + "an automated trigger to supply it, running it manually won't have that data.");
         }
 
         Object taskObj = withBlock.get("task");
