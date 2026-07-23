@@ -344,12 +344,22 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
         }
         String installationId = rawInstallationId.toString();
         List<String> repositories = (request != null && request.repoFullName() != null && !request.repoFullName().isBlank())
-                ? List.of(request.repoFullName())
+                ? List.of(bareRepoName(request.repoFullName()))
                 : List.of();
 
         GitHubAppService.InstallationTokenResult result =
                 gitHubAppService.installationToken(installationId, repositories);
         return new RuntimeCredential("GH_TOKEN", result.token(), result.expiresAt());
+    }
+
+    /**
+     * GitHub's installation-token {@code repositories} scoping field expects bare repo names (e.g.
+     * {@code "conductor"}), not {@code owner/repo} — passing the full path 422s with "repository does
+     * not exist or is not accessible" since GitHub looks for a repo literally named {@code owner/repo}.
+     */
+    private static String bareRepoName(String repoFullName) {
+        int idx = repoFullName.lastIndexOf('/');
+        return idx >= 0 ? repoFullName.substring(idx + 1) : repoFullName;
     }
 
     /** Same config-map JSON parsing approach as {@link GitHubAppController#parseConfig}. */

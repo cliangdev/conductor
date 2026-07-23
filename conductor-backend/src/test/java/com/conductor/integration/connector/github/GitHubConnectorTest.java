@@ -378,17 +378,19 @@ class GitHubConnectorTest {
     }
 
     @Test
-    void issueRuntimeCredential_withRepoFullName_scopesToSingleRepoList() {
+    void issueRuntimeCredential_withRepoFullName_scopesToBareRepoName() {
+        // GitHub's installation-token "repositories" field expects bare repo names, not owner/repo —
+        // passing the full path 422s with "repository does not exist or is not accessible".
         Connection conn = connectionWithConfig("{\"installationId\":\"42\"}");
         java.time.Instant expiry = java.time.Instant.now().plusSeconds(3600);
-        when(gitHubAppService.installationToken("42", List.of("Rexworks-LLC/nexus-backend")))
+        when(gitHubAppService.installationToken("42", List.of("nexus-backend")))
                 .thenReturn(new GitHubAppService.InstallationTokenResult("ghs_scoped", expiry));
 
         RuntimeCredential credential = connector.issueRuntimeCredential(
                 conn, new CredentialRequest("Rexworks-LLC/nexus-backend"));
 
         assertThat(credential.value()).isEqualTo("ghs_scoped");
-        verify(gitHubAppService).installationToken("42", List.of("Rexworks-LLC/nexus-backend"));
+        verify(gitHubAppService).installationToken("42", List.of("nexus-backend"));
     }
 
     @Test
