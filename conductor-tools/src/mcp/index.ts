@@ -28,7 +28,7 @@ import {
   listWorkflowSecrets,
 } from './tools/workflows.js'
 import { listIntegrationTools, listConnectorCatalog } from './tools/integrations.js'
-import { listAgents } from './tools/agents.js'
+import { listAgents, createAgent } from './tools/agents.js'
 import { listSkills, registerSkill } from './tools/skills.js'
 import {
   submitKnowledgeSource,
@@ -218,8 +218,38 @@ const TOOLS = [
   },
   {
     name: 'list_agents',
-    description: 'List the project\'s named AI Agents (id, slug, provider, model, state). Discovery for workflow authoring: resolve an agent name to its slug before referencing it from a workflow agent step.',
+    description: 'List the project\'s named AI Agents (id, slug, provider, model, state). Discovery for workflow authoring: resolve an agent name to its slug before referencing it from a workflow agent step. Also the read-back companion for create_agent — call after creating to verify the stored result.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'create_agent',
+    description: 'Create a named AI Agent in the project (provider, model, system prompt, tool bindings, guardrails). Returns the created agent. Always call list_agents after to verify it was stored correctly.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Agent display name' },
+        provider: { type: 'string', description: 'Model provider id (e.g. "claude"). Discover with list_agents or the providers endpoint.' },
+        slug: { type: 'string', description: 'URL-safe unique slug (optional — derived from name if omitted)' },
+        description: { type: 'string', description: 'What this agent does (optional)' },
+        model: { type: 'string', description: 'Model id override (optional — provider default applies if omitted)' },
+        systemPrompt: { type: 'string', description: 'System prompt (optional)' },
+        config: {
+          type: 'object',
+          description: 'Generation guardrails, all optional',
+          properties: {
+            temperature: { type: 'number' },
+            maxTokens: { type: 'integer' },
+            maxToolTurns: { type: 'integer' },
+            runtime: { type: 'string', enum: ['api', 'claude-code'], description: 'Pins the runtime that executes this agent\'s workflow steps. Omit to auto-detect.' },
+          },
+        },
+        toolIds: { type: 'array', items: { type: 'string' }, description: 'Namespaced tool ids the agent may call (optional)' },
+        state: { type: 'string', enum: ['DRAFT', 'ACTIVE'], description: 'Defaults to DRAFT if omitted' },
+        avatarEmoji: { type: 'string', description: 'Avatar emoji (optional — a default is derived from the slug)' },
+        avatarColor: { type: 'string', description: 'Avatar color token (optional — a default is derived from the slug)' },
+      },
+      required: ['name', 'provider'],
+    },
   },
   {
     name: 'list_skills',
@@ -569,6 +599,33 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'list_agents': {
           return successResponse(await listAgents({}, config))
+        }
+        case 'create_agent': {
+          return successResponse(
+            await createAgent(
+              {
+                name: params['name'] as string,
+                provider: params['provider'] as string,
+                slug: params['slug'] as string | undefined,
+                description: params['description'] as string | undefined,
+                model: params['model'] as string | undefined,
+                systemPrompt: params['systemPrompt'] as string | undefined,
+                config: params['config'] as
+                  | {
+                      temperature?: number
+                      maxTokens?: number
+                      maxToolTurns?: number
+                      runtime?: 'api' | 'claude-code'
+                    }
+                  | undefined,
+                toolIds: params['toolIds'] as string[] | undefined,
+                state: params['state'] as 'DRAFT' | 'ACTIVE' | undefined,
+                avatarEmoji: params['avatarEmoji'] as string | undefined,
+                avatarColor: params['avatarColor'] as string | undefined,
+              },
+              config
+            )
+          )
         }
         case 'list_skills': {
           return successResponse(await listSkills({}, config))
