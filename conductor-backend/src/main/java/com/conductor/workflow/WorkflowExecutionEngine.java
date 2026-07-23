@@ -9,7 +9,9 @@ import com.conductor.workflow.model.WorkflowYamlParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -118,7 +120,11 @@ public class WorkflowExecutionEngine {
                     // so all concurrent job results are visible.
                     self.checkRunCompletionAfterCommit(runId);
                 } catch (Exception e) {
-                    log.error("Error processing job {}: {}", jobId, e.getMessage(), e);
+                    // Last-resort net: processJob() now catches and terminalizes job-level failures
+                    // itself (see its own try/catch), so this should only ever fire if that recovery
+                    // path itself throws (e.g. completeRemoteJob failing) — log loudly since a job is
+                    // left stranded in RUNNING with no further automatic recovery at this point.
+                    log.error("Error processing job {} — job may be stranded in RUNNING: {}", jobId, e.getMessage(), e);
                 }
             });
         }
@@ -196,11 +202,38 @@ public class WorkflowExecutionEngine {
      * — holding a DB connection across those would strand "idle in transaction" sessions on
      * Supabase/Supavisor when a Cloud Run instance is killed mid-step. Transactional boundaries
      * are managed inside {@link WorkflowJobOrchestrator} around the discrete units of DB work.
+     *
+     * <p>Expected step failures (a connector error, a bad credential, a timeout) are handled inside
+     * each step executor and returned as a normal {@code StepResult.failed(...)} — those never reach
+     * this method as an exception. This catch is a safety net for the unexpected case: any executor
+     * that lets an exception escape uncaught (e.g. a raw {@code RuntimeException} from an HTTP client
+     * that isn't translated into a {@code StepResult}) used to strand the job in {@code RUNNING}
+     * forever, since the caller ({@link #pollQueueOnce}) only logged it. Reusing {@link
+     * WorkflowJobOrchestrator#completeRemoteJob} here — the same idempotent terminalize-and-propagate
+     * path already used by the daemon-pickup-timeout sweep — closes that gap without inventing a new
+     * failure path.
      */
     public void processJob(String runId, String jobId) {
         log.info("processJob started: runId={}, jobId={}", runId, jobId);
-        orchestrator.executeJob(runId, jobId);
+        try {
+            orchestrator.executeJob(runId, jobId);
+        } catch (Exception e) {
+            log.error("Unhandled exception executing job {} for run {} — marking FAILED: {}",
+                    jobId, runId, e.getMessage(), e);
+            orchestrator.completeRemoteJob(runId, jobId, WorkflowJobStatus.FAILED,
+                    "INTERNAL_ERROR: " + e.getMessage());
+        }
         log.info("processJob finished: runId={}, jobId={}", runId, jobId);
+    }
+
+    /**
+     * Runs once, shortly after the application is fully up, so a Cloud Run instance that was killed
+     * mid-job (deploy, scale-down, crash) doesn't leave jobs stranded in {@code RUNNING} until the next
+     * manual intervention — see {@link #recoverStuckJobs}.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void recoverStuckJobsOnStartup() {
+        self.recoverStuckJobs();
     }
 
     /**
