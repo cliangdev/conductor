@@ -3,6 +3,9 @@ package com.conductor.integration.connector.github;
 import com.conductor.integration.*;
 import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSubmission;
+import com.conductor.notification.EventType;
+import com.conductor.notification.NotificationDispatcher;
+import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
 import com.conductor.service.ProjectSettingsService;
@@ -25,6 +28,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -54,12 +58,18 @@ public class GitHubConnector implements WebhookConnector {
     private static final Pattern CLOSES_PATTERN =
             Pattern.compile("closes\\s+conductor/([A-Z]+-\\d+)", Pattern.CASE_INSENSITIVE);
 
+    /** PR actions that fire {@link EventType#GITHUB_PULL_REQUEST} for review-workflow triggers.
+     *  Deliberately excludes {@code closed}-without-merge (an abandoned PR shouldn't be reviewed) —
+     *  merges are already handled separately above via the issue-completion path. */
+    private static final Set<String> PR_REVIEW_ACTIONS = Set.of("opened", "labeled", "synchronize", "reopened");
+
     private final WorkItemService workItemService;
     private final ConnectionRepository connectionRepository;
     private final ConnectionService connectionService;
     private final GitHubAppService gitHubAppService;
     private final KnowledgeIngestionService knowledgeIngestionService;
     private final ProjectSettingsService projectSettingsService;
+    private final NotificationDispatcher notificationDispatcher;
     private final ObjectMapper objectMapper;
     /** App-level webhook signing secret (one per GitHub App, not per connection). */
     private final String appWebhookSecret;
@@ -70,6 +80,7 @@ public class GitHubConnector implements WebhookConnector {
                            GitHubAppService gitHubAppService,
                            KnowledgeIngestionService knowledgeIngestionService,
                            ProjectSettingsService projectSettingsService,
+                           NotificationDispatcher notificationDispatcher,
                            ObjectMapper objectMapper,
                            @Value("${GITHUB_APP_WEBHOOK_SECRET:}") String appWebhookSecret) {
         this.workItemService = workItemService;
@@ -78,6 +89,7 @@ public class GitHubConnector implements WebhookConnector {
         this.gitHubAppService = gitHubAppService;
         this.knowledgeIngestionService = knowledgeIngestionService;
         this.projectSettingsService = projectSettingsService;
+        this.notificationDispatcher = notificationDispatcher;
         this.objectMapper = objectMapper;
         this.appWebhookSecret = appWebhookSecret;
     }
@@ -188,8 +200,12 @@ public class GitHubConnector implements WebhookConnector {
 
             boolean isMergeEvent = "closed".equals(action) && merged;
             if (!isMergeEvent) {
-                log.info("Skipping event {} - action='{}' merged={} is not a merge event",
-                        event.deliveryId(), action, merged);
+                if (PR_REVIEW_ACTIONS.contains(action)) {
+                    dispatchPullRequestReviewEvent(ctx, root, action);
+                } else {
+                    log.info("Skipping event {} - action='{}' merged={} is not a merge or reviewable action",
+                            event.deliveryId(), action, merged);
+                }
                 return;
             }
 
@@ -271,6 +287,42 @@ public class GitHubConnector implements WebhookConnector {
         } catch (Exception e) {
             log.warn("Failed to submit knowledge source for merged PR (project {}): {}", projectId, e.getMessage());
         }
+    }
+
+    /**
+     * Fires {@link EventType#GITHUB_PULL_REQUEST} so a {@code github.pull_request} workflow trigger
+     * can pick it up. {@code ctx.projectId()} is already the correctly-resolved project id for this
+     * connection (resolved upstream by the installation-id fan-out in {@link #route}) — no extra
+     * {@code ConnectionRepository} lookup is needed here, unlike the merge-completion path above which
+     * needs a different, project-scoped lookup (issue key).
+     */
+    private void dispatchPullRequestReviewEvent(ConnectionContext ctx, JsonNode root, String action) {
+        JsonNode pr = root.path("pull_request");
+        JsonNode repository = root.path("repository");
+
+        Map<String, String> meta = new LinkedHashMap<>();
+        putIfPresent(meta, "repoName", nodeText(repository.path("name")));
+        putIfPresent(meta, "repoFullName", nodeText(repository.path("full_name")));
+        JsonNode numberNode = pr.path("number");
+        if (numberNode.isInt()) {
+            meta.put("prNumber", String.valueOf(numberNode.asInt()));
+        }
+        putIfPresent(meta, "prTitle", nodeText(pr.path("title")));
+        putIfPresent(meta, "author", nodeText(pr.path("user").path("login")));
+        putIfPresent(meta, "headRef", nodeText(pr.path("head").path("ref")));
+        putIfPresent(meta, "baseRef", nodeText(pr.path("base").path("ref")));
+        putIfPresent(meta, "htmlUrl", nodeText(pr.path("html_url")));
+        putIfPresent(meta, "installationId", nodeText(root.path("installation").path("id")));
+        meta.put("action", action);
+        if ("labeled".equals(action)) {
+            putIfPresent(meta, "label", nodeText(root.path("label").path("name")));
+        }
+
+        notificationDispatcher.dispatch(NotificationEvent.of(EventType.GITHUB_PULL_REQUEST, ctx.projectId(), meta));
+    }
+
+    private static void putIfPresent(Map<String, String> map, String key, String value) {
+        if (value != null) map.put(key, value);
     }
 
     private String installationId(byte[] rawBody) {

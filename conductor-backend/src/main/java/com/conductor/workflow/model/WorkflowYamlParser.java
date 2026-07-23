@@ -22,6 +22,7 @@ import java.util.Map;
 public class WorkflowYamlParser {
 
     private static final String CONDUCTOR_STATUS_CHANGED = "conductor.work_item.status_changed";
+    private static final String GITHUB_PULL_REQUEST = "github.pull_request";
 
     public WorkflowSpec parse(String yaml) {
         // Guard explicitly rather than letting SnakeYAML NPE on a null Reader: WorkflowDefinition
@@ -58,7 +59,7 @@ public class WorkflowYamlParser {
 
     private TriggersSpec parseTriggers(Object onBlock) {
         if (!(onBlock instanceof Map)) {
-            return new TriggersSpec(null, null, List.of(), false, Map.of());
+            return new TriggersSpec(null, null, List.of(), List.of(), false, Map.of());
         }
         @SuppressWarnings("unchecked")
         Map<String, Object> triggers = (Map<String, Object>) onBlock;
@@ -86,9 +87,21 @@ public class WorkflowYamlParser {
             events.add(new ConductorEventTrigger(CONDUCTOR_STATUS_CHANGED, statusFilter));
         }
 
+        List<GitHubPullRequestTrigger> pullRequestEvents = new ArrayList<>();
+        Object prConfig = triggers.get(GITHUB_PULL_REQUEST);
+        if (prConfig != null) {
+            List<String> actionFilter = List.of();
+            List<String> labelFilter = List.of();
+            if (prConfig instanceof Map<?, ?> configMap && configMap.get("filters") instanceof Map<?, ?> filtersMap) {
+                actionFilter = normalizeStringList(filtersMap.get("actions"));
+                labelFilter = normalizeStringList(filtersMap.get("labels"));
+            }
+            pullRequestEvents.add(new GitHubPullRequestTrigger(GITHUB_PULL_REQUEST, actionFilter, labelFilter));
+        }
+
         boolean hasWorkflowDispatch = triggers.containsKey("workflow_dispatch");
 
-        return new TriggersSpec(schedule, webhook, events, hasWorkflowDispatch, triggers);
+        return new TriggersSpec(schedule, webhook, events, pullRequestEvents, hasWorkflowDispatch, triggers);
     }
 
     private Map<String, JobSpec> parseJobs(Object jobsObj) {

@@ -7,6 +7,9 @@ import com.conductor.integration.WebhookRouting;
 import com.conductor.integration.WebhookVerification;
 import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSubmission;
+import com.conductor.notification.EventType;
+import com.conductor.notification.NotificationDispatcher;
+import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
 import com.conductor.service.ProjectSettingsService;
@@ -50,6 +53,7 @@ class GitHubConnectorTest {
     @Mock private GitHubAppService gitHubAppService;
     @Mock private KnowledgeIngestionService knowledgeIngestionService;
     @Mock private ProjectSettingsService projectSettingsService;
+    @Mock private NotificationDispatcher notificationDispatcher;
 
     private GitHubConnector connector;
 
@@ -59,7 +63,8 @@ class GitHubConnectorTest {
         // they don't need to stub it; the dedicated knowledge tests below override it.
         lenient().when(projectSettingsService.isKnowledgeEnabled(anyString())).thenReturn(false);
         connector = new GitHubConnector(workItemService, connectionRepository, connectionService,
-                gitHubAppService, knowledgeIngestionService, projectSettingsService, new ObjectMapper(), APP_SECRET);
+                gitHubAppService, knowledgeIngestionService, projectSettingsService, notificationDispatcher,
+                new ObjectMapper(), APP_SECRET);
     }
 
     private ConnectionContext ctx() {
@@ -97,7 +102,8 @@ class GitHubConnectorTest {
     @Test
     void verify_failsWhenAppSecretNotConfigured() throws Exception {
         GitHubConnector noSecret = new GitHubConnector(workItemService, connectionRepository, connectionService,
-                gitHubAppService, knowledgeIngestionService, projectSettingsService, new ObjectMapper(), "");
+                gitHubAppService, knowledgeIngestionService, projectSettingsService, notificationDispatcher,
+                new ObjectMapper(), "");
         byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
         assertThat(noSecret.verify(body, signedHeaders(body), ctx()).valid()).isFalse();
     }
@@ -261,5 +267,88 @@ class GitHubConnectorTest {
         connector.handleEvent(new InboundEvent("d7", "pull_request", payload, Map.of()), ctx());
 
         verify(knowledgeIngestionService, never()).submit(any());
+    }
+
+    // --- handleEvent() : firable PR actions dispatch GITHUB_PULL_REQUEST for workflow triggers ---
+
+    private static final String PR_ACTION_PAYLOAD_TEMPLATE =
+            "{\"action\":\"%s\",\"installation\":{\"id\":42},"
+            + "\"repository\":{\"name\":\"nexus-backend\",\"full_name\":\"Rexworks-LLC/nexus-backend\"},"
+            + "\"pull_request\":{\"number\":7,\"title\":\"Add feature\",\"merged\":false,"
+            + "\"user\":{\"login\":\"alice\"},\"head\":{\"ref\":\"feature-branch\"},\"base\":{\"ref\":\"main\"},"
+            + "\"html_url\":\"https://github.com/Rexworks-LLC/nexus-backend/pull/7\"}}";
+
+    @Test
+    void handleEvent_prOpened_dispatchesGitHubPullRequestEventWithMetadata() {
+        String payload = String.format(PR_ACTION_PAYLOAD_TEMPLATE, "opened");
+
+        connector.handleEvent(new InboundEvent("d8", "pull_request", payload, Map.of()), ctx());
+
+        org.mockito.ArgumentCaptor<NotificationEvent> captor = org.mockito.ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher).dispatch(captor.capture());
+        NotificationEvent event = captor.getValue();
+        assertThat(event.getEventType()).isEqualTo(EventType.GITHUB_PULL_REQUEST);
+        assertThat(event.getProjectId()).isEqualTo(PROJECT_ID);
+        assertThat(event.getMetadata())
+                .containsEntry("repoName", "nexus-backend")
+                .containsEntry("repoFullName", "Rexworks-LLC/nexus-backend")
+                .containsEntry("prNumber", "7")
+                .containsEntry("prTitle", "Add feature")
+                .containsEntry("author", "alice")
+                .containsEntry("headRef", "feature-branch")
+                .containsEntry("baseRef", "main")
+                .containsEntry("htmlUrl", "https://github.com/Rexworks-LLC/nexus-backend/pull/7")
+                .containsEntry("installationId", "42")
+                .containsEntry("action", "opened")
+                .doesNotContainKey("label");
+    }
+
+    @Test
+    void handleEvent_prSynchronize_dispatchesGitHubPullRequestEvent() {
+        String payload = String.format(PR_ACTION_PAYLOAD_TEMPLATE, "synchronize");
+        connector.handleEvent(new InboundEvent("d9", "pull_request", payload, Map.of()), ctx());
+        verify(notificationDispatcher).dispatch(any());
+    }
+
+    @Test
+    void handleEvent_prReopened_dispatchesGitHubPullRequestEvent() {
+        String payload = String.format(PR_ACTION_PAYLOAD_TEMPLATE, "reopened");
+        connector.handleEvent(new InboundEvent("d10", "pull_request", payload, Map.of()), ctx());
+        verify(notificationDispatcher).dispatch(any());
+    }
+
+    @Test
+    void handleEvent_prLabeled_includesLabelMetadata() {
+        String payload = "{\"action\":\"labeled\",\"pull_request\":{\"number\":7,\"merged\":false},"
+                + "\"label\":{\"name\":\"code_review_ready\"}}";
+
+        connector.handleEvent(new InboundEvent("d11", "pull_request", payload, Map.of()), ctx());
+
+        org.mockito.ArgumentCaptor<NotificationEvent> captor = org.mockito.ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher).dispatch(captor.capture());
+        assertThat(captor.getValue().getMetadata())
+                .containsEntry("action", "labeled")
+                .containsEntry("label", "code_review_ready");
+    }
+
+    @Test
+    void handleEvent_closedWithoutMerge_doesNotDispatchReviewEventOrMergeCompletion() {
+        String payload = "{\"action\":\"closed\",\"pull_request\":{\"merged\":false,"
+                + "\"body\":\"closes conductor/PROJ-1\"}}";
+
+        connector.handleEvent(new InboundEvent("d12", "pull_request", payload, Map.of()), ctx());
+
+        verify(notificationDispatcher, never()).dispatch(any());
+        verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void handleEvent_unrelatedAction_doesNotDispatch() {
+        String payload = "{\"action\":\"assigned\",\"pull_request\":{\"number\":7,\"merged\":false}}";
+
+        connector.handleEvent(new InboundEvent("d13", "pull_request", payload, Map.of()), ctx());
+
+        verify(notificationDispatcher, never()).dispatch(any());
+        verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
     }
 }

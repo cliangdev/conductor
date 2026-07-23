@@ -71,7 +71,19 @@ public enum EventType {
      * <p>Required metadata keys: {@code workflowId}, {@code workflowName}, {@code consecutiveFailures},
      * {@code runId} (the run that tripped it)
      */
-    WORKFLOW_AUTO_PAUSED("Workflow auto-paused after repeated failures");
+    WORKFLOW_AUTO_PAUSED("Workflow auto-paused after repeated failures"),
+
+    /**
+     * A GitHub pull request was opened, labeled, synchronized (new commits pushed), or reopened.
+     * Explicitly excludes a merge (handled separately by the issue-completion path in {@code
+     * GitHubConnector.handleEvent}) and a closed-without-merge PR (an abandoned PR shouldn't trigger
+     * a review workflow).
+     *
+     * <p>Required metadata keys: {@code repoName}, {@code repoFullName}, {@code prNumber}, {@code prTitle},
+     * {@code author}, {@code headRef}, {@code baseRef}, {@code htmlUrl}, {@code action}
+     * <p>Optional metadata keys: {@code installationId}, {@code label} (present only when {@code action == "labeled"})
+     */
+    GITHUB_PULL_REQUEST("GitHub pull request activity");
 
     private final String description;
 
