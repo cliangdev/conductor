@@ -20,6 +20,7 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -103,29 +104,70 @@ public class GitHubAppService {
         return repos;
     }
 
-    /** A cached installation access token (~1h GitHub lifetime; refreshed shortly before expiry). */
+    /** A cached, unscoped installation access token (~1h GitHub lifetime; refreshed shortly before expiry). */
     public String installationToken(String installationId) {
-        CachedToken cached = tokenCache.get(installationId);
+        return installationToken(installationId, List.of()).token();
+    }
+
+    /**
+     * A cached installation access token, optionally scoped to a subset of the installation's
+     * repositories via GitHub's {@code {"repositories": [...]}} access-token request body. Scoped and
+     * unscoped tokens are cached under different keys ({@code installationId} unscoped, {@code
+     * installationId + "|" + sortedRepos} scoped) — sharing one cache entry across scopes would risk
+     * serving a repo-scoped token for the wrong repo, or an unscoped token where a scoped one was
+     * requested.
+     */
+    public InstallationTokenResult installationToken(String installationId, List<String> repositories) {
+        List<String> repos = repositories != null ? repositories : List.of();
+        String cacheKey = cacheKey(installationId, repos);
+        CachedToken cached = tokenCache.get(cacheKey);
         if (cached != null && Instant.now().isBefore(cached.expiresAt().minusSeconds(300))) {
-            return cached.token();
+            return new InstallationTokenResult(cached.token(), cached.expiresAt());
+        }
+
+        HttpHeaders headers = appJwtAuth();
+        String body = null;
+        if (!repos.isEmpty()) {
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            body = writeJson(Map.of("repositories", repos));
         }
         JsonNode root = exchangeJson(HttpMethod.POST,
-                API_BASE + "/app/installations/" + installationId + "/access_tokens", appJwtAuth(), null);
+                API_BASE + "/app/installations/" + installationId + "/access_tokens", headers, body);
         String token = root.path("token").asText(null);
         String expiresAt = root.path("expires_at").asText(null);
         Instant expiry = expiresAt != null ? Instant.parse(expiresAt) : Instant.now().plusSeconds(3300);
         purgeExpired();
-        tokenCache.put(installationId, new CachedToken(token, expiry));
-        return token;
+        tokenCache.put(cacheKey, new CachedToken(token, expiry));
+        return new InstallationTokenResult(token, expiry);
+    }
+
+    /** Unscoped cache key, or {@code installationId + "|" + sortedRepos} when scoped — sorted so
+     *  {@code ["a","b"]} and {@code ["b","a"]} share one cache entry. */
+    private static String cacheKey(String installationId, List<String> repositories) {
+        if (repositories == null || repositories.isEmpty()) {
+            return installationId;
+        }
+        List<String> sorted = new ArrayList<>(repositories);
+        Collections.sort(sorted);
+        return installationId + "|" + String.join(",", sorted);
+    }
+
+    private String writeJson(Object obj) {
+        try {
+            return objectMapper.writeValueAsString(obj);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize GitHub API request body: " + e.getMessage(), e);
+        }
     }
 
     /**
-     * Drop a cached installation token. Called when an installation is uninstalled so its entry doesn't
-     * linger in the cache forever.
+     * Drop every cached token (unscoped and repo-scoped) for an installation. Called when an
+     * installation is uninstalled so no entry — including a repo-scoped one — lingers in the cache
+     * forever.
      */
     public void evictInstallationToken(String installationId) {
         if (installationId != null) {
-            tokenCache.remove(installationId);
+            tokenCache.keySet().removeIf(key -> key.equals(installationId) || key.startsWith(installationId + "|"));
         }
     }
 
@@ -194,6 +236,11 @@ public class GitHubAppService {
     public record InstallationInfo(String accountLogin, String htmlUrl, String repositorySelection) {}
 
     public record Repo(String fullName, boolean isPrivate) {}
+
+    /** An installation access token plus its GitHub-reported expiry — needed by callers (e.g. {@link
+     *  com.conductor.integration.connector.github.GitHubConnector#issueRuntimeCredential}) that must
+     *  report an expiry alongside the token value. */
+    public record InstallationTokenResult(String token, Instant expiresAt) {}
 
     private record CachedToken(String token, Instant expiresAt) {}
 }

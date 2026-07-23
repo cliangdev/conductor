@@ -76,7 +76,7 @@ class ApiAgentStepRuntimeTest {
                         new TokenUsage(100, 50), "SUCCEEDED"));
 
         AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
-                definition(), "Analyze SEO health", Map.of(), null, null);
+                definition(), "Analyze SEO health", Map.of(), null, null, List.of(), Map.of());
         StepResult result = runtime.run(context(stepDef()), call);
 
         assertThat(result.getStatus().name()).isEqualTo("SUCCESS");
@@ -95,7 +95,7 @@ class ApiAgentStepRuntimeTest {
         AgentExecutionService.AgentDefinition ghost = new AgentExecutionService.AgentDefinition(
                 "id", "ghost", "claude", null, null, List.of(), 8, null);
         AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
-                ghost, "Do something", Map.of(), null, null);
+                ghost, "Do something", Map.of(), null, null, List.of(), Map.of());
         StepResult result = runtime.run(context(stepDef()), call);
 
         assertThat(result.getStatus().name()).isEqualTo("FAILED");
@@ -112,11 +112,36 @@ class ApiAgentStepRuntimeTest {
         Map<String, Object> stepDef = stepDef();
         stepDef.put("outputs", Map.of("summary", "body.report"));
         AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
-                definition(), "Analyze", Map.of(), null, null);
+                definition(), "Analyze", Map.of(), null, null, List.of(), Map.of());
         StepResult result = runtime.run(context(stepDef), call);
 
         assertThat(result.getStatus().name()).isEqualTo("SUCCESS");
         assertThat(result.getOutputs().get("summary")).isEqualTo("All good");
+    }
+
+    @Test
+    void declaredCredentials_failsFastWithoutCallingAgentExecutionService() {
+        List<Map<String, Object>> credentials = List.of(Map.of("connector", "github", "as", "GH_TOKEN"));
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
+                definition(), "Analyze", Map.of(), null, null, credentials, Map.of());
+
+        StepResult result = runtime.run(context(stepDef()), call);
+
+        assertThat(result.getStatus().name()).isEqualTo("FAILED");
+        assertThat(result.getErrorReason()).contains("CREDENTIALS_NOT_AVAILABLE_ON_API_RUNTIME");
+        org.mockito.Mockito.verifyNoInteractions(agentExecutionService);
+    }
+
+    @Test
+    void declaredExtraEnv_failsFastWithoutCallingAgentExecutionService() {
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
+                definition(), "Analyze", Map.of(), null, null, List.of(), Map.of("MY_VAR", "hello"));
+
+        StepResult result = runtime.run(context(stepDef()), call);
+
+        assertThat(result.getStatus().name()).isEqualTo("FAILED");
+        assertThat(result.getErrorReason()).contains("CREDENTIALS_NOT_AVAILABLE_ON_API_RUNTIME");
+        org.mockito.Mockito.verifyNoInteractions(agentExecutionService);
     }
 
     @Test
@@ -125,7 +150,7 @@ class ApiAgentStepRuntimeTest {
                 .thenReturn(new AgentRunResult("run-3", "partial", null, TokenUsage.ZERO, "FAILED"));
 
         AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
-                definition(), "Analyze", Map.of(), null, null);
+                definition(), "Analyze", Map.of(), null, null, List.of(), Map.of());
         StepResult result = runtime.run(context(stepDef()), call);
 
         assertThat(result.getStatus().name()).isEqualTo("FAILED");

@@ -236,9 +236,9 @@ public class WorkflowValidator {
                     }
                     validateConditionStep(step, job.id(), jobs, errors, conditionTargets);
                 }
-                case CLAUDE_CODE_TYPE -> validateClaudeCodeStep(step, job.id(), runsOnVal, runtimeTargetNames, errors);
+                case CLAUDE_CODE_TYPE -> validateClaudeCodeStep(step, job.id(), runsOnVal, runtimeTargetNames, errors, warnings);
                 case "integration" -> validateIntegrationStep(step, errors);
-                case "agent" -> validateAgentStep(step, errors);
+                case "agent" -> validateAgentStep(step, job.id(), errors, warnings);
                 case "action" -> validateActionStep(step, errors, warnings);
                 default -> { /* http, docker: no extra config checks today */ }
             }
@@ -357,7 +357,7 @@ public class WorkflowValidator {
      */
     @SuppressWarnings("unchecked")
     private void validateClaudeCodeStep(StepSpec step, String jobId, Object runsOnVal,
-                                        Set<String> runtimeTargetNames, List<String> errors) {
+                                        Set<String> runtimeTargetNames, List<String> errors, List<String> warnings) {
         if (!isClaudeCodeRunsOn(runsOnVal, runtimeTargetNames)) {
             errors.add("claude-code step in job " + jobId
                     + " requires runs-on: cloud-run or self-hosted, or a project runtime target "
@@ -405,6 +405,8 @@ public class WorkflowValidator {
         if (conductorMcp != null && !(conductorMcp instanceof Boolean)) {
             errors.add("claude-code step with.conductor_mcp must be a boolean");
         }
+
+        validateCredentialsAndEnv(with, jobId, "claude-code step", errors, warnings);
     }
 
     private boolean isClaudeCodeRunsOn(Object runsOnVal, Set<String> runtimeTargetNames) {
@@ -436,7 +438,7 @@ public class WorkflowValidator {
         }
     }
 
-    private void validateAgentStep(StepSpec step, List<String> errors) {
+    private void validateAgentStep(StepSpec step, String jobId, List<String> errors, List<String> warnings) {
         Object agent = step.with().get("agent");
         if (agent == null || agent.toString().isBlank()) {
             errors.add("agent step missing required field: with.agent");
@@ -449,6 +451,67 @@ public class WorkflowValidator {
         if (timeoutMinutes != null && (!(timeoutMinutes instanceof Number)
                 || ((Number) timeoutMinutes).intValue() < 1 || ((Number) timeoutMinutes).intValue() > 120)) {
             errors.add("agent step with.timeout_minutes must be an integer between 1 and 120");
+        }
+
+        validateCredentialsAndEnv(step.with(), jobId, "agent step", errors, warnings);
+    }
+
+    /**
+     * Shared {@code credentials:}/{@code env:} shape validation for both the {@code claude-code} and
+     * {@code agent} step types (only the {@code claude-code} runtime honors these at execution time —
+     * see {@code ApiAgentStepRuntime}'s {@code CREDENTIALS_NOT_AVAILABLE_ON_API_RUNTIME} guard). {@code
+     * credentials:} must be a list of {@code {connector, as}} maps; {@code env:} must be a map. Any
+     * {@code as}/env key colliding with {@link ReservedEnvKeys#isReserved} is a hard error. A referenced
+     * connector that doesn't support the CREDENTIAL capability is only a best-effort WARNING — matching
+     * this validator's existing philosophy for connector-reference lint elsewhere (a local-profile
+     * authoring environment may lack a connector bean that production very much has).
+     */
+    @SuppressWarnings("unchecked")
+    private void validateCredentialsAndEnv(Map<String, Object> with, String jobId, String stepLabel,
+                                           List<String> errors, List<String> warnings) {
+        Object credentialsObj = with.get("credentials");
+        if (credentialsObj != null) {
+            if (!(credentialsObj instanceof List)) {
+                errors.add(stepLabel + " with.credentials must be a list of {connector, as} maps (job '" + jobId + "')");
+            } else {
+                for (Object entry : (List<Object>) credentialsObj) {
+                    if (!(entry instanceof Map)) {
+                        errors.add(stepLabel + " with.credentials entry must be a map with connector/as (job '" + jobId + "')");
+                        continue;
+                    }
+                    Map<String, Object> entryMap = (Map<String, Object>) entry;
+                    Object connectorObj = entryMap.get("connector");
+                    Object asObj = entryMap.get("as");
+                    if (!(connectorObj instanceof String) || connectorObj.toString().isBlank()) {
+                        errors.add(stepLabel + " with.credentials entry missing required field: connector (job '" + jobId + "')");
+                    }
+                    if (!(asObj instanceof String) || asObj.toString().isBlank()) {
+                        errors.add(stepLabel + " with.credentials entry missing required field: as (job '" + jobId + "')");
+                    } else if (ReservedEnvKeys.isReserved(asObj.toString())) {
+                        errors.add(stepLabel + " with.credentials 'as: " + asObj
+                                + "' collides with a reserved env key (job '" + jobId + "')");
+                    }
+                    if (connectorObj instanceof String connectorId && !connectorId.isBlank() && connectorRegistry != null
+                            && connectorRegistry.findCredential(connectorId).isEmpty()) {
+                        warnings.add(stepLabel + " with.credentials references connector '" + connectorId
+                                + "' which does not support the CREDENTIAL capability in this environment (job '" + jobId + "')");
+                    }
+                }
+            }
+        }
+
+        Object envObj = with.get("env");
+        if (envObj != null) {
+            if (!(envObj instanceof Map)) {
+                errors.add(stepLabel + " with.env must be a map (job '" + jobId + "')");
+            } else {
+                for (Object key : ((Map<String, Object>) envObj).keySet()) {
+                    if (ReservedEnvKeys.isReserved(String.valueOf(key))) {
+                        errors.add(stepLabel + " with.env key '" + key
+                                + "' collides with a reserved env key (job '" + jobId + "')");
+                    }
+                }
+            }
         }
     }
 

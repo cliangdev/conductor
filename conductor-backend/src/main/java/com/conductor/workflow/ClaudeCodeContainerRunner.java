@@ -1,12 +1,18 @@
 package com.conductor.workflow;
 
 import com.conductor.agent.credential.ProviderCredentialService;
+import com.conductor.entity.Connection;
 import com.conductor.entity.ProjectSettings;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.entity.WorkflowStepStatus;
+import com.conductor.integration.ConnectorRegistry;
+import com.conductor.integration.CredentialConnector;
+import com.conductor.integration.CredentialRequest;
+import com.conductor.integration.RuntimeCredential;
 import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.service.ActiveConnectionResolver;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -86,6 +92,8 @@ public class ClaudeCodeContainerRunner {
     private final WorkflowInterpolator interpolator;
     private final ObjectMapper objectMapper;
     private final WorkflowRunLogBroker logBroker;
+    private final ActiveConnectionResolver activeConnectionResolver;
+    private final ConnectorRegistry connectorRegistry;
     private final String backendBaseUrl;
 
     public ClaudeCodeContainerRunner(CloudRunJobLauncher launcher,
@@ -97,6 +105,8 @@ public class ClaudeCodeContainerRunner {
                                       WorkflowInterpolator interpolator,
                                       ObjectMapper objectMapper,
                                       WorkflowRunLogBroker logBroker,
+                                      ActiveConnectionResolver activeConnectionResolver,
+                                      ConnectorRegistry connectorRegistry,
                                       @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.launcher = launcher;
         this.runtimeTargetResolver = runtimeTargetResolver;
@@ -107,6 +117,8 @@ public class ClaudeCodeContainerRunner {
         this.interpolator = interpolator;
         this.objectMapper = objectMapper;
         this.logBroker = logBroker;
+        this.activeConnectionResolver = activeConnectionResolver;
+        this.connectorRegistry = connectorRegistry;
         this.backendBaseUrl = backendBaseUrl;
     }
 
@@ -115,6 +127,10 @@ public class ClaudeCodeContainerRunner {
      * {@link WorkflowStepRun} row ({@code "claude-code"} for a raw step, {@code "agent"} when driven by
      * the {@code agent} step's claude-code runtime) and also selects the runs-on defaulting behavior
      * described in this class's javadoc.
+     *
+     * @param credentials each entry a {@code {connector, as}} map — resolved into a connector-issued
+     *                    runtime credential and injected under the env key named by {@code as}.
+     * @param extraEnv    plain, already-interpolated env values from the step's {@code env:} block.
      */
     public record ClaudeCodeInvocation(
             String prompt,
@@ -123,7 +139,9 @@ public class ClaudeCodeContainerRunner {
             Integer timeoutMinutes,
             Boolean conductorMcp,
             Map<String, Object> outputSchema,
-            String stepType) {}
+            String stepType,
+            List<Map<String, Object>> credentials,
+            Map<String, String> extraEnv) {}
 
     public StepResult run(StepExecutionContext context, ClaudeCodeInvocation inv) {
         Optional<RuntimeTargetResolver.ResolvedRuntime> resolved;
@@ -194,8 +212,14 @@ public class ClaudeCodeContainerRunner {
                     logBuilder, inFlightRow, projectId);
         }
 
-        Map<String, String> env = buildEnv(inv, stepDef, ctx, projectId, runId, jobRun, workerJobId,
-                timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get(), context.getConsumes(), ttlHours);
+        Map<String, String> env;
+        try {
+            env = buildEnv(inv, stepDef, ctx, projectId, runId, jobRun, workerJobId,
+                    timeoutMinutes, conductorMcp, conductorApiKey, oauthToken.get(), context.getConsumes(), ttlHours);
+        } catch (CredentialResolutionException e) {
+            log.warn("claude-code step {} credential resolution failed: {}", stepId, e.getMessage());
+            return StepResult.failed("", "CLAUDE_CREDENTIAL_ERROR: " + e.getMessage()).withWorkerJobId(workerJobId);
+        }
         ContainerTask task = new ContainerTask(image, CONTAINER_COMMAND, env, timeoutMinutes);
 
         appendLauncherLine(stepRun, projectId, logBuilder,
@@ -324,7 +348,67 @@ public class ClaudeCodeContainerRunner {
                 env.put("CONDUCTOR_ARTIFACTS_DIR", "/conductor/artifacts");
             }
         }
+
+        applyCredentials(inv, ctx, projectId, env);
+        applyExtraEnv(inv, env);
         return env;
+    }
+
+    /**
+     * Resolves each {@code credentials:} entry ({@code {connector, as}}) into a connector-issued
+     * {@link RuntimeCredential} and writes it into {@code env} under the key named by {@code as}.
+     * Failure to resolve a connection or a CREDENTIAL-capable connector, or a reserved-key collision,
+     * fails the step loudly via {@link CredentialResolutionException} rather than silently skipping or
+     * overwriting a reserved var.
+     */
+    private void applyCredentials(ClaudeCodeInvocation inv, RuntimeContext ctx, String projectId, Map<String, String> env) {
+        if (inv.credentials() == null || inv.credentials().isEmpty()) {
+            return;
+        }
+        String repoHint = repoHint(ctx);
+        for (Map<String, Object> entry : inv.credentials()) {
+            Object connectorIdObj = entry.get("connector");
+            Object asObj = entry.get("as");
+            String connectorId = connectorIdObj != null ? connectorIdObj.toString() : null;
+            String as = asObj != null ? asObj.toString() : null;
+            if (connectorId == null || connectorId.isBlank() || as == null || as.isBlank()) {
+                throw new CredentialResolutionException(
+                        "credentials: entry requires both 'connector' and 'as': " + entry);
+            }
+            if (ReservedEnvKeys.isReserved(as)) {
+                throw new CredentialResolutionException("'" + as + "' is a reserved env key and cannot be used in credentials:");
+            }
+            Connection connection = activeConnectionResolver.resolve(projectId, connectorId)
+                    .orElseThrow(() -> new CredentialResolutionException(
+                            "No active connection found for connector: " + connectorId));
+            CredentialConnector credentialConnector = connectorRegistry.findCredential(connectorId)
+                    .orElseThrow(() -> new CredentialResolutionException(
+                            "Connector '" + connectorId + "' does not support issuing runtime credentials"));
+            RuntimeCredential credential = credentialConnector.issueRuntimeCredential(connection, new CredentialRequest(repoHint));
+            env.put(as, credential.value());
+        }
+    }
+
+    /** Merges {@code env:} (already-interpolated by the caller) into the container env, rejecting any
+     *  key that collides with a reserved Conductor var. */
+    private void applyExtraEnv(ClaudeCodeInvocation inv, Map<String, String> env) {
+        if (inv.extraEnv() == null || inv.extraEnv().isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, String> entry : inv.extraEnv().entrySet()) {
+            if (ReservedEnvKeys.isReserved(entry.getKey())) {
+                throw new CredentialResolutionException(
+                        "'" + entry.getKey() + "' is a reserved env key and cannot be set via env:");
+            }
+            env.put(entry.getKey(), entry.getValue());
+        }
+    }
+
+    /** Best-effort repo scope hint for a credential request — present for github.pull_request-triggered
+     *  runs, {@code null} otherwise (an unscoped credential is still correct, just less tightly scoped). */
+    private String repoHint(RuntimeContext ctx) {
+        Object value = ctx.getEventPayload().get("repoFullName");
+        return value != null ? value.toString() : null;
     }
 
     /** Searches every needed job's resolved artifacts (see {@link RuntimeContext#getJobArtifacts()}) for one named {@code name}. */

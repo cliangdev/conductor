@@ -2,6 +2,7 @@ package com.conductor.workflow;
 
 import com.conductor.agent.run.AgentExecutionService;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -33,11 +34,17 @@ public interface AgentStepRuntime {
      * @param agentContext    interpolated {@code with.context} map (may be empty, never null).
      * @param outputSchema    optional {@code with.output_schema}, or null.
      * @param timeoutMinutes  optional {@code with.timeout_minutes}, or null (runtime picks its own default).
+     * @param credentials     {@code with.credentials} entries ({@code {connector, as}} maps), or empty.
+     *                        Only the {@code claude-code} runtime can honor these — see {@link
+     *                        ApiAgentStepRuntime}, which fails fast when this is non-empty.
+     * @param extraEnv        interpolated {@code with.env} map, or empty. Same caveat as {@code credentials}.
      */
     record AgentStepCall(
             AgentExecutionService.AgentDefinition agent,
             String task,
             Map<String, Object> agentContext,
             Map<String, Object> outputSchema,
-            Integer timeoutMinutes) {}
+            Integer timeoutMinutes,
+            List<Map<String, Object>> credentials,
+            Map<String, String> extraEnv) {}
 }

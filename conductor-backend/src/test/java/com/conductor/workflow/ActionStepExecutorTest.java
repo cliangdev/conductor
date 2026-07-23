@@ -6,6 +6,7 @@ import com.conductor.entity.WorkflowRun;
 import com.conductor.integration.ActionResult;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ActionInvocationService;
+import com.conductor.service.ActiveConnectionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +37,7 @@ class ActionStepExecutorTest {
 
     @BeforeEach
     void setUp() {
-        executor = new ActionStepExecutor(connectionRepository, actionInvocationService,
+        executor = new ActionStepExecutor(new ActiveConnectionResolver(connectionRepository), actionInvocationService,
                 new WorkflowInterpolator(), new ObjectMapper());
     }
 

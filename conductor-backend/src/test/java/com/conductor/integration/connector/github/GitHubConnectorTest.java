@@ -2,7 +2,9 @@ package com.conductor.integration.connector.github;
 
 import com.conductor.entity.Connection;
 import com.conductor.integration.ConnectionContext;
+import com.conductor.integration.CredentialRequest;
 import com.conductor.integration.InboundEvent;
+import com.conductor.integration.RuntimeCredential;
 import com.conductor.integration.WebhookRouting;
 import com.conductor.integration.WebhookVerification;
 import com.conductor.knowledge.KnowledgeIngestionService;
@@ -350,5 +352,64 @@ class GitHubConnectorTest {
 
         verify(notificationDispatcher, never()).dispatch(any());
         verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    // --- issueRuntimeCredential() : CREDENTIAL capability (Phase B connector-issued runtime credentials) ---
+
+    private Connection connectionWithConfig(String configJson) {
+        Connection c = new Connection();
+        c.setId("conn-gh");
+        c.setConfigJson(configJson);
+        return c;
+    }
+
+    @Test
+    void issueRuntimeCredential_unscoped_returnsGhTokenFromInstallationToken() {
+        Connection conn = connectionWithConfig("{\"installationId\":\"42\"}");
+        java.time.Instant expiry = java.time.Instant.now().plusSeconds(3600);
+        when(gitHubAppService.installationToken("42", List.of()))
+                .thenReturn(new GitHubAppService.InstallationTokenResult("ghs_abc", expiry));
+
+        RuntimeCredential credential = connector.issueRuntimeCredential(conn, new CredentialRequest(null));
+
+        assertThat(credential.envHint()).isEqualTo("GH_TOKEN");
+        assertThat(credential.value()).isEqualTo("ghs_abc");
+        assertThat(credential.expiresAt()).isEqualTo(expiry);
+    }
+
+    @Test
+    void issueRuntimeCredential_withRepoFullName_scopesToSingleRepoList() {
+        Connection conn = connectionWithConfig("{\"installationId\":\"42\"}");
+        java.time.Instant expiry = java.time.Instant.now().plusSeconds(3600);
+        when(gitHubAppService.installationToken("42", List.of("Rexworks-LLC/nexus-backend")))
+                .thenReturn(new GitHubAppService.InstallationTokenResult("ghs_scoped", expiry));
+
+        RuntimeCredential credential = connector.issueRuntimeCredential(
+                conn, new CredentialRequest("Rexworks-LLC/nexus-backend"));
+
+        assertThat(credential.value()).isEqualTo("ghs_scoped");
+        verify(gitHubAppService).installationToken("42", List.of("Rexworks-LLC/nexus-backend"));
+    }
+
+    @Test
+    void issueRuntimeCredential_nullRequest_isTreatedAsUnscoped() {
+        Connection conn = connectionWithConfig("{\"installationId\":\"42\"}");
+        when(gitHubAppService.installationToken("42", List.of()))
+                .thenReturn(new GitHubAppService.InstallationTokenResult("ghs_abc", java.time.Instant.now()));
+
+        connector.issueRuntimeCredential(conn, null);
+
+        verify(gitHubAppService).installationToken("42", List.of());
+    }
+
+    @Test
+    void issueRuntimeCredential_missingInstallationId_throwsClearly() {
+        Connection conn = connectionWithConfig("{}");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> connector.issueRuntimeCredential(conn, new CredentialRequest(null)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("installationId");
+        verify(gitHubAppService, never()).installationToken(anyString(), any());
     }
 }

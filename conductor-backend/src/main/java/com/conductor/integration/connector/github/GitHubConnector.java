@@ -1,5 +1,6 @@
 package com.conductor.integration.connector.github;
 
+import com.conductor.entity.Connection;
 import com.conductor.integration.*;
 import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSubmission;
@@ -10,6 +11,7 @@ import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
 import com.conductor.service.ProjectSettingsService;
 import com.conductor.service.WorkItemService;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -24,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -44,11 +47,14 @@ import java.util.regex.Pattern;
  *       installation_repositories is a no-op — repos are listed live).</li>
  *   <li>{@link #handleEvent} maps a merged PR whose body says "closes conductor/KEY-N" → issue DONE,
  *       delegating the aggregate mutation + notifications to {@link WorkItemService}.</li>
+ *   <li>{@link #issueRuntimeCredential} (CREDENTIAL capability) mints a short-lived, optionally
+ *       repo-scoped installation token for injection into a {@code claude-code} container's env — see
+ *       {@code ClaudeCodeContainerRunner#buildEnv}.</li>
  * </ul>
  * Install/callback/repo-listing live in {@link GitHubAppController}.
  */
 @Component
-public class GitHubConnector implements WebhookConnector {
+public class GitHubConnector implements WebhookConnector, CredentialConnector {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubConnector.class);
 
@@ -319,6 +325,41 @@ public class GitHubConnector implements WebhookConnector {
         }
 
         notificationDispatcher.dispatch(NotificationEvent.of(EventType.GITHUB_PULL_REQUEST, ctx.projectId(), meta));
+    }
+
+    /**
+     * CREDENTIAL capability: mints an installation access token for the connection's {@code
+     * installationId}, scoped to {@code request.repoFullName()} when present (a single-repo scope
+     * list), unscoped otherwise. Reads the connection's {@code configJson} fresh — never the
+     * triggering event's {@code installationId} metadata, which could be stale by the time a
+     * long-running step executes.
+     */
+    @Override
+    public RuntimeCredential issueRuntimeCredential(Connection connection, CredentialRequest request) {
+        Map<String, Object> config = parseConfig(connection.getConfigJson());
+        Object rawInstallationId = config.get(INSTALLATION_ID_KEY);
+        if (rawInstallationId == null || rawInstallationId.toString().isBlank()) {
+            throw new IllegalStateException(
+                    "GitHub connection " + connection.getId() + " has no installationId configured");
+        }
+        String installationId = rawInstallationId.toString();
+        List<String> repositories = (request != null && request.repoFullName() != null && !request.repoFullName().isBlank())
+                ? List.of(request.repoFullName())
+                : List.of();
+
+        GitHubAppService.InstallationTokenResult result =
+                gitHubAppService.installationToken(installationId, repositories);
+        return new RuntimeCredential("GH_TOKEN", result.token(), result.expiresAt());
+    }
+
+    /** Same config-map JSON parsing approach as {@link GitHubAppController#parseConfig}. */
+    private Map<String, Object> parseConfig(String json) {
+        if (json == null || json.isBlank() || json.equals("{}")) return new HashMap<>();
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            return new HashMap<>();
+        }
     }
 
     private static void putIfPresent(Map<String, String> map, String key, String value) {

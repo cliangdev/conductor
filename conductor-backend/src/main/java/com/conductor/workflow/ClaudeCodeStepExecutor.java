@@ -2,6 +2,8 @@ package com.conductor.workflow;
 
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -56,9 +58,49 @@ public class ClaudeCodeStepExecutor implements WorkflowExecutionBackend {
         Map<String, Object> outputSchema = outputSchemaObj instanceof Map
                 ? (Map<String, Object>) outputSchemaObj : null;
 
+        List<Map<String, Object>> credentials = parseCredentials(stepDef);
+        Map<String, String> extraEnv = interpolateEnv(stepDef, ctx);
+
         ClaudeCodeContainerRunner.ClaudeCodeInvocation inv = new ClaudeCodeContainerRunner.ClaudeCodeInvocation(
-                prompt, allowedTools, maxTurns, timeoutMinutes, conductorMcp, outputSchema, STEP_TYPE);
+                prompt, allowedTools, maxTurns, timeoutMinutes, conductorMcp, outputSchema, STEP_TYPE,
+                credentials, extraEnv);
         return runner.run(context, inv);
+    }
+
+    /** {@code credentials:} entries are literal {@code {connector, as}} maps — no interpolation on the
+     *  map structure itself, mirroring how {@code with.agent}/{@code with.action} refs work elsewhere. */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> parseCredentials(Map<String, Object> stepDef) {
+        Object credentialsObj = stepDef.get("credentials");
+        if (!(credentialsObj instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Map<String, Object>> result = new java.util.ArrayList<>();
+        for (Object entry : list) {
+            if (entry instanceof Map) {
+                result.add((Map<String, Object>) entry);
+            }
+        }
+        return result;
+    }
+
+    /** Interpolates the step's {@code env:} block values through {@link WorkflowInterpolator}, mirroring
+     *  {@code DockerStepExecutor#interpolateEnv}. */
+    @SuppressWarnings("unchecked")
+    private Map<String, String> interpolateEnv(Map<String, Object> stepDef, RuntimeContext ctx) {
+        Map<String, String> result = new LinkedHashMap<>();
+        Object envObj = stepDef.get("env");
+        if (!(envObj instanceof Map)) {
+            return result;
+        }
+        Map<String, Object> envMap = (Map<String, Object>) envObj;
+        for (Map.Entry<String, Object> entry : envMap.entrySet()) {
+            String value = entry.getValue() != null
+                    ? interpolator.interpolate(entry.getValue().toString(), ctx)
+                    : "";
+            result.put(entry.getKey(), value);
+        }
+        return result;
     }
 
     private boolean getBooleanOrDefault(Map<String, Object> map, String key, boolean defaultValue) {

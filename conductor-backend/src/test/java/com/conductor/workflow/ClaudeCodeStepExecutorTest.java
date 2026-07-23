@@ -7,8 +7,11 @@ import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.entity.WorkflowStepStatus;
+import com.conductor.integration.ConnectorRegistry;
+import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
+import com.conductor.service.ActiveConnectionResolver;
 import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +44,8 @@ class ClaudeCodeStepExecutorTest {
     @Mock private ProjectSettingsRepository projectSettingsRepository;
     @Mock private RuntimeTargetService runtimeTargetService;
     @Mock private WorkflowRunLogBroker logBroker;
+    @Mock private ConnectionRepository connectionRepository;
+    @Mock private ConnectorRegistry connectorRegistry;
 
     private RuntimeTargetResolver runtimeTargetResolver;
     private ClaudeCodeContainerRunner runner;
@@ -56,7 +61,8 @@ class ClaudeCodeStepExecutorTest {
         // through that runner, just with the poll sleep stubbed out for speed.
         runner = new ClaudeCodeContainerRunner(launcher, runtimeTargetResolver, credentialService,
                 stepRunRepository, runTokenService, projectSettingsRepository,
-                new WorkflowInterpolator(), new ObjectMapper(), logBroker, "http://localhost:8080") {
+                new WorkflowInterpolator(), new ObjectMapper(), logBroker,
+                new ActiveConnectionResolver(connectionRepository), connectorRegistry, "http://localhost:8080") {
             @Override
             protected void sleepSeconds(int seconds) {
                 // no-op for fast tests

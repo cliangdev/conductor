@@ -5,4 +5,4 @@ package com.conductor.integration;
  * ({@link FetchConnector}, {@link WebhookConnector}, {@link ActionConnector}) — surfaced to the
  * hub UI so it knows whether to render an OAuth redirect, an API-key modal, or a webhook setup panel.
  */
-public enum Capability { FETCH, WEBHOOK, ACTION }
+public enum Capability { FETCH, WEBHOOK, ACTION, CREDENTIAL }
