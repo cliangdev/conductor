@@ -180,6 +180,11 @@ export function RuntimeTargetCreateModal({
             required
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
+          <p className="mt-1 text-xs text-muted-foreground">
+            Cloud Run pins this tag to a specific image digest right now — pushing a newer image to
+            the same tag later won&apos;t take effect on its own. Use &ldquo;Sync to latest
+            image&rdquo; on the target&apos;s row menu after a new push.
+          </p>
         </div>
         <div>
           <label htmlFor="runtime-job-name" className="block text-sm font-medium text-foreground mb-1">

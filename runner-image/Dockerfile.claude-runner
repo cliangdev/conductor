@@ -34,19 +34,20 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | g
     && rm -rf /var/lib/apt/lists/*
 
 # Claude CLI pinned (same version as ../Dockerfile — bump deliberately, verify against the exit
-# taxonomy in conductor-claude-entrypoint.mjs when upgrading). @cliangdev/conductor (the MCP
-# server) is pre-installed globally so the entrypoint's `npx -y @cliangdev/conductor mcp` resolves
-# with no network call at job start.
-#
-# A plain `npm install -g` is not enough: npx resolves a scoped package spec like
-# "@cliangdev/conductor" through its own resolution cache (~/.npm/_npx), which a global install
-# never populates — it only gets written the first time npx itself runs that exact spec. So we
-# point NPM_CONFIG_CACHE at a shared, world-writable location and run the same `npx -y
-# @cliangdev/conductor --version` the entrypoint uses (while the build still has network) to warm
-# that cache, then it's available to any user at container runtime with no registry call.
+# taxonomy in conductor-claude-entrypoint.mjs when upgrading). Installed with npm's default
+# (ephemeral) cache, then cleaned — that cache would otherwise sit in the image holding tarballs
+# for claude-code and its deps that are already extracted into node_modules, pure waste.
+RUN npm install -g @anthropic-ai/claude-code@2.1.206 @cliangdev/conductor \
+    && npm cache clean --force
+
+# @cliangdev/conductor (the MCP server) needs a *second*, separate warm-up so the entrypoint's
+# `npx -y @cliangdev/conductor mcp` resolves with no network call at job start: npx resolves a
+# scoped package spec through its own resolution cache, which a plain global install never
+# populates — it's only written the first time npx itself runs that exact spec. NPM_CONFIG_CACHE
+# is scoped to just this step (not the install above) so the persisted cache holds only what npx
+# needs for this one spec, not the entire install's download cache.
 ENV NPM_CONFIG_CACHE=/opt/npm-cache
 RUN mkdir -p /opt/npm-cache \
-    && npm install -g @anthropic-ai/claude-code@2.1.206 @cliangdev/conductor \
     && npx -y @cliangdev/conductor --version \
     && chmod -R a+rwX /opt/npm-cache
 

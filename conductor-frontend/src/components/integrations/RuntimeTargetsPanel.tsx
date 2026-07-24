@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2Icon, PlusIcon } from 'lucide-react'
+import { Loader2Icon, PlusIcon, RefreshCwIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Alert } from '@/components/ui/alert'
@@ -122,7 +122,11 @@ export default function RuntimeTargetsPanel({
     }
   }
 
-  async function handleRetry(target: RuntimeTarget) {
+  // Re-runs verify-image + create-or-update-Job for the target's *currently configured* image
+  // string. Doubles as "sync to latest": Cloud Run resolves an image tag to a digest and pins it
+  // on the Job at this call, not at container-run time, so a tag like `:latest` that's had a
+  // newer image pushed to it since the last provision needs this to actually pick that up.
+  async function handleProvision(target: RuntimeTarget) {
     if (!accessToken) return
     setRetrying(target.id)
     try {
@@ -132,7 +136,7 @@ export default function RuntimeTargetsPanel({
       setTargets((prev) =>
         prev.map((t) =>
           t.id === target.id
-            ? { ...t, status: 'ERROR', errorMessage: apiErrorMessage(err, 'Retry failed.') }
+            ? { ...t, status: 'ERROR', errorMessage: apiErrorMessage(err, 'Provisioning failed.') }
             : t,
         ),
       )
@@ -228,9 +232,15 @@ export default function RuntimeTargetsPanel({
                           target.status === 'ERROR'
                             ? [{
                                 label: retrying === target.id ? 'Retrying…' : 'Retry provisioning',
-                                onSelect: () => handleRetry(target),
+                                onSelect: () => handleProvision(target),
                               }]
-                            : []
+                            : target.status === 'ACTIVE'
+                              ? [{
+                                  icon: <RefreshCwIcon className="h-4 w-4" />,
+                                  label: retrying === target.id ? 'Syncing…' : 'Sync to latest image',
+                                  onSelect: () => handleProvision(target),
+                                }]
+                              : []
                         }
                       />
                     )}
@@ -265,7 +275,7 @@ export default function RuntimeTargetsPanel({
         open={editTarget !== null}
         onOpenChange={(o) => { if (!o) setEditTarget(null) }}
         title={editTarget ? `Edit ${editTarget.name}` : ''}
-        description="Changing region, image, or job name re-provisions the Cloud Run Job."
+        description="Changing region, image, or job name re-provisions the Cloud Run Job. Saving the same image value again is a no-op — use “Sync to latest image” on the row menu instead."
       >
         {editTarget && (
           <form onSubmit={handleEdit} className="space-y-4">
