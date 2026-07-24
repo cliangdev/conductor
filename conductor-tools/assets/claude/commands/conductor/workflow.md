@@ -41,6 +41,13 @@ Run these in parallel before designing anything:
 2. list_workflows            → existing workflows (for naming/area conventions)
 3. list_connector_catalog    → integrations NOT yet connected, for recommending a fit
 4. list_workflow_secrets     → which ${{ secrets.X }} keys already exist (never their values)
+5. get_workflow_step_schema  → live reference: every step type's fields + valid interpolation
+                                roots/functions, read straight from the engine. Authoritative —
+                                use this instead of recalling step shapes from memory; it reflects
+                                the current engine, including step types added after your training
+                                data.
+6. list_agents                → existing named agents, in case one already fits a step you're
+                                about to write as an inline prompt instead
 ```
 
 Then ask the user (use AskUserQuestion for structured choices where applicable):
@@ -48,7 +55,8 @@ Then ask the user (use AskUserQuestion for structured choices where applicable):
 1. **What is the goal?** One sentence describing what the workflow should do.
 2. **What triggers it?**
    - Weekly/daily/hourly schedule → `on: schedule: cron:`
-   - External push (GitHub, Zapier, etc.) → `on: webhook:`
+   - GitHub PR activity → `on: github.pull_request:` (see below for repo scoping)
+   - Other external push (Zapier, etc.) → `on: webhook:`
    - Work Item status change → `on: conductor.work_item.status_changed:`
    - Manual run button → `on: workflow_dispatch:`
 3. **What data or actions does it need?** (use `list_integration_tools` output to suggest connected options)
@@ -66,6 +74,37 @@ step silently:
 If the design will reference `${{ secrets.SOME_KEY }}`, confirm it's in the `list_workflow_secrets`
 result before designing around it — don't assume a secret exists because the user mentioned it.
 Secrets are added under **Settings → Secrets**.
+
+### GitHub PR trigger — repo scoping and label gating
+
+`on.github.pull_request` fires for **any** repo the connected GitHub App installation covers, on
+`opened`/`labeled`/`synchronize`/`reopened`. Narrow it with `filters:`:
+
+```yaml
+on:
+  github.pull_request:
+    filters:
+      actions: [labeled]           # optional; unfiltered = any of the four actions above
+      labels: [code_review_ready]  # optional; a labeled action is required for this to match
+```
+
+There is **no trigger-level repo filter**. If the workflow should only act on specific repo(s) —
+or should behave differently per repo (e.g. a different review persona per codebase) — ask:
+> "Which repo(s) should this act on? Routing happens per-job via `if: event.repoFullName == 'org/repo'`,
+> not a trigger filter — so different behavior per repo means separate jobs, each gated on the
+> repo name."
+
+Job-level `if:` can reference the same roots as everywhere else — `event`, `secrets`, `inputs`,
+`steps`, `needs`, `loop` (see `get_workflow_step_schema`'s `interpolation` output) — not just
+`needs.*`/`steps.*`. A repo-routing job looks like:
+
+```yaml
+jobs:
+  review_backend:
+    if: "${{ event.repoFullName }} == 'org/backend-repo'"
+    runs-on: cloud-run
+    ...
+```
 
 ---
 
@@ -99,36 +138,54 @@ steps:
         Authorization: Bearer ${{ secrets.MY_API_KEY }}
 ```
 
-### Reference: Step types
+### Step types and fields — check `get_workflow_step_schema`, don't recall from memory
 
-| Step type | `uses` value | When to use |
-|-----------|-------------|-------------|
-| Integration | `integration` | Connected data source (GSC, PostHog, RevenueCat, GCP Billing) |
-| Action | `action` | Outbound side effect via a connector with the ACTION capability (e.g. `discord post_message`) |
-| HTTP | `http` | Any REST API call; custom integrations |
-| Docker | `docker://image` | Run a script or CLI tool in a container |
-| Agent | `agent` | Hand a task to a named AI agent (Settings → Agents) |
-| Claude Code | `claude-code` | Headless Claude Code (`claude -p`), full tool-calling loop, optional Conductor MCP access |
-| Condition | `condition` | Branch to different jobs based on a runtime value |
-| Kestra | `kestra` | Delegate to an existing Kestra flow |
+Don't rely on a memorized table of step types/fields — the exact set of `uses:` values and each
+one's fields (which are required, what types, what constraints) is queryable live via
+`get_workflow_step_schema` (called during Step 1 discovery), and it changes across releases. Use
+its output as the reference while designing. Rough orientation only, to help you pick a starting
+point before checking the live call: `integration`/`action` wrap a connected connector (reads vs.
+outbound side effects); `http`/`docker`/`kestra` cover raw APIs, containers, and Kestra flows;
+`agent`/`claude-code` run an AI step (see below for the decision between them); `condition`
+branches to one of two jobs.
 
-Prefer `uses: action` over a raw `http` step with a webhook-secret whenever an action connector
-exists for the target — same reasoning as preferring `integration` over `http` for reads:
-credentials stay off the connector, never in the YAML.
+Prefer `uses: action`/`uses: integration` over a raw `http` step whenever a connector exists for
+the target — credentials stay off the connector, never in the YAML.
 
-### Reference: Interpolation
+### Authenticated CLI/API access inside a step — the `credentials:` field
 
-| Expression | Value |
-|------------|-------|
-| `${{ event.FIELD }}` | Trigger event payload field |
-| `${{ secrets.SECRET_NAME }}` | Project secret (custom secrets only; integrations don't need this) |
-| `${{ inputs.KEY }}` | A manual-dispatch input value (see `on.workflow_dispatch.inputs`) |
-| `${{ steps.STEP_ID.outputs.KEY }}` | Output from a step in the current job |
-| `${{ steps.STEP_ID.result }}` | Terminal result of a prior step: `success` / `failure` / `skipped` |
-| `${{ needs.JOB_ID.outputs.KEY }}` | Output from a completed upstream job |
-| `${{ needs.JOB_ID.result }}` | Terminal result of an upstream job: `success` / `failure` / `skipped` |
-| `${{ needs.JOB_ID.artifacts.NAME }}` | Signed download URL for an artifact an upstream job produced |
-| `${{ loop.iteration }}` | Current loop iteration (1-based) |
+A `claude-code` or `agent` step that needs to run authenticated CLI commands (e.g. `gh`, `git`)
+must bind the credential explicitly — never assume ambient auth. Check the target connector's
+`capabilities` array in `list_connector_catalog`: if it includes `CREDENTIAL`, bind it via
+`credentials:` (exact shape and any reserved-key constraints are in that step type's entry in
+`get_workflow_step_schema`):
+
+```yaml
+- uses: claude-code
+  with:
+    credentials:
+      - connector: github
+        as: GH_TOKEN
+    prompt: |
+      `gh pr checkout ...`, review the diff, `gh pr comment ...` — GH_TOKEN is already in env.
+```
+
+If the connector you need doesn't show `CREDENTIAL` in `list_connector_catalog`, don't fabricate a
+binding — flag it to the user instead of guessing.
+
+### Named Agent vs. inline prompt
+
+Before writing an inline `claude-code`/`agent` prompt for a task that's really a repeatable persona
+(a code reviewer, a triager, an analyst) rather than a one-off, check `list_agents` for an existing
+match. If none fits, ask the user:
+> "This looks like a reusable reviewer persona — want me to create a dedicated named Agent for it
+> (visible under Settings → Agents, reusable across workflows), or keep it as an inline prompt in
+> this workflow's YAML?"
+
+A named agent is created with `create_agent` (always call `list_agents` afterward to confirm it
+stored correctly) and referenced from a step as `uses: agent` / `with: {agent: <slug>, task: ...}`.
+Both patterns are equally valid — the decision is about reuse and reviewability, not correctness;
+don't default to inline silently.
 
 ### Annotated example — Weekly SEO report
 
@@ -208,6 +265,38 @@ on:
 ```
 
 Reference it as `${{ inputs.date }}` anywhere in the workflow.
+
+**Gating a job on a computed value.** When a job needs to branch on something that isn't directly
+in the trigger event (e.g. "does this PR touch `backend/`?"), don't reinvent it as a per-job
+self-check — use a dedicated detect job with `output_schema` and consume its structured output via
+`needs.JOB.outputs.KEY` in a downstream `if:`:
+
+```yaml
+jobs:
+  detect_changes:
+    runs-on: cloud-run
+    steps:
+      - id: detect
+        uses: claude-code
+        with:
+          credentials: [{connector: github, as: GH_TOKEN}]
+          prompt: |
+            Repo: ${{ event.repoFullName }}, PR #${{ event.prNumber }}. Run:
+              gh pr view ${{ event.prNumber }} --repo ${{ event.repoFullName }} --json files -q '.files[].path'
+            Return hasBackendChanges: "true"/"false" if any path starts with "backend/".
+          output_schema:
+            type: object
+            required: [hasBackendChanges]
+            properties: { hasBackendChanges: { type: string, enum: ["true", "false"] } }
+        outputs:
+          hasBackendChanges: body.hasBackendChanges
+
+  review_backend:
+    needs: detect_changes
+    if: "${{ needs.detect_changes.outputs.hasBackendChanges }} == 'true'"
+    runs-on: cloud-run
+    ...
+```
 
 ## Artifacts
 
@@ -349,7 +438,9 @@ publish_workflow(workflowId)                 // DRAFT → PUBLISHED
 
 These rules apply regardless of the user's request. Never deviate from them.
 
-1. **Always call `list_integration_tools` before designing** — never guess what integrations are available from secret key names or conversation context.
+1. **Always call `list_integration_tools`, `list_connector_catalog`, and `get_workflow_step_schema`
+   before designing** — never guess what integrations are available or what a step type's fields
+   are from secret key names, conversation context, or memory of a prior session.
 2. **Use `uses: integration` for reads and `uses: action` for outbound side effects** on any connected integration — credentials must never appear in workflow YAML.
 3. **Always call `get_workflow` after `create_workflow`** — close the observability loop before publishing.
 4. **DRAFT is the safe buffer** — only call `publish_workflow` when the design is fully confirmed.
@@ -357,3 +448,9 @@ These rules apply regardless of the user's request. Never deviate from them.
 6. **Never invent connector IDs** — use `list_integration_tools` for what's connected, `list_connector_catalog` for what's available but not yet connected. Same for secrets: verify with `list_workflow_secrets` before designing around a `${{ secrets.X }}` reference.
 7. **Register a custom skill before binding it** — for a statechart `skill` step whose id is not a built-in or
    already registered (`list_skills`), call `register_skill` first, or Publish will reject the definition.
+8. **Bind `credentials:` explicitly for authenticated CLI/API access** — never assume a
+   `claude-code`/`agent` step has ambient `gh`/`git` auth. Check the connector's `capabilities` in
+   `list_connector_catalog` for `CREDENTIAL`, and bind it via `credentials:`.
+9. **Don't default silently to an inline prompt for a persona-style task** — check `list_agents`
+   first, and ask the user whether a dedicated named Agent (`create_agent`) would serve better
+   before writing a one-off `claude-code`/`agent` prompt.
