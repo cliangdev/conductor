@@ -44,6 +44,16 @@ public class ApiAgentStepRuntime implements AgentStepRuntime {
         Map<String, Object> stepDef = context.getStepDefinition();
         String agentRef = call.agent().slug() != null ? call.agent().slug() : call.agent().id();
 
+        boolean hasCredentials = call.credentials() != null && !call.credentials().isEmpty();
+        boolean hasExtraEnv = call.extraEnv() != null && !call.extraEnv().isEmpty();
+        if (hasCredentials || hasExtraEnv) {
+            // The api runtime is an in-process model call with no container/shell to inject into —
+            // declaring credentials/env here is meaningless and must be a loud, explicit failure,
+            // never a silent no-op. Mirrors ClaudeCodeAgentStepRuntime's AGENT_TOOL_NOT_AVAILABLE_ON_CLAUDE_CODE precedent.
+            return StepResult.failed("", "CREDENTIALS_NOT_AVAILABLE_ON_API_RUNTIME: agent=" + agentRef
+                    + " declares credentials/env, but the 'api' runtime has no container to inject them into");
+        }
+
         try {
             // The agent module resolves the agent by slug-then-id internally (single load, possibly a
             // second lookup after AgentStepExecutor's resolveDefinition — see AgentExecutionService.run's

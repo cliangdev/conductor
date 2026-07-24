@@ -171,6 +171,98 @@ class WorkflowYamlParserTest {
     }
 
     @Test
+    void gitHubPullRequestTrigger_withBothFilters_parsesEventTypeAndFilters() {
+        String yaml = """
+                on:
+                  github.pull_request:
+                    filters:
+                      actions: [opened, labeled, synchronize, reopened]
+                      labels: [code_review_ready]
+                jobs:
+                  build:
+                    steps:
+                      - type: http
+                        url: https://example.com
+                """;
+        WorkflowSpec spec = parser.parse(yaml);
+        assertThat(spec.triggers().pullRequestEvents()).hasSize(1);
+        GitHubPullRequestTrigger trigger = spec.triggers().pullRequestEvents().get(0);
+        assertThat(trigger.eventType()).isEqualTo("github.pull_request");
+        assertThat(trigger.actionFilter()).containsExactly("opened", "labeled", "synchronize", "reopened");
+        assertThat(trigger.labelFilter()).containsExactly("code_review_ready");
+    }
+
+    @Test
+    void gitHubPullRequestTrigger_withOnlyActionFilter_hasEmptyLabelFilter() {
+        String yaml = """
+                on:
+                  github.pull_request:
+                    filters:
+                      actions: [opened]
+                jobs:
+                  build:
+                    steps:
+                      - type: http
+                        url: https://example.com
+                """;
+        WorkflowSpec spec = parser.parse(yaml);
+        GitHubPullRequestTrigger trigger = spec.triggers().pullRequestEvents().get(0);
+        assertThat(trigger.actionFilter()).containsExactly("opened");
+        assertThat(trigger.labelFilter()).isEmpty();
+    }
+
+    @Test
+    void gitHubPullRequestTrigger_withOnlyLabelFilter_hasEmptyActionFilter() {
+        String yaml = """
+                on:
+                  github.pull_request:
+                    filters:
+                      labels: [code_review_ready]
+                jobs:
+                  build:
+                    steps:
+                      - type: http
+                        url: https://example.com
+                """;
+        WorkflowSpec spec = parser.parse(yaml);
+        GitHubPullRequestTrigger trigger = spec.triggers().pullRequestEvents().get(0);
+        assertThat(trigger.actionFilter()).isEmpty();
+        assertThat(trigger.labelFilter()).containsExactly("code_review_ready");
+    }
+
+    @Test
+    void gitHubPullRequestTrigger_withNoFilters_hasEmptyFilters() {
+        String yaml = """
+                on:
+                  github.pull_request: {}
+                jobs:
+                  build:
+                    steps:
+                      - type: http
+                        url: https://example.com
+                """;
+        WorkflowSpec spec = parser.parse(yaml);
+        assertThat(spec.triggers().pullRequestEvents()).hasSize(1);
+        assertThat(spec.triggers().pullRequestEvents().get(0).actionFilter()).isEmpty();
+        assertThat(spec.triggers().pullRequestEvents().get(0).labelFilter()).isEmpty();
+    }
+
+    @Test
+    void gitHubPullRequestTrigger_absent_isEmptyList() {
+        String yaml = """
+                on:
+                  workflow_dispatch: {}
+                jobs:
+                  build:
+                    steps:
+                      - type: http
+                        url: https://example.com
+                """;
+        WorkflowSpec spec = parser.parse(yaml);
+        assertThat(spec.triggers().pullRequestEvents()).isEmpty();
+    }
+
+    @Test
     void scheduleTrigger_parsesCron() {
         String yaml = """
                 on:

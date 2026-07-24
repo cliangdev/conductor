@@ -10,6 +10,7 @@ import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowScheduleRepository;
 import com.conductor.workflow.model.ConductorEventTrigger;
+import com.conductor.workflow.model.GitHubPullRequestTrigger;
 import com.conductor.workflow.model.JobSpec;
 import com.conductor.workflow.model.StepSpec;
 import com.conductor.workflow.model.WorkflowSpec;
@@ -80,6 +81,31 @@ public class WorkflowTriggerService {
             if (!passesStatusFilter(trigger, event)) continue;
 
             createRun(workflow, "conductor.work_item.status_changed", buildEventPayload(event));
+        }
+    }
+
+    /**
+     * Called by NotificationDispatcher after a GitHub pull request event fires.
+     * Finds all enabled workflows in the project with a matching {@code github.pull_request} trigger
+     * and creates WorkflowRun rows.
+     */
+    @Transactional
+    public void onGitHubPullRequest(NotificationEvent event) {
+        if (event.getEventType() != EventType.GITHUB_PULL_REQUEST) return;
+
+        String projectId = event.getProjectId();
+        List<WorkflowDefinition> workflows = workflowRepository.findByProjectId(projectId);
+
+        for (WorkflowDefinition workflow : workflows) {
+            if (!workflow.isEnabled()) continue;
+            if (workflow.getYaml() == null) continue;
+            WorkflowSpec spec = parseYaml(workflow.getYaml());
+            if (spec == null) continue;
+            GitHubPullRequestTrigger trigger = spec.triggers().pullRequestEvents().stream().findFirst().orElse(null);
+            if (trigger == null) continue;
+            if (!passesPrFilters(trigger, event)) continue;
+
+            createRun(workflow, "github.pull_request", buildPullRequestEventPayload(event));
         }
     }
 
@@ -251,6 +277,33 @@ public class WorkflowTriggerService {
     private String buildEventPayload(NotificationEvent event) {
         Map<String, Object> payload = new HashMap<>(event.getMetadata());
         payload.put("type", "conductor.work_item.status_changed");
+        return toJson(payload);
+    }
+
+    /**
+     * Passes when no action filter is declared, or the event's action matches any declared entry
+     * (case-insensitive); and when no label filter is declared, or the event carries a {@code label}
+     * metadata key matching any declared entry. A non-{@code labeled} action has no {@code label} key
+     * at all, so a declared {@code labelFilter} correctly excludes it unless the action filter also
+     * separately matches.
+     */
+    private boolean passesPrFilters(GitHubPullRequestTrigger trigger, NotificationEvent event) {
+        List<String> actionFilter = trigger.actionFilter();
+        if (!actionFilter.isEmpty()) {
+            String action = event.getMetadata().get("action");
+            if (actionFilter.stream().noneMatch(a -> a.equalsIgnoreCase(action))) return false;
+        }
+        List<String> labelFilter = trigger.labelFilter();
+        if (!labelFilter.isEmpty()) {
+            String label = event.getMetadata().get("label");
+            if (label == null || labelFilter.stream().noneMatch(l -> l.equalsIgnoreCase(label))) return false;
+        }
+        return true;
+    }
+
+    private String buildPullRequestEventPayload(NotificationEvent event) {
+        Map<String, Object> payload = new HashMap<>(event.getMetadata());
+        payload.put("type", "github.pull_request");
         return toJson(payload);
     }
 

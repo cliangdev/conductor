@@ -2,11 +2,16 @@ package com.conductor.integration.connector.github;
 
 import com.conductor.entity.Connection;
 import com.conductor.integration.ConnectionContext;
+import com.conductor.integration.CredentialRequest;
 import com.conductor.integration.InboundEvent;
+import com.conductor.integration.RuntimeCredential;
 import com.conductor.integration.WebhookRouting;
 import com.conductor.integration.WebhookVerification;
 import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSubmission;
+import com.conductor.notification.EventType;
+import com.conductor.notification.NotificationDispatcher;
+import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
 import com.conductor.service.ProjectSettingsService;
@@ -50,6 +55,7 @@ class GitHubConnectorTest {
     @Mock private GitHubAppService gitHubAppService;
     @Mock private KnowledgeIngestionService knowledgeIngestionService;
     @Mock private ProjectSettingsService projectSettingsService;
+    @Mock private NotificationDispatcher notificationDispatcher;
 
     private GitHubConnector connector;
 
@@ -59,7 +65,8 @@ class GitHubConnectorTest {
         // they don't need to stub it; the dedicated knowledge tests below override it.
         lenient().when(projectSettingsService.isKnowledgeEnabled(anyString())).thenReturn(false);
         connector = new GitHubConnector(workItemService, connectionRepository, connectionService,
-                gitHubAppService, knowledgeIngestionService, projectSettingsService, new ObjectMapper(), APP_SECRET);
+                gitHubAppService, knowledgeIngestionService, projectSettingsService, notificationDispatcher,
+                new ObjectMapper(), APP_SECRET);
     }
 
     private ConnectionContext ctx() {
@@ -97,7 +104,8 @@ class GitHubConnectorTest {
     @Test
     void verify_failsWhenAppSecretNotConfigured() throws Exception {
         GitHubConnector noSecret = new GitHubConnector(workItemService, connectionRepository, connectionService,
-                gitHubAppService, knowledgeIngestionService, projectSettingsService, new ObjectMapper(), "");
+                gitHubAppService, knowledgeIngestionService, projectSettingsService, notificationDispatcher,
+                new ObjectMapper(), "");
         byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
         assertThat(noSecret.verify(body, signedHeaders(body), ctx()).valid()).isFalse();
     }
@@ -261,5 +269,149 @@ class GitHubConnectorTest {
         connector.handleEvent(new InboundEvent("d7", "pull_request", payload, Map.of()), ctx());
 
         verify(knowledgeIngestionService, never()).submit(any());
+    }
+
+    // --- handleEvent() : firable PR actions dispatch GITHUB_PULL_REQUEST for workflow triggers ---
+
+    private static final String PR_ACTION_PAYLOAD_TEMPLATE =
+            "{\"action\":\"%s\",\"installation\":{\"id\":42},"
+            + "\"repository\":{\"name\":\"nexus-backend\",\"full_name\":\"Rexworks-LLC/nexus-backend\"},"
+            + "\"pull_request\":{\"number\":7,\"title\":\"Add feature\",\"merged\":false,"
+            + "\"user\":{\"login\":\"alice\"},\"head\":{\"ref\":\"feature-branch\"},\"base\":{\"ref\":\"main\"},"
+            + "\"html_url\":\"https://github.com/Rexworks-LLC/nexus-backend/pull/7\"}}";
+
+    @Test
+    void handleEvent_prOpened_dispatchesGitHubPullRequestEventWithMetadata() {
+        String payload = String.format(PR_ACTION_PAYLOAD_TEMPLATE, "opened");
+
+        connector.handleEvent(new InboundEvent("d8", "pull_request", payload, Map.of()), ctx());
+
+        org.mockito.ArgumentCaptor<NotificationEvent> captor = org.mockito.ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher).dispatch(captor.capture());
+        NotificationEvent event = captor.getValue();
+        assertThat(event.getEventType()).isEqualTo(EventType.GITHUB_PULL_REQUEST);
+        assertThat(event.getProjectId()).isEqualTo(PROJECT_ID);
+        assertThat(event.getMetadata())
+                .containsEntry("repoName", "nexus-backend")
+                .containsEntry("repoFullName", "Rexworks-LLC/nexus-backend")
+                .containsEntry("prNumber", "7")
+                .containsEntry("prTitle", "Add feature")
+                .containsEntry("author", "alice")
+                .containsEntry("headRef", "feature-branch")
+                .containsEntry("baseRef", "main")
+                .containsEntry("htmlUrl", "https://github.com/Rexworks-LLC/nexus-backend/pull/7")
+                .containsEntry("installationId", "42")
+                .containsEntry("action", "opened")
+                .doesNotContainKey("label");
+    }
+
+    @Test
+    void handleEvent_prSynchronize_dispatchesGitHubPullRequestEvent() {
+        String payload = String.format(PR_ACTION_PAYLOAD_TEMPLATE, "synchronize");
+        connector.handleEvent(new InboundEvent("d9", "pull_request", payload, Map.of()), ctx());
+        verify(notificationDispatcher).dispatch(any());
+    }
+
+    @Test
+    void handleEvent_prReopened_dispatchesGitHubPullRequestEvent() {
+        String payload = String.format(PR_ACTION_PAYLOAD_TEMPLATE, "reopened");
+        connector.handleEvent(new InboundEvent("d10", "pull_request", payload, Map.of()), ctx());
+        verify(notificationDispatcher).dispatch(any());
+    }
+
+    @Test
+    void handleEvent_prLabeled_includesLabelMetadata() {
+        String payload = "{\"action\":\"labeled\",\"pull_request\":{\"number\":7,\"merged\":false},"
+                + "\"label\":{\"name\":\"code_review_ready\"}}";
+
+        connector.handleEvent(new InboundEvent("d11", "pull_request", payload, Map.of()), ctx());
+
+        org.mockito.ArgumentCaptor<NotificationEvent> captor = org.mockito.ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher).dispatch(captor.capture());
+        assertThat(captor.getValue().getMetadata())
+                .containsEntry("action", "labeled")
+                .containsEntry("label", "code_review_ready");
+    }
+
+    @Test
+    void handleEvent_closedWithoutMerge_doesNotDispatchReviewEventOrMergeCompletion() {
+        String payload = "{\"action\":\"closed\",\"pull_request\":{\"merged\":false,"
+                + "\"body\":\"closes conductor/PROJ-1\"}}";
+
+        connector.handleEvent(new InboundEvent("d12", "pull_request", payload, Map.of()), ctx());
+
+        verify(notificationDispatcher, never()).dispatch(any());
+        verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void handleEvent_unrelatedAction_doesNotDispatch() {
+        String payload = "{\"action\":\"assigned\",\"pull_request\":{\"number\":7,\"merged\":false}}";
+
+        connector.handleEvent(new InboundEvent("d13", "pull_request", payload, Map.of()), ctx());
+
+        verify(notificationDispatcher, never()).dispatch(any());
+        verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    // --- issueRuntimeCredential() : CREDENTIAL capability (Phase B connector-issued runtime credentials) ---
+
+    private Connection connectionWithConfig(String configJson) {
+        Connection c = new Connection();
+        c.setId("conn-gh");
+        c.setConfigJson(configJson);
+        return c;
+    }
+
+    @Test
+    void issueRuntimeCredential_unscoped_returnsGhTokenFromInstallationToken() {
+        Connection conn = connectionWithConfig("{\"installationId\":\"42\"}");
+        java.time.Instant expiry = java.time.Instant.now().plusSeconds(3600);
+        when(gitHubAppService.installationToken("42", List.of()))
+                .thenReturn(new GitHubAppService.InstallationTokenResult("ghs_abc", expiry));
+
+        RuntimeCredential credential = connector.issueRuntimeCredential(conn, new CredentialRequest(null));
+
+        assertThat(credential.envHint()).isEqualTo("GH_TOKEN");
+        assertThat(credential.value()).isEqualTo("ghs_abc");
+        assertThat(credential.expiresAt()).isEqualTo(expiry);
+    }
+
+    @Test
+    void issueRuntimeCredential_withRepoFullName_scopesToBareRepoName() {
+        // GitHub's installation-token "repositories" field expects bare repo names, not owner/repo —
+        // passing the full path 422s with "repository does not exist or is not accessible".
+        Connection conn = connectionWithConfig("{\"installationId\":\"42\"}");
+        java.time.Instant expiry = java.time.Instant.now().plusSeconds(3600);
+        when(gitHubAppService.installationToken("42", List.of("nexus-backend")))
+                .thenReturn(new GitHubAppService.InstallationTokenResult("ghs_scoped", expiry));
+
+        RuntimeCredential credential = connector.issueRuntimeCredential(
+                conn, new CredentialRequest("Rexworks-LLC/nexus-backend"));
+
+        assertThat(credential.value()).isEqualTo("ghs_scoped");
+        verify(gitHubAppService).installationToken("42", List.of("nexus-backend"));
+    }
+
+    @Test
+    void issueRuntimeCredential_nullRequest_isTreatedAsUnscoped() {
+        Connection conn = connectionWithConfig("{\"installationId\":\"42\"}");
+        when(gitHubAppService.installationToken("42", List.of()))
+                .thenReturn(new GitHubAppService.InstallationTokenResult("ghs_abc", java.time.Instant.now()));
+
+        connector.issueRuntimeCredential(conn, null);
+
+        verify(gitHubAppService).installationToken("42", List.of());
+    }
+
+    @Test
+    void issueRuntimeCredential_missingInstallationId_throwsClearly() {
+        Connection conn = connectionWithConfig("{}");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> connector.issueRuntimeCredential(conn, new CredentialRequest(null)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("installationId");
+        verify(gitHubAppService, never()).installationToken(anyString(), any());
     }
 }

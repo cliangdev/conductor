@@ -69,6 +69,7 @@ class WebhookReceiverControllerTest {
                 // no-op here without needing to stub it — this suite only exercises the pre-existing
                 // issue-completion path.
                 org.mockito.Mockito.mock(com.conductor.service.ProjectSettingsService.class),
+                org.mockito.Mockito.mock(com.conductor.notification.NotificationDispatcher.class),
                 new ObjectMapper(), SECRET);
         when(connectorRegistry.findWebhook("github")).thenReturn(Optional.of(connector));
     }

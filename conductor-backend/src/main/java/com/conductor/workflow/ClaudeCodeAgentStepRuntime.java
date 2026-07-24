@@ -58,7 +58,7 @@ public class ClaudeCodeAgentStepRuntime implements AgentStepRuntime {
 
         ClaudeCodeContainerRunner.ClaudeCodeInvocation inv = new ClaudeCodeContainerRunner.ClaudeCodeInvocation(
                 prompt, allowedTools, agent.maxToolTurns(), call.timeoutMinutes(), conductorMcp,
-                call.outputSchema(), "agent");
+                call.outputSchema(), "agent", call.credentials(), call.extraEnv());
         try {
             return runner.run(context, inv);
         } catch (Exception e) {

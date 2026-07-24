@@ -19,6 +19,7 @@ import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.repository.WebhookEventRepository;
+import com.conductor.service.ActiveConnectionResolver;
 import com.conductor.service.ConnectionService;
 import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.JwtService;
@@ -164,7 +165,7 @@ class WorkflowIntegrationToolsTest {
             .thenReturn(ConnectorData.healthy(Map.of("topQueries", List.of("q1", "q2"), "clicks", 100)));
 
         ConnectorRegistry registry = mock(ConnectorRegistry.class);
-        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(new ActiveConnectionResolver(connRepo), fetchSvc, realMapper, registry);
 
         StepExecutionContext ctx = mock(StepExecutionContext.class);
         when(ctx.getProjectId()).thenReturn("proj-1");
@@ -197,7 +198,7 @@ class WorkflowIntegrationToolsTest {
             .thenReturn(ConnectorData.degraded("Fetch failed: 401 invalid_grant — token expired", Map.of()));
 
         ConnectorRegistry registry = mock(ConnectorRegistry.class);
-        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(new ActiveConnectionResolver(connRepo), fetchSvc, realMapper, registry);
 
         StepExecutionContext ctx = mock(StepExecutionContext.class);
         when(ctx.getProjectId()).thenReturn("proj-1");
@@ -231,7 +232,7 @@ class WorkflowIntegrationToolsTest {
             .thenReturn(ConnectorData.healthy(Map.of("clicks", 1)));
 
         ConnectorRegistry registry = mock(ConnectorRegistry.class);
-        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(new ActiveConnectionResolver(connRepo), fetchSvc, realMapper, registry);
 
         StepExecutionContext ctx = mock(StepExecutionContext.class);
         when(ctx.getProjectId()).thenReturn("proj-1");
@@ -255,7 +256,7 @@ class WorkflowIntegrationToolsTest {
         when(connRepo.findByProjectIdAndConnectorId(anyString(), anyString())).thenReturn(List.of());
 
         ConnectorRegistry registry = mock(ConnectorRegistry.class);
-        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(new ActiveConnectionResolver(connRepo), fetchSvc, realMapper, registry);
 
         StepExecutionContext ctx = mock(StepExecutionContext.class);
         when(ctx.getProjectId()).thenReturn("proj-1");
@@ -275,7 +276,7 @@ class WorkflowIntegrationToolsTest {
         IntegrationFetchService fetchSvc = mock(IntegrationFetchService.class);
 
         ConnectorRegistry registry = mock(ConnectorRegistry.class);
-        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(new ActiveConnectionResolver(connRepo), fetchSvc, realMapper, registry);
 
         StepExecutionContext ctx = mock(StepExecutionContext.class);
         when(ctx.getProjectId()).thenReturn("proj-1");
@@ -302,7 +303,7 @@ class WorkflowIntegrationToolsTest {
             .thenReturn(ConnectorData.setupRequired("Configure your Search Console property"));
 
         ConnectorRegistry registry = mock(ConnectorRegistry.class);
-        IntegrationStepExecutor executor = new IntegrationStepExecutor(connRepo, fetchSvc, realMapper, registry);
+        IntegrationStepExecutor executor = new IntegrationStepExecutor(new ActiveConnectionResolver(connRepo), fetchSvc, realMapper, registry);
 
         StepExecutionContext ctx = mock(StepExecutionContext.class);
         when(ctx.getProjectId()).thenReturn("proj-1");

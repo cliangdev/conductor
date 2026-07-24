@@ -3,7 +3,7 @@ package com.conductor.workflow;
 import com.conductor.entity.Connection;
 import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorRegistry;
-import com.conductor.repository.ConnectionRepository;
+import com.conductor.service.ActiveConnectionResolver;
 import com.conductor.service.IntegrationFetchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -12,7 +12,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
 import java.util.LinkedHashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -27,16 +26,16 @@ public class IntegrationStepExecutor implements WorkflowExecutionBackend {
     private static final Logger log = LoggerFactory.getLogger(IntegrationStepExecutor.class);
     private static final int MAX_LOG_BYTES = 2_000;
 
-    private final ConnectionRepository connectionRepository;
+    private final ActiveConnectionResolver activeConnectionResolver;
     private final IntegrationFetchService integrationFetchService;
     private final ObjectMapper objectMapper;
     private final ConnectorRegistry connectorRegistry;
 
-    public IntegrationStepExecutor(ConnectionRepository connectionRepository,
+    public IntegrationStepExecutor(ActiveConnectionResolver activeConnectionResolver,
                                    IntegrationFetchService integrationFetchService,
                                    ObjectMapper objectMapper,
                                    ConnectorRegistry connectorRegistry) {
-        this.connectionRepository = connectionRepository;
+        this.activeConnectionResolver = activeConnectionResolver;
         this.integrationFetchService = integrationFetchService;
         this.objectMapper = objectMapper;
         this.connectorRegistry = connectorRegistry;
@@ -60,11 +59,7 @@ public class IntegrationStepExecutor implements WorkflowExecutionBackend {
             return StepResult.failed("", "Step 'with.connector' is required for integration step");
         }
 
-        List<Connection> connections = connectionRepository.findByProjectIdAndConnectorId(projectId, connectorId);
-        Connection conn = connections.stream()
-            .filter(c -> "ACTIVE".equals(c.getStatus()))
-            .findFirst()
-            .orElse(null);
+        Connection conn = activeConnectionResolver.resolve(projectId, connectorId).orElse(null);
         if (conn == null) {
             return StepResult.failed(
                 "No active connection found for connector: " + connectorId,

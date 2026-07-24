@@ -13,15 +13,20 @@ import java.util.Map;
  * @param schedule            the {@code schedule:} trigger, or null if absent
  * @param webhook             the {@code webhook:} trigger, or null if absent
  * @param events              {@code conductor.*} event triggers declared (0 or 1 today)
+ * @param pullRequestEvents   {@code github.pull_request} event triggers declared (0 or 1 today) —
+ *                            a distinct trigger kind/shape from {@code events}, not folded into it
  * @param hasWorkflowDispatch whether {@code workflow_dispatch:} is present
  * @param raw                 the full {@code on:} block, verbatim
  */
 public record TriggersSpec(ScheduleTrigger schedule, WebhookTrigger webhook,
-                           List<ConductorEventTrigger> events, boolean hasWorkflowDispatch,
+                           List<ConductorEventTrigger> events,
+                           List<GitHubPullRequestTrigger> pullRequestEvents,
+                           boolean hasWorkflowDispatch,
                            Map<String, Object> raw) {
 
     public TriggersSpec {
         events = Copies.list(events);
+        pullRequestEvents = Copies.list(pullRequestEvents);
         raw = Copies.map(raw);
     }
 

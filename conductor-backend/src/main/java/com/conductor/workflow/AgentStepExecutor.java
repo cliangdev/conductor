@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -106,6 +107,9 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
             timeoutMinutes = n.intValue();
         }
 
+        List<Map<String, Object>> credentials = parseCredentials(withBlock);
+        Map<String, String> extraEnv = interpolateEnv(withBlock, ctx);
+
         AgentExecutionService.AgentDefinition agent;
         try {
             agent = agentExecutionService.resolveDefinition(projectId, agentRef);
@@ -128,7 +132,43 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
 
         log.info("agent step: agent={} runtime={}", agentRef, runtimeId);
         AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
-                agent, task, agentContext, outputSchema, timeoutMinutes);
+                agent, task, agentContext, outputSchema, timeoutMinutes, credentials, extraEnv);
         return runtime.run(context, call);
+    }
+
+    /** {@code with.credentials} entries are literal {@code {connector, as}} maps — no interpolation on
+     *  the map structure itself, mirroring {@link ClaudeCodeStepExecutor}'s identical parsing. */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> parseCredentials(Map<String, Object> withBlock) {
+        Object credentialsObj = withBlock.get("credentials");
+        if (!(credentialsObj instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Object entry : list) {
+            if (entry instanceof Map) {
+                result.add((Map<String, Object>) entry);
+            }
+        }
+        return result;
+    }
+
+    /** Interpolates {@code with.env} values through {@link WorkflowInterpolator}, mirroring {@link
+     *  ClaudeCodeStepExecutor}/{@code DockerStepExecutor}'s identical env-interpolation approach. */
+    @SuppressWarnings("unchecked")
+    private Map<String, String> interpolateEnv(Map<String, Object> withBlock, RuntimeContext ctx) {
+        Map<String, String> result = new LinkedHashMap<>();
+        Object envObj = withBlock.get("env");
+        if (!(envObj instanceof Map)) {
+            return result;
+        }
+        Map<String, Object> envMap = (Map<String, Object>) envObj;
+        for (Map.Entry<String, Object> entry : envMap.entrySet()) {
+            String value = entry.getValue() != null
+                    ? interpolator.interpolate(entry.getValue().toString(), ctx)
+                    : "";
+            result.put(entry.getKey(), value);
+        }
+        return result;
     }
 }

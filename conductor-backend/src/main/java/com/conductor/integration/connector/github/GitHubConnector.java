@@ -1,12 +1,17 @@
 package com.conductor.integration.connector.github;
 
+import com.conductor.entity.Connection;
 import com.conductor.integration.*;
 import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSubmission;
+import com.conductor.notification.EventType;
+import com.conductor.notification.NotificationDispatcher;
+import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
 import com.conductor.service.ProjectSettingsService;
 import com.conductor.service.WorkItemService;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -21,10 +26,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -40,11 +47,14 @@ import java.util.regex.Pattern;
  *       installation_repositories is a no-op — repos are listed live).</li>
  *   <li>{@link #handleEvent} maps a merged PR whose body says "closes conductor/KEY-N" → issue DONE,
  *       delegating the aggregate mutation + notifications to {@link WorkItemService}.</li>
+ *   <li>{@link #issueRuntimeCredential} (CREDENTIAL capability) mints a short-lived, optionally
+ *       repo-scoped installation token for injection into a {@code claude-code} container's env — see
+ *       {@code ClaudeCodeContainerRunner#buildEnv}.</li>
  * </ul>
  * Install/callback/repo-listing live in {@link GitHubAppController}.
  */
 @Component
-public class GitHubConnector implements WebhookConnector {
+public class GitHubConnector implements WebhookConnector, CredentialConnector {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubConnector.class);
 
@@ -54,12 +64,18 @@ public class GitHubConnector implements WebhookConnector {
     private static final Pattern CLOSES_PATTERN =
             Pattern.compile("closes\\s+conductor/([A-Z]+-\\d+)", Pattern.CASE_INSENSITIVE);
 
+    /** PR actions that fire {@link EventType#GITHUB_PULL_REQUEST} for review-workflow triggers.
+     *  Deliberately excludes {@code closed}-without-merge (an abandoned PR shouldn't be reviewed) —
+     *  merges are already handled separately above via the issue-completion path. */
+    private static final Set<String> PR_REVIEW_ACTIONS = Set.of("opened", "labeled", "synchronize", "reopened");
+
     private final WorkItemService workItemService;
     private final ConnectionRepository connectionRepository;
     private final ConnectionService connectionService;
     private final GitHubAppService gitHubAppService;
     private final KnowledgeIngestionService knowledgeIngestionService;
     private final ProjectSettingsService projectSettingsService;
+    private final NotificationDispatcher notificationDispatcher;
     private final ObjectMapper objectMapper;
     /** App-level webhook signing secret (one per GitHub App, not per connection). */
     private final String appWebhookSecret;
@@ -70,6 +86,7 @@ public class GitHubConnector implements WebhookConnector {
                            GitHubAppService gitHubAppService,
                            KnowledgeIngestionService knowledgeIngestionService,
                            ProjectSettingsService projectSettingsService,
+                           NotificationDispatcher notificationDispatcher,
                            ObjectMapper objectMapper,
                            @Value("${GITHUB_APP_WEBHOOK_SECRET:}") String appWebhookSecret) {
         this.workItemService = workItemService;
@@ -78,6 +95,7 @@ public class GitHubConnector implements WebhookConnector {
         this.gitHubAppService = gitHubAppService;
         this.knowledgeIngestionService = knowledgeIngestionService;
         this.projectSettingsService = projectSettingsService;
+        this.notificationDispatcher = notificationDispatcher;
         this.objectMapper = objectMapper;
         this.appWebhookSecret = appWebhookSecret;
     }
@@ -188,8 +206,12 @@ public class GitHubConnector implements WebhookConnector {
 
             boolean isMergeEvent = "closed".equals(action) && merged;
             if (!isMergeEvent) {
-                log.info("Skipping event {} - action='{}' merged={} is not a merge event",
-                        event.deliveryId(), action, merged);
+                if (PR_REVIEW_ACTIONS.contains(action)) {
+                    dispatchPullRequestReviewEvent(ctx, root, action);
+                } else {
+                    log.info("Skipping event {} - action='{}' merged={} is not a merge or reviewable action",
+                            event.deliveryId(), action, merged);
+                }
                 return;
             }
 
@@ -271,6 +293,87 @@ public class GitHubConnector implements WebhookConnector {
         } catch (Exception e) {
             log.warn("Failed to submit knowledge source for merged PR (project {}): {}", projectId, e.getMessage());
         }
+    }
+
+    /**
+     * Fires {@link EventType#GITHUB_PULL_REQUEST} so a {@code github.pull_request} workflow trigger
+     * can pick it up. {@code ctx.projectId()} is already the correctly-resolved project id for this
+     * connection (resolved upstream by the installation-id fan-out in {@link #route}) — no extra
+     * {@code ConnectionRepository} lookup is needed here, unlike the merge-completion path above which
+     * needs a different, project-scoped lookup (issue key).
+     */
+    private void dispatchPullRequestReviewEvent(ConnectionContext ctx, JsonNode root, String action) {
+        JsonNode pr = root.path("pull_request");
+        JsonNode repository = root.path("repository");
+
+        Map<String, String> meta = new LinkedHashMap<>();
+        putIfPresent(meta, "repoName", nodeText(repository.path("name")));
+        putIfPresent(meta, "repoFullName", nodeText(repository.path("full_name")));
+        JsonNode numberNode = pr.path("number");
+        if (numberNode.isInt()) {
+            meta.put("prNumber", String.valueOf(numberNode.asInt()));
+        }
+        putIfPresent(meta, "prTitle", nodeText(pr.path("title")));
+        putIfPresent(meta, "author", nodeText(pr.path("user").path("login")));
+        putIfPresent(meta, "headRef", nodeText(pr.path("head").path("ref")));
+        putIfPresent(meta, "baseRef", nodeText(pr.path("base").path("ref")));
+        putIfPresent(meta, "htmlUrl", nodeText(pr.path("html_url")));
+        putIfPresent(meta, "installationId", nodeText(root.path("installation").path("id")));
+        meta.put("action", action);
+        if ("labeled".equals(action)) {
+            putIfPresent(meta, "label", nodeText(root.path("label").path("name")));
+        }
+
+        notificationDispatcher.dispatch(NotificationEvent.of(EventType.GITHUB_PULL_REQUEST, ctx.projectId(), meta));
+    }
+
+    /**
+     * CREDENTIAL capability: mints an installation access token for the connection's {@code
+     * installationId}, scoped to {@code request.repoFullName()} when present (a single-repo scope
+     * list), unscoped otherwise. Reads the connection's {@code configJson} fresh — never the
+     * triggering event's {@code installationId} metadata, which could be stale by the time a
+     * long-running step executes.
+     */
+    @Override
+    public RuntimeCredential issueRuntimeCredential(Connection connection, CredentialRequest request) {
+        Map<String, Object> config = parseConfig(connection.getConfigJson());
+        Object rawInstallationId = config.get(INSTALLATION_ID_KEY);
+        if (rawInstallationId == null || rawInstallationId.toString().isBlank()) {
+            throw new IllegalStateException(
+                    "GitHub connection " + connection.getId() + " has no installationId configured");
+        }
+        String installationId = rawInstallationId.toString();
+        List<String> repositories = (request != null && request.repoFullName() != null && !request.repoFullName().isBlank())
+                ? List.of(bareRepoName(request.repoFullName()))
+                : List.of();
+
+        GitHubAppService.InstallationTokenResult result =
+                gitHubAppService.installationToken(installationId, repositories);
+        return new RuntimeCredential("GH_TOKEN", result.token(), result.expiresAt());
+    }
+
+    /**
+     * GitHub's installation-token {@code repositories} scoping field expects bare repo names (e.g.
+     * {@code "conductor"}), not {@code owner/repo} — passing the full path 422s with "repository does
+     * not exist or is not accessible" since GitHub looks for a repo literally named {@code owner/repo}.
+     */
+    private static String bareRepoName(String repoFullName) {
+        int idx = repoFullName.lastIndexOf('/');
+        return idx >= 0 ? repoFullName.substring(idx + 1) : repoFullName;
+    }
+
+    /** Same config-map JSON parsing approach as {@link GitHubAppController#parseConfig}. */
+    private Map<String, Object> parseConfig(String json) {
+        if (json == null || json.isBlank() || json.equals("{}")) return new HashMap<>();
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            return new HashMap<>();
+        }
+    }
+
+    private static void putIfPresent(Map<String, String> map, String key, String value) {
+        if (value != null) map.put(key, value);
     }
 
     private String installationId(byte[] rawBody) {

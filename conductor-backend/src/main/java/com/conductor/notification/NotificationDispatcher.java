@@ -49,6 +49,12 @@ public class NotificationDispatcher {
         }
 
         try {
+            workflowTriggerService.onGitHubPullRequest(event);
+        } catch (Exception e) {
+            log.warn("GitHub PR workflow trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
+        }
+
+        try {
             lifecycleTriggerDispatcher.onConductorEvent(event);
         } catch (Exception e) {
             log.warn("Lifecycle trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());

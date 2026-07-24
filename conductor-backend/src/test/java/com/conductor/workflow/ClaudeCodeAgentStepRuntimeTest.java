@@ -59,7 +59,7 @@ class ClaudeCodeAgentStepRuntimeTest {
     void promptConcatenatesSystemPromptAndTask() {
         AgentExecutionService.AgentDefinition agent = definition(List.of(), 8);
         AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
-                agent, "File the batch.", Map.of(), null, null);
+                agent, "File the batch.", Map.of(), null, null, List.of(), Map.of());
         when(runner.run(any(), any())).thenReturn(StepResult.success("ok", Map.of()));
 
         runtime.run(context(), call);
@@ -74,7 +74,7 @@ class ClaudeCodeAgentStepRuntimeTest {
     void contextMapAppendedToPromptAsJsonBlock() {
         AgentExecutionService.AgentDefinition agent = definition(List.of(), 8);
         AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
-                agent, "File the batch.", Map.of("repo", "cliangdev/conductor"), null, null);
+                agent, "File the batch.", Map.of("repo", "cliangdev/conductor"), null, null, List.of(), Map.of());
         when(runner.run(any(), any())).thenReturn(StepResult.success("ok", Map.of()));
 
         runtime.run(context(), call);
@@ -98,7 +98,7 @@ class ClaudeCodeAgentStepRuntimeTest {
                 .thenReturn(Optional.of("mcp__conductor__write_knowledge_pages"));
         when(runner.run(any(), any())).thenReturn(StepResult.success("ok", Map.of()));
 
-        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null);
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null, List.of(), Map.of());
         runtime.run(context(), call);
 
         ArgumentCaptor<ClaudeCodeContainerRunner.ClaudeCodeInvocation> captor =
@@ -113,7 +113,7 @@ class ClaudeCodeAgentStepRuntimeTest {
         AgentExecutionService.AgentDefinition agent = definition(List.of("http:some-tool"), 8);
         when(toolRegistry.claudeCodeToolName("http:some-tool")).thenReturn(Optional.empty());
 
-        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null);
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null, List.of(), Map.of());
         StepResult result = runtime.run(context(), call);
 
         assertThat(result.getStatus()).isEqualTo(com.conductor.entity.WorkflowStepStatus.FAILED);
@@ -126,7 +126,7 @@ class ClaudeCodeAgentStepRuntimeTest {
         AgentExecutionService.AgentDefinition agent = definition(List.of(), 8);
         when(runner.run(any(), any())).thenReturn(StepResult.success("ok", Map.of()));
 
-        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null);
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null, List.of(), Map.of());
         runtime.run(context(), call);
 
         ArgumentCaptor<ClaudeCodeContainerRunner.ClaudeCodeInvocation> captor =
@@ -141,7 +141,7 @@ class ClaudeCodeAgentStepRuntimeTest {
         AgentExecutionService.AgentDefinition agent = definition(List.of(), 25);
         when(runner.run(any(), any())).thenReturn(StepResult.success("ok", Map.of()));
 
-        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null);
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null, List.of(), Map.of());
         runtime.run(context(), call);
 
         ArgumentCaptor<ClaudeCodeContainerRunner.ClaudeCodeInvocation> captor =
@@ -157,7 +157,7 @@ class ClaudeCodeAgentStepRuntimeTest {
                 .thenReturn(Optional.of("mcp__conductor__search_knowledge"));
         when(runner.run(any(), any())).thenReturn(StepResult.success("ok", Map.of()));
 
-        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null);
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null, List.of(), Map.of());
         runtime.run(context(), call);
 
         ArgumentCaptor<ClaudeCodeContainerRunner.ClaudeCodeInvocation> captor =
@@ -171,7 +171,7 @@ class ClaudeCodeAgentStepRuntimeTest {
         AgentExecutionService.AgentDefinition agent = definition(List.of(), 8);
         when(runner.run(any(), any())).thenReturn(StepResult.success("ok", Map.of()));
 
-        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null);
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null, List.of(), Map.of());
         runtime.run(context(), call);
 
         ArgumentCaptor<ClaudeCodeContainerRunner.ClaudeCodeInvocation> captor =
@@ -185,11 +185,29 @@ class ClaudeCodeAgentStepRuntimeTest {
         AgentExecutionService.AgentDefinition agent = definition(List.of(), 8);
         when(runner.run(any(), any())).thenThrow(new IllegalStateException("KMS decrypt failed"));
 
-        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null);
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null, List.of(), Map.of());
         StepResult result = runtime.run(context(), call);
 
         assertThat(result.getStatus()).isEqualTo(com.conductor.entity.WorkflowStepStatus.FAILED);
         assertThat(result.getErrorReason()).contains("KMS decrypt failed");
+    }
+
+    @Test
+    void credentialsAndExtraEnvAreForwardedToInvocation() {
+        AgentExecutionService.AgentDefinition agent = definition(List.of(), 8);
+        List<Map<String, Object>> credentials = List.of(Map.of("connector", "github", "as", "GH_TOKEN"));
+        Map<String, String> extraEnv = Map.of("MY_VAR", "hello");
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
+                agent, "task", Map.of(), null, null, credentials, extraEnv);
+        when(runner.run(any(), any())).thenReturn(StepResult.success("ok", Map.of()));
+
+        runtime.run(context(), call);
+
+        ArgumentCaptor<ClaudeCodeContainerRunner.ClaudeCodeInvocation> captor =
+                ArgumentCaptor.forClass(ClaudeCodeContainerRunner.ClaudeCodeInvocation.class);
+        verify(runner).run(any(), captor.capture());
+        assertThat(captor.getValue().credentials()).isEqualTo(credentials);
+        assertThat(captor.getValue().extraEnv()).isEqualTo(extraEnv);
     }
 
     @Test
@@ -199,7 +217,7 @@ class ClaudeCodeAgentStepRuntimeTest {
         StepResult expected = StepResult.failed("log", "CLAUDE_AGENT_ERROR");
         when(runner.run(eq(ctx), any())).thenReturn(expected);
 
-        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null);
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(agent, "task", Map.of(), null, null, List.of(), Map.of());
         StepResult result = runtime.run(ctx, call);
 
         assertThat(result).isSameAs(expected);

@@ -15,6 +15,7 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Loops](#loops)
   - [Conditions](#conditions)
   - [Example: monthly SEO analysis](#example-monthly-seo-analysis)
+  - [Example: PR code review](#example-pr-code-review)
 - [Execution modes](#execution-modes)
   - [Conductor-hosted](#conductor-hosted)
   - [Self-hosted](#self-hosted)
@@ -156,6 +157,31 @@ on:
 ```
 
 Available event fields: `event.toStatus`, `event.fromStatus`, `event.workItemId`.
+
+#### GitHub pull request
+
+Fires when a GitHub App-connected repo (the same installation already used for the existing `closes
+conductor/KEY-N` merge-to-Work-Item behavior) receives one of four pull request actions: `opened`,
+`labeled`, `synchronize`, `reopened`. A merged PR (`closed` with `merged: true`) never fires this
+trigger — it goes through the pre-existing issue-completion path instead; a `closed`-without-merge PR
+fires neither path.
+
+```yaml
+on:
+  github.pull_request:
+    filters:
+      actions: [labeled]           # optional; unfiltered = any of the four actions above
+      labels: [code_review_ready]  # optional; unfiltered = any label or no label at all
+```
+
+`filters.actions` narrows to specific PR actions. `filters.labels` narrows to specific label names —
+only a `labeled` action carries a `label` at all, so a declared label filter excludes every other
+action unless `filters.actions` separately admits it.
+
+Available event fields: `event.repoName`, `event.repoFullName`, `event.prNumber`, `event.prTitle`,
+`event.author`, `event.headRef`, `event.baseRef`, `event.htmlUrl`, `event.installationId`,
+`event.action`, `event.label`. All but `event.action` are best-effort (populated only when present in
+the GitHub payload); `event.label` is further only ever populated on a `labeled` action.
 
 #### Cron schedule
 
@@ -462,6 +488,8 @@ An agent's *definition* (system prompt, tools, guardrails) is decoupled from the
 
 **`runs-on` interaction.** The `api` runtime ignores `runs-on` entirely (it's an in-process call, not a container). The `claude-code` runtime uses the job's `runs-on` the same way a raw `claude-code` step does — except an agent step's job commonly has no container-capable `runs-on` at all (agent steps predate runtimes and were written assuming Conductor-hosted execution), so if the job's `runs-on` doesn't resolve to a container target, the runtime defaults to the builtin `cloud-run` target rather than requiring every agent-step job to add `runs-on: cloud-run` just to pick this runtime.
 
+**`credentials:`/`env:` (claude-code runtime only).** An `agent` step also accepts the `claude-code` step's [`credentials:`/`env:`](#claude-code--run-claude-code-headlessly) fields — same shape, same resolution — but only the `claude-code` runtime has a container to inject them into. On the `api` runtime, declaring either fails the step immediately with `CREDENTIALS_NOT_AVAILABLE_ON_API_RUNTIME: agent=<ref> declares credentials/env, but the 'api' runtime has no container to inject them into`.
+
 #### `claude-code` — Run Claude Code headlessly
 
 Hands a prompt to **Claude Code running headlessly** (`claude -p`) inside the Conductor runner image, optionally with tool access to the Conductor MCP server, and exposes its answer as step outputs. Unlike `agent`, this runs the actual Claude Code CLI — full tool-calling agent loop, not just a single model call — so it can read the input files it's given, use `Read`/`Glob`/MCP tools, and write a Conductor document directly.
@@ -510,6 +538,30 @@ jobs:
 | `max_turns` | — | Maximum agent turns (positive integer) before Claude Code stops itself, passed to `--max-turns`. |
 | `timeout_minutes` | `30` | Hard wall-clock timeout for the whole step (integer, 1–120). Enforced inside the container (SIGTERM, then SIGKILL) — the step fails with `CLAUDE_TIMEOUT` if exceeded. |
 | `output_schema` | — | JSON Schema requesting a structured JSON answer, passed to `--json-schema`. |
+| `credentials` | — | List of `{connector, as}` entries. Mints a connector-issued runtime credential and injects it into the container's env under the key named by `as`. See below. |
+| `env` | — | Plain map of extra env vars for the container. Values are interpolated, same as the `docker` step's `env:`. |
+
+**`credentials:`** resolves each `{connector, as}` entry at runtime, never in the YAML: `connector` names a connected integration (the same `connector:` id used by `integration`/`action` steps, e.g. `github`), and the project's ACTIVE connection for that connector is resolved when the step runs. `as` is the env var name the resolved secret is injected under inside the container. The connector must support the CREDENTIAL capability — currently `github`, minting a GitHub App installation access token repo-scoped to the current run's `${{ event.repoFullName }}` when present, unscoped otherwise — exposed as e.g. `GH_TOKEN`:
+
+```yaml
+- uses: claude-code
+  with:
+    credentials:
+      - connector: github
+        as: GH_TOKEN
+    env:
+      SOME_TOKEN: ${{ secrets.MY_PAT }}
+    prompt: |
+      `gh pr checkout ...`, review the diff, `gh pr comment ...`
+```
+
+`gh`/`git` inside the container pick up `GH_TOKEN` automatically via normal env-var auth — the runner image bundles `gh`, and the entrypoint forwards the full container env into the `claude -p` process, so no extra wiring is needed once the env var is set.
+
+**`env:`** is a plain map, same shape/interpolation as the `docker` step's `env:` — for a user's own explicit secret (e.g. `${{ secrets.MY_TOKEN }}`) rather than a connector-resolved one.
+
+**Reserved keys.** Any `as`/env key starting with `CONDUCTOR_` or exactly `CLAUDE_CODE_OAUTH_TOKEN` is rejected — a hard error at publish time (the validator), and belt-and-suspenders at execution time too.
+
+**Never logged, never a step output.** The resolved credential value is written straight into the container's env and never appears in step logs, `steps.*.outputs`, or anywhere else persisted.
 
 **Live logs** — the run detail view streams the step's activity while it runs: a container-started line, then one compact line per Claude turn/tool call (`→ tool: Read {...}`, `💬 …`), ending with `✓ done: N turns`. Lines persist on the step, so they're also there after the run. The container can always read its own `/conductor/inputs/` files — no `allowed_tools` entry needed for that.
 
@@ -534,6 +586,7 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 | `CLAUDE_RATE_LIMITED` | The account's usage/rate limit was exhausted. |
 | `CLAUDE_TIMEOUT` | The step exceeded `timeout_minutes`. |
 | `CLAUDE_CONFIG_ERROR` | Bad step configuration (e.g. invalid `inputs`/`output_schema` JSON, or `claude` failed to launch). |
+| `CLAUDE_CREDENTIAL_ERROR` | A declared `credentials:`/`env:` entry couldn't be resolved — no active connection for the named connector, the connector doesn't support CREDENTIAL, or a malformed entry. |
 | `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` | No Claude Code subscription OAuth token is configured for this runtime — self-hosted: the daemon host; cloud-run/runtime targets: the project's Claude Code credential. See "Auth & runtime targets" below. |
 | `CLAUDE_LAUNCH_ERROR` | The Cloud Run execution failed to launch, or ended without the container ever reporting a result (e.g. image pull failure, OOM kill) — the target itself resolved fine; something went wrong running on it. |
 | `RUNTIME_TARGET_NOT_FOUND` | `runs-on` names a [runtime target](#runtime-targets-bring-your-own-cloud-run) that no longer exists in the project. |
@@ -922,6 +975,72 @@ jobs:
 ```
 
 `needs.collect_gsc.outputs.data` and `needs.collect_posthog.outputs.data` are the JSON blobs each `integration` step emits; they are embedded into the agent's `context`. The agent's final answer is exposed as `needs.analyze.outputs.text`, which the `deliver` job posts to the Discord webhook (stored as a project secret).
+
+---
+
+### Example: PR code review
+
+A `github.pull_request` trigger gated to a specific label, fanning out to a per-repo review job, then notifying regardless of outcome.
+
+```yaml
+name: PR Code Review
+on:
+  github.pull_request:
+    filters:
+      labels: [code_review_ready]
+
+jobs:
+  review-backend:
+    if: "${{ event.repoFullName }} == 'org/backend-repo'"
+    runs-on: cloud-run
+    steps:
+      - id: review
+        uses: claude-code
+        with:
+          credentials:
+            - connector: github
+              as: GH_TOKEN
+          allowed_tools: "Bash"
+          timeout_minutes: 30
+          prompt: |
+            You are a senior backend reviewer. Repo: ${{ event.repoFullName }},
+            PR #${{ event.prNumber }} ("${{ event.prTitle }}") by @${{ event.author }}.
+            `gh pr checkout ${{ event.prNumber }} --repo ${{ event.repoFullName }}`, review the
+            diff against `${{ event.baseRef }}`, then post one PR comment tagging the author:
+            `gh pr comment ${{ event.prNumber }} --repo ${{ event.repoFullName }} --body "..."`
+
+  review-frontend:
+    if: "${{ event.repoFullName }} == 'org/frontend-repo'"
+    runs-on: cloud-run
+    steps:
+      - id: review
+        uses: claude-code
+        with:
+          credentials:
+            - connector: github
+              as: GH_TOKEN
+          allowed_tools: "Bash"
+          timeout_minutes: 30
+          prompt: |
+            You are a senior frontend reviewer. Repo: ${{ event.repoFullName }},
+            PR #${{ event.prNumber }} ("${{ event.prTitle }}") by @${{ event.author }}.
+            `gh pr checkout ${{ event.prNumber }} --repo ${{ event.repoFullName }}`, review the
+            diff against `${{ event.baseRef }}`, then post one PR comment tagging the author.
+
+  notify:
+    needs: [review-backend, review-frontend]
+    if: always()
+    steps:
+      - id: notify
+        uses: action
+        with:
+          connector: discord
+          action: post_message
+          input:
+            content: "PR review posted for ${{ event.repoFullName }} #${{ event.prNumber }}: ${{ event.htmlUrl }}"
+```
+
+The label gate happens once at trigger time; per-repo routing happens per-job via `if:` so a backend-only PR never spins up the frontend container. `notify` runs regardless of review outcome via `needs` + `always()`. Either reviewer job could equally use a persisted `uses: agent` step (with the same `credentials:` field) instead of an inline `uses: claude-code` prompt — both are supported.
 
 ---
 

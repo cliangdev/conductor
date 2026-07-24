@@ -57,12 +57,17 @@ public class ConnectorRegistry {
         return as(id, OAuth2Connector.class);
     }
 
+    public Optional<CredentialConnector> findCredential(String id) {
+        return as(id, CredentialConnector.class);
+    }
+
     /** Capabilities a connector supports, derived from the interfaces it implements. */
     public List<Capability> capabilitiesOf(Connector c) {
         List<Capability> caps = new ArrayList<>();
         if (c instanceof FetchConnector) caps.add(Capability.FETCH);
         if (c instanceof WebhookConnector) caps.add(Capability.WEBHOOK);
         if (c instanceof ActionConnector) caps.add(Capability.ACTION);
+        if (c instanceof CredentialConnector) caps.add(Capability.CREDENTIAL);
         return caps;
     }
 
