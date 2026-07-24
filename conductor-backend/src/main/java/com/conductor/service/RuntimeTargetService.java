@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
 
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -204,6 +205,8 @@ public class RuntimeTargetService {
                 .image(config.image())
                 .status(RuntimeTargetResponse.StatusEnum.fromValue(target.getStatus().name()))
                 .errorMessage(target.getErrorMessage())
+                .resolvedImage(config.resolvedImage())
+                .lastProvisionedAt(config.lastProvisionedAt())
                 .createdAt(target.getCreatedAt())
                 .updatedAt(target.getUpdatedAt());
         if (!config.warnings().isEmpty()) {
@@ -217,12 +220,16 @@ public class RuntimeTargetService {
         Map<String, Object> config = readConfig(target.getConfigJson());
         List<String> warnings = config.get("warnings") instanceof List<?> list
                 ? list.stream().map(String::valueOf).toList() : List.of();
+        String lastProvisionedAtRaw = str(config, "lastProvisionedAt");
+        OffsetDateTime lastProvisionedAt = lastProvisionedAtRaw != null
+                ? OffsetDateTime.parse(lastProvisionedAtRaw) : null;
         return new TargetRuntimeConfig(str(config, "gcpProjectId"), str(config, "region"),
-                str(config, "jobName"), str(config, "image"), warnings);
+                str(config, "jobName"), str(config, "image"), warnings,
+                str(config, "resolvedImage"), lastProvisionedAt);
     }
 
     public record TargetRuntimeConfig(String gcpProjectId, String region, String jobName, String image,
-                                      List<String> warnings) {}
+                                      List<String> warnings, String resolvedImage, OffsetDateTime lastProvisionedAt) {}
 
     // ---- provisioning ----
 
@@ -249,13 +256,21 @@ public class RuntimeTargetService {
                 target.setStatus(RuntimeTargetStatus.ERROR);
                 target.setErrorMessage(verify.message());
             } else {
-                ensureJob(ctx, new GcpConnector.EnsureJobSpec(gcpProjectId, region, jobName, image, null));
+                GcpConnector.EnsureJobResult ensured =
+                        ensureJob(ctx, new GcpConnector.EnsureJobSpec(gcpProjectId, region, jobName, image, null));
                 // The missing-protocol-label message is a non-fatal, stored warning (runner-image work
-                // is out of scope for this PR — see GcpConnector.verifyImage javadoc); it never blocks ACTIVE.
-                if (verify.message() != null && !verify.protocolLabelPresent()) {
-                    config.put("warnings", List.of(verify.message()));
-                    target.setConfigJson(writeConfig(config));
-                }
+                // is out of scope for this PR — see GcpConnector.verifyImage javadoc); it never blocks
+                // ACTIVE. Explicitly cleared when not applicable so a resolved warning doesn't linger
+                // from a prior provision now that config is always persisted below.
+                config.put("warnings", verify.message() != null && !verify.protocolLabelPresent()
+                        ? List.of(verify.message()) : List.of());
+                // Ground truth for "what's actually running" — see EnsureJobResult's javadoc. Stored
+                // even if resolvedImage/updatedAt come back null (an unexpected but non-fatal GCP
+                // response shape), which just leaves the row without that detail rather than stale.
+                config.put("resolvedImage", ensured.resolvedImage());
+                config.put("lastProvisionedAt",
+                        ensured.updatedAt() != null ? ensured.updatedAt().toString() : null);
+                target.setConfigJson(writeConfig(config));
                 target.setStatus(RuntimeTargetStatus.ACTIVE);
                 target.setErrorMessage(null);
             }
@@ -274,7 +289,7 @@ public class RuntimeTargetService {
         return localGcpConnector.orElseThrow(this::gcpConnectorUnavailable).verifyImage(ctx, imageRef);
     }
 
-    private String ensureJob(ConnectionContext ctx, GcpConnector.EnsureJobSpec spec) {
+    private GcpConnector.EnsureJobResult ensureJob(ConnectionContext ctx, GcpConnector.EnsureJobSpec spec) {
         if (gcpConnector.isPresent()) {
             return gcpConnector.get().ensureJob(ctx, spec);
         }

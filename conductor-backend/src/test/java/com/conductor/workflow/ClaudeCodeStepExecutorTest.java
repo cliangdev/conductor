@@ -144,7 +144,7 @@ class ClaudeCodeStepExecutorTest {
         when(runtimeTargetService.findByProjectIdAndName(PROJECT_ID, "my-target")).thenReturn(Optional.of(target));
         when(runtimeTargetService.configOf(target)).thenReturn(new RuntimeTargetService.TargetRuntimeConfig(
                 "customer-proj", "us-east1", "conductor-my-target",
-                "us-east1-docker.pkg.dev/customer-proj/repo/image:1", List.of()));
+                "us-east1-docker.pkg.dev/customer-proj/repo/image:1", List.of(), null, null));
         stubHappyCredentials();
         when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn(CloudRunJobLauncher.LaunchResult.confirmed("op-1", "exec-1"));
         when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))

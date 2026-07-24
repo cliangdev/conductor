@@ -7,6 +7,11 @@ import com.conductor.integration.connector.gcp.model.ArDockerImage;
 import com.conductor.integration.connector.gcp.model.ArListDockerImagesResponse;
 import com.conductor.integration.connector.gcp.model.ArListRepositoriesResponse;
 import com.conductor.integration.connector.gcp.model.ArRepository;
+import com.google.cloud.run.v2.Container;
+import com.google.cloud.run.v2.ExecutionTemplate;
+import com.google.cloud.run.v2.Job;
+import com.google.cloud.run.v2.TaskTemplate;
+import com.google.protobuf.Timestamp;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
@@ -15,6 +20,7 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.net.URI;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -158,5 +164,43 @@ class GcpConnectorTest {
     void parseImageRef_rejectsNonArtifactRegistryHost() {
         assertThatThrownBy(() -> GcpConnector.parseImageRef("docker.io/library/nginx:latest"))
                 .hasMessageContaining("Artifact Registry");
+    }
+
+    // ---- ensureJob response mapping (what "Sync to latest image" depends on) ----
+
+    private static Job jobWithImage(String image) {
+        Container container = Container.newBuilder().setImage(image).build();
+        TaskTemplate taskTemplate = TaskTemplate.newBuilder().addContainers(container).build();
+        return Job.newBuilder().setTemplate(ExecutionTemplate.newBuilder().setTemplate(taskTemplate)).build();
+    }
+
+    @Test
+    void resolvedImageOf_returnsTheFirstContainersImage() {
+        Job job = jobWithImage("us-central1-docker.pkg.dev/proj/repo/claude-runner@sha256:abc123");
+        assertThat(GcpConnector.resolvedImageOf(job))
+                .isEqualTo("us-central1-docker.pkg.dev/proj/repo/claude-runner@sha256:abc123");
+    }
+
+    @Test
+    void resolvedImageOf_noContainers_returnsNullRatherThanThrowing() {
+        Job job = Job.newBuilder()
+                .setTemplate(ExecutionTemplate.newBuilder().setTemplate(TaskTemplate.newBuilder()))
+                .build();
+        assertThat(GcpConnector.resolvedImageOf(job)).isNull();
+    }
+
+    @Test
+    void updateTimeOf_convertsProtoTimestampToOffsetDateTimeInUtc() {
+        Job job = jobWithImage("img:1").toBuilder()
+                .setUpdateTime(Timestamp.newBuilder().setSeconds(1_700_000_000L).setNanos(123_000_000).build())
+                .build();
+        OffsetDateTime updateTime = GcpConnector.updateTimeOf(job);
+        assertThat(updateTime).isEqualTo(OffsetDateTime.parse("2023-11-14T22:13:20.123Z"));
+    }
+
+    @Test
+    void updateTimeOf_absentOnResponse_returnsNull() {
+        Job job = jobWithImage("img:1");
+        assertThat(GcpConnector.updateTimeOf(job)).isNull();
     }
 }

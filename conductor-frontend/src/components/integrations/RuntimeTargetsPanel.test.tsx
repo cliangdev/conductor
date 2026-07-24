@@ -9,6 +9,11 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   useCan: (cap: string) => (cap === 'integration.manage' ? mockCanMutate : false),
 }))
 
+const showToast = vi.fn()
+vi.mock('@/components/ui/toast', () => ({
+  useToast: () => ({ showToast }),
+}))
+
 vi.mock('@/lib/api', () => ({
   listRuntimeTargets: vi.fn(),
   createRuntimeTarget: vi.fn(),
@@ -59,6 +64,8 @@ const activeTarget = {
   status: 'ACTIVE' as const,
   errorMessage: null,
   warnings: null,
+  resolvedImage: 'us-central1-docker.pkg.dev/my-project/repo/img@sha256:abcdef0123456789',
+  lastProvisionedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 }
@@ -98,6 +105,18 @@ describe('RuntimeTargetsPanel', () => {
     expect(screen.getByText('Active')).toBeInTheDocument()
     expect(screen.getByText('Provisioning')).toBeInTheDocument()
     expect(screen.getByText(/Image not found in Artifact Registry/)).toBeInTheDocument()
+
+    // ACTIVE-only "ground truth" line — the resolved digest GCP actually pinned, not just the
+    // configured tag, plus when that resolution last happened.
+    expect(screen.getByText(/Synced 5m ago · sha256:abcdef01…/)).toBeInTheDocument()
+  })
+
+  it('shows a fallback sync label for an ACTIVE target provisioned before this was tracked', async () => {
+    const untracked = { ...activeTarget, id: 't-untracked', name: 'untracked-target', resolvedImage: null, lastProvisionedAt: null }
+    vi.mocked(api.listRuntimeTargets).mockResolvedValue([untracked])
+    render(<RuntimeTargetsPanel projectId="proj-1" connections={[activeConnection]} />)
+
+    expect(await screen.findByText('Synced before this was tracked')).toBeInTheDocument()
   })
 
   it('shows connect hint when no ACTIVE connection', async () => {

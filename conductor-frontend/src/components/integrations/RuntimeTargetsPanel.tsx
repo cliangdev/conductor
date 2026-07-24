@@ -8,6 +8,7 @@ import { Alert } from '@/components/ui/alert'
 import { Modal } from '@/components/ui/modal'
 import { RowActionsMenu } from '@/components/ui/RowActionsMenu'
 import { RuntimeTargetCreateModal } from '@/components/runtime/RuntimeTargetCreateModal'
+import { useToast } from '@/components/ui/toast'
 import { useCan } from '@/contexts/PermissionsContext'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -25,6 +26,33 @@ interface EditFormState {
   jobName: string
 }
 
+/** "3m ago"/"2h ago"/"5d ago" — same coarse-relative style as ClaudeProviderCard's verified badge. */
+function formatRelative(diffMs: number): string {
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+/** `...@sha256:abcdef0123...` -> `sha256:abcdef01…` — short enough for an inline row, full value in the title. */
+function shortDigest(resolvedImage: string): string {
+  const at = resolvedImage.lastIndexOf('@sha256:')
+  if (at === -1) return resolvedImage
+  return resolvedImage.slice(at + 1, at + 1 + 15) + '…'
+}
+
+/** Not a component — a plain helper, same as ClaudeProviderCard's verifiedBadgeLabel, so the
+ *  react-hooks purity rule (no Date.now() during a component's render) doesn't apply to this call. */
+function syncedLabel(target: RuntimeTarget): string {
+  const when = target.lastProvisionedAt
+    ? `Synced ${formatRelative(Date.now() - new Date(target.lastProvisionedAt).getTime())}`
+    : 'Synced before this was tracked'
+  return target.resolvedImage ? `${when} · ${shortDigest(target.resolvedImage)}` : when
+}
+
 export default function RuntimeTargetsPanel({
   projectId,
   connections,
@@ -33,6 +61,7 @@ export default function RuntimeTargetsPanel({
   connections: ConnectionSummary[]
 }) {
   const { accessToken } = useAuth()
+  const { showToast } = useToast()
   const canMutate = useCan('integration.manage')
 
   const [targets, setTargets] = useState<RuntimeTarget[]>([])
@@ -126,20 +155,32 @@ export default function RuntimeTargetsPanel({
   // string. Doubles as "sync to latest": Cloud Run resolves an image tag to a digest and pins it
   // on the Job at this call, not at container-run time, so a tag like `:latest` that's had a
   // newer image pushed to it since the last provision needs this to actually pick that up.
+  //
+  // This call is synchronous on the backend (can take a few seconds — a real GCP round trip), and
+  // the dropdown menu closes the instant it's selected, so without explicit feedback here a click
+  // looks like it did nothing. Flip the row to the existing "Provisioning" badge immediately, then
+  // toast the outcome — a 200 response can still carry status: 'ERROR' (e.g. image not found), so
+  // success isn't just "the request didn't throw".
   async function handleProvision(target: RuntimeTarget) {
     if (!accessToken) return
     setRetrying(target.id)
+    setTargets((prev) =>
+      prev.map((t) => (t.id === target.id ? { ...t, status: 'PROVISIONING' } : t)),
+    )
     try {
       const updated = await provisionRuntimeTarget(projectId, target.id, accessToken)
       setTargets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
+      if (updated.status === 'ACTIVE') {
+        showToast(`${updated.name} is up to date.`, 'success')
+      } else {
+        showToast(updated.errorMessage || `Provisioning ${updated.name} failed.`, 'error')
+      }
     } catch (err) {
+      const message = apiErrorMessage(err, 'Provisioning failed.')
       setTargets((prev) =>
-        prev.map((t) =>
-          t.id === target.id
-            ? { ...t, status: 'ERROR', errorMessage: apiErrorMessage(err, 'Provisioning failed.') }
-            : t,
-        ),
+        prev.map((t) => (t.id === target.id ? { ...t, status: 'ERROR', errorMessage: message } : t)),
       )
+      showToast(message, 'error')
     } finally {
       setRetrying(null)
     }
@@ -246,6 +287,11 @@ export default function RuntimeTargetsPanel({
                     )}
                   </div>
                 </div>
+                {target.status === 'ACTIVE' && (
+                  <p className="mt-1 text-xs text-muted-foreground font-mono truncate" title={target.resolvedImage ?? undefined}>
+                    {syncedLabel(target)}
+                  </p>
+                )}
                 {target.errorMessage && (
                   <Alert variant="destructive" className="mt-1 py-1.5 text-xs">
                     {target.errorMessage}

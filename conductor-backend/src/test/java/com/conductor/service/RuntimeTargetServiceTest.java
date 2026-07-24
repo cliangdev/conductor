@@ -144,8 +144,11 @@ class RuntimeTargetServiceTest {
         when(connectionService.toContext(connection)).thenReturn(ctx);
         when(gcpConnector.verifyImage(eq(ctx), eq(IMAGE)))
                 .thenReturn(new GcpConnector.VerifyImageResult(true, true, null));
+        java.time.OffsetDateTime updatedAt = java.time.OffsetDateTime.parse("2026-07-24T03:00:00Z");
         when(gcpConnector.ensureJob(eq(ctx), any(GcpConnector.EnsureJobSpec.class)))
-                .thenReturn("projects/customer-proj/locations/us-central1/jobs/conductor-my-target");
+                .thenReturn(new GcpConnector.EnsureJobResult(
+                        "projects/customer-proj/locations/us-central1/jobs/conductor-my-target",
+                        IMAGE + "@sha256:resolved123", updatedAt));
         stubSaveReturnsArgument();
 
         RuntimeTarget saved = service.create(PROJECT_ID, createRequest("my-target"));
@@ -156,6 +159,10 @@ class RuntimeTargetServiceTest {
         RuntimeTargetService.TargetRuntimeConfig config = service.configOf(saved);
         assertThat(config.jobName()).isEqualTo("conductor-my-target");
         assertThat(config.gcpProjectId()).isEqualTo("customer-proj");
+        // The resolved digest GCP echoed back, distinct from the configured tag (IMAGE) — proves
+        // "what's actually running" is threaded through, not just the requested image string.
+        assertThat(config.resolvedImage()).isEqualTo(IMAGE + "@sha256:resolved123");
+        assertThat(config.lastProvisionedAt()).isEqualTo(updatedAt);
     }
 
     @Test
@@ -166,7 +173,8 @@ class RuntimeTargetServiceTest {
         ConnectionContext ctx = new ConnectionContext(PROJECT_ID, "gcp", CONNECTION_ID, "key", null, null, Map.of(), null);
         when(connectionService.toContext(connection)).thenReturn(ctx);
         when(gcpConnector.verifyImage(any(), any())).thenReturn(new GcpConnector.VerifyImageResult(true, true, null));
-        when(gcpConnector.ensureJob(any(), any())).thenReturn("jobs/conductor-my-target");
+        when(gcpConnector.ensureJob(any(), any())).thenReturn(
+                new GcpConnector.EnsureJobResult("jobs/conductor-my-target", IMAGE, java.time.OffsetDateTime.now()));
         stubSaveReturnsArgument();
 
         RuntimeTarget saved = service.create(PROJECT_ID, createRequest("my-target"));
@@ -182,7 +190,8 @@ class RuntimeTargetServiceTest {
         ConnectionContext ctx = new ConnectionContext(PROJECT_ID, "gcp", CONNECTION_ID, "key", null, null, Map.of(), null);
         when(connectionService.toContext(connection)).thenReturn(ctx);
         when(gcpConnector.verifyImage(any(), any())).thenReturn(new GcpConnector.VerifyImageResult(true, true, null));
-        when(gcpConnector.ensureJob(any(), any())).thenReturn("jobs/custom-job");
+        when(gcpConnector.ensureJob(any(), any())).thenReturn(
+                new GcpConnector.EnsureJobResult("jobs/custom-job", IMAGE, java.time.OffsetDateTime.now()));
         stubSaveReturnsArgument();
 
         CreateRuntimeTargetRequest request = createRequest("my-target");
@@ -273,7 +282,8 @@ class RuntimeTargetServiceTest {
         when(connectionService.toContext(connection)).thenReturn(ctx);
         when(gcpConnector.verifyImage(eq(ctx), eq(IMAGE))).thenReturn(new GcpConnector.VerifyImageResult(
                 true, false, "Image found. Could not verify the dev.conductor.runner.protocol OCI label."));
-        when(gcpConnector.ensureJob(any(), any())).thenReturn("jobs/conductor-my-target");
+        when(gcpConnector.ensureJob(any(), any())).thenReturn(
+                new GcpConnector.EnsureJobResult("jobs/conductor-my-target", IMAGE, java.time.OffsetDateTime.now()));
         stubSaveReturnsArgument();
 
         RuntimeTarget saved = service.create(PROJECT_ID, createRequest("my-target"));
@@ -300,7 +310,8 @@ class RuntimeTargetServiceTest {
         ConnectionContext ctx = new ConnectionContext(PROJECT_ID, "gcp", CONNECTION_ID, "key", null, null, Map.of(), null);
         when(connectionService.toContext(connection)).thenReturn(ctx);
         when(gcpConnector.verifyImage(any(), any())).thenReturn(new GcpConnector.VerifyImageResult(true, true, null));
-        when(gcpConnector.ensureJob(any(), any())).thenReturn("jobs/conductor-my-target");
+        when(gcpConnector.ensureJob(any(), any())).thenReturn(
+                new GcpConnector.EnsureJobResult("jobs/conductor-my-target", IMAGE, java.time.OffsetDateTime.now()));
         stubSaveReturnsArgument();
 
         RuntimeTarget result = service.provisionById(PROJECT_ID, "target-1");
@@ -326,7 +337,8 @@ class RuntimeTargetServiceTest {
         ConnectionContext ctx = new ConnectionContext(PROJECT_ID, "gcp", CONNECTION_ID, "key", null, null, Map.of(), null);
         when(connectionService.toContext(connection)).thenReturn(ctx);
         when(gcpConnector.verifyImage(any(), any())).thenReturn(new GcpConnector.VerifyImageResult(true, true, null));
-        when(gcpConnector.ensureJob(any(), any())).thenReturn("jobs/conductor-my-target");
+        when(gcpConnector.ensureJob(any(), any())).thenReturn(
+                new GcpConnector.EnsureJobResult("jobs/conductor-my-target", IMAGE, java.time.OffsetDateTime.now()));
         stubSaveReturnsArgument();
 
         UpdateRuntimeTargetRequest request = new UpdateRuntimeTargetRequest();

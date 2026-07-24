@@ -5157,6 +5157,20 @@ components:
           nullable: true
           items:
             type: string
+        resolvedImage:
+          type: string
+          nullable: true
+          description: >-
+            The image reference GCP echoed back on the last successful provision (create/update
+            Job) call. Cloud Run resolves a tag to a specific digest at that moment and pins it on
+            the Job — this is the ground truth for "what's actually running", since `image` above
+            is only the configured tag and a later push to that tag has no effect until the target
+            is re-provisioned (see lastProvisionedAt).
+        lastProvisionedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the Job resource was last successfully created or updated (from GCP's own Job.update_time, not Conductor's clock).
         createdAt:
           type: string
           format: date-time

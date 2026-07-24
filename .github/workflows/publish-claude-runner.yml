@@ -27,6 +27,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write  # only consumed by the Google auth step below, itself gated to cliangdev/conductor
 
     steps:
       - name: Checkout
@@ -63,3 +64,39 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.short }}
+
+      # Mirrors the just-published image into Conductor's own Artifact Registry, the project this
+      # repo's other CI (deploy-cloudrun.yml) already deploys conductor-backend/frontend into — not
+      # a customer's cloud. This is NOT how a BYO runtime target's image ever gets updated (that
+      # stays a deliberate, per-customer choice — see docs/workflows.md's "Image tags are pinned,
+      # not floating" note); it only saves the dogfooding `byo-test` target the manual
+      # pull/tag/push dance. A runtime target still needs "Sync to latest image" afterward — Cloud
+      # Run pins whatever digest the tag resolved to at the last provision, and pushing here doesn't
+      # call Conductor's API to trigger that.
+      #
+      # Gated to the canonical repo: WIF_PROVIDER/WIF_SERVICE_ACCOUNT are cliangdev/conductor-only
+      # secrets, absent (and rightly so) on any fork.
+      - name: Authenticate to Google Cloud
+        if: github.repository == 'cliangdev/conductor'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093  # v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        if: github.repository == 'cliangdev/conductor'
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db  # v3
+
+      - name: Configure Docker for Artifact Registry
+        if: github.repository == 'cliangdev/conductor'
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Mirror into Conductor's own Artifact Registry
+        if: github.repository == 'cliangdev/conductor'
+        run: |
+          AR_IMAGE=us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/conductor/claude-runner
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest $AR_IMAGE:latest
+          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest $AR_IMAGE:sha-${{ steps.sha.outputs.short }}
+          docker push $AR_IMAGE:latest
+          docker push $AR_IMAGE:sha-${{ steps.sha.outputs.short }}

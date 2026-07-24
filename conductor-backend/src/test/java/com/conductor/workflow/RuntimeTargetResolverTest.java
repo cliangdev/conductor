@@ -70,7 +70,7 @@ class RuntimeTargetResolverTest {
         when(runtimeTargetService.get("proj-1", "target-1")).thenReturn(target);
         when(runtimeTargetService.configOf(target)).thenReturn(new RuntimeTargetService.TargetRuntimeConfig(
                 "customer-proj", "us-east1", "conductor-designated-target",
-                "us-east1-docker.pkg.dev/customer-proj/repo/image:1", java.util.List.of()));
+                "us-east1-docker.pkg.dev/customer-proj/repo/image:1", java.util.List.of(), null, null));
 
         Optional<RuntimeTargetResolver.ResolvedRuntime> resolved = resolver.resolve("proj-1", "cloud-run");
 
@@ -168,7 +168,7 @@ class RuntimeTargetResolverTest {
         when(runtimeTargetService.findByProjectIdAndName("proj-1", "my-target")).thenReturn(Optional.of(target));
         when(runtimeTargetService.configOf(target)).thenReturn(new RuntimeTargetService.TargetRuntimeConfig(
                 "customer-proj", "us-east1", "conductor-my-target",
-                "us-east1-docker.pkg.dev/customer-proj/repo/image:1", java.util.List.of()));
+                "us-east1-docker.pkg.dev/customer-proj/repo/image:1", java.util.List.of(), null, null));
 
         Optional<RuntimeTargetResolver.ResolvedRuntime> resolved = resolver.resolve("proj-1", "my-target");
 
