@@ -173,6 +173,15 @@ public class WorkflowService {
     public void deleteWorkflow(String projectId, String workflowId, String userId) {
         requireAdminOrCreator(projectId, userId);
         WorkflowDefinition def = findInProject(projectId, workflowId);
+        // Deletion is irreversible and this API is called by LLM tools as well as the UI, so a workflow
+        // that has ever been published is off limits — publishing is one-way (there is no transition back
+        // to DRAFT). Legacy pre-COND-18 rows carry no state and stay deletable.
+        String state = def.getState();
+        if (WorkflowDefinitionLifecycleService.STATE_PUBLISHED.equals(state)
+                || WorkflowDefinitionLifecycleService.STATE_DISABLED.equals(state)) {
+            throw new BusinessException("Cannot delete a workflow in state " + state
+                    + ". Only a Draft workflow can be deleted.");
+        }
         // Domain invariant: lifecycle workflows with bound Work Items cannot be deleted.
         // Work Items reference the workflow by slug+version; deleting the definition orphans them.
         if (def.isLifecycle()) {

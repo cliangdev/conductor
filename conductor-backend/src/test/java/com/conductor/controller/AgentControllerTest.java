@@ -545,6 +545,36 @@ class AgentControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // ---- request-body enum rejection ----
+    // A bad enum token used to surface as the generic "Malformed or unreadable request body", which told
+    // the caller nothing about which field was wrong or what it accepts.
+
+    @Test
+    void createAgent_unknownAvatarColorToken_detailNamesFieldAndAcceptedValues() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Marketer\",\"provider\":\"claude\",\"avatarColor\":\"purple\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(
+                        "Invalid value for field 'avatarColor' — must be one of: "
+                                + "gray, blue, amber, violet, teal, green, rose, slate"));
+    }
+
+    @Test
+    void createAgent_malformedJsonBody_keepsGenericUnreadableDetail() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Marketer\","))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Malformed or unreadable request body"));
+    }
+
     // ---- updateAgent toolIds partial-update semantics ----
     // Guards the regression where a partial PATCH that omits toolIds (e.g. the Active/Draft state
     // toggle) wiped an agent's tool bindings: the generated request defaulted toolIds to an empty

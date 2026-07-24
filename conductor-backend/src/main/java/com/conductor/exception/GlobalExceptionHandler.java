@@ -15,12 +15,17 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.exc.InvalidFormatException;
+import tools.jackson.databind.exc.ValueInstantiationException;
 
 import java.net.URI;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
@@ -180,14 +185,53 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
+    private static final String UNREADABLE_BODY_DETAIL = "Malformed or unreadable request body";
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ProblemDetail handleUnreadableMessage(HttpMessageNotReadableException e) {
         // Malformed/unbindable request body (e.g. a JSON array where an object is expected). A body the
         // server can't parse is a client error — 400, not the catch-all 500.
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.BAD_REQUEST);
         problem.setType(URI.create("about:blank"));
-        problem.setDetail("Malformed or unreadable request body");
+        problem.setDetail(unreadableBodyDetail(e.getCause()));
         return problem;
+    }
+
+    /**
+     * A rejected enum token is the one unreadable-body case worth naming — the body parsed fine and the
+     * caller only needs the accepted values. Generated DTO enums reject via a {@code @JsonCreator} that
+     * throws, which Jackson reports as a {@link ValueInstantiationException}; enums without one fail
+     * Jackson's own coercion and arrive as an {@link InvalidFormatException}, the only shape that also
+     * carries the rejected value (by the time the other is built the parser has moved past the token).
+     * These are the Jackson 3 ({@code tools.jackson}) types — the stack Spring Boot 4's message
+     * converters read request bodies with, regardless of the Jackson 2 {@code ObjectMapper} services use.
+     */
+    private static String unreadableBodyDetail(Throwable cause) {
+        Class<?> enumType;
+        Object rejected;
+        if (cause instanceof InvalidFormatException e) {
+            enumType = e.getTargetType();
+            rejected = e.getValue();
+        } else if (cause instanceof ValueInstantiationException e) {
+            enumType = e.getType().getRawClass();
+            rejected = null;
+        } else {
+            return UNREADABLE_BODY_DETAIL;
+        }
+        if (enumType == null || !enumType.isEnum()) {
+            return UNREADABLE_BODY_DETAIL;
+        }
+        String field = ((JacksonException) cause).getPath().stream()
+                .map(JacksonException.Reference::getPropertyName)
+                .filter(Objects::nonNull)
+                .collect(Collectors.joining("."));
+        String accepted = Arrays.stream(enumType.getEnumConstants())
+                .map(String::valueOf)
+                .collect(Collectors.joining(", "));
+        return "Invalid value"
+                + (rejected != null ? " '" + rejected + "'" : "")
+                + (field.isEmpty() ? "" : " for field '" + field + "'")
+                + " — must be one of: " + accepted;
     }
 
     @ExceptionHandler(Exception.class)
