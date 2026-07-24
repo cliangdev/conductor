@@ -24,6 +24,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -328,14 +329,27 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
     }
 
     /**
-     * CREDENTIAL capability: mints an installation access token for the connection's {@code
-     * installationId}, scoped to {@code request.repoFullName()} when present (a single-repo scope
-     * list), unscoped otherwise. Reads the connection's {@code configJson} fresh — never the
-     * triggering event's {@code installationId} metadata, which could be stale by the time a
-     * long-running step executes.
+     * CREDENTIAL capability: for a {@code PAT}-type connection, returns the stored Personal Access
+     * Token as-is — no repo-scoping is possible for a PAT (unlike an installation token), so {@code
+     * request.repoFullName()} is simply ignored on this path. Otherwise mints an installation access
+     * token for the connection's {@code installationId}, scoped to {@code request.repoFullName()}
+     * when present (a single-repo scope list), unscoped otherwise. Reads the connection's {@code
+     * configJson} fresh — never the triggering event's {@code installationId} metadata, which could
+     * be stale by the time a long-running step executes.
      */
     @Override
     public RuntimeCredential issueRuntimeCredential(Connection connection, CredentialRequest request) {
+        if (AuthType.PAT.name().equals(connection.getAuthType())) {
+            String token = connectionService.decrypt(connection).accessToken();
+            if (token == null || token.isBlank()) {
+                throw new IllegalStateException(
+                        "GitHub connection " + connection.getId() + " has no PAT stored");
+            }
+            Instant expiresAt = connection.getTokenExpiresAt() != null
+                    ? connection.getTokenExpiresAt().toInstant() : null;
+            return new RuntimeCredential("GH_TOKEN", token, expiresAt);
+        }
+
         Map<String, Object> config = parseConfig(connection.getConfigJson());
         Object rawInstallationId = config.get(INSTALLATION_ID_KEY);
         if (rawInstallationId == null || rawInstallationId.toString().isBlank()) {

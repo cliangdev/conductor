@@ -20,5 +20,9 @@ public enum AuthType {
     WEBHOOK,
     /** Installed app (e.g. GitHub App): the user installs a vendor-owned app and picks resources on the
      *  provider; the app authenticates with its own key, and the connection stores an installation id. */
-    APP
+    APP,
+    /** User pastes a Personal Access Token directly (e.g. GitHub fine-grained PAT). Distinct from
+     *  {@link #API_KEY}: a PAT has real provider-enforced expiry semantics, surfaced via
+     *  {@code Connection.tokenExpiresAt}, and its own UI label ("Personal Access Token" vs "API Key"). */
+    PAT
 }

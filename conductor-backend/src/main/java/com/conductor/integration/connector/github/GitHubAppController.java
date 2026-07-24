@@ -3,7 +3,10 @@ package com.conductor.integration.connector.github;
 import com.conductor.entity.Connection;
 import com.conductor.entity.IntegrationOAuthState;
 import com.conductor.entity.User;
+import com.conductor.exception.BusinessException;
 import com.conductor.generated.api.GithubApi;
+import com.conductor.generated.model.BindGithubPatRequest;
+import com.conductor.generated.model.ConnectionResponse;
 import com.conductor.generated.model.GithubInstallUrlResponse;
 import com.conductor.generated.model.GithubRepositoriesResponse;
 import com.conductor.generated.model.GithubRepository;
@@ -18,6 +21,7 @@ import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -28,6 +32,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.net.URI;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
@@ -99,6 +104,58 @@ public class GitHubAppController implements GithubApi {
 
         return ResponseEntity.ok(new GithubInstallUrlResponse()
                 .installUrl(gitHubAppService.buildInstallUrl(state)));
+    }
+
+    /**
+     * Bind a project-level GitHub Personal Access Token — a second, project-owned credential
+     * alongside the App connection, taking precedence over it at credential-resolution time (see
+     * {@link com.conductor.service.ActiveConnectionResolver}) while ACTIVE. Validates the token
+     * against GitHub before storing it (rejects a bad/revoked token immediately). Finds the single
+     * ACTIVE PAT connection for this project, if any, and updates it in place (rebind/rotate);
+     * otherwise creates one.
+     *
+     * <p>Race-safe the same way {@code ConnectionService#getOrCreateSingle} is: the real guarantee
+     * is the partial unique index {@code uq_connection_pat_per_project_connector}. If two binds race
+     * past the fast-path read, the loser's insert (isolated in {@code createInNewTx}'s own {@code
+     * REQUIRES_NEW} tx) throws {@link DataIntegrityViolationException}; caught here and resolved by
+     * re-reading the winning row instead of surfacing a raw 500.
+     */
+    @Override
+    public ResponseEntity<ConnectionResponse> bindGithubPat(String projectId, BindGithubPatRequest request) {
+        User user = requireAdminOrCreator(projectId);
+        if (request == null || request.getToken() == null || request.getToken().isBlank()) {
+            throw new BusinessException("token is required");
+        }
+
+        GitHubAppService.PatValidationResult validation =
+                gitHubAppService.validatePersonalAccessToken(request.getToken());
+
+        OffsetDateTime expiresAt = validation.expiresAt() != null
+                ? validation.expiresAt().atOffset(ZoneOffset.UTC)
+                : request.getExpiresAt();
+        String label = request.getLabel() != null && !request.getLabel().isBlank()
+                ? request.getLabel()
+                : "PAT (@" + validation.login() + ")";
+
+        Connection conn = findActivePat(projectId).orElseGet(() -> {
+            try {
+                return connectionService.createInNewTx(projectId, CONNECTOR_ID, AuthType.PAT, label, user.getId());
+            } catch (DataIntegrityViolationException e) {
+                // Lost the insert race against a concurrent bind — the winning row now exists.
+                return findActivePat(projectId).orElseThrow(() -> e);
+            }
+        });
+
+        connectionService.updateLabel(conn, label);
+        connectionService.storeTokens(conn, request.getToken(), null, expiresAt);
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(toConnectionResponse(conn));
+    }
+
+    private Optional<Connection> findActivePat(String projectId) {
+        return connectionRepository.findByProjectIdAndConnectorId(projectId, CONNECTOR_ID).stream()
+                .filter(c -> AuthType.PAT.name().equals(c.getAuthType()) && "ACTIVE".equals(c.getStatus()))
+                .findFirst();
     }
 
     /**
@@ -197,6 +254,19 @@ public class GitHubAppController implements GithubApi {
     }
 
     // ---- helpers ----
+
+    /** Mirrors {@code IntegrationController#toConnectionResponse}, minus the webhook fields (never
+     *  applicable to a PAT connection). */
+    private ConnectionResponse toConnectionResponse(Connection conn) {
+        return new ConnectionResponse()
+                .id(conn.getId())
+                .connectorId(conn.getConnectorId())
+                .label(conn.getDisplayLabel())
+                .status(conn.getStatus())
+                .authType(conn.getAuthType())
+                .tokenExpiresAt(conn.getTokenExpiresAt())
+                .connectedAt(conn.getCreatedAt());
+    }
 
     private ResponseEntity<Void> redirect(String url) {
         return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(url)).build();
