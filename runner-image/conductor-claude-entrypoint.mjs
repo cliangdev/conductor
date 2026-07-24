@@ -312,7 +312,21 @@ function buildClaudeInvocation(env) {
   // to run) never needs the run token.
   delete childEnv.CONDUCTOR_RUN_TOKEN;
 
-  const args = ['-p', env.CONDUCTOR_STEP_PROMPT, '--output-format', 'stream-json', '--verbose'];
+  // --dangerously-skip-permissions is safe (and required) here: this entrypoint only ever runs
+  // inside an isolated, single-use worker (a Cloud Run Job execution or equivalent), never
+  // interactively. In headless `-p` mode there is no TTY to answer an interactive approval
+  // prompt, so without this flag any tool call outside --allowedTools fails permanently with
+  // "This command requires approval." The container itself (ephemeral, no shared filesystem/state
+  // across executions) plus scoped, short-lived credentials are the real security boundary — see
+  // docs/workflows.md.
+  const args = [
+    '-p',
+    env.CONDUCTOR_STEP_PROMPT,
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--dangerously-skip-permissions',
+  ];
 
   // Always grant Read on the materialized inputs dir, regardless of the caller's allowedTools —
   // seen live: with a restrictive (or absent) allowlist, claude silently refused to Read
