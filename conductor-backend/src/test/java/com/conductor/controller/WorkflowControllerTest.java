@@ -25,10 +25,14 @@ import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.WorkflowDefinitionLifecycleService;
 import com.conductor.service.WorkflowService;
 import com.conductor.service.WorkflowViewService;
+import com.conductor.workflow.StepExecutionContext;
+import com.conductor.workflow.StepResult;
+import com.conductor.workflow.WorkflowExecutionBackend;
 import com.conductor.workflow.WorkflowFailureCircuitBreaker;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.model.WorkflowYamlParser;
+import com.conductor.workflow.schema.StepSchemaRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -80,6 +84,30 @@ class WorkflowControllerTest {
         @Bean
         WorkflowYamlParser workflowYamlParser() {
             return new WorkflowYamlParser();
+        }
+
+        // Hand-authored/static, like WorkflowYamlParser above -- a real instance is simpler than
+        // mocking it (none of these tests exercise the step-schema endpoint's content). Its
+        // @PostConstruct cross-checks the given backend types against its own step-type keys, so this
+        // slice (which doesn't wire real WorkflowExecutionBackend beans) hands it fakes matching what
+        // production actually registers.
+        @Bean
+        StepSchemaRegistry stepSchemaRegistry() {
+            List<WorkflowExecutionBackend> backends = new java.util.ArrayList<>();
+            for (String type : new String[] {"http", "docker", "kestra", "integration", "agent", "claude-code", "action"}) {
+                backends.add(new WorkflowExecutionBackend() {
+                    @Override
+                    public String getStepType() {
+                        return type;
+                    }
+
+                    @Override
+                    public StepResult execute(StepExecutionContext context) {
+                        throw new UnsupportedOperationException("not exercised by this test");
+                    }
+                });
+            }
+            return new StepSchemaRegistry(backends);
         }
     }
 
@@ -191,6 +219,28 @@ class WorkflowControllerTest {
                 .andExpect(jsonPath("$[0].slug").value("ENGINEERING"));
 
         verify(workflowService).listWorkflows(PROJECT_ID, true, "PUBLISHED", true);
+    }
+
+    @Test
+    void getWorkflowStepSchema_returnsRegistryContentToProjectMembers() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/step-schema", PROJECT_ID)
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stepTypes.length()").value(8))
+                .andExpect(jsonPath("$.stepTypes[?(@.type=='claude-code')]").isNotEmpty())
+                .andExpect(jsonPath("$.interpolation.roots[?(@.name=='event')]").isNotEmpty())
+                .andExpect(jsonPath("$.interpolation.functions[?(@.name=='always()')]").isNotEmpty());
+    }
+
+    @Test
+    void getWorkflowStepSchema_rejectsNonMember() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/step-schema", PROJECT_ID)
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNotFound());
     }
 
     @Test

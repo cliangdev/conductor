@@ -266,6 +266,13 @@ steps:
 
 ### Step types
 
+The field-by-field reference below is also available as data at runtime — `GET
+/projects/{projectId}/workflows/step-schema` returns every step type's fields (required-ness, type,
+constraints) plus the valid interpolation roots and condition functions, hand-authored from
+`WorkflowValidator`'s actual checks (`StepSchemaRegistry`, kept honest by a contract test,
+`StepSchemaSyncTest`, that runs generated fixtures through the real validator). Docs and the Claude
+Code workflow-authoring skill can read this instead of re-transcribing the rules as prose.
+
 #### `http` — Call an API
 
 Sends an HTTP request and optionally extracts values from the response.

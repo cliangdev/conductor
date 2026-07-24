@@ -13,8 +13,13 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.WorkflowsApi;
 import com.conductor.generated.model.DispatchWorkflowRequest;
+import com.conductor.generated.model.InterpolationFunctionDto;
+import com.conductor.generated.model.InterpolationRootDto;
+import com.conductor.generated.model.InterpolationSchemaDto;
 import com.conductor.generated.model.SetWorkflowEnabledRequest;
 import com.conductor.generated.model.SetWorkflowSidebarRequest;
+import com.conductor.generated.model.StepFieldSchemaDto;
+import com.conductor.generated.model.StepTypeSchemaDto;
 import com.conductor.generated.model.UpdateWorkflowRunStatusRequest;
 import com.conductor.generated.model.WorkflowCreateRequest;
 import com.conductor.generated.model.WorkflowCreateResponse;
@@ -25,6 +30,7 @@ import com.conductor.generated.model.WorkflowRunDetailDto;
 import com.conductor.generated.model.WorkflowRunDto;
 import com.conductor.generated.model.WorkflowScheduleSkipDto;
 import com.conductor.generated.model.WorkflowStepRunDto;
+import com.conductor.generated.model.WorkflowStepSchemaResponse;
 import com.conductor.generated.model.WorkflowState;
 import com.conductor.generated.model.WorkflowUpdateRequest;
 import com.conductor.generated.model.WorkflowValidationWarning;
@@ -48,6 +54,9 @@ import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.model.WorkflowSpec;
 import com.conductor.workflow.model.WorkflowYamlException;
 import com.conductor.workflow.model.WorkflowYamlParser;
+import com.conductor.workflow.schema.StepFieldSchema;
+import com.conductor.workflow.schema.StepSchemaRegistry;
+import com.conductor.workflow.schema.StepTypeSchema;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -90,6 +99,7 @@ public class WorkflowController implements WorkflowsApi {
     private final ObjectMapper objectMapper;
     private final WorkflowYamlParser yamlParser;
     private final WorkflowFailureCircuitBreaker circuitBreaker;
+    private final StepSchemaRegistry stepSchemaRegistry;
 
     public WorkflowController(WorkflowService workflowService,
                                WorkflowTriggerService workflowTriggerService,
@@ -105,7 +115,8 @@ public class WorkflowController implements WorkflowsApi {
                                WorkflowViewService workflowViewService,
                                ObjectMapper objectMapper,
                                WorkflowYamlParser yamlParser,
-                               WorkflowFailureCircuitBreaker circuitBreaker) {
+                               WorkflowFailureCircuitBreaker circuitBreaker,
+                               StepSchemaRegistry stepSchemaRegistry) {
         this.workflowService = workflowService;
         this.workflowTriggerService = workflowTriggerService;
         this.workflowJobOrchestrator = workflowJobOrchestrator;
@@ -121,6 +132,7 @@ public class WorkflowController implements WorkflowsApi {
         this.objectMapper = objectMapper;
         this.yamlParser = yamlParser;
         this.circuitBreaker = circuitBreaker;
+        this.stepSchemaRegistry = stepSchemaRegistry;
     }
 
     @Override
@@ -184,6 +196,21 @@ public class WorkflowController implements WorkflowsApi {
     public ResponseEntity<WorkflowDefinitionDto> getWorkflow(String projectId, String workflowId) {
         WorkflowDefinition def = workflowService.getWorkflow(projectId, workflowId);
         return ResponseEntity.ok(toDto(def));
+    }
+
+    /**
+     * Registry-driven discovery endpoint (mirrors {@code IntegrationController#listConnectorCatalog}):
+     * the data itself isn't project-specific (it's {@link StepSchemaRegistry}'s hand-authored mirror
+     * of {@code WorkflowValidator}), but the route stays project-scoped for consistency with sibling
+     * workflow endpoints, so membership is still checked before serving it.
+     */
+    @Override
+    public ResponseEntity<WorkflowStepSchemaResponse> getWorkflowStepSchema(String projectId) {
+        String userId = currentUserId();
+        if (!projectSecurityService.isProjectMember(projectId, userId)) {
+            throw new EntityNotFoundException("Project not found");
+        }
+        return ResponseEntity.ok(toStepSchemaResponse());
     }
 
     @Override
@@ -527,6 +554,36 @@ public class WorkflowController implements WorkflowsApi {
         dto.setReason(skip.getReason());
         dto.setRunId(skip.getRunId());
         return dto;
+    }
+
+    private WorkflowStepSchemaResponse toStepSchemaResponse() {
+        WorkflowStepSchemaResponse response = new WorkflowStepSchemaResponse();
+        response.setStepTypes(stepSchemaRegistry.stepTypes().stream()
+                .map(this::toStepTypeSchemaDto).collect(Collectors.toList()));
+        response.setInterpolation(new InterpolationSchemaDto()
+                .roots(stepSchemaRegistry.interpolationRoots().stream()
+                        .map(r -> new InterpolationRootDto().name(r.name()).description(r.description()))
+                        .collect(Collectors.toList()))
+                .functions(stepSchemaRegistry.interpolationFunctions().stream()
+                        .map(f -> new InterpolationFunctionDto().name(f.name()).description(f.description()))
+                        .collect(Collectors.toList())));
+        return response;
+    }
+
+    private StepTypeSchemaDto toStepTypeSchemaDto(StepTypeSchema schema) {
+        return new StepTypeSchemaDto()
+                .type(schema.type())
+                .description(schema.description())
+                .fields(schema.fields().stream().map(this::toStepFieldSchemaDto).collect(Collectors.toList()));
+    }
+
+    private StepFieldSchemaDto toStepFieldSchemaDto(StepFieldSchema field) {
+        return new StepFieldSchemaDto()
+                .name(field.name())
+                .type(StepFieldSchemaDto.TypeEnum.fromValue(field.type().name()))
+                .required(field.required())
+                .description(field.description())
+                .constraints(field.constraints());
     }
 
     private List<WorkflowValidationWarning> toWarningDtos(List<String> warnings) {
