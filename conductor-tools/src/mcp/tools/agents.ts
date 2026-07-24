@@ -1,5 +1,5 @@
 import { Config } from '../config.js'
-import { apiGet, apiPost } from '../api.js'
+import { apiGet, apiPost, apiPatch, apiDelete } from '../api.js'
 
 /**
  * Agent discovery for workflow authoring. Call list_agents to learn which named AI Agents a
@@ -12,6 +12,33 @@ export async function listAgents(_params: Record<string, never>, config: Config)
 
 /** {@code AgentConfig.runtime} -- mirrors the enum AgentService validates on the backend write path. */
 const VALID_RUNTIMES = new Set(['api', 'claude-code'])
+
+/** {@code Agent.avatarColor} -- mirrors the token set AgentService validates on the backend write path. */
+const VALID_AVATAR_COLORS = new Set([
+  'gray',
+  'blue',
+  'amber',
+  'violet',
+  'teal',
+  'green',
+  'rose',
+  'slate',
+])
+
+function validateAgentFields(params: { config?: { runtime?: string }; avatarColor?: string }): void {
+  const runtime = params.config?.runtime
+  if (runtime !== undefined && !VALID_RUNTIMES.has(runtime)) {
+    throw new Error(
+      `Invalid agent runtime: ${runtime} (expected one of ${[...VALID_RUNTIMES].join(', ')})`
+    )
+  }
+  const avatarColor = params.avatarColor
+  if (avatarColor !== undefined && !VALID_AVATAR_COLORS.has(avatarColor)) {
+    throw new Error(
+      `Invalid agent avatarColor: ${avatarColor} (expected one of ${[...VALID_AVATAR_COLORS].join(', ')})`
+    )
+  }
+}
 
 export interface CreateAgentParams {
   name: string
@@ -34,18 +61,13 @@ export interface CreateAgentParams {
 
 /**
  * Creates a named AI Agent in the project. Fails client-side (no network call) on an invalid
- * `config.runtime` value so a bad value never round-trips to the backend.
+ * `config.runtime` or `avatarColor` value so a bad value never round-trips to the backend.
  */
 export async function createAgent(
   params: CreateAgentParams,
   config: Config
 ): Promise<Record<string, unknown>> {
-  const runtime = params.config?.runtime
-  if (runtime !== undefined && !VALID_RUNTIMES.has(runtime)) {
-    throw new Error(
-      `Invalid agent runtime: ${runtime} (expected one of ${[...VALID_RUNTIMES].join(', ')})`
-    )
-  }
+  validateAgentFields(params)
 
   const body: Record<string, unknown> = {
     name: params.name,
@@ -66,4 +88,44 @@ export async function createAgent(
     body,
     config
   )
+}
+
+export interface UpdateAgentParams extends Partial<CreateAgentParams> {
+  agentId: string
+}
+
+/** Partial update — only supplied fields are sent, so omitted fields keep their stored value. */
+export async function updateAgent(
+  params: UpdateAgentParams,
+  config: Config
+): Promise<Record<string, unknown>> {
+  validateAgentFields(params)
+
+  const { agentId, ...rest } = params
+  const body: Record<string, unknown> = {}
+  if (rest.name !== undefined) body['name'] = rest.name
+  if (rest.provider !== undefined) body['provider'] = rest.provider
+  if (rest.slug !== undefined) body['slug'] = rest.slug
+  if (rest.description !== undefined) body['description'] = rest.description
+  if (rest.model !== undefined) body['model'] = rest.model
+  if (rest.systemPrompt !== undefined) body['systemPrompt'] = rest.systemPrompt
+  if (rest.config !== undefined) body['config'] = rest.config
+  if (rest.toolIds !== undefined) body['toolIds'] = rest.toolIds
+  if (rest.state !== undefined) body['state'] = rest.state
+  if (rest.avatarEmoji !== undefined) body['avatarEmoji'] = rest.avatarEmoji
+  if (rest.avatarColor !== undefined) body['avatarColor'] = rest.avatarColor
+
+  return apiPatch<Record<string, unknown>>(
+    `/api/v1/projects/${config.projectId}/agents/${agentId}`,
+    body,
+    config
+  )
+}
+
+export async function deleteAgent(
+  params: { agentId: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  await apiDelete(`/api/v1/projects/${config.projectId}/agents/${params.agentId}`, config)
+  return { success: true }
 }

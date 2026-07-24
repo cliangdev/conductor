@@ -1,5 +1,5 @@
 import { Config } from '../config.js'
-import { apiGet, apiPost, apiPatch, apiPut } from '../api.js'
+import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from '../api.js'
 import { queueChange } from '../queue.js'
 
 /**
@@ -145,6 +145,17 @@ export async function updateWorkflow(
     body,
     config
   )
+}
+
+export async function deleteWorkflow(
+  params: { workflowId: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  await apiDelete(
+    `/api/v1/projects/${config.projectId}/workflows/${params.workflowId}`,
+    config
+  )
+  return { success: true }
 }
 
 export async function publishWorkflow(

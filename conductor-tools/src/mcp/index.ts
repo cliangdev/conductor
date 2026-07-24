@@ -21,6 +21,7 @@ import {
   createWorkflow,
   getWorkflow,
   updateWorkflow,
+  deleteWorkflow,
   publishWorkflow,
   dispatchWorkflow,
   getWorkflowRun,
@@ -29,7 +30,7 @@ import {
   getWorkflowStepSchema,
 } from './tools/workflows.js'
 import { listIntegrationTools, listConnectorCatalog } from './tools/integrations.js'
-import { listAgents, createAgent } from './tools/agents.js'
+import { listAgents, createAgent, updateAgent, deleteAgent } from './tools/agents.js'
 import { listSkills, registerSkill } from './tools/skills.js'
 import {
   submitKnowledgeSource,
@@ -247,9 +248,51 @@ const TOOLS = [
         toolIds: { type: 'array', items: { type: 'string' }, description: 'Namespaced tool ids the agent may call (optional)' },
         state: { type: 'string', enum: ['DRAFT', 'ACTIVE'], description: 'Defaults to DRAFT if omitted' },
         avatarEmoji: { type: 'string', description: 'Avatar emoji (optional — a default is derived from the slug)' },
-        avatarColor: { type: 'string', description: 'Avatar color token (optional — a default is derived from the slug)' },
+        avatarColor: { type: 'string', enum: ['gray', 'blue', 'amber', 'violet', 'teal', 'green', 'rose', 'slate'], description: 'Avatar color token (optional — a default is derived from the slug)' },
       },
       required: ['name', 'provider'],
+    },
+  },
+  {
+    name: 'update_agent',
+    description: 'Update an existing AI Agent. Partial: only the fields you supply change, everything omitted keeps its stored value. Also how you set an ACTIVE agent back to DRAFT ({state: "DRAFT"}) so it can be deleted. Always call list_agents after to verify the stored result.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agentId: { type: 'string', description: 'Agent ID (from list_agents)' },
+        name: { type: 'string', description: 'New display name (optional)' },
+        provider: { type: 'string', description: 'New model provider id (optional)' },
+        slug: { type: 'string', description: 'New URL-safe unique slug (optional)' },
+        description: { type: 'string', description: 'New description (optional)' },
+        model: { type: 'string', description: 'New model id (optional)' },
+        systemPrompt: { type: 'string', description: 'New system prompt (optional)' },
+        config: {
+          type: 'object',
+          description: 'Generation guardrails, all optional',
+          properties: {
+            temperature: { type: 'number' },
+            maxTokens: { type: 'integer' },
+            maxToolTurns: { type: 'integer' },
+            runtime: { type: 'string', enum: ['api', 'claude-code'], description: 'Pins the runtime that executes this agent\'s workflow steps.' },
+          },
+        },
+        toolIds: { type: 'array', items: { type: 'string' }, description: 'Replacement list of namespaced tool ids (optional)' },
+        state: { type: 'string', enum: ['DRAFT', 'ACTIVE'], description: 'New state (optional)' },
+        avatarEmoji: { type: 'string', description: 'New avatar emoji (optional)' },
+        avatarColor: { type: 'string', enum: ['gray', 'blue', 'amber', 'violet', 'teal', 'green', 'rose', 'slate'], description: 'New avatar color token (optional)' },
+      },
+      required: ['agentId'],
+    },
+  },
+  {
+    name: 'delete_agent',
+    description: 'Delete an AI Agent. Only a DRAFT agent can be deleted — the backend rejects deleting an ACTIVE one, so set it to Draft first with update_agent ({state: "DRAFT"}). Call list_agents after to verify it is gone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agentId: { type: 'string', description: 'Agent ID (from list_agents)' },
+      },
+      required: ['agentId'],
     },
   },
   {
@@ -313,6 +356,17 @@ const TOOLS = [
   {
     name: 'publish_workflow',
     description: 'Promote a workflow from DRAFT to PUBLISHED. Returns {success, errors[]}. If errors is non-empty, fix with update_workflow and retry — do not create a new workflow. DRAFT acts as a dry-run buffer: no commitment until publish succeeds.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: { type: 'string', description: 'Workflow definition ID' },
+      },
+      required: ['workflowId'],
+    },
+  },
+  {
+    name: 'delete_workflow',
+    description: 'Delete a workflow definition. Only a DRAFT workflow can be deleted — PUBLISHED and DISABLED workflows are rejected by the backend. For a DRAFT with problems, prefer update_workflow (fix in place) over delete + recreate. Call list_workflows after to verify it is gone.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -633,6 +687,39 @@ export async function runMcpServer(): Promise<void> {
             )
           )
         }
+        case 'update_agent': {
+          return successResponse(
+            await updateAgent(
+              {
+                agentId: params['agentId'] as string,
+                name: params['name'] as string | undefined,
+                provider: params['provider'] as string | undefined,
+                slug: params['slug'] as string | undefined,
+                description: params['description'] as string | undefined,
+                model: params['model'] as string | undefined,
+                systemPrompt: params['systemPrompt'] as string | undefined,
+                config: params['config'] as
+                  | {
+                      temperature?: number
+                      maxTokens?: number
+                      maxToolTurns?: number
+                      runtime?: 'api' | 'claude-code'
+                    }
+                  | undefined,
+                toolIds: params['toolIds'] as string[] | undefined,
+                state: params['state'] as 'DRAFT' | 'ACTIVE' | undefined,
+                avatarEmoji: params['avatarEmoji'] as string | undefined,
+                avatarColor: params['avatarColor'] as string | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'delete_agent': {
+          return successResponse(
+            await deleteAgent({ agentId: params['agentId'] as string }, config)
+          )
+        }
         case 'list_skills': {
           return successResponse(await listSkills({}, config))
         }
@@ -678,6 +765,11 @@ export async function runMcpServer(): Promise<void> {
               },
               config
             )
+          )
+        }
+        case 'delete_workflow': {
+          return successResponse(
+            await deleteWorkflow({ workflowId: params['workflowId'] as string }, config)
           )
         }
         case 'publish_workflow': {
