@@ -2435,6 +2435,42 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/workflows/step-schema:
+    get:
+      tags: [workflows]
+      summary: Get the declarative schema for every workflow step type
+      description: >-
+        Registry-driven discovery endpoint (mirrors GET .../integrations/catalog): describes every
+        step type WorkflowValidator accepts (fields, required-ness, type, constraints) plus the valid
+        `${{ }}` interpolation roots and the always()/success()/failure() condition functions. Global
+        across projects (not project-specific data) but kept under the project-scoped route for
+        routing/auth consistency with sibling workflow endpoints. Used by docs generation and the
+        Claude Code workflow-authoring skill so step-type field knowledge doesn't drift from what the
+        validator actually enforces.
+      operationId: getWorkflowStepSchema
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The step-type schema and interpolation context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowStepSchemaResponse"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/workflows/{workflowId}:
     get:
       tags: [workflows]
@@ -6268,6 +6304,72 @@ components:
         completedAt:
           type: string
           format: date-time
+
+    WorkflowStepSchemaResponse:
+      type: object
+      properties:
+        stepTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/StepTypeSchemaDto"
+        interpolation:
+          $ref: "#/components/schemas/InterpolationSchemaDto"
+
+    StepTypeSchemaDto:
+      type: object
+      properties:
+        type:
+          type: string
+        description:
+          type: string
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/StepFieldSchemaDto"
+
+    StepFieldSchemaDto:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [STRING, INTEGER, BOOLEAN, OBJECT, ARRAY, MAP]
+        required:
+          type: boolean
+        description:
+          type: string
+        constraints:
+          type: string
+          nullable: true
+
+    InterpolationSchemaDto:
+      type: object
+      properties:
+        roots:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterpolationRootDto"
+        functions:
+          type: array
+          items:
+            $ref: "#/components/schemas/InterpolationFunctionDto"
+
+    InterpolationRootDto:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    InterpolationFunctionDto:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
 
     WorkflowScheduleSkipDto:
       type: object

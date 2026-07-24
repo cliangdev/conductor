@@ -14,6 +14,32 @@ All conductor assets use the `conductor-` prefix so they're easy to identify in 
 
 Skill frontmatter must set `name: conductor-<name>` to match the directory name.
 
+## Writing domain-agnostic guidance
+
+Conductor is a generic agentic-orchestration platform — engineering, marketing, knowledge, and
+whatever other domains a project defines (see the pillar list in the root `CLAUDE.md`) — not a
+GitHub- or code-review-specific tool. Skill/command prose that only ever illustrates a generic
+platform capability with one connector or one domain's example makes that capability read as if
+it's scoped to that domain, and a future agent working in an unrelated domain may skip guidance
+that looks like it doesn't apply to them.
+
+This bit us concretely: `/conductor:workflow` picked up three additions in the same pass
+(credentials binding, job-level `if:` scope, a job-gating idiom) that all used the same GitHub
+PR-review example. Two of the three are actually trigger/connector-agnostic engine features, not
+GitHub-specific ones — the repeated example made them read otherwise.
+
+**When writing or editing skill/command/agent content:**
+- State a generic platform capability's rule on its own, independent of any one domain, before
+  reaching for a worked example.
+- If you use a worked example, label it explicitly as one instance of the rule ("one instance of
+  this idiom is...") rather than letting the example stand in for the rule.
+- When a pass touches multiple pieces of guidance, don't reuse the same single domain/connector as
+  the example for all of them — vary it, or call out a second domain explicitly, so the generality
+  reads from the text itself.
+
+This applies the same way to MCP tool descriptions — see
+[`docs/mcp-tool-guidelines.md`](mcp-tool-guidelines.md#8-domain-agnostic-examples).
+
 ## Adding a new asset
 
 1. Create the file under `conductor-tools/assets/claude/` following the naming convention above.

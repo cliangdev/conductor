@@ -96,7 +96,22 @@ Let the agent discover the real shape of available tools rather than summarizing
 
 ---
 
-## 8. Checklist for adding / updating an MCP tool
+## 8. Domain-agnostic examples
+
+Conductor is a generic orchestration platform (marketing, knowledge, engineering, etc. — see the
+pillar list in the root `CLAUDE.md`), not a GitHub/code-review-specific tool. A tool description
+that only ever illustrates itself with one connector or domain (GitHub, Discord, whatever's newest)
+makes agents read a genuinely generic capability as scoped to that one domain — see
+[`docs/cli-assets.md`](cli-assets.md#writing-domain-agnostic-guidance) for the full guideline and
+the incident that prompted it.
+
+Applies to tool descriptions the same way it applies to skill/doc prose: state the generic
+capability first, and if you need a worked example, name it as one instance rather than letting it
+stand in for the rule itself.
+
+---
+
+## 9. Checklist for adding / updating an MCP tool
 
 - [ ] Description is lean — no inline JSON examples; states what it returns and what to call next
 - [ ] Tool does exactly one thing (one user intent)
@@ -105,6 +120,7 @@ Let the agent discover the real shape of available tools rather than summarizing
 - [ ] Async dispatch tools: named a status-check companion in the description
 - [ ] Credentials are not accepted as parameters — use integration indirection
 - [ ] Discovery data comes from the DB at runtime, not hardcoded in the description
+- [ ] Examples in the description (if any) aren't the only domain a generic capability is shown in
 - [ ] If the internal API changed: all in-repo callers updated + CLI version bumped
 
 ---

@@ -21,6 +21,7 @@ import {
   reportStepRun,
   listWorkflowRuns,
   listWorkflowSecrets,
+  getWorkflowStepSchema,
 } from '../mcp/tools/workflows.js'
 
 const config: Config = {
@@ -141,5 +142,21 @@ describe('workflow-aware MCP tools', () => {
     const result = await listWorkflowSecrets({}, config)
     expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflow-secrets', config)
     expect(result).toEqual([{ key: 'DISCORD_WEBHOOK_URL' }, { key: 'API_TOKEN' }])
+  })
+
+  it('get_workflow_step_schema GETs the step-schema resource and passes the response through', async () => {
+    const schema = {
+      stepTypes: [
+        { type: 'http', description: 'Make an HTTP request', fields: [{ name: 'url', type: 'STRING', required: true }] },
+      ],
+      interpolation: {
+        roots: [{ name: 'inputs', description: 'Workflow dispatch inputs' }],
+        functions: [{ name: 'toJson' }],
+      },
+    }
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue(schema)
+    const result = await getWorkflowStepSchema({}, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/step-schema', config)
+    expect(result).toEqual(schema)
   })
 })

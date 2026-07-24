@@ -212,6 +212,21 @@ export async function listWorkflowSecrets(
     .map((s) => ({ key: s['key'] as string }))
 }
 
+/**
+ * Live workflow-authoring schema: every step type's fields plus the valid `${{ }}`/`if:` interpolation
+ * roots and functions, sourced from the backend's StepSchemaRegistry. Thin passthrough — no local
+ * shaping — so it always reflects the current engine, never a stale hardcoded copy.
+ */
+export async function getWorkflowStepSchema(
+  _params: Record<string, never>,
+  config: Config
+): Promise<Record<string, unknown>> {
+  return apiGet<Record<string, unknown>>(
+    `/api/v1/projects/${config.projectId}/workflows/step-schema`,
+    config
+  )
+}
+
 export async function reportStepRun(
   params: {
     issueId: string

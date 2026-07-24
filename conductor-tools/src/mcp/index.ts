@@ -26,6 +26,7 @@ import {
   getWorkflowRun,
   listWorkflowRuns,
   listWorkflowSecrets,
+  getWorkflowStepSchema,
 } from './tools/workflows.js'
 import { listIntegrationTools, listConnectorCatalog } from './tools/integrations.js'
 import { listAgents, createAgent } from './tools/agents.js'
@@ -360,6 +361,11 @@ const TOOLS = [
   {
     name: 'list_workflow_secrets',
     description: 'List the names of workflow secrets configured for this project (keys only — values are never returned here or anywhere over MCP). Secrets are set in the app under Settings → Secrets.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_workflow_step_schema',
+    description: 'The live, authoritative reference for workflow YAML: every step type\'s fields (name, type, required, constraints) plus the valid `${{ }}`/`if:` interpolation roots and functions, read straight from the engine\'s schema registry. Call this before designing or editing workflow YAML instead of recalling step shapes from memory — it always matches the current engine, including step types added after your training data.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -715,6 +721,9 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'list_workflow_secrets': {
           return successResponse(await listWorkflowSecrets({}, config))
+        }
+        case 'get_workflow_step_schema': {
+          return successResponse(await getWorkflowStepSchema({}, config))
         }
         case 'get_available_transitions': {
           return successResponse(

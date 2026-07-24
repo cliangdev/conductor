@@ -49,10 +49,13 @@ public class WorkflowValidator {
 
     /**
      * Test-only constructor with an explicit allowed step-type set, bypassing the Spring-wired
-     * executor registry. Package-private: production code always goes through the registry-driven
-     * constructor above.
+     * executor registry. Production code always goes through the registry-driven constructor above.
+     * Public (rather than package-private) so contract tests outside {@code com.conductor.workflow}
+     * can exercise the real validator too — see {@code
+     * com.conductor.workflow.schema.StepSchemaSyncTest}, the drift guard between {@code
+     * StepSchemaRegistry} and this class.
      */
-    WorkflowValidator(Set<String> allowedStepTypes) {
+    public WorkflowValidator(Set<String> allowedStepTypes) {
         this.yamlParser = new WorkflowYamlParser();
         this.allowedStepTypes = Set.copyOf(allowedStepTypes);
         this.connectorRegistry = null;
