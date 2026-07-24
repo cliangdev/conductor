@@ -2,11 +2,12 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
-import { ChevronDownIcon } from 'lucide-react'
-import { Alert } from '@/components/ui/alert'
+import { ChevronDownIcon, CloudOffIcon, RefreshCwIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { settingsBreadcrumbs } from '@/lib/navigation'
 
@@ -53,72 +54,6 @@ interface CliManifest {
     skills: ClaudeAsset[]
   }
   mcpTools: McpTool[]
-}
-
-// ─── Bundled fallback (shown when CDN is unreachable) ─────────────────────────
-
-const BUNDLED_MANIFEST: CliManifest = {
-  package: {
-    name: '@cliangdev/conductor',
-    version: '0.4.2',
-    bin: 'conductor',
-    installCommand: 'npm install -g @cliangdev/conductor',
-  },
-  commands: [
-    { name: 'login', syntax: 'conductor login', description: 'Authenticate with Conductor via browser.', category: 'auth', options: [{ flag: '--force', description: 'Re-authenticate even if already logged in' }, { flag: '--local', description: 'Email/password login (local dev only)' }] },
-    { name: 'logout', syntax: 'conductor logout', description: 'Clear saved Conductor credentials.', category: 'auth' },
-    { name: 'init', syntax: 'conductor init', description: 'Initialize Conductor in the current project. Links the project, installs the Claude Code plugin, and starts the sync daemon.', category: 'project', options: [{ flag: '--project-id <id>', description: 'Project ID to link' }, { flag: '--path <dir>', description: 'Project directory (defaults to current)' }] },
-    { name: 'start', syntax: 'conductor start', description: 'Start the file watcher daemon.', category: 'daemon' },
-    { name: 'stop', syntax: 'conductor stop', description: 'Stop the file watcher daemon.', category: 'daemon' },
-    { name: 'status', syntax: 'conductor status', description: 'Show daemon running state and sync queue depth.', category: 'daemon', options: [{ flag: '--json', description: 'Output as JSON' }] },
-    { name: 'mcp', syntax: 'conductor mcp', description: 'Start the MCP stdio server for Claude Code integration.', category: 'mcp' },
-    { name: 'dashboard', syntax: 'conductor dashboard', description: 'Show a live Conductor status dashboard in the terminal.', category: 'debug' },
-    { name: 'doctor', syntax: 'conductor doctor', description: 'Run health checks: config, API connectivity, MCP server, and plugin installation.', category: 'debug', options: [{ flag: '--json', description: 'Output results as JSON' }] },
-    { name: 'lint', syntax: 'conductor lint [issueId]', description: 'Lint local PRD and tasks.json artifacts against the current schema.', category: 'debug', options: [{ flag: '--json', description: 'Output as JSON' }] },
-    { name: 'config show', syntax: 'conductor config show', description: 'Display the current CLI configuration (API key redacted).', category: 'config', options: [{ flag: '--json', description: 'Output as JSON' }] },
-    { name: 'config use', syntax: 'conductor config use <env>', description: 'Switch to a named environment (e.g. prod).', category: 'config' },
-    { name: 'config set-url', syntax: 'conductor config set-url <url>', description: 'Update the API base URL for self-hosted deployments.', category: 'config' },
-  ],
-  claudeIntegration: {
-    description: 'Conductor ships a full Claude Code plugin — slash commands, skills, and a background agent — installed automatically by conductor init.',
-    mcpConfig: '{\n  "mcpServers": {\n    "conductor": {\n      "command": "conductor",\n      "args": ["mcp"]\n    }\n  }\n}',
-    slashCommands: [
-      { name: 'conductor:prd', description: 'Create a PRD through guided discovery, research, and writing.' },
-      { name: 'conductor:implement', description: 'Take a PRD issue from BACKLOG to a green PR — status transitions, branch, parallel coding agents, CI monitoring.' },
-      { name: 'conductor:fix', description: 'Fix a bug found during PR review — root cause investigation, build validation, push to existing PR branch.' },
-      { name: 'conductor:workflow', description: 'Design and create a Conductor workflow via guided discovery and MCP creation.' },
-    ],
-    agents: [
-      { name: 'conductor-researcher', description: 'Researches unfamiliar technologies, libraries, and APIs for PRD creation. Auto-triggered when confidence is low.' },
-    ],
-    skills: [
-      { name: 'conductor-coder', description: 'Conductor-native coding agent. Implements tasks TDD-style: writes tests first, implements until passing, commits with task ref.' },
-      { name: 'conductor-ux-ui-design', description: 'Expert UX/UI design guidance for simple, user-focused interfaces.' },
-    ],
-  },
-  mcpTools: [
-    { name: 'create_issue', description: 'Create a new issue (Work Item) in the project.', category: 'issues', requiredParams: ['type', 'title'] },
-    { name: 'update_issue', description: "Update an existing issue's title or description.", category: 'issues', requiredParams: ['issueId'] },
-    { name: 'set_issue_status', description: 'Update the status of an issue.', category: 'issues', requiredParams: ['issueId', 'status'] },
-    { name: 'list_issues', description: 'List issues in the project, optionally filtered by type or status.', category: 'issues' },
-    { name: 'get_issue', description: 'Get a single issue by ID, including status and linked documents.', category: 'issues', requiredParams: ['issueId'] },
-    { name: 'scaffold_document', description: 'Create an empty document file locally and register it with the backend. Returns absolutePath for use with the Write tool.', category: 'documents', requiredParams: ['issueId', 'filename'] },
-    { name: 'delete_document', description: 'Delete a document from an issue locally and from the backend.', category: 'documents', requiredParams: ['issueId', 'documentId', 'filename'] },
-    { name: 'list_issue_comments', description: 'List comments on an issue, optionally filtered by resolved status.', category: 'comments', requiredParams: ['issueId'] },
-    { name: 'list_workflows', description: "List the project's Workflows. Discovery entry point — resolves workflow names to slugs.", category: 'workflows' },
-    { name: 'get_available_transitions', description: 'Get valid next statuses for a Work Item. Review-gated transitions are hidden until approved.', category: 'workflows', requiredParams: ['issueId'] },
-    { name: 'transition_work_item', description: 'Move a Work Item to a new status. Backend validates against the active Workflow and Review gate.', category: 'workflows', requiredParams: ['issueId', 'toStatus'] },
-    { name: 'record_asset', description: 'Record a produced-output Asset on a Work Item (e.g. a github_pr link).', category: 'workflows', requiredParams: ['issueId', 'type', 'kind', 'ref'] },
-    { name: 'report_step_run', description: 'Report an agent-run step on a Work Item for human review at a Review gate.', category: 'workflows', requiredParams: ['issueId', 'stepKind', 'status', 'inputBrief', 'reportedBy'] },
-    { name: 'create_workflow', description: 'Create a new workflow definition in DRAFT state. Returns workflowId.', category: 'workflows', requiredParams: ['name', 'area'] },
-    { name: 'get_workflow', description: 'Get a workflow definition by ID. Verify after create or update.', category: 'workflows', requiredParams: ['workflowId'] },
-    { name: 'update_workflow', description: 'Update a DRAFT workflow definition. Fix validation errors before retrying publish.', category: 'workflows', requiredParams: ['workflowId'] },
-    { name: 'publish_workflow', description: 'Promote a workflow from DRAFT to PUBLISHED. Returns success and any validation errors.', category: 'workflows', requiredParams: ['workflowId'] },
-    { name: 'dispatch_workflow', description: 'Manually trigger a workflow run for testing. Returns runId.', category: 'workflows', requiredParams: ['workflowId'] },
-    { name: 'get_workflow_run', description: 'Get status and step details for a workflow run (PENDING/RUNNING/SUCCESS/FAILED).', category: 'workflows', requiredParams: ['workflowId', 'runId'] },
-    { name: 'list_integration_tools', description: 'List connected integrations and their available data operations. Always call before designing a workflow.', category: 'discovery' },
-    { name: 'list_agents', description: "List the project's named AI Agents (id, slug, provider, model, state). Discovery for workflow authoring.", category: 'discovery' },
-  ],
 }
 
 const MANIFEST_URL = 'https://unpkg.com/@cliangdev/conductor@latest/assets/cli-manifest.json'
@@ -464,6 +399,7 @@ export default function CliPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const [manifest, setManifest] = useState<CliManifest | null>(null)
   const [loadError, setLoadError] = useState(false)
+  const [retryToken, setRetryToken] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -472,14 +408,21 @@ export default function CliPage() {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json() as Promise<CliManifest>
       })
-      .then(setManifest)
+      .then((data) => {
+        setManifest(data)
+        setLoadError(false)
+      })
       .catch(() => {
         if (!controller.signal.aborted) {
           setLoadError(true)
-          setManifest(BUNDLED_MANIFEST)
         }
       })
     return () => controller.abort()
+  }, [retryToken])
+
+  const handleRetry = useCallback(() => {
+    setLoadError(false)
+    setRetryToken((t) => t + 1)
   }, [])
 
   const version = manifest?.package.version
@@ -495,59 +438,67 @@ export default function CliPage() {
             <Badge variant="outline" className="font-mono text-xs">
               v{version}
             </Badge>
-          ) : (
+          ) : loadError ? null : (
             <div className="h-5 w-14 bg-muted animate-pulse rounded-full" />
           )
         }
       />
 
-      {loadError && (
-        <Alert variant="warning">
-          Could not reach the npm registry. Showing bundled reference — may not reflect the latest version.
-        </Alert>
-      )}
+      {loadError ? (
+        <EmptyState
+          icon={CloudOffIcon}
+          title="Couldn't load the CLI reference"
+          description="We couldn't reach the npm registry to fetch the latest CLI reference. Check your connection and try again."
+          action={
+            <Button size="sm" variant="outline" onClick={handleRetry}>
+              <RefreshCwIcon className="h-4 w-4" />
+              Retry
+            </Button>
+          }
+        />
+      ) : (
+        <div className="flex gap-10 items-start">
+          {/* Main content */}
+          <div className="flex-1 min-w-0">
+            {!manifest ? (
+              <div className="space-y-4">
+                {[0, 1, 2].map((i) => (
+                  <div key={i} className="h-32 bg-muted rounded-lg animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                <CollapsibleSection id="install" title="Install">
+                  <div className="space-y-3 max-w-lg">
+                    <CodeBlock code={manifest.package.installCommand} />
+                    <p className="text-sm text-muted-foreground">
+                      After installing, run{' '}
+                      <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">conductor init</code>{' '}
+                      inside any project to link it, install the Claude Code plugin, and start the sync daemon.
+                    </p>
+                    <CodeBlock code="conductor init" />
+                  </div>
+                </CollapsibleSection>
 
-      <div className="flex gap-10 items-start">
-        {/* Main content */}
-        <div className="flex-1 min-w-0">
-          {!manifest ? (
-            <div className="space-y-4">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="h-32 bg-muted rounded-lg animate-pulse" />
-              ))}
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              <CollapsibleSection id="install" title="Install">
-                <div className="space-y-3 max-w-lg">
-                  <CodeBlock code={manifest.package.installCommand} />
-                  <p className="text-sm text-muted-foreground">
-                    After installing, run{' '}
-                    <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">conductor init</code>{' '}
-                    inside any project to link it, install the Claude Code plugin, and start the sync daemon.
-                  </p>
-                  <CodeBlock code="conductor init" />
-                </div>
-              </CollapsibleSection>
+                <CollapsibleSection id="commands" title="Commands">
+                  <CommandsSection commands={manifest.commands} />
+                </CollapsibleSection>
 
-              <CollapsibleSection id="commands" title="Commands">
-                <CommandsSection commands={manifest.commands} />
-              </CollapsibleSection>
+                <CollapsibleSection id="claude" title="Claude Integration">
+                  <ClaudeSection integration={manifest.claudeIntegration} />
+                </CollapsibleSection>
 
-              <CollapsibleSection id="claude" title="Claude Integration">
-                <ClaudeSection integration={manifest.claudeIntegration} />
-              </CollapsibleSection>
+                <CollapsibleSection id="mcp-tools" title="MCP Tools">
+                  <McpToolsSection tools={manifest.mcpTools} />
+                </CollapsibleSection>
+              </div>
+            )}
+          </div>
 
-              <CollapsibleSection id="mcp-tools" title="MCP Tools">
-                <McpToolsSection tools={manifest.mcpTools} />
-              </CollapsibleSection>
-            </div>
-          )}
+          {/* Sticky anchor nav */}
+          <AnchorNav />
         </div>
-
-        {/* Sticky anchor nav */}
-        <AnchorNav />
-      </div>
+      )}
     </div>
   )
 }
