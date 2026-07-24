@@ -1147,13 +1147,22 @@ jobs:
    - The *runtime* service account (which the Job executes as) needs `roles/artifactregistry.reader` to pull your image, plus whatever the workload itself uses.
 2. **Create the runtime target** (Integrations → Google Cloud → Runtime targets): name (slug), the gcp connection, GCP project id, region, and the **container image** to pin on the Job (e.g. `us-central1-docker.pkg.dev/PROJECT/conductor/runner:3`). Job name defaults to `conductor-<name>`.
 
-Creating (or editing) a target provisions it synchronously: Conductor **verifies the image exists** in your Artifact Registry, then **creates or updates the Cloud Run Job** in your project (image + `conductor-claude-entrypoint` command pinned on the Job, `--max-retries 0`). The target lands `ACTIVE`, or `ERROR` with the reason on the row (missing image, missing IAM permission, …) — fix and hit *Retry provisioning*. A warning (not an error) is recorded when the image's runner-contract label can't be verified.
+Creating (or editing-with-a-changed-value) a target provisions it synchronously: Conductor **verifies the image exists** in your Artifact Registry, then **creates or updates the Cloud Run Job** in your project (image + `conductor-claude-entrypoint` command pinned on the Job, `--max-retries 0`). The target lands `ACTIVE`, or `ERROR` with the reason on the row (missing image, missing IAM permission, …) — fix and hit *Retry provisioning*. A warning (not an error) is recorded when the image's runner-contract label can't be verified.
+
+**Image tags are pinned, not floating.** Cloud Run resolves an image *tag* (e.g. `:latest`) to a specific *digest* at the moment Conductor calls the create/update-Job API — not at each execution. Pushing a newer image to that same tag afterward has no effect on an already-provisioned target; the Job keeps running whatever digest was current at the last provision. Re-saving the edit form with the *same* image string is also a no-op (nothing changed, so nothing re-provisions). To pick up a new push without changing the tag, use **Sync to latest image** from an `ACTIVE` target's row menu (Integrations → Google Cloud → Runtime targets) — it re-runs the same verify-image + update-Job call the backend already uses for `ERROR`-state retries, just exposed for `ACTIVE` targets too.
 
 Deleting a target removes only Conductor's record — **the Cloud Run Job in your project is left in place**.
 
 **Choosing an image.** The image must honor the Conductor runner contract (the `conductor-claude-entrypoint` self-reporting entrypoint — see [Runner image](#runner-image)). For claude-code-only targets, prefer the **dedicated claude runner** (`runner-image/Dockerfile.claude-runner`): node-slim + pinned Claude CLI + pre-warmed MCP resolution, with `DISABLE_AUTOUPDATER=1`, plus `git`/`gh`/`curl`/`jq` so a step's Bash tool can act on `credentials:`-issued tokens (checkout a PR, call an API) regardless of project type — it deliberately omits Python and the Docker CLI (only `docker` steps need those), so it's substantially smaller and cold-starts faster than the general-purpose image. Patterns:
 
-- **Build the dedicated claude runner** into your Artifact Registry (not yet published to a public registry — built from the repo for now):
+- **Mirror the dedicated claude runner** into your Artifact Registry — published to `ghcr.io/cliangdev/conductor-claude-runner`, rebuilt automatically on every change to `runner-image/Dockerfile.claude-runner` (see [Runner image](#runner-image)):
+  ```bash
+  docker pull ghcr.io/cliangdev/conductor-claude-runner:latest
+  docker tag ghcr.io/cliangdev/conductor-claude-runner:latest us-central1-docker.pkg.dev/PROJECT/conductor/claude-runner:latest
+  docker push us-central1-docker.pkg.dev/PROJECT/conductor/claude-runner:latest
+  ```
+  Prefer an immutable `sha-<commit>` tag over `:latest` if you want provisioning to be a deliberate, reviewable step rather than picking up whatever's newest; either way, a later pull needs **Sync to latest image** (see above) to actually take effect on an existing target.
+- **Or build it yourself** from the repo instead of mirroring:
   ```bash
   docker build --platform linux/amd64 -f runner-image/Dockerfile.claude-runner \
     -t us-central1-docker.pkg.dev/PROJECT/conductor/claude-runner:1 runner-image/
@@ -1291,7 +1300,7 @@ This image includes:
 | `curl`, `git`, `jq` | latest stable |
 | `conductor-claude-entrypoint` | self-reporting entrypoint used by `claude-code` steps (see below) |
 
-A **dedicated claude-code image** also exists (`runner-image/Dockerfile.claude-runner`): node-slim + the same pinned Claude CLI + `conductor-claude-entrypoint`, plus `git`/`gh`/`curl`/`jq` (so `credentials:`-based steps can act on an issued token), without the Python/Docker-CLI tooling above. Today it's consumed via a [runtime target](#runtime-targets-bring-your-own-cloud-run)'s image field; making it the default image for self-hosted claude-code dispatch is tracked in #268.
+A **dedicated claude-code image** also exists (`runner-image/Dockerfile.claude-runner`): node-slim + the same pinned Claude CLI + `conductor-claude-entrypoint`, plus `git`/`gh`/`curl`/`jq` (so `credentials:`-based steps can act on an issued token), without the Python/Docker-CLI tooling above. Published to `ghcr.io/cliangdev/conductor-claude-runner` (`:latest` and immutable `:sha-<commit>` tags) by the **Publish Claude Runner Image** workflow (`.github/workflows/publish-claude-runner.yml`), which builds and pushes automatically whenever `Dockerfile.claude-runner`, the entrypoint, or its self-test changes on `main` — no manual version tag needed, unlike the general-purpose image's `runner-v*.*.*`-tag-triggered release. Today it's consumed via a [runtime target](#runtime-targets-bring-your-own-cloud-run)'s image field; making it the default image for self-hosted claude-code dispatch is tracked in #268.
 
 The container runs as a non-root `runner` user and ships with **no default `ENTRYPOINT`/`CMD`** — a plain `docker` step's `run:` script executes as before; a `claude-code` step explicitly invokes `conductor-claude-entrypoint`, which materializes the step's `inputs` under `/conductor/inputs/`, optionally wires up the Conductor MCP server, runs `claude -p` with the step's flags, streams logs, and self-reports the result (outputs + `errorReason`) back to Conductor — the same entrypoint runs unmodified whether the launcher is the self-hosted daemon or a Cloud Run Job execution.
 
