@@ -243,7 +243,7 @@ public class ClaudeCodeContainerRunner {
         ContainerTask task = new ContainerTask(image, CONTAINER_COMMAND, env, timeoutMinutes);
 
         appendLauncherLine(stepRun, projectId, logBuilder,
-                "→ Launching Cloud Run execution (timeout=" + timeoutMinutes + "m)");
+                "→ Launching Cloud Run execution (image=" + image + ", timeout=" + timeoutMinutes + "m)");
 
         CloudRunJobLauncher.LaunchResult launch;
         try {
