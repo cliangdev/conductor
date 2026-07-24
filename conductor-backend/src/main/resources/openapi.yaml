@@ -6793,6 +6793,13 @@ components:
           type: integer
         maxToolTurns:
           type: integer
+        runtime:
+          type: string
+          enum: [api, claude-code]
+          description: >-
+            Pins the runtime that executes this agent's workflow steps ("api": in-process ReAct
+            loop; "claude-code": headless Claude Code container). Omit to auto-detect from the
+            project's configured credentials -- see docs/workflows.md#agent--run-an-ai-agent.
 
     AgentResponse:
       type: object

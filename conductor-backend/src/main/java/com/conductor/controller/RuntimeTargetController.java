@@ -6,11 +6,13 @@ import com.conductor.generated.api.RuntimeTargetsApi;
 import com.conductor.generated.model.CreateRuntimeTargetRequest;
 import com.conductor.generated.model.RuntimeTargetResponse;
 import com.conductor.generated.model.UpdateRuntimeTargetRequest;
+import com.conductor.security.ProjectScopedPrincipal;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.RuntimeTargetService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -78,19 +80,37 @@ public class RuntimeTargetController implements RuntimeTargetsApi {
         return runtimeTargetService.toResponse(target);
     }
 
+    /**
+     * Member-level gate: accepts either a {@link User} principal or a project-scoped machine
+     * principal ({@link ProjectScopedPrincipal} -- a project API key or a run-scoped MCP token)
+     * whose {@code projectId} matches the requested project -- mirroring
+     * {@code KnowledgeController#requireProjectAccess}.
+     */
     private void requireMember(String projectId) {
-        if (!projectSecurityService.isProjectMember(projectId, currentUser().getId())) {
-            throw new AccessDeniedException("Not a member of this project");
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = auth != null ? auth.getPrincipal() : null;
+        if (principal instanceof User user) {
+            if (!projectSecurityService.isProjectMember(projectId, user.getId())) {
+                throw new AccessDeniedException("Not a member of this project");
+            }
+            return;
         }
+        if (auth instanceof ProjectScopedPrincipal scoped && projectId.equals(scoped.getProjectId())) {
+            return;
+        }
+        throw new AccessDeniedException("Not a member of this project");
     }
 
+    /**
+     * Admin/creator-level gate: only a real {@link User} principal can hold a project role, so
+     * project-scoped machine principals are rejected with a clean 403 here -- mirroring
+     * {@code KnowledgeController#requireProjectAdmin}.
+     */
     private void requireAdminOrCreator(String projectId) {
-        if (!projectSecurityService.isAdminOrCreator(projectId, currentUser().getId())) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = auth != null ? auth.getPrincipal() : null;
+        if (!(principal instanceof User user) || !projectSecurityService.isAdminOrCreator(projectId, user.getId())) {
             throw new AccessDeniedException("Requires ADMIN or CREATOR role");
         }
-    }
-
-    private User currentUser() {
-        return (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     }
 }

@@ -6,6 +6,8 @@ import com.conductor.agent.AgentService;
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.agent.credential.ProviderCredentialService.ProviderCredentialStatusView;
 import com.conductor.config.SecurityConfig;
+import com.conductor.entity.Project;
+import com.conductor.entity.ProjectApiKey;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.repository.ProjectApiKeyRepository;
@@ -77,6 +79,62 @@ class AgentControllerTest {
         when(jwtService.validateToken("member-token")).thenReturn(true);
         when(jwtService.getUserIdFromToken("member-token")).thenReturn("member-user-id");
         when(userRepository.findById("member-user-id")).thenReturn(java.util.Optional.of(memberUser));
+
+        // A project-scoped API key for PROJECT_ID -- ApiKeyAuthenticationFilter resolves this token
+        // to an ApiKeyAuthenticationToken (a ProjectScopedPrincipal) with no backing User.
+        Project project = new Project();
+        project.setId(PROJECT_ID);
+        ProjectApiKey apiKey = new ProjectApiKey();
+        apiKey.setId("key-1");
+        apiKey.setProject(project);
+        apiKey.setName("ci-key");
+        apiKey.setKeyValue("project-api-key");
+        when(projectApiKeyRepository.findByKeyValueWithProject("project-api-key"))
+                .thenReturn(java.util.Optional.of(apiKey));
+    }
+
+    // ---- project API key auth (bug fix regression coverage) ----
+    // AgentController.currentUser() used to unconditionally cast the Authentication principal to
+    // User, which threw ClassCastException (-> 500) whenever the caller authenticated with a
+    // project API key (ApiKeyAuthenticationToken, principal = plain project-id String). Member-level
+    // endpoints must now accept the project-scoped principal outright; admin/creator-level endpoints
+    // must reject it with a clean 403, never a 500 -- mirroring KnowledgeController's precedent.
+
+    @Test
+    void listAgents_projectApiKey_succeedsAsMemberLevel() throws Exception {
+        when(agentService.list(PROJECT_ID)).thenReturn(List.of(stubAgent()));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer project-api-key"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    @Test
+    void getAgent_projectApiKey_succeedsAsMemberLevel() throws Exception {
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(stubAgent());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer project-api-key"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void createAgent_projectApiKey_returnsClean403NotServerError() throws Exception {
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer project-api-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Marketer\",\"provider\":\"claude\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void updateAgent_projectApiKey_returnsClean403NotServerError() throws Exception {
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer project-api-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"state\":\"ACTIVE\"}"))
+                .andExpect(status().isForbidden());
     }
 
     // ---- isDefault mapping ----
@@ -349,6 +407,76 @@ class AgentControllerTest {
                 .andExpect(jsonPath("$.source").value("project-target"))
                 .andExpect(jsonPath("$.runtimeTargetId").value("target-1"))
                 .andExpect(jsonPath("$.runtimeTarget.name").value("my-target"));
+    }
+
+    // ---- agent config "runtime" round-trip (bug fix: was silently dropped by toConfigMap) ----
+
+    @Test
+    void createAgent_withRuntimeConfig_passesRuntimeThroughToService() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.create(eq(PROJECT_ID), any())).thenReturn(stubAgent());
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Marketer\",\"provider\":\"claude\","
+                                + "\"config\":{\"runtime\":\"claude-code\"}}"))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).create(eq(PROJECT_ID), captor.capture());
+        assertThat(captor.getValue().config()).containsEntry("runtime", "claude-code");
+    }
+
+    @Test
+    void updateAgent_withRuntimeConfig_passesRuntimeThroughToService() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"config\":{\"runtime\":\"api\"}}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).update(eq(PROJECT_ID), eq("agent-1"), captor.capture());
+        assertThat(captor.getValue().config()).containsEntry("runtime", "api");
+    }
+
+    @Test
+    void createAgent_invalidRuntimeValue_returns400() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Marketer\",\"provider\":\"claude\","
+                                + "\"config\":{\"runtime\":\"not-a-real-runtime\"}}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void getAgent_persistedRuntimeConfig_returnsRuntimeInResponse() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        // AgentController's ObjectMapper is a @MockitoBean here (WebMvcTest slice) — delegate to a
+        // real Jackson instance so readConfig's deserialization is genuinely exercised, confirming
+        // AgentService's execution-time resolution (which reads configJson's "runtime" key) would
+        // actually see the persisted value.
+        com.fasterxml.jackson.databind.ObjectMapper realMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        when(objectMapper.readValue(org.mockito.ArgumentMatchers.anyString(),
+                        eq(com.conductor.generated.model.AgentConfig.class)))
+                .thenAnswer(inv -> realMapper.readValue((String) inv.getArgument(0),
+                        com.conductor.generated.model.AgentConfig.class));
+
+        Agent agent = stubAgent();
+        agent.setConfigJson("{\"runtime\":\"claude-code\"}");
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(agent);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.config.runtime").value("claude-code"));
     }
 
     // ---- avatar ----

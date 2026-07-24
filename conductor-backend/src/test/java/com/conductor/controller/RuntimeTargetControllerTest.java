@@ -1,6 +1,8 @@
 package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
+import com.conductor.entity.Project;
+import com.conductor.entity.ProjectApiKey;
 import com.conductor.entity.RuntimeTarget;
 import com.conductor.entity.RuntimeTargetStatus;
 import com.conductor.entity.User;
@@ -67,6 +69,43 @@ class RuntimeTargetControllerTest {
         when(jwtService.validateToken("member-token")).thenReturn(true);
         when(jwtService.getUserIdFromToken("member-token")).thenReturn("member-user-id");
         when(userRepository.findById("member-user-id")).thenReturn(Optional.of(memberUser));
+
+        // A project-scoped API key for PROJECT_ID -- ApiKeyAuthenticationFilter resolves this token
+        // to an ApiKeyAuthenticationToken (a ProjectScopedPrincipal) with no backing User.
+        Project project = new Project();
+        project.setId(PROJECT_ID);
+        ProjectApiKey apiKey = new ProjectApiKey();
+        apiKey.setId("key-1");
+        apiKey.setProject(project);
+        apiKey.setName("ci-key");
+        apiKey.setKeyValue("project-api-key");
+        when(projectApiKeyRepository.findByKeyValueWithProject("project-api-key"))
+                .thenReturn(Optional.of(apiKey));
+    }
+
+    // ---- project API key auth (bug fix regression coverage) ----
+
+    @Test
+    void listRuntimeTargets_projectApiKey_succeedsAsMemberLevel() throws Exception {
+        when(runtimeTargetService.list(PROJECT_ID)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/runtime-targets")
+                        .header("Authorization", "Bearer project-api-key"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void createRuntimeTarget_projectApiKey_returnsClean403NotServerError() throws Exception {
+        String body = """
+                {"name":"my-target","provider":"gcp-cloud-run","connectionId":"conn-1",
+                 "gcpProjectId":"customer-proj","region":"us-central1","image":"img:1"}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/runtime-targets")
+                        .header("Authorization", "Bearer project-api-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isForbidden());
     }
 
     private RuntimeTarget targetWithConfig() {

@@ -22,6 +22,7 @@ import com.conductor.generated.model.SetClaudeRuntimeRequest;
 import com.conductor.generated.model.SetProviderCredentialRequest;
 import com.conductor.generated.model.UpdateAgentRequest;
 import com.conductor.generated.model.VerificationCheck;
+import com.conductor.security.ProjectScopedPrincipal;
 import com.conductor.service.ClaudeRuntimeService;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.ProviderVerificationService;
@@ -34,6 +35,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -43,7 +45,11 @@ import java.util.Map;
 
 /**
  * External CRUD for user-managed named {@link Agent}s plus per-(project, provider) BYO API-key
- * management. Reads gate on project membership; mutations require ADMIN or CREATOR — mirroring
+ * management. Reads gate on project membership -- accepting either a {@link User} principal or a
+ * project-scoped machine principal ({@link ProjectScopedPrincipal}: a project API key or a
+ * run-scoped MCP token); mutations require ADMIN or CREATOR and, per {@code KnowledgeController}'s
+ * precedent, only a real {@link User} principal can hold a project role, so project API keys are
+ * cleanly rejected (403) rather than allowed to bypass role checks -- mirroring
  * {@code IntegrationController}. Provider credentials are never returned in clear: the credential
  * endpoints only report whether a key is configured.
  */
@@ -306,6 +312,9 @@ public class AgentController implements AgentsApi {
         if (config.getMaxToolTurns() != null) {
             map.put("maxToolTurns", config.getMaxToolTurns());
         }
+        if (config.getRuntime() != null) {
+            map.put("runtime", config.getRuntime().getValue());
+        }
         return map;
     }
 
@@ -333,19 +342,39 @@ public class AgentController implements AgentsApi {
 
     // ---- access control ----
 
+    /**
+     * Member-level gate: accepts either a {@link User} principal (checked via
+     * {@link ProjectSecurityService#isProjectMember}) or a project-scoped machine principal
+     * ({@link ProjectScopedPrincipal} -- a project API key or a run-scoped MCP token) whose
+     * {@code projectId} matches the requested project -- mirroring
+     * {@code KnowledgeController#requireProjectAccess}.
+     */
     private void requireMember(String projectId) {
-        if (!projectSecurityService.isProjectMember(projectId, currentUser().getId())) {
-            throw new AccessDeniedException("Not a member of this project");
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = auth != null ? auth.getPrincipal() : null;
+        if (principal instanceof User user) {
+            if (!projectSecurityService.isProjectMember(projectId, user.getId())) {
+                throw new AccessDeniedException("Not a member of this project");
+            }
+            return;
         }
+        if (auth instanceof ProjectScopedPrincipal scoped && projectId.equals(scoped.getProjectId())) {
+            return;
+        }
+        throw new AccessDeniedException("Not a member of this project");
     }
 
+    /**
+     * Admin/creator-level gate: only a real {@link User} principal can hold a project role, so
+     * project-scoped machine principals (project API keys, run-scoped MCP tokens) are rejected with
+     * a clean 403 here rather than bypassing the role check -- mirroring
+     * {@code KnowledgeController#requireProjectAdmin}.
+     */
     private void requireAdminOrCreator(String projectId) {
-        if (!projectSecurityService.isAdminOrCreator(projectId, currentUser().getId())) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = auth != null ? auth.getPrincipal() : null;
+        if (!(principal instanceof User user) || !projectSecurityService.isAdminOrCreator(projectId, user.getId())) {
             throw new AccessDeniedException("Requires ADMIN or CREATOR role");
         }
-    }
-
-    private User currentUser() {
-        return (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     }
 }

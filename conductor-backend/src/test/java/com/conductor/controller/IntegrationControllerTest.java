@@ -2,6 +2,8 @@ package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
 import com.conductor.entity.Connection;
+import com.conductor.entity.Project;
+import com.conductor.entity.ProjectApiKey;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.integration.AuthType;
@@ -98,6 +100,39 @@ class IntegrationControllerTest {
         when(jwtService.validateToken("member-token")).thenReturn(true);
         when(jwtService.getUserIdFromToken("member-token")).thenReturn("member-user-id");
         when(userRepository.findById("member-user-id")).thenReturn(Optional.of(memberUser));
+
+        // A project-scoped API key for PROJECT_ID -- ApiKeyAuthenticationFilter resolves this token
+        // to an ApiKeyAuthenticationToken (a ProjectScopedPrincipal) with no backing User.
+        Project project = new Project();
+        project.setId(PROJECT_ID);
+        ProjectApiKey apiKey = new ProjectApiKey();
+        apiKey.setId("key-1");
+        apiKey.setProject(project);
+        apiKey.setName("ci-key");
+        apiKey.setKeyValue("project-api-key");
+        when(projectApiKeyRepository.findByKeyValueWithProject("project-api-key"))
+                .thenReturn(Optional.of(apiKey));
+    }
+
+    // ---- project API key auth (bug fix regression coverage) ----
+
+    @Test
+    void listConnections_projectApiKey_succeedsAsMemberLevel() throws Exception {
+        when(connectionService.list(PROJECT_ID, GCP_CONNECTOR_ID)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/" + GCP_CONNECTOR_ID + "/connections")
+                        .header("Authorization", "Bearer project-api-key"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void createConnection_projectApiKey_returnsClean403NotServerError() throws Exception {
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + GCP_SA_CONNECTOR_ID + "/connections")
+                        .header("Authorization", "Bearer project-api-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"serviceAccountKey\":\"{}\"}"))
+                .andExpect(status().isForbidden());
     }
 
     private Connection gcpConnectionWithToken() {
