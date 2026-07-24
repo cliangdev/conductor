@@ -616,6 +616,8 @@ export interface RuntimeTarget {
   status: RuntimeTargetStatus
   errorMessage?: string | null
   warnings?: string[] | null
+  resolvedImage?: string | null
+  lastProvisionedAt?: string | null
   createdAt: string
   updatedAt: string
 }

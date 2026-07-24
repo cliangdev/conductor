@@ -123,7 +123,7 @@ class RuntimeTargetControllerTest {
 
     private RuntimeTargetService.TargetRuntimeConfig config() {
         return new RuntimeTargetService.TargetRuntimeConfig(
-                "customer-proj", "us-central1", "conductor-my-target", "img:1", List.of());
+                "customer-proj", "us-central1", "conductor-my-target", "img:1", List.of(), null, null);
     }
 
     /** Mirrors {@code RuntimeTargetService.toResponse} — the controller now delegates entirely to that
@@ -140,6 +140,8 @@ class RuntimeTargetControllerTest {
                 .image(config.image())
                 .status(RuntimeTargetResponse.StatusEnum.fromValue(target.getStatus().name()))
                 .errorMessage(target.getErrorMessage())
+                .resolvedImage(config.resolvedImage())
+                .lastProvisionedAt(config.lastProvisionedAt())
                 .createdAt(target.getCreatedAt())
                 .updatedAt(target.getUpdatedAt());
         config.warnings().forEach(response::addWarningsItem);
@@ -262,7 +264,7 @@ class RuntimeTargetControllerTest {
         when(runtimeTargetService.create(eq(PROJECT_ID), any(CreateRuntimeTargetRequest.class))).thenReturn(created);
         RuntimeTargetService.TargetRuntimeConfig warningConfig = new RuntimeTargetService.TargetRuntimeConfig(
                 "customer-proj", "us-central1", "conductor-my-target", "img:1",
-                List.of("Image found. Could not verify the dev.conductor.runner.protocol OCI label."));
+                List.of("Image found. Could not verify the dev.conductor.runner.protocol OCI label."), null, null);
         when(runtimeTargetService.toResponse(created)).thenReturn(responseFor(created, warningConfig));
 
         String body = """

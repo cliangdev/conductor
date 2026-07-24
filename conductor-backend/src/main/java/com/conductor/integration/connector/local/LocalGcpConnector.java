@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -60,8 +61,9 @@ public class LocalGcpConnector implements FetchConnector {
         return List.of(Map.of("name", "conductor-runners", "format", "DOCKER"));
     }
 
-    public String ensureJob(ConnectionContext ctx, GcpConnector.EnsureJobSpec spec) {
-        return "projects/" + spec.gcpProjectId() + "/locations/" + spec.region()
+    public GcpConnector.EnsureJobResult ensureJob(ConnectionContext ctx, GcpConnector.EnsureJobSpec spec) {
+        String jobName = "projects/" + spec.gcpProjectId() + "/locations/" + spec.region()
                 + "/jobs/" + spec.jobName();
+        return new GcpConnector.EnsureJobResult(jobName, spec.image(), OffsetDateTime.now());
     }
 }

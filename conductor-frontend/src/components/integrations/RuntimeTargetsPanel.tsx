@@ -26,6 +26,33 @@ interface EditFormState {
   jobName: string
 }
 
+/** "3m ago"/"2h ago"/"5d ago" — same coarse-relative style as ClaudeProviderCard's verified badge. */
+function formatRelative(diffMs: number): string {
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
+}
+
+/** `...@sha256:abcdef0123...` -> `sha256:abcdef01…` — short enough for an inline row, full value in the title. */
+function shortDigest(resolvedImage: string): string {
+  const at = resolvedImage.lastIndexOf('@sha256:')
+  if (at === -1) return resolvedImage
+  return resolvedImage.slice(at + 1, at + 1 + 15) + '…'
+}
+
+/** Not a component — a plain helper, same as ClaudeProviderCard's verifiedBadgeLabel, so the
+ *  react-hooks purity rule (no Date.now() during a component's render) doesn't apply to this call. */
+function syncedLabel(target: RuntimeTarget): string {
+  const when = target.lastProvisionedAt
+    ? `Synced ${formatRelative(Date.now() - new Date(target.lastProvisionedAt).getTime())}`
+    : 'Synced before this was tracked'
+  return target.resolvedImage ? `${when} · ${shortDigest(target.resolvedImage)}` : when
+}
+
 export default function RuntimeTargetsPanel({
   projectId,
   connections,
@@ -260,6 +287,11 @@ export default function RuntimeTargetsPanel({
                     )}
                   </div>
                 </div>
+                {target.status === 'ACTIVE' && (
+                  <p className="mt-1 text-xs text-muted-foreground font-mono truncate" title={target.resolvedImage ?? undefined}>
+                    {syncedLabel(target)}
+                  </p>
+                )}
                 {target.errorMessage && (
                   <Alert variant="destructive" className="mt-1 py-1.5 text-xs">
                     {target.errorMessage}

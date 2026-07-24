@@ -21,6 +21,7 @@ import com.google.cloud.run.v2.JobsClient;
 import com.google.cloud.run.v2.JobsSettings;
 import com.google.cloud.run.v2.LocationName;
 import com.google.cloud.run.v2.TaskTemplate;
+import com.google.protobuf.Timestamp;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
@@ -37,6 +38,9 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -229,11 +233,22 @@ public class GcpConnector implements FetchConnector {
                                 String runtimeServiceAccountEmail) {}
 
     /**
+     * @param jobName Job resource name.
+     * @param resolvedImage The container image GCP echoed back on the Job it just created/updated.
+     *     Cloud Run resolves an image tag to a specific digest at this exact moment and pins it on
+     *     the Job — this is the ground truth for what will actually run, as opposed to
+     *     {@link EnsureJobSpec#image()}, which is only the tag that was asked for. Null if the
+     *     response carries no container (shouldn't happen given {@link #buildJob} always sets one).
+     * @param updatedAt GCP's own {@code Job.update_time} for this create/update call — not
+     *     Conductor's clock, so it reflects exactly when GCP itself applied the change.
+     */
+    public record EnsureJobResult(String jobName, String resolvedImage, OffsetDateTime updatedAt) {}
+
+    /**
      * Creates the Cloud Run Job if it doesn't exist, otherwise updates it in place — idempotent.
      * The image is pinned on the Job resource (Cloud Run Job executions cannot override the image).
-     * Returns the Job resource name.
      */
-    public String ensureJob(ConnectionContext ctx, EnsureJobSpec spec) {
+    public EnsureJobResult ensureJob(ConnectionContext ctx, EnsureJobSpec spec) {
         GoogleCredentials credentials = credentialsFor(ctx);
         JobName jobName = JobName.of(spec.gcpProjectId(), spec.region(), spec.jobName());
         try (JobsClient jobsClient = jobsClientFactory.create(credentials)) {
@@ -250,7 +265,7 @@ public class GcpConnector implements FetchConnector {
                         .get(60, TimeUnit.SECONDS)
                     : jobsClient.createJobAsync(LocationName.of(spec.gcpProjectId(), spec.region()),
                         jobBuilder.build(), spec.jobName()).get(60, TimeUnit.SECONDS);
-            return result.getName();
+            return new EnsureJobResult(result.getName(), resolvedImageOf(result), updateTimeOf(result));
         } catch (ExecutionException | TimeoutException e) {
             throw new IllegalStateException("Failed to ensure Cloud Run Job " + jobName + ": " + e.getMessage(), e);
         } catch (InterruptedException e) {
@@ -259,6 +274,19 @@ public class GcpConnector implements FetchConnector {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to create Cloud Run Jobs client: " + e.getMessage(), e);
         }
+    }
+
+    // package-private (not private): directly unit-tested like parseImageRef, without needing to
+    // mock the JobsClient/credentials plumbing around ensureJob just to exercise this proto mapping.
+    static String resolvedImageOf(Job result) {
+        List<Container> containers = result.getTemplate().getTemplate().getContainersList();
+        return containers.isEmpty() ? null : containers.get(0).getImage();
+    }
+
+    static OffsetDateTime updateTimeOf(Job result) {
+        if (!result.hasUpdateTime()) return null;
+        Timestamp ts = result.getUpdateTime();
+        return Instant.ofEpochSecond(ts.getSeconds(), ts.getNanos()).atOffset(ZoneOffset.UTC);
     }
 
     private Job.Builder buildJob(EnsureJobSpec spec) {
