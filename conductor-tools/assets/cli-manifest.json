@@ -145,49 +145,55 @@
   },
   "mcpTools": [
     {
-      "name": "create_issue",
-      "description": "Create a new issue (Work Item) in the project.",
+      "name": "create_work_item",
+      "description": "Create a new Work Item in the project. Discover-then-create: call list_workflows({kind:\"LIFECYCLE\"}) first to pick the governing Workflow slug.",
       "category": "issues",
-      "requiredParams": ["type", "title"]
+      "requiredParams": ["workflow", "type", "title"]
     },
     {
-      "name": "update_issue",
-      "description": "Update an existing issue's title or description.",
+      "name": "update_work_item",
+      "description": "Update an existing Work Item's title or description.",
       "category": "issues",
       "requiredParams": ["issueId"]
     },
     {
-      "name": "set_issue_status",
-      "description": "Update the status of an issue directly (bypasses workflow gate).",
+      "name": "set_work_item_status",
+      "description": "Update the status of a Work Item directly. For Workflow-validated moves prefer transition_work_item.",
       "category": "issues",
       "requiredParams": ["issueId", "status"]
     },
     {
-      "name": "list_issues",
-      "description": "List issues in the project, optionally filtered by type or status.",
+      "name": "list_work_items",
+      "description": "List Work Items in the project, optionally filtered by type, status, or Workflow.",
       "category": "issues"
     },
     {
-      "name": "get_issue",
-      "description": "Get a single issue by ID, including its current status and linked documents.",
+      "name": "get_work_item",
+      "description": "Get a single Work Item by ID, including its current status and linked documents.",
       "category": "issues",
       "requiredParams": ["issueId"]
     },
     {
       "name": "scaffold_document",
-      "description": "Create an empty document file locally and register it with the backend. Returns absolutePath for use with the Write tool.",
+      "description": "Create an empty document file locally and register it with the backend. Returns absolutePath for use with the Write tool. Prefer write_document in headless containers.",
       "category": "documents",
       "requiredParams": ["issueId", "filename"]
     },
     {
+      "name": "write_document",
+      "description": "Create or update a Work Item document by filename with full content (upsert). Works headlessly — supersedes scaffold_document+Write for new documents.",
+      "category": "documents",
+      "requiredParams": ["issueId", "filename", "content"]
+    },
+    {
       "name": "delete_document",
-      "description": "Delete a document from an issue, both locally and from the backend.",
+      "description": "Delete a document from a Work Item, both locally and from the backend.",
       "category": "documents",
       "requiredParams": ["issueId", "documentId", "filename"]
     },
     {
-      "name": "list_issue_comments",
-      "description": "List comments on an issue, optionally filtered by resolved status.",
+      "name": "list_work_item_comments",
+      "description": "List comments on a Work Item, optionally filtered by resolved status.",
       "category": "comments",
       "requiredParams": ["issueId"]
     },
@@ -257,14 +263,93 @@
       "requiredParams": ["workflowId", "runId"]
     },
     {
+      "name": "list_workflow_runs",
+      "description": "List recent runs for a workflow (newest first): runId, status, triggerType, timings.",
+      "category": "workflows",
+      "requiredParams": ["workflowId"]
+    },
+    {
+      "name": "list_workflow_secrets",
+      "description": "List the names of workflow secrets configured for this project (keys only — values are never returned over MCP).",
+      "category": "workflows"
+    },
+    {
+      "name": "get_workflow_step_schema",
+      "description": "The live, authoritative reference for workflow YAML: every step type's fields plus valid ${{ }}/if: interpolation roots and functions, read from the engine's schema registry.",
+      "category": "workflows"
+    },
+    {
       "name": "list_integration_tools",
       "description": "List connected integrations and their available data operations for workflow authoring. Always call before designing a workflow.",
+      "category": "discovery"
+    },
+    {
+      "name": "list_connector_catalog",
+      "description": "List all connector types Conductor supports (connected or not), with capabilities and config fields. Use to recommend integrations to connect.",
       "category": "discovery"
     },
     {
       "name": "list_agents",
       "description": "List the project's named AI Agents (id, slug, provider, model, state). Discovery for workflow authoring.",
       "category": "discovery"
+    },
+    {
+      "name": "create_agent",
+      "description": "Create a named AI Agent in the project (provider, model, system prompt, tool bindings, guardrails).",
+      "category": "discovery",
+      "requiredParams": ["name", "provider"]
+    },
+    {
+      "name": "list_skills",
+      "description": "List the Claude Code skills a lifecycle Workflow may bind from a skill transition step: shipped built-ins plus project-registered skills.",
+      "category": "discovery"
+    },
+    {
+      "name": "register_skill",
+      "description": "Register a project-scoped skill id so a lifecycle Workflow can bind it from a transition step and publish without a backend redeploy.",
+      "category": "discovery",
+      "requiredParams": ["skillId"]
+    },
+    {
+      "name": "submit_knowledge_source",
+      "description": "Push an observation, event, or document into the project's knowledge inbox for the librarian to file into wiki pages.",
+      "category": "knowledge",
+      "requiredParams": ["sourceType"]
+    },
+    {
+      "name": "read_knowledge_sources",
+      "description": "Fetch knowledge-inbox sources by id, with offloaded payload content resolved inline.",
+      "category": "knowledge",
+      "requiredParams": ["ids"]
+    },
+    {
+      "name": "search_knowledge",
+      "description": "Search the project wiki for pages matching a query: path, type, title, description, snippet, rank per hit.",
+      "category": "knowledge",
+      "requiredParams": ["q"]
+    },
+    {
+      "name": "read_knowledge_pages",
+      "description": "Fetch full content of wiki pages by path. Pass [\"index.md\"] for wiki orientation.",
+      "category": "knowledge",
+      "requiredParams": ["paths"]
+    },
+    {
+      "name": "write_knowledge_pages",
+      "description": "Create, update, or delete wiki pages atomically. Updating requires the page's current version as baseVersion.",
+      "category": "knowledge",
+      "requiredParams": ["writes"]
+    },
+    {
+      "name": "list_knowledge_domains",
+      "description": "List this project's knowledge domains — slug, displayName, description, pathPrefix, filing conventions.",
+      "category": "knowledge"
+    },
+    {
+      "name": "suggest_knowledge_domain",
+      "description": "Raise a gap report for a knowledge domain not yet in the registry. Claim-or-return on slug.",
+      "category": "knowledge",
+      "requiredParams": ["slug", "displayName", "reason"]
     }
   ]
 }

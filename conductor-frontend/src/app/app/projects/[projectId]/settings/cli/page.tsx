@@ -318,13 +318,14 @@ function ClaudeSection({ integration }: { integration: CliManifest['claudeIntegr
   )
 }
 
-const MCP_CATEGORY_ORDER = ['issues', 'documents', 'comments', 'workflows', 'discovery']
+const MCP_CATEGORY_ORDER = ['issues', 'documents', 'comments', 'workflows', 'discovery', 'knowledge']
 const MCP_CATEGORY_LABELS: Record<string, string> = {
   issues: 'Issues',
   documents: 'Documents',
   comments: 'Comments',
   workflows: 'Workflows',
   discovery: 'Discovery',
+  knowledge: 'Knowledge',
 }
 
 function McpToolsSection({ tools }: { tools: McpTool[] }) {
