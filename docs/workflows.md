@@ -566,6 +566,8 @@ jobs:
 
 `gh`/`git` inside the container pick up `GH_TOKEN` automatically via normal env-var auth — the runner image bundles `gh`, and the entrypoint forwards the full container env into the `claude -p` process, so no extra wiring is needed once the env var is set.
 
+By default `github` credential resolution uses the shared, Conductor-managed GitHub App installation for the project. A project can instead bind its own GitHub Personal Access Token (Integrations → GitHub → "Use a Personal Access Token") — useful when the App doesn't have permissions a workflow needs, without waiting on the App's org-wide permission set to change. The same `credentials: [{connector: github, as: GH_TOKEN}]` YAML resolves it — no workflow changes required. While ACTIVE, the bound PAT always takes precedence over the App connection; unbinding it falls back to the App connection automatically. Because a PAT doesn't auto-rotate the way an App installation token does, its expiration (read from GitHub when available, or as supplied at bind time) is shown on the connection so it can be rotated before it lapses.
+
 **`env:`** is a plain map, same shape/interpolation as the `docker` step's `env:` — for a user's own explicit secret (e.g. `${{ secrets.MY_TOKEN }}`) rather than a connector-resolved one.
 
 **Reserved keys.** Any `as`/env key starting with `CONDUCTOR_` or exactly `CLAUDE_CODE_OAUTH_TOKEN` is rejected — a hard error at publish time (the validator), and belt-and-suspenders at execution time too.
