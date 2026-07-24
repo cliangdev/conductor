@@ -15,6 +15,8 @@ export interface ConnectionSummary {
   id: string
   label?: string | null
   status: ConnectionStatus
+  authType?: string | null
+  tokenExpiresAt?: string | null
   healthStatus?: string | null
   fetchedAt?: string | null
 }
@@ -25,6 +27,7 @@ export interface ConnectionResponse {
   label?: string | null
   status: ConnectionStatus
   authType: string
+  tokenExpiresAt?: string | null
   /** Only returned for webhook connectors at creation — the URL to paste into GitHub. */
   webhookUrl?: string | null
   /** Only returned ONCE at creation — never surfaced again. */
@@ -179,6 +182,23 @@ export function installGitHubApp(projectId: string, token: string): Promise<GitH
   return apiPost<GitHubInstallResponse>(
     `/api/v1/projects/${projectId}/integrations/github/installations`,
     {},
+    token,
+  )
+}
+
+/**
+ * Bind (or rotate) the project's single GitHub Personal Access Token connection. Takes precedence
+ * over an App-install connection for credential resolution while ACTIVE. Binding again replaces
+ * the existing PAT in place.
+ */
+export function bindGitHubPat(
+  projectId: string,
+  body: { token: string; label?: string; expiresAt?: string },
+  token: string,
+): Promise<ConnectionResponse> {
+  return apiPost<ConnectionResponse>(
+    `/api/v1/projects/${projectId}/integrations/github/pat`,
+    body,
     token,
   )
 }

@@ -1,7 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -10,6 +12,7 @@ import {
   listConnectionWebhookEvents,
   installGitHubApp,
   listGitHubRepositories,
+  bindGitHubPat,
   apiErrorMessage,
 } from '@/lib/api';
 import type { ConnectionSummary, WebhookEventSummary, GitHubRepositoriesResponse, ApiError } from '@/lib/api';
@@ -19,6 +22,19 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { ArrowUpRight } from 'lucide-react';
 
 const CONNECTOR_ID = 'github';
+
+/** Days-until-expiry → the file's existing inline-color-by-state convention (see webhook events table). */
+export function getPatExpiryStatus(tokenExpiresAt?: string | null): { label: string; className: string } {
+  if (!tokenExpiresAt) return { label: 'No expiration', className: 'text-status-done' };
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const daysUntil = Math.ceil((new Date(tokenExpiresAt).getTime() - Date.now()) / msPerDay);
+  if (daysUntil < 0) return { label: 'Expired', className: 'text-destructive' };
+  if (daysUntil === 0) return { label: 'Expires today', className: 'text-destructive' };
+  const label = `Expires in ${daysUntil} ${daysUntil === 1 ? 'day' : 'days'}`;
+  if (daysUntil <= 7) return { label, className: 'text-destructive' };
+  if (daysUntil <= 30) return { label, className: 'text-status-progress' };
+  return { label, className: 'text-status-done' };
+}
 
 export default function GitHubConnectorPage({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth();
@@ -37,14 +53,22 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
   const [installError, setInstallError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
 
+  const [patFormOpen, setPatFormOpen] = useState(false);
+  const [patToken, setPatToken] = useState('');
+  const [patLabel, setPatLabel] = useState('');
+  const [patExpiresAt, setPatExpiresAt] = useState('');
+  const [patTokenError, setPatTokenError] = useState<string | null>(null);
+  const [patSubmitting, setPatSubmitting] = useState(false);
+
   const fetchConnections = useCallback(async () => {
     if (!accessToken) return;
     try {
       const conns = await listConnections(projectId, CONNECTOR_ID, accessToken);
       setConnections(conns);
       setConnectionsError(null);
+      const appConns = conns.filter((c) => c.authType !== 'PAT');
       const entries = await Promise.all(
-        conns.map(async (c) => {
+        appConns.map(async (c) => {
           try {
             return [c.id, await listGitHubRepositories(projectId, c.id, accessToken)] as const;
           } catch {
@@ -122,6 +146,49 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
     }
   }
 
+  function openPatForm(existingLabel?: string | null) {
+    setPatToken('');
+    setPatLabel(existingLabel ?? '');
+    setPatExpiresAt('');
+    setPatTokenError(null);
+    setPatFormOpen(true);
+  }
+
+  function closePatForm() {
+    setPatFormOpen(false);
+    setPatToken('');
+    setPatLabel('');
+    setPatExpiresAt('');
+    setPatTokenError(null);
+  }
+
+  async function handleBindPat(e: FormEvent) {
+    e.preventDefault();
+    if (!accessToken) return;
+    if (!patToken.trim()) {
+      setPatTokenError('Token is required.');
+      return;
+    }
+    setPatSubmitting(true);
+    try {
+      await bindGitHubPat(
+        projectId,
+        {
+          token: patToken,
+          ...(patLabel.trim() ? { label: patLabel.trim() } : {}),
+          ...(patExpiresAt ? { expiresAt: `${patExpiresAt}T00:00:00Z` } : {}),
+        },
+        accessToken,
+      );
+      closePatForm();
+      await fetchConnections();
+    } catch (err) {
+      showToast(apiErrorMessage(err, 'Failed to save personal access token. Please try again.'), 'error');
+    } finally {
+      setPatSubmitting(false);
+    }
+  }
+
   if (connectionsLoading) {
     return (
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -151,20 +218,73 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
     );
   }
 
+  const appConnections = connections.filter((c) => c.authType !== 'PAT');
+  const patConnection = connections.find((c) => c.authType === 'PAT') ?? null;
+  const patExpiry = getPatExpiryStatus(patConnection?.tokenExpiresAt);
+
+  const patForm = (
+    <form onSubmit={handleBindPat} className="mt-4 space-y-3 border-t border-border pt-4">
+      <div>
+        <Label htmlFor="pat-token">Personal access token</Label>
+        <Input
+          id="pat-token"
+          type="password"
+          autoComplete="off"
+          value={patToken}
+          onChange={(e) => { setPatToken(e.target.value); setPatTokenError(null); }}
+          placeholder="ghp_…"
+        />
+        {patTokenError && (
+          <p className="mt-1 text-xs text-destructive" role="alert">{patTokenError}</p>
+        )}
+      </div>
+      <div>
+        <Label htmlFor="pat-label">Label (optional)</Label>
+        <Input
+          id="pat-label"
+          value={patLabel}
+          onChange={(e) => setPatLabel(e.target.value)}
+          placeholder="e.g. Deploy token"
+        />
+      </div>
+      <div>
+        <Label htmlFor="pat-expires-at">Expiration (optional)</Label>
+        <Input
+          id="pat-expires-at"
+          type="date"
+          value={patExpiresAt}
+          onChange={(e) => setPatExpiresAt(e.target.value)}
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Only used if GitHub doesn&apos;t report an expiration for this token.
+        </p>
+      </div>
+      <div className="flex items-center gap-2 pt-1">
+        <Button type="submit" size="sm" disabled={patSubmitting}>
+          {patSubmitting ? 'Saving…' : 'Save token'}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={closePatForm} disabled={patSubmitting}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <PageHeader
         title="GitHub"
         description={
           <>
-            Install the Conductor GitHub App and choose which repositories it can access. When a pull request
-            whose body contains <code className="font-mono text-xs">closes conductor/KEY-123</code> is merged, the
-            matching issue moves to Done.
+            Install the Conductor GitHub App and choose which repositories it can access, or bind a
+            project-level Personal Access Token. When a pull request whose body contains{' '}
+            <code className="font-mono text-xs">closes conductor/KEY-123</code> is merged, the matching
+            issue moves to Done.
           </>
         }
       />
 
-      {connections.length === 0 ? (
+      {appConnections.length === 0 ? (
         /* Not connected — install CTA */
         <div className="bg-card rounded-lg border border-border p-8 text-center">
           <h2 className="text-base font-semibold text-foreground mb-1">Connect GitHub</h2>
@@ -180,6 +300,17 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
               {installError && (
                 <p className="mt-3 text-sm text-destructive" role="alert">{installError}</p>
               )}
+              {!patConnection && (
+                <div className="mt-3">
+                  {!patFormOpen ? (
+                    <Button type="button" size="sm" variant="ghost" onClick={() => openPatForm()}>
+                      Use a Personal Access Token instead
+                    </Button>
+                  ) : (
+                    <div className="max-w-sm mx-auto text-left">{patForm}</div>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <p className="text-sm text-muted-foreground">
@@ -190,7 +321,7 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
       ) : (
         /* Connected — one card per installation */
         <div className="space-y-6">
-          {connections.map((conn) => {
+          {appConnections.map((conn) => {
             const data = repos[conn.id];
             return (
               <div key={conn.id} className="bg-card rounded-lg border border-border p-6">
@@ -262,6 +393,72 @@ export default function GitHubConnectorPage({ projectId }: { projectId: string }
               </div>
             );
           })}
+
+          {canMutate && !patConnection && (
+            <div className="bg-card rounded-lg border border-border p-6">
+              {!patFormOpen ? (
+                <>
+                  <h2 className="text-base font-semibold text-foreground mb-1">Personal Access Token</h2>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Bind a project-level GitHub token for permissions the app install doesn&apos;t grant. It
+                    takes precedence over the app connection when both are present.
+                  </p>
+                  <Button type="button" size="sm" variant="outline" onClick={() => openPatForm()}>
+                    Use a Personal Access Token instead
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-base font-semibold text-foreground mb-1">Personal Access Token</h2>
+                  {patForm}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {patConnection && (
+        <div className="bg-card rounded-lg border border-border p-6 mt-6">
+          {!patFormOpen ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h2 className="text-base font-semibold text-foreground truncate">
+                    {patConnection.label || 'Personal Access Token'}
+                  </h2>
+                  <p className={`text-xs mt-1 ${patExpiry.className}`}>{patExpiry.label}</p>
+                </div>
+                {canMutate && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openPatForm(patConnection.label)}
+                    >
+                      Replace token
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleDisconnect(patConnection.id)}
+                      disabled={disconnecting === patConnection.id}
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    >
+                      {disconnecting === patConnection.id ? 'Disconnecting…' : 'Disconnect'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <h2 className="text-base font-semibold text-foreground mb-1">Replace Personal Access Token</h2>
+              {patForm}
+            </>
+          )}
         </div>
       )}
 
