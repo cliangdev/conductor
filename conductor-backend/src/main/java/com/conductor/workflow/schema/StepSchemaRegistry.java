@@ -273,7 +273,13 @@ public class StepSchemaRegistry {
                                         + "CLAUDE_CODE_OAUTH_TOKEN)"),
                         new StepFieldSchema("env", MAP, false,
                                 "Plain map of extra env vars for the container. Values are interpolated.",
-                                "keys must not collide with a reserved env key")
+                                "keys must not collide with a reserved env key"),
+                        new StepFieldSchema("artifacts", ARRAY, false,
+                                "List of {name, path} artifacts this step produces, downloadable by "
+                                        + "downstream jobs via needs.JOB.artifacts.NAME. Unlike docker, "
+                                        + "claude-code supports artifacts on any runtime (no self-hosted "
+                                        + "requirement).",
+                                "each entry needs name (matching ^[a-z0-9_-]{1,160}$) and path")
                 ));
     }
 
@@ -305,11 +311,17 @@ public class StepSchemaRegistry {
                 new InterpolationRoot("inputs",
                         "A manual-dispatch input value declared under on.workflow_dispatch.inputs."),
                 new InterpolationRoot("steps",
-                        "An output or terminal result of a step in the current job."),
+                        "An output or terminal result of a step in the current job. Exact forms: "
+                                + "${{ steps.STEP_ID.outputs.KEY }}, ${{ steps.STEP_ID.result }} "
+                                + "(success/failure/skipped). There is no bare ${{ steps.STEP_ID }} form."),
                 new InterpolationRoot("needs",
-                        "An output, terminal result, or artifact download URL of a completed upstream job."),
+                        "An output, terminal result, or artifact download URL of a completed upstream job. "
+                                + "Exact forms: ${{ needs.JOB_ID.outputs.KEY }}, ${{ needs.JOB_ID.result }}, "
+                                + "${{ needs.JOB_ID.artifacts.NAME }}. There is no bare ${{ needs.JOB_ID }} form."),
                 new InterpolationRoot("loop",
-                        "The current loop iteration number (1-based), inside a job with a loop: block.")
+                        "The current loop iteration number (1-based), inside a job with a loop: block. "
+                                + "Exact form: ${{ loop.iteration }} — a bare ${{ loop }} silently resolves to "
+                                + "an empty string rather than erroring.")
         );
     }
 
