@@ -8,6 +8,7 @@ import { Alert } from '@/components/ui/alert'
 import { Modal } from '@/components/ui/modal'
 import { RowActionsMenu } from '@/components/ui/RowActionsMenu'
 import { RuntimeTargetCreateModal } from '@/components/runtime/RuntimeTargetCreateModal'
+import { useToast } from '@/components/ui/toast'
 import { useCan } from '@/contexts/PermissionsContext'
 import { useAuth } from '@/contexts/AuthContext'
 import {
@@ -33,6 +34,7 @@ export default function RuntimeTargetsPanel({
   connections: ConnectionSummary[]
 }) {
   const { accessToken } = useAuth()
+  const { showToast } = useToast()
   const canMutate = useCan('integration.manage')
 
   const [targets, setTargets] = useState<RuntimeTarget[]>([])
@@ -126,20 +128,32 @@ export default function RuntimeTargetsPanel({
   // string. Doubles as "sync to latest": Cloud Run resolves an image tag to a digest and pins it
   // on the Job at this call, not at container-run time, so a tag like `:latest` that's had a
   // newer image pushed to it since the last provision needs this to actually pick that up.
+  //
+  // This call is synchronous on the backend (can take a few seconds — a real GCP round trip), and
+  // the dropdown menu closes the instant it's selected, so without explicit feedback here a click
+  // looks like it did nothing. Flip the row to the existing "Provisioning" badge immediately, then
+  // toast the outcome — a 200 response can still carry status: 'ERROR' (e.g. image not found), so
+  // success isn't just "the request didn't throw".
   async function handleProvision(target: RuntimeTarget) {
     if (!accessToken) return
     setRetrying(target.id)
+    setTargets((prev) =>
+      prev.map((t) => (t.id === target.id ? { ...t, status: 'PROVISIONING' } : t)),
+    )
     try {
       const updated = await provisionRuntimeTarget(projectId, target.id, accessToken)
       setTargets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))
+      if (updated.status === 'ACTIVE') {
+        showToast(`${updated.name} is up to date.`, 'success')
+      } else {
+        showToast(updated.errorMessage || `Provisioning ${updated.name} failed.`, 'error')
+      }
     } catch (err) {
+      const message = apiErrorMessage(err, 'Provisioning failed.')
       setTargets((prev) =>
-        prev.map((t) =>
-          t.id === target.id
-            ? { ...t, status: 'ERROR', errorMessage: apiErrorMessage(err, 'Provisioning failed.') }
-            : t,
-        ),
+        prev.map((t) => (t.id === target.id ? { ...t, status: 'ERROR', errorMessage: message } : t)),
       )
+      showToast(message, 'error')
     } finally {
       setRetrying(null)
     }
