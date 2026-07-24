@@ -1,9 +1,17 @@
 # Dedicated, minimal image for claude-code workflow steps only.
 #
 # The general-purpose conductor-runner (../Dockerfile) stays as-is for `docker` steps and bundles
-# Python/gh/Docker CLI/jq for that use case. claude-code steps only ever spawn the `claude` binary
-# via conductor-claude-entrypoint (Node built-ins only) — no shell tooling required — so this image
-# deliberately omits Python, gh, the Docker CLI, and jq to stay small and start fast on Cloud Run.
+# Python and the Docker CLI for that use case. This image deliberately omits those two — no
+# language runtime, no container tooling — to stay small, fast to cold-start on Cloud Run, and
+# usable for any project type rather than biased toward one stack. Project-specific tooling (a
+# language SDK, a Claude Code skill) belongs in a derived image, not here — see "Choosing an
+# image" in docs/workflows.md.
+#
+# It does include git, gh, curl, and jq: not because conductor-claude-entrypoint needs them (it's
+# Node built-ins only — see its own header comment), but because claude's Bash tool does. The
+# `credentials:` mechanism (connector-issued runtime credentials, e.g. a GitHub token) assumes the
+# container can act on them itself — `gh pr checkout`, `gh pr comment`, a `curl` against an API, a
+# `jq` filter on the JSON response — regardless of what language the target project is in.
 #
 # The Claude CLI version pin below must move in lockstep with the pin in ../Dockerfile — see
 # RunnerImage.java for the full list of places the version is duplicated.
@@ -11,7 +19,18 @@ FROM node:26-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    curl \
+    gnupg \
+    jq \
     ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install GitHub CLI (gh) — same apt-repo approach as ../Dockerfile, minus lsb-release (only
+# needed there for the Docker CLI's repo, which this image doesn't install).
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude CLI pinned (same version as ../Dockerfile — bump deliberately, verify against the exit

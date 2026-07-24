@@ -1151,7 +1151,7 @@ Creating (or editing) a target provisions it synchronously: Conductor **verifies
 
 Deleting a target removes only Conductor's record — **the Cloud Run Job in your project is left in place**.
 
-**Choosing an image.** The image must honor the Conductor runner contract (the `conductor-claude-entrypoint` self-reporting entrypoint — see [Runner image](#runner-image)). For claude-code-only targets, prefer the **dedicated claude runner** (`runner-image/Dockerfile.claude-runner`): node-slim + pinned Claude CLI + pre-warmed MCP resolution, with `DISABLE_AUTOUPDATER=1` — it deliberately omits the Python/gh/Docker-CLI tooling that only `docker` steps need, so it's substantially smaller and cold-starts faster. Patterns:
+**Choosing an image.** The image must honor the Conductor runner contract (the `conductor-claude-entrypoint` self-reporting entrypoint — see [Runner image](#runner-image)). For claude-code-only targets, prefer the **dedicated claude runner** (`runner-image/Dockerfile.claude-runner`): node-slim + pinned Claude CLI + pre-warmed MCP resolution, with `DISABLE_AUTOUPDATER=1`, plus `git`/`gh`/`curl`/`jq` so a step's Bash tool can act on `credentials:`-issued tokens (checkout a PR, call an API) regardless of project type — it deliberately omits Python and the Docker CLI (only `docker` steps need those), so it's substantially smaller and cold-starts faster than the general-purpose image. Patterns:
 
 - **Build the dedicated claude runner** into your Artifact Registry (not yet published to a public registry — built from the repo for now):
   ```bash
@@ -1291,7 +1291,7 @@ This image includes:
 | `curl`, `git`, `jq` | latest stable |
 | `conductor-claude-entrypoint` | self-reporting entrypoint used by `claude-code` steps (see below) |
 
-A **dedicated claude-code image** also exists (`runner-image/Dockerfile.claude-runner`): node-slim + the same pinned Claude CLI + `conductor-claude-entrypoint`, without the Python/gh/Docker-CLI tooling above. Today it's consumed via a [runtime target](#runtime-targets-bring-your-own-cloud-run)'s image field; making it the default image for self-hosted claude-code dispatch is tracked in #268.
+A **dedicated claude-code image** also exists (`runner-image/Dockerfile.claude-runner`): node-slim + the same pinned Claude CLI + `conductor-claude-entrypoint`, plus `git`/`gh`/`curl`/`jq` (so `credentials:`-based steps can act on an issued token), without the Python/Docker-CLI tooling above. Today it's consumed via a [runtime target](#runtime-targets-bring-your-own-cloud-run)'s image field; making it the default image for self-hosted claude-code dispatch is tracked in #268.
 
 The container runs as a non-root `runner` user and ships with **no default `ENTRYPOINT`/`CMD`** — a plain `docker` step's `run:` script executes as before; a `claude-code` step explicitly invokes `conductor-claude-entrypoint`, which materializes the step's `inputs` under `/conductor/inputs/`, optionally wires up the Conductor MCP server, runs `claude -p` with the step's flags, streams logs, and self-reports the result (outputs + `errorReason`) back to Conductor — the same entrypoint runs unmodified whether the launcher is the self-hosted daemon or a Cloud Run Job execution.
 
