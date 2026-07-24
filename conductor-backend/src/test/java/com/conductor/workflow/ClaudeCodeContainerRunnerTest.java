@@ -97,7 +97,8 @@ class ClaudeCodeContainerRunnerTest {
         when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
         when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
         when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
-        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class))).thenReturn("exec-1");
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class)))
+                .thenReturn(CloudRunJobLauncher.LaunchResult.confirmed("op-1", "exec-1"));
         when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-1")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
         when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());

@@ -1,5 +1,7 @@
 package com.conductor.workflow;
 
+import com.google.api.gax.longrunning.OperationFuture;
+import com.google.api.gax.longrunning.OperationSnapshot;
 import com.google.cloud.run.v2.EnvVar;
 import com.google.cloud.run.v2.Execution;
 import com.google.cloud.run.v2.ExecutionName;
@@ -9,6 +11,8 @@ import com.google.cloud.run.v2.JobsClient;
 import com.google.cloud.run.v2.RunJobRequest;
 import com.google.cloud.run.v2.Task;
 import com.google.cloud.run.v2.TasksClient;
+import com.google.longrunning.Operation;
+import com.google.protobuf.Any;
 import com.google.protobuf.Duration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,7 +31,7 @@ import java.util.concurrent.TimeoutException;
  * setup); per-execution overrides here only carry env vars and the timeout, since Cloud Run Job
  * execution overrides cannot change the image.
  *
- * <p>All three methods resolve their clients via {@link CloudRunClientFactory#forTarget} — the
+ * <p>Every method resolves its clients via {@link CloudRunClientFactory#forTarget} — the
  * builtin target uses the operator-configured default clients, a customer target
  * ({@code connectionId != null}) gets clients built from that connection's own credentials.
  * Poll/cancel must go through the factory too, not default clients: a customer target's executions
@@ -42,6 +46,16 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
 
     private static final Logger log = LoggerFactory.getLogger(GcpCloudRunJobLauncher.class);
 
+    /** Bound on the RunJob operation's *creation* (a single fast RPC round trip) — a timeout here means
+     *  Cloud Run never even accepted the request, so nothing was started. */
+    private static final int INITIAL_FUTURE_TIMEOUT_SECONDS = 20;
+    /** Per-attempt bound on waiting for the operation's metadata (the actual {@link Execution}) to
+     *  materialize — genuinely async, can be slow under cold-start/control-plane load. */
+    private static final int METADATA_ATTEMPT_TIMEOUT_SECONDS = 30;
+    /** Total metadata wait budget ({@link #METADATA_ATTEMPT_TIMEOUT_SECONDS} * this) before falling back
+     *  to the unconfirmed-launch path rather than giving up outright. */
+    private static final int METADATA_MAX_ATTEMPTS = 3;
+
     private final CloudRunClientFactory clientFactory;
 
     public GcpCloudRunJobLauncher(CloudRunClientFactory clientFactory) {
@@ -49,7 +63,7 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
     }
 
     @Override
-    public String startExecution(CloudRunTarget target, ContainerTask task) {
+    public LaunchResult startExecution(CloudRunTarget target, ContainerTask task) {
         RunJobRequest.Overrides.ContainerOverride.Builder containerOverride =
                 RunJobRequest.Overrides.ContainerOverride.newBuilder();
         task.env().forEach((k, v) -> containerOverride.addEnv(EnvVar.newBuilder().setName(k).setValue(v)));
@@ -63,18 +77,72 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
                         .setTimeout(Duration.newBuilder().setSeconds(task.timeoutMinutes() * 60L)))
                 .build();
 
+        OperationFuture<Execution, Execution> operation = jobsClient.runJobAsync(request);
+
+        OperationSnapshot initial;
         try {
-            // The RunJob LRO's initial metadata carries the freshly created Execution — waiting for
-            // metadata (not the full operation) returns as soon as the execution exists, without
-            // blocking for it to finish. We drive our own poll/timeout loop from there.
-            Execution initial = jobsClient.runJobAsync(request).getMetadata()
-                    .get(30, TimeUnit.SECONDS);
-            log.info("Started Cloud Run execution {} for job {}", initial.getName(), target.jobName());
-            return initial.getName();
+            // Resolves as soon as Cloud Run has acknowledged and is tracking the RunJob request — a
+            // fast, single RPC round trip. A timeout here means nothing was created: safe to treat as a
+            // definitive launch failure.
+            initial = operation.getInitialFuture().get(INITIAL_FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (ExecutionException | InterruptedException | TimeoutException e) {
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new IllegalStateException("Failed to start Cloud Run Job execution: " + e.getMessage(), e);
         }
+        String operationName = initial.getName();
+        log.info("Cloud Run accepted RunJob request (operation {}) for job {}", operationName, target.jobName());
+
+        Optional<String> executionName = awaitExecutionMetadata(operation, target.jobName());
+        return executionName
+                .map(name -> LaunchResult.confirmed(operationName, name))
+                .orElseGet(() -> LaunchResult.unconfirmed(operationName));
+    }
+
+    /**
+     * The operation's metadata (the actual {@link Execution}) materializes once Cloud Run has fully
+     * created it — genuinely async, can be slow under cold-start/control-plane load. A
+     * {@link TimeoutException} here does NOT mean the launch failed (the initial future already
+     * confirmed Cloud Run accepted the request) — retried a few times before giving up on a prompt
+     * answer; the caller falls back to polling {@link #tryResolveExecutionName} separately rather than
+     * treating this as a hard failure. An {@link ExecutionException}, by contrast, means Cloud Run itself
+     * reported the create-execution operation failed — a genuine, definitive failure.
+     */
+    private Optional<String> awaitExecutionMetadata(OperationFuture<Execution, Execution> operation, String jobName) {
+        for (int attempt = 1; attempt <= METADATA_MAX_ATTEMPTS; attempt++) {
+            try {
+                Execution execution = operation.getMetadata().get(METADATA_ATTEMPT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                log.info("Started Cloud Run execution {} for job {}", execution.getName(), jobName);
+                return Optional.of(execution.getName());
+            } catch (TimeoutException e) {
+                log.warn("Timed out waiting for Cloud Run execution metadata (attempt {}/{}) for job {}",
+                        attempt, METADATA_MAX_ATTEMPTS, jobName);
+            } catch (ExecutionException | InterruptedException e) {
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                throw new IllegalStateException("Failed to start Cloud Run Job execution: " + e.getMessage(), e);
+            }
+        }
+        log.warn("Cloud Run execution metadata still unresolved after {} attempts for job {} — proceeding "
+                        + "without a confirmed execution name; the container may already be running",
+                METADATA_MAX_ATTEMPTS, jobName);
+        return Optional.empty();
+    }
+
+    @Override
+    public Optional<String> tryResolveExecutionName(CloudRunTarget target, String operationName) {
+        try {
+            JobsClient jobsClient = clientFactory.forTarget(target).jobs();
+            Operation operation = jobsClient.getOperationsClient().getOperation(operationName);
+            Any metadata = operation.getMetadata();
+            if (metadata.is(Execution.class)) {
+                String executionName = metadata.unpack(Execution.class).getName();
+                if (!executionName.isEmpty()) {
+                    return Optional.of(executionName);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to resolve Cloud Run execution name for operation {}: {}", operationName, e.getMessage());
+        }
+        return Optional.empty();
     }
 
     @Override

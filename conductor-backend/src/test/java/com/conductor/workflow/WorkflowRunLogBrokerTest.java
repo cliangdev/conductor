@@ -77,6 +77,30 @@ class WorkflowRunLogBrokerTest {
         verify(stepRunRepository).save(step);
     }
 
+    /**
+     * The Cloud Run launch-race fix relies on this: a step whose {@code executionName} (and even
+     * {@code operationName}) never resolved must still complete correctly via the container's
+     * self-report, which is keyed on {@code workerJobId} alone.
+     */
+    @Test
+    void recordStepCompleted_completesCorrectly_whenExecutionNameWasNeverSet() {
+        WorkflowStepRun step = new WorkflowStepRun();
+        step.setId("step-1");
+        step.setWorkerJobId("jobrun-1:0");
+        step.setStatus(WorkflowStepStatus.RUNNING);
+        assertThat(step.getExecutionName()).isNull();
+        assertThat(step.getOperationName()).isNull();
+        WorkflowJobRun jobRun = jobRunWithStep(step);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        broker.recordStepCompleted("run-1", "jobrun-1:0", WorkflowStepStatus.SUCCESS, 0, null,
+                Map.of("summary", "done"));
+
+        assertThat(step.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        assertThat(step.getExecutionName()).isNull();
+        verify(stepRunRepository).save(step);
+    }
+
     @Test
     void recordStepCompleted_setsErrorReason_andDoesNotOverwriteExistingStartedAt() {
         WorkflowStepRun step = new WorkflowStepRun();

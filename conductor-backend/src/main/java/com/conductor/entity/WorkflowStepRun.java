@@ -59,6 +59,9 @@ public class WorkflowStepRun {
     @Column(name = "execution_name", length = 512)
     private String executionName;
 
+    @Column(name = "operation_name", length = 512)
+    private String operationName;
+
     @Column(name = "started_at")
     private OffsetDateTime startedAt;
 
@@ -110,6 +113,9 @@ public class WorkflowStepRun {
 
     public String getExecutionName() { return executionName; }
     public void setExecutionName(String executionName) { this.executionName = executionName; }
+
+    public String getOperationName() { return operationName; }
+    public void setOperationName(String operationName) { this.operationName = operationName; }
 
     public OffsetDateTime getStartedAt() { return startedAt; }
     public void setStartedAt(OffsetDateTime startedAt) { this.startedAt = startedAt; }
