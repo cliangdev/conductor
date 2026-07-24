@@ -127,14 +127,23 @@ public class WorkflowJobOrchestrator {
         JobSpec jobDef = jobs.get(jobId);
 
         boolean selfHosted = "self-hosted".equals(jobDef.runsOn());
-        if (selfHosted) {
-            // Lock the run row so a duplicate readiness trigger for this job (e.g. two dependents in
-            // a diamond `needs` both becoming ready at once) can't race past the check below and
-            // dispatch the same job to the daemon twice.
-            runRepository.findByIdForUpdate(runId);
-            List<WorkflowJobRun> latestForJob = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(runId, jobId);
-            if (!latestForJob.isEmpty() && latestForJob.get(0).getStatus() == WorkflowJobStatus.AWAITING_PICKUP) {
+
+        // Lock the run row so a duplicate readiness trigger for this job (e.g. two dependents in a
+        // diamond `needs` both becoming ready at once, or two webhook deliveries firing the same
+        // trigger) can't race past the check below and dispatch the same job twice. Applies to both
+        // dispatch paths: self-hosted jobs land in AWAITING_PICKUP once handed to the daemon, while
+        // cloud-run/other jobs go straight to RUNNING within this same transaction — so the "already
+        // dispatched" marker differs per path but the lock + guard shape is the same for both.
+        runRepository.findByIdForUpdate(runId);
+        List<WorkflowJobRun> latestForJob = jobRunRepository.findByRunIdAndJobIdOrderByIterationDesc(runId, jobId);
+        if (!latestForJob.isEmpty()) {
+            WorkflowJobStatus latestStatus = latestForJob.get(0).getStatus();
+            if (selfHosted && latestStatus == WorkflowJobStatus.AWAITING_PICKUP) {
                 log.info("planJobExecution: job {} (run {}) already AWAITING_PICKUP, skipping duplicate dispatch", jobId, runId);
+                return JobExecutionPlan.complete();
+            }
+            if (!selfHosted && latestStatus == WorkflowJobStatus.RUNNING) {
+                log.info("planJobExecution: job {} (run {}) already RUNNING, skipping duplicate dispatch", jobId, runId);
                 return JobExecutionPlan.complete();
             }
         }
