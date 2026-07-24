@@ -75,10 +75,20 @@ If the design will reference `${{ secrets.SOME_KEY }}`, confirm it's in the `lis
 result before designing around it — don't assume a secret exists because the user mentioned it.
 Secrets are added under **Settings → Secrets**.
 
-### GitHub PR trigger — repo scoping and label gating
+### Job-level `if:` — every trigger, not just GitHub
 
-`on.github.pull_request` fires for **any** repo the connected GitHub App installation covers, on
-`opened`/`labeled`/`synchronize`/`reopened`. Narrow it with `filters:`:
+This applies regardless of which trigger you picked above. Job-level `if:` can reference the same
+roots as everywhere else — `event`, `secrets`, `inputs`, `steps`, `needs`, `loop` (see
+`get_workflow_step_schema`'s `interpolation` output) — not just `needs.*`/`steps.*`. Any trigger's
+event fields are fair game for per-job routing: `event.toStatus` on a
+`conductor.work_item.status_changed` trigger, a field from a generic webhook body, `event.repoFullName`
+on a GitHub PR trigger (below), etc. Don't assume `if:` is limited to upstream job results.
+
+### Example trigger with per-job routing: GitHub PR — repo scoping and label gating
+
+One concrete instance of the routing idiom above. `on.github.pull_request` fires for **any** repo
+the connected GitHub App installation covers, on `opened`/`labeled`/`synchronize`/`reopened`.
+Narrow it with `filters:`:
 
 ```yaml
 on:
@@ -93,10 +103,6 @@ or should behave differently per repo (e.g. a different review persona per codeb
 > "Which repo(s) should this act on? Routing happens per-job via `if: event.repoFullName == 'org/repo'`,
 > not a trigger filter — so different behavior per repo means separate jobs, each gated on the
 > repo name."
-
-Job-level `if:` can reference the same roots as everywhere else — `event`, `secrets`, `inputs`,
-`steps`, `needs`, `loop` (see `get_workflow_step_schema`'s `interpolation` output) — not just
-`needs.*`/`steps.*`. A repo-routing job looks like:
 
 ```yaml
 jobs:
@@ -267,9 +273,12 @@ on:
 Reference it as `${{ inputs.date }}` anywhere in the workflow.
 
 **Gating a job on a computed value.** When a job needs to branch on something that isn't directly
-in the trigger event (e.g. "does this PR touch `backend/`?"), don't reinvent it as a per-job
-self-check — use a dedicated detect job with `output_schema` and consume its structured output via
-`needs.JOB.outputs.KEY` in a downstream `if:`:
+in the trigger event, don't reinvent it as a per-job self-check — use a dedicated detect job with
+`output_schema` and consume its structured output via `needs.JOB.outputs.KEY` in a downstream
+`if:`. This is a general idiom, not specific to any one trigger or connector — "does this PR touch
+`backend/`?" below is one instance; the same shape fits "which fields did this webhook payload
+actually populate?", "which of these data sources returned rows this run?", or any other
+runtime-computed branch:
 
 ```yaml
 jobs:
