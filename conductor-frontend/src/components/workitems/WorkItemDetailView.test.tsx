@@ -242,7 +242,7 @@ describe('WorkItemDetailView', () => {
     await renderView()
     const panel = within(screen.getByTestId('properties-panel'))
 
-    await userEvent.click(panel.getByRole('button', { name: /in review/i }))
+    await userEvent.click(await panel.findByRole('button', { name: /in review/i }))
     await userEvent.click(await screen.findByRole('menuitem', { name: /approve & close/i }))
 
     await waitFor(() => {
@@ -569,7 +569,7 @@ describe('WorkItemDetailView', () => {
   describe('single status control + edit-pending prefill', () => {
     it('renders exactly one interactive status control (the properties panel owns it)', async () => {
       await renderView()
-      expect(screen.getAllByRole('button', { name: /in review/i })).toHaveLength(1)
+      expect(await screen.findAllByRole('button', { name: /in review/i })).toHaveLength(1)
     })
 
     it('reopens a pending comment with its existing text instead of blank', async () => {
