@@ -9,6 +9,11 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   useCan: (cap: string) => (cap === 'integration.manage' ? mockCanMutate : false),
 }))
 
+const showToast = vi.fn()
+vi.mock('@/components/ui/toast', () => ({
+  useToast: () => ({ showToast }),
+}))
+
 vi.mock('@/lib/api', () => ({
   listRuntimeTargets: vi.fn(),
   createRuntimeTarget: vi.fn(),
