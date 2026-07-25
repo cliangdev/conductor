@@ -22,6 +22,15 @@ vi.mock('@/lib/api', () => ({
 
 import * as api from '@/lib/api'
 import GenericConnectorPage from './GenericConnectorPage'
+import { ConnectorCatalogProvider } from './ConnectorCatalogContext'
+
+function renderPage(connectorId: string) {
+  return render(
+    <ConnectorCatalogProvider projectId="proj-1" connectorId={connectorId}>
+      <GenericConnectorPage projectId="proj-1" connectorId={connectorId} />
+    </ConnectorCatalogProvider>
+  )
+}
 
 let mockCanMutate = true
 
@@ -49,7 +58,7 @@ describe('GenericConnectorPage', () => {
 
   it('renders a connected, already-configured connector without falling back to "Unknown connector"', async () => {
     vi.mocked(api.listIntegrations).mockResolvedValue([discordConnector])
-    render(<GenericConnectorPage projectId="proj-1" connectorId="discord" />)
+    renderPage('discord')
 
     expect(await screen.findByRole('heading', { name: 'Discord' })).toBeInTheDocument()
     expect(screen.getByText('Connected')).toBeInTheDocument()
@@ -60,7 +69,7 @@ describe('GenericConnectorPage', () => {
 
   it('falls back to the unknown-connector message when the id is absent from the catalog', async () => {
     vi.mocked(api.listIntegrations).mockResolvedValue([])
-    render(<GenericConnectorPage projectId="proj-1" connectorId="not-a-real-connector" />)
+    renderPage('not-a-real-connector')
 
     expect(await screen.findByText('Unknown connector: not-a-real-connector')).toBeInTheDocument()
   })
@@ -68,7 +77,7 @@ describe('GenericConnectorPage', () => {
   it('disconnecting shows an error inline without duplicating it', async () => {
     vi.mocked(api.listIntegrations).mockResolvedValue([discordConnector])
     vi.mocked(api.deleteConnection).mockRejectedValue({ detail: 'Cannot disconnect right now' })
-    render(<GenericConnectorPage projectId="proj-1" connectorId="discord" />)
+    renderPage('discord')
 
     fireEvent.click(await screen.findByRole('button', { name: /disconnect/i }))
 

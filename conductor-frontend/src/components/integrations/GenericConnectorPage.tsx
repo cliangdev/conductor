@@ -1,23 +1,15 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import {
-  listIntegrations,
-  createConnection,
-  deleteConnection,
-  apiPost,
-  apiErrorMessage,
-  type IntegrationListItem,
-} from '@/lib/api';
+import { createConnection, deleteConnection, apiPost, apiErrorMessage } from '@/lib/api';
+import { buildConnectionPayload } from '@/lib/connectorConnectForm';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
-import { ServiceAccountKeyField } from './ServiceAccountKeyField';
+import { useConnectorCatalogItem } from './ConnectorCatalogContext';
+import { ConnectorConfigFields } from './ConnectorConfigFields';
 import { ConnectorIcon } from './ConnectorIcon';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 import { useCan } from '@/contexts/PermissionsContext';
 import { CheckCircleIcon } from 'lucide-react';
 
@@ -26,6 +18,8 @@ import { CheckCircleIcon } from 'lucide-react';
  * like Discord, which have no analytics to visualize). Renders connection status and a generic
  * connect/disconnect flow driven entirely by the catalog metadata from `GET /integrations` — no
  * connector-specific code needed, so a newly registered connector never lands on "Unknown connector".
+ * The catalog entry itself comes from `ConnectorCatalogProvider` (in the surrounding layout), which
+ * the breadcrumb also reads — so there's a single fetch per page view, not one per consumer.
  */
 export default function GenericConnectorPage({
   projectId,
@@ -36,27 +30,12 @@ export default function GenericConnectorPage({
 }) {
   const { accessToken } = useAuth();
   const canMutate = useCan('integration.manage');
-  const [item, setItem] = useState<IntegrationListItem | null | undefined>(undefined);
+  const { item, refetch } = useConnectorCatalogItem();
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [jsonFieldErrors, setJsonFieldErrors] = useState<Record<string, string>>({});
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!accessToken) return;
-    try {
-      const all = await listIntegrations(projectId, accessToken);
-      setItem(all.find((i) => i.connectorId === connectorId) ?? null);
-    } catch (e) {
-      console.error(e);
-      setItem(null);
-    }
-  }, [projectId, connectorId, accessToken]);
-
-  // Reset to the loading state on connectorId change — App Router reuses this component across
-  // sibling connector routes, so without this the previous connector's data would flash first.
-  useEffect(() => { setItem(undefined); load(); }, [connectorId, load]);
 
   const applyJsonField = (key: string, value: string) => {
     setFormValues((prev) => ({ ...prev, [key]: value }));
@@ -71,38 +50,19 @@ export default function GenericConnectorPage({
     e.preventDefault();
     if (!item || !accessToken) return;
 
-    const inputFields = item.configFields.filter((f) => f.source === 'USER_INPUT');
-    const secretField = inputFields.find((f) => f.secret);
-    const secretValue = formValues[secretField?.key || 'apiKey'] || formValues['apiKey'];
-    const configJson: Record<string, string> = {};
-    inputFields
-      .filter((f) => !f.secret)
-      .forEach((f) => {
-        if (formValues[f.key]) configJson[f.key] = formValues[f.key];
-      });
-
-    if (secretField?.type === 'JSON') {
-      const parsed = parseServiceAccountKey(secretValue || '');
-      if (!parsed.valid) {
-        setConnectError(parsed.error ?? 'Invalid key');
-        return;
-      }
+    const payload = buildConnectionPayload(item, formValues);
+    if (!payload.ok) {
+      setConnectError(payload.error);
+      return;
     }
 
     setConnecting(true);
     setConnectError(null);
     try {
-      await createConnection(
-        projectId,
-        item.connectorId,
-        item.authType === 'SERVICE_ACCOUNT'
-          ? { serviceAccountKey: secretValue, configJson }
-          : { apiKey: secretValue, configJson },
-        accessToken
-      );
+      await createConnection(projectId, item.connectorId, payload.body, accessToken);
       setFormValues({});
       setJsonFieldErrors({});
-      await load();
+      await refetch();
     } catch (err: unknown) {
       setConnectError(apiErrorMessage(err, 'Connection failed'));
     } finally {
@@ -111,7 +71,7 @@ export default function GenericConnectorPage({
   };
 
   const handleOAuth = async () => {
-    if (!accessToken) return;
+    if (!accessToken || !item) return;
     try {
       const result = await apiPost<{ authorizationUrl: string }>(
         `/api/v1/projects/${projectId}/integrations/${connectorId}/oauth/authorize`,
@@ -129,7 +89,7 @@ export default function GenericConnectorPage({
     setDisconnecting(connectionId);
     try {
       await deleteConnection(projectId, item.connectorId, connectionId, accessToken);
-      await load();
+      await refetch();
     } catch (e) {
       setConnectError(apiErrorMessage(e, 'Failed to disconnect. Please try again.'));
     } finally {
@@ -157,52 +117,6 @@ export default function GenericConnectorPage({
       </div>
     );
   }
-
-  const connectForm = (
-    <form onSubmit={handleConnect} className="space-y-4">
-      {item.configFields
-        .filter((field) => field.source === 'USER_INPUT')
-        .map((field) => (
-          <div key={field.key}>
-            {field.type === 'JSON' ? (
-              <ServiceAccountKeyField
-                label={field.label}
-                hint={field.hint}
-                required={field.required}
-                value={formValues[field.key] || ''}
-                error={jsonFieldErrors[field.key] || null}
-                onChange={(text) => applyJsonField(field.key, text)}
-              />
-            ) : field.type === 'SELECT' ? (
-              <>
-                <Label>{field.label}</Label>
-                <Select
-                  value={formValues[field.key] || ''}
-                  onChange={(e) => setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                  required={field.required}
-                >
-                  <option value="" disabled>{field.hint || 'Select…'}</option>
-                </Select>
-              </>
-            ) : (
-              <>
-                <Label>{field.label}</Label>
-                <Input
-                  type={field.secret ? 'password' : 'text'}
-                  value={formValues[field.key] || ''}
-                  onChange={(e) => setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                  placeholder={field.hint || ''}
-                  required={field.required}
-                />
-              </>
-            )}
-          </div>
-        ))}
-      <Button type="submit" disabled={connecting}>
-        {connecting ? 'Connecting…' : 'Connect'}
-      </Button>
-    </form>
-  );
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -261,7 +175,18 @@ export default function GenericConnectorPage({
           {item.authType === 'OAUTH2' ? (
             <Button type="button" onClick={handleOAuth}>Authorize</Button>
           ) : (
-            connectForm
+            <form onSubmit={handleConnect} className="space-y-4">
+              <ConnectorConfigFields
+                fields={item.configFields}
+                formValues={formValues}
+                setFormValues={setFormValues}
+                jsonFieldErrors={jsonFieldErrors}
+                applyJsonField={applyJsonField}
+              />
+              <Button type="submit" disabled={connecting}>
+                {connecting ? 'Connecting…' : 'Connect'}
+              </Button>
+            </form>
           )}
         </div>
       )}

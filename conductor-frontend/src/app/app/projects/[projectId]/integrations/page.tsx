@@ -8,7 +8,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiPost, createConnection, deleteConnection, apiErrorMessage, listIntegrations } from '@/lib/api';
 import type { IntegrationListItem } from '@/lib/api';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
-import { ServiceAccountKeyField } from '@/components/integrations/ServiceAccountKeyField';
+import { buildConnectionPayload } from '@/lib/connectorConnectForm';
+import { ConnectorConfigFields } from '@/components/integrations/ConnectorConfigFields';
 import { usePermissions } from '@/contexts/PermissionsContext';
 import { useToast } from '@/components/ui/toast';
 import Link from 'next/link';
@@ -19,9 +20,6 @@ import { PageContainer } from '@/components/layout/PageContainer';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Modal } from '@/components/ui/modal';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
 import { Tabs } from '@/components/ui/tabs';
 import { Can } from '@/components/auth/Can';
 
@@ -100,35 +98,16 @@ export default function IntegrationsPage() {
     if (!connectModal || !accessToken) return;
 
     const { connector } = connectModal;
-    const inputFields = connector.configFields.filter((f) => f.source === 'USER_INPUT');
-    const secretField = inputFields.find((f) => f.secret);
-    const secretValue = formValues[secretField?.key || 'apiKey'] || formValues['apiKey'];
-    const configJson: Record<string, string> = {};
-    inputFields
-      .filter((f) => !f.secret)
-      .forEach((f) => {
-        if (formValues[f.key]) configJson[f.key] = formValues[f.key];
-      });
-
-    if (secretField?.type === 'JSON') {
-      const parsed = parseServiceAccountKey(secretValue || '');
-      if (!parsed.valid) {
-        setConnectError(parsed.error ?? 'Invalid key');
-        return;
-      }
+    const payload = buildConnectionPayload(connector, formValues);
+    if (!payload.ok) {
+      setConnectError(payload.error);
+      return;
     }
 
     setConnecting(true);
     setConnectError(null);
     try {
-      await createConnection(
-        projectId,
-        connector.connectorId,
-        connector.authType === 'SERVICE_ACCOUNT'
-          ? { serviceAccountKey: secretValue, configJson }
-          : { apiKey: secretValue, configJson },
-        accessToken
-      );
+      await createConnection(projectId, connector.connectorId, payload.body, accessToken);
       setConnectModal(null);
       // Don't keep the pasted secret in component state past a successful connect.
       setFormValues({});
@@ -348,52 +327,13 @@ export default function IntegrationsPage() {
       >
         {connectModal && (
           <form onSubmit={handleConnect} className="space-y-4">
-            {connectModal.connector.configFields
-              .filter((field) => field.source === 'USER_INPUT')
-              .map((field) => (
-                <div key={field.key}>
-                  {field.type === 'JSON' ? (
-                    <ServiceAccountKeyField
-                      label={field.label}
-                      hint={field.hint}
-                      required={field.required}
-                      value={formValues[field.key] || ''}
-                      error={jsonFieldErrors[field.key] || null}
-                      onChange={(text) => applyJsonField(field.key, text)}
-                    />
-                  ) : field.type === 'SELECT' ? (
-                    <>
-                      <Label>{field.label}</Label>
-                      {/* No connector currently ships enumerated options for the backend to send;
-                          this is a structural placeholder ready for that data. */}
-                      <Select
-                        value={formValues[field.key] || ''}
-                        onChange={(e) =>
-                          setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))
-                        }
-                        required={field.required}
-                      >
-                        <option value="" disabled>
-                          {field.hint || 'Select…'}
-                        </option>
-                      </Select>
-                    </>
-                  ) : (
-                    <>
-                      <Label>{field.label}</Label>
-                      <Input
-                        type={field.secret ? 'password' : 'text'}
-                        value={formValues[field.key] || ''}
-                        onChange={(e) =>
-                          setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))
-                        }
-                        placeholder={field.hint || ''}
-                        required={field.required}
-                      />
-                    </>
-                  )}
-                </div>
-              ))}
+            <ConnectorConfigFields
+              fields={connectModal.connector.configFields}
+              formValues={formValues}
+              setFormValues={setFormValues}
+              jsonFieldErrors={jsonFieldErrors}
+              applyJsonField={applyJsonField}
+            />
             {connectError && <p className="text-sm text-destructive">{connectError}</p>}
             <div className="flex gap-3 pt-1">
               <Button type="button" variant="outline" className="flex-1" onClick={() => setConnectModal(null)}>
