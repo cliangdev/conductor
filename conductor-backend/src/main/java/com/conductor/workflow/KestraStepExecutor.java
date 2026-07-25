@@ -1,5 +1,7 @@
 package com.conductor.workflow;
 
+import com.conductor.entity.WorkflowRunStatus;
+import com.conductor.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -22,12 +24,14 @@ public class KestraStepExecutor implements WorkflowExecutionBackend {
     private final WorkflowInterpolator interpolator;
     private final ObjectMapper objectMapper;
     private final RestTemplate restTemplate;
+    private final WorkflowRunRepository runRepository;
 
     public KestraStepExecutor(WorkflowInterpolator interpolator, ObjectMapper objectMapper,
-                               RestTemplate restTemplate) {
+                               RestTemplate restTemplate, WorkflowRunRepository runRepository) {
         this.interpolator = interpolator;
         this.objectMapper = objectMapper;
         this.restTemplate = restTemplate;
+        this.runRepository = runRepository;
     }
 
     @Override
@@ -80,8 +84,8 @@ public class KestraStepExecutor implements WorkflowExecutionBackend {
             return StepResult.success(logBuilder.toString(), Map.of("executionId", executionId));
         }
 
-        return pollUntilTerminal(baseUrl, apiToken, executionId, timeoutMinutes, failOnWarning,
-                stepDef, logBuilder);
+        return pollUntilTerminal(baseUrl, apiToken, executionId, context.getRun().getId(), timeoutMinutes,
+                failOnWarning, stepDef, logBuilder);
     }
 
     private String triggerExecution(String baseUrl, String apiToken, String namespace, String flowId,
@@ -107,7 +111,7 @@ public class KestraStepExecutor implements WorkflowExecutionBackend {
         return responseJson.path("id").asText();
     }
 
-    private StepResult pollUntilTerminal(String baseUrl, String apiToken, String executionId,
+    private StepResult pollUntilTerminal(String baseUrl, String apiToken, String executionId, String runId,
                                          int timeoutMinutes, boolean failOnWarning,
                                          Map<String, Object> stepDef, StringBuilder logBuilder) {
         long deadlineMs = System.currentTimeMillis() + (long) timeoutMinutes * 60 * 1000;
@@ -117,6 +121,11 @@ public class KestraStepExecutor implements WorkflowExecutionBackend {
             sleepMs(POLL_INTERVAL_MS);
             if (Thread.currentThread().isInterrupted()) {
                 return StepResult.failed(logBuilder.toString(), "Polling interrupted");
+            }
+            if (runRepository.findStatusById(runId).orElse(null) == WorkflowRunStatus.CANCELLING) {
+                killExecution(baseUrl, apiToken, executionId);
+                logBuilder.append("✗ Cancelled (executionId: ").append(executionId).append(")\n");
+                return StepResult.cancelled(logBuilder.toString());
             }
 
             try {
@@ -139,6 +148,16 @@ public class KestraStepExecutor implements WorkflowExecutionBackend {
         String msg = "Kestra execution timed out after " + timeoutMinutes + " minutes (executionId: " + executionId + ")";
         logBuilder.append("✗ ").append(msg);
         return StepResult.failed(logBuilder.toString(), msg);
+    }
+
+    /** Best-effort kill of a running Kestra execution — a failure here still cancels the step. */
+    private void killExecution(String baseUrl, String apiToken, String executionId) {
+        String url = baseUrl + "/api/v1/executions/" + executionId + "/kill";
+        try {
+            restTemplate.exchange(url, HttpMethod.DELETE, new HttpEntity<>(buildHeaders(apiToken)), String.class);
+        } catch (Exception e) {
+            log.warn("Failed to kill Kestra execution {}: {}", executionId, e.getMessage());
+        }
     }
 
     private boolean isTerminalState(String state) {

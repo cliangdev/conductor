@@ -7,5 +7,11 @@ public enum WorkflowJobStatus {
     FAILED,
     SKIPPED,
     LOOP_EXHAUSTED,
-    AWAITING_PICKUP
+    AWAITING_PICKUP,
+    CANCELLED;
+
+    public boolean isTerminal() {
+        return this == SUCCESS || this == FAILED || this == SKIPPED
+                || this == LOOP_EXHAUSTED || this == CANCELLED;
+    }
 }

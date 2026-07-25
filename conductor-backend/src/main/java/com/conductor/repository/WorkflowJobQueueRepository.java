@@ -35,4 +35,12 @@ public interface WorkflowJobQueueRepository extends JpaRepository<WorkflowJobQue
      * concurrent callers can still both pass this check before either inserts.
      */
     List<WorkflowJobQueue> findByRunIdAndJobIdAndClaimedAtIsNull(String runId, String jobId);
+
+    /**
+     * Drops a cancelled run's not-yet-dispatched queue rows. Claimed rows are left alone — those are
+     * already in flight and settle through the orchestrator's own cancellation checks instead.
+     */
+    @Modifying
+    @Query("DELETE FROM WorkflowJobQueue q WHERE q.run.id = :runId AND q.claimedAt IS NULL")
+    void deleteUnclaimedByRunId(@Param("runId") String runId);
 }

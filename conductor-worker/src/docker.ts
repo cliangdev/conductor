@@ -168,6 +168,11 @@ export async function cleanupContainer(containerName: string): Promise<void> {
   await runCommand('docker', ['rm', '-v', containerName]);
 }
 
+/** `docker rm` refuses a running container, so a cancel has to stop it before cleaning up. */
+export async function killContainer(containerName: string): Promise<void> {
+  await runCommand('docker', ['kill', containerName]);
+}
+
 export async function launchJob(job: Job): Promise<void> {
   await createVolume(job.volumeName);
   await startContainer(job.containerName, job.volumeName, job.image, job.env);

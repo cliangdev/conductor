@@ -71,13 +71,13 @@ These commands are installed automatically when you run `conductor init` (projec
 
 ## MCP Tools
 
-Once `conductor init` runs, Claude Code gets access to 39 tools via the Conductor MCP server, grouped by area:
+Once `conductor init` runs, Claude Code gets access to 40 tools via the Conductor MCP server, grouped by area:
 
 | Area | Tools |
 |------|-------|
 | Work items | `create_work_item`, `update_work_item`, `get_work_item`, `list_work_items`, `set_work_item_status`, `get_available_transitions`, `transition_work_item`, `list_work_item_comments`, `record_asset` |
 | Documents | `write_document` (headless upsert), `scaffold_document` (local file, needs daemon), `delete_document` |
-| Workflows | `list_workflows`, `create_workflow`, `get_workflow`, `update_workflow`, `publish_workflow`, `delete_workflow`, `dispatch_workflow`, `get_workflow_run`, `list_workflow_runs`, `list_workflow_secrets`, `get_workflow_step_schema`, `report_step_run` |
+| Workflows | `list_workflows`, `create_workflow`, `get_workflow`, `update_workflow`, `publish_workflow`, `delete_workflow`, `dispatch_workflow`, `cancel_workflow_run`, `get_workflow_run`, `list_workflow_runs`, `list_workflow_secrets`, `get_workflow_step_schema`, `report_step_run` |
 | Integrations & discovery | `list_integration_tools`, `list_connector_catalog`, `list_agents`, `create_agent`, `update_agent`, `delete_agent`, `list_skills`, `register_skill` |
 | Knowledge | `submit_knowledge_source`, `read_knowledge_sources`, `search_knowledge`, `read_knowledge_pages`, `write_knowledge_pages`, `list_knowledge_domains`, `suggest_knowledge_domain` |
 

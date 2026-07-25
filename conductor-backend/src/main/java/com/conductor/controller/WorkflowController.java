@@ -50,6 +50,7 @@ import com.conductor.service.WorkflowViewService;
 import com.conductor.workflow.StepFailureExplanations;
 import com.conductor.workflow.WorkflowFailureCircuitBreaker;
 import com.conductor.workflow.WorkflowJobOrchestrator;
+import com.conductor.workflow.WorkflowRunCancellationService;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.conductor.workflow.lifecycle.Statechart;
@@ -102,6 +103,7 @@ public class WorkflowController implements WorkflowsApi {
     private final WorkflowYamlParser yamlParser;
     private final WorkflowFailureCircuitBreaker circuitBreaker;
     private final StepSchemaRegistry stepSchemaRegistry;
+    private final WorkflowRunCancellationService runCancellationService;
 
     public WorkflowController(WorkflowService workflowService,
                                WorkflowTriggerService workflowTriggerService,
@@ -118,7 +120,9 @@ public class WorkflowController implements WorkflowsApi {
                                ObjectMapper objectMapper,
                                WorkflowYamlParser yamlParser,
                                WorkflowFailureCircuitBreaker circuitBreaker,
-                               StepSchemaRegistry stepSchemaRegistry) {
+                               StepSchemaRegistry stepSchemaRegistry,
+                               WorkflowRunCancellationService runCancellationService) {
+        this.runCancellationService = runCancellationService;
         this.workflowService = workflowService;
         this.workflowTriggerService = workflowTriggerService;
         this.workflowJobOrchestrator = workflowJobOrchestrator;
@@ -462,6 +466,23 @@ public class WorkflowController implements WorkflowsApi {
         dto.setCompletedAt(run.getCompletedAt());
         dto.setJobs(jobDtos);
         return ResponseEntity.ok(dto);
+    }
+
+    @Override
+    public ResponseEntity<WorkflowRunDto> cancelWorkflowRun(String projectId, String workflowId, String runId) {
+        String userId = currentUserId();
+        if (!projectSecurityService.isProjectMember(projectId, userId)) {
+            throw new EntityNotFoundException("Project not found");
+        }
+        // Scope the run to the path before mutating it — unlike the read endpoints, cancelling on a
+        // bare runId would otherwise let any member of any project stop another project's run.
+        WorkflowDefinition workflow = workflowService.getWorkflow(projectId, workflowId);
+        WorkflowRun target = runRepository.findByIdWithWorkflow(runId)
+                .orElseThrow(() -> new EntityNotFoundException("Run not found: " + runId));
+        if (!target.getWorkflow().getId().equals(workflow.getId())) {
+            throw new EntityNotFoundException("Run not found: " + runId);
+        }
+        return ResponseEntity.status(202).body(toRunDto(runCancellationService.cancelRun(runId)));
     }
 
     private WorkflowJobRunDto toJobRunDto(WorkflowJobRun jobRun, List<WorkflowStepRun> steps) {

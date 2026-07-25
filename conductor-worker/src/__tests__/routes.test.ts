@@ -24,6 +24,7 @@ async function getApp() {
     buildVolumeName: (runId: string, jobId: string) => `conductor-vol-${runId}-${jobId}`,
     launchJob: jest.fn().mockResolvedValue(undefined),
     cleanupContainer: jest.fn().mockResolvedValue(undefined),
+    killContainer: jest.fn().mockResolvedValue(undefined),
   }));
   jest.mock('../startup', () => ({
     recoverStoppedContainers: jest.fn().mockResolvedValue(undefined),
@@ -92,6 +93,7 @@ describe('POST /run-job', () => {
       buildVolumeName: (runId: string, jobId: string) => `conductor-vol-${runId}-${jobId}`,
       launchJob: jest.fn().mockReturnValue(new Promise(() => {})), // never resolves
       cleanupContainer: jest.fn().mockResolvedValue(undefined),
+      killContainer: jest.fn().mockResolvedValue(undefined),
     }));
     jest.mock('../startup', () => ({
       recoverStoppedContainers: jest.fn().mockResolvedValue(undefined),
@@ -168,5 +170,22 @@ describe('DELETE /job/:workerJobId', () => {
       .set(authHeader());
     expect(deleteRes.status).toBe(200);
     expect(deleteRes.body.status).toBe('CANCELLED');
+  });
+
+  it('kills the container before removing it', async () => {
+    const app = await getApp();
+    const docker = await import('../docker');
+    const createRes = await request(app)
+      .post('/run-job')
+      .set(authHeader())
+      .send(validRunJobBody);
+    const { workerJobId } = createRes.body;
+
+    await request(app).delete(`/job/${workerJobId}`).set(authHeader());
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // `docker rm` refuses a running container, so the kill has to land first.
+    expect(docker.killContainer as jest.Mock).toHaveBeenCalledWith('conductor-run-abc-job-123');
+    expect(docker.cleanupContainer as jest.Mock).toHaveBeenCalledWith('conductor-run-abc-job-123');
   });
 });

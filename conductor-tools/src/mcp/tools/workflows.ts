@@ -180,6 +180,17 @@ export async function dispatchWorkflow(
   )
 }
 
+export async function cancelWorkflowRun(
+  params: { workflowId: string; runId: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  return apiPost<Record<string, unknown>>(
+    `/api/v1/projects/${config.projectId}/workflows/${params.workflowId}/runs/${params.runId}/cancel`,
+    {},
+    config
+  )
+}
+
 export async function getWorkflowRun(
   params: { workflowId: string; runId: string },
   config: Config

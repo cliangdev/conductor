@@ -84,7 +84,7 @@ public class WorkflowRunLogBroker {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MS);
         WorkflowRunStatus status = run.getStatus();
 
-        if (isTerminalStatus(status)) {
+        if (status.isTerminal()) {
             sendHistoricalLogsAndClose(emitter, run, status);
             return emitter;
         }
@@ -218,7 +218,7 @@ public class WorkflowRunLogBroker {
             List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(jobRun.getId());
             for (WorkflowStepRun step : steps) {
                 if (workerJobId.equals(step.getWorkerJobId())) {
-                    if (isTerminal(step.getStatus())) {
+                    if (step.getStatus().isTerminal()) {
                         // A late daemon backstop post (e.g. after the container already self-reported)
                         // must not flip an already-terminal, container-reported result.
                         log.info("recordStepCompleted: step {} (workerJobId={}) already terminal ({}), "
@@ -342,7 +342,7 @@ public class WorkflowRunLogBroker {
     public void closeTerminalRunEmitters() {
         activeEmitters.forEach((runId, emitter) -> {
             Optional<WorkflowRun> runOpt = runRepository.findByIdWithWorkflow(runId);
-            if (runOpt.isEmpty() || isTerminalStatus(runOpt.get().getStatus())) {
+            if (runOpt.isEmpty() || runOpt.get().getStatus().isTerminal()) {
                 WorkflowRunStatus status = runOpt.map(WorkflowRun::getStatus).orElse(WorkflowRunStatus.FAILED);
                 sendRunCompleteAndClose(emitter, status);
                 activeEmitters.remove(runId);
@@ -353,11 +353,11 @@ public class WorkflowRunLogBroker {
 
     private void checkAndCompleteRun(String runId) {
         WorkflowRun run = runRepository.findByIdWithWorkflow(runId).orElse(null);
-        if (run == null || isTerminalStatus(run.getStatus())) return;
+        if (run == null || run.getStatus().isTerminal()) return;
 
         List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(runId);
         boolean anyFailed = jobRuns.stream().anyMatch(j -> j.getStatus() == WorkflowJobStatus.FAILED);
-        boolean allDone = jobRuns.stream().allMatch(j -> isTerminalJobStatus(j.getStatus()));
+        boolean allDone = jobRuns.stream().allMatch(j -> j.getStatus().isTerminal());
 
         if (anyFailed || allDone) {
             run.setStatus(anyFailed ? WorkflowRunStatus.FAILED : WorkflowRunStatus.SUCCESS);
@@ -421,20 +421,4 @@ public class WorkflowRunLogBroker {
         }
     }
 
-    private boolean isTerminalStatus(WorkflowRunStatus status) {
-        return status == WorkflowRunStatus.SUCCESS
-                || status == WorkflowRunStatus.FAILED
-                || status == WorkflowRunStatus.CANCELLED;
-    }
-
-    private boolean isTerminal(WorkflowStepStatus status) {
-        return status == WorkflowStepStatus.SUCCESS || status == WorkflowStepStatus.FAILED;
-    }
-
-    private boolean isTerminalJobStatus(WorkflowJobStatus status) {
-        return status == WorkflowJobStatus.SUCCESS
-                || status == WorkflowJobStatus.FAILED
-                || status == WorkflowJobStatus.SKIPPED
-                || status == WorkflowJobStatus.LOOP_EXHAUSTED;
-    }
 }

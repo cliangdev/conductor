@@ -46,6 +46,20 @@ export function dispatchWorkflow(
   )
 }
 
+/** Request cancellation of a PENDING/RUNNING run. Idempotent while CANCELLING; 409 once terminal. */
+export function cancelWorkflowRun(
+  projectId: string,
+  workflowId: string,
+  runId: string,
+  token: string,
+): Promise<WorkflowRunDto> {
+  return apiPost<WorkflowRunDto>(
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/runs/${runId}/cancel`,
+    {},
+    token,
+  )
+}
+
 /** Runs for one Workflow, newest first. */
 export function listWorkflowRuns(
   projectId: string,
@@ -242,6 +256,7 @@ const WELL_KNOWN_HUES: Record<string, StatusHue> = {
   success: 'green',
   closed: 'slate',
   skipped: 'slate',
+  cancelling: 'slate',
   cancelled: 'slate',
   failed: 'red',
   error: 'red',

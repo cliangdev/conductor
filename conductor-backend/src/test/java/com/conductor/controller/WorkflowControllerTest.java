@@ -32,6 +32,7 @@ import com.conductor.workflow.StepResult;
 import com.conductor.workflow.WorkflowExecutionBackend;
 import com.conductor.workflow.WorkflowFailureCircuitBreaker;
 import com.conductor.workflow.WorkflowJobOrchestrator;
+import com.conductor.workflow.WorkflowRunCancellationService;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.model.WorkflowYamlParser;
 import com.conductor.workflow.schema.StepSchemaRegistry;
@@ -130,6 +131,7 @@ class WorkflowControllerTest {
     @MockitoBean private WorkflowDefinitionLifecycleService lifecycleService;
     @MockitoBean private WorkflowViewService workflowViewService;
     @MockitoBean private WorkflowFailureCircuitBreaker circuitBreaker;
+    @MockitoBean private WorkflowRunCancellationService runCancellationService;
 
     // Security-filter collaborators
     @MockitoBean private JwtService jwtService;

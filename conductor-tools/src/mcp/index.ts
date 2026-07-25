@@ -24,6 +24,7 @@ import {
   deleteWorkflow,
   publishWorkflow,
   dispatchWorkflow,
+  cancelWorkflowRun,
   getWorkflowRun,
   listWorkflowRuns,
   listWorkflowSecrets,
@@ -385,6 +386,18 @@ const TOOLS = [
         inputs: { type: 'object', description: 'Input values passed to the workflow run, available as ${{ inputs.KEY }} in the YAML (optional)' },
       },
       required: ['workflowId'],
+    },
+  },
+  {
+    name: 'cancel_workflow_run',
+    description: 'Cancel a PENDING or RUNNING workflow run. Idempotent while the run is already CANCELLING; fails if the run has already finished. Call get_workflow_run afterward to confirm the run reached CANCELLING/CANCELLED.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        workflowId: { type: 'string', description: 'Workflow definition ID (from dispatch_workflow response)' },
+        runId: { type: 'string', description: 'Run ID (from dispatch_workflow response)' },
+      },
+      required: ['workflowId', 'runId'],
     },
   },
   {
@@ -783,6 +796,17 @@ export async function runMcpServer(): Promise<void> {
               {
                 workflowId: params['workflowId'] as string,
                 inputs: params['inputs'] as Record<string, unknown> | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'cancel_workflow_run': {
+          return successResponse(
+            await cancelWorkflowRun(
+              {
+                workflowId: params['workflowId'] as string,
+                runId: params['runId'] as string,
               },
               config
             )

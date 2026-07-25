@@ -2,6 +2,8 @@ package com.conductor.workflow;
 
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
+import com.conductor.entity.WorkflowRunStatus;
+import com.conductor.repository.WorkflowRunRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +15,7 @@ import org.springframework.http.*;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -21,8 +24,12 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class KestraStepExecutorTest {
 
+    private static final String RUN_ID = "run-1";
+
     @Mock
     private RestTemplate restTemplate;
+    @Mock
+    private WorkflowRunRepository runRepository;
 
     private KestraStepExecutor executor;
     private ObjectMapper objectMapper;
@@ -31,12 +38,14 @@ class KestraStepExecutorTest {
     void setUp() {
         objectMapper = new ObjectMapper();
         WorkflowInterpolator interpolator = new WorkflowInterpolator();
-        executor = new KestraStepExecutor(interpolator, objectMapper, restTemplate);
+        executor = new KestraStepExecutor(interpolator, objectMapper, restTemplate, runRepository);
     }
 
     private StepExecutionContext context(Map<String, Object> stepDef) {
         RuntimeContext runtimeContext = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
-        return new StepExecutionContext(new WorkflowRun(), new WorkflowJobRun(), stepDef, runtimeContext, "proj-1");
+        WorkflowRun run = new WorkflowRun();
+        run.setId(RUN_ID);
+        return new StepExecutionContext(run, new WorkflowJobRun(), stepDef, runtimeContext, "proj-1");
     }
 
     @Test
@@ -98,7 +107,7 @@ class KestraStepExecutorTest {
         );
 
         // Use a test subclass that skips Thread.sleep
-        KestraStepExecutor fastExecutor = new KestraStepExecutor(new WorkflowInterpolator(), objectMapper, restTemplate) {
+        KestraStepExecutor fastExecutor = new KestraStepExecutor(new WorkflowInterpolator(), objectMapper, restTemplate, runRepository) {
             @Override
             protected void sleepMs(long ms) { }
         };
@@ -124,7 +133,7 @@ class KestraStepExecutorTest {
                 "timeout_minutes", 1
         );
 
-        KestraStepExecutor fastExecutor = new KestraStepExecutor(new WorkflowInterpolator(), objectMapper, restTemplate) {
+        KestraStepExecutor fastExecutor = new KestraStepExecutor(new WorkflowInterpolator(), objectMapper, restTemplate, runRepository) {
             @Override
             protected void sleepMs(long ms) { }
         };
@@ -152,7 +161,7 @@ class KestraStepExecutorTest {
                 "timeout_minutes", 1
         );
 
-        KestraStepExecutor fastExecutor = new KestraStepExecutor(new WorkflowInterpolator(), objectMapper, restTemplate) {
+        KestraStepExecutor fastExecutor = new KestraStepExecutor(new WorkflowInterpolator(), objectMapper, restTemplate, runRepository) {
             @Override
             protected void sleepMs(long ms) { }
         };
@@ -179,13 +188,41 @@ class KestraStepExecutorTest {
                 "timeout_minutes", 1
         );
 
-        KestraStepExecutor fastExecutor = new KestraStepExecutor(new WorkflowInterpolator(), objectMapper, restTemplate) {
+        KestraStepExecutor fastExecutor = new KestraStepExecutor(new WorkflowInterpolator(), objectMapper, restTemplate, runRepository) {
             @Override
             protected void sleepMs(long ms) { }
         };
 
         StepResult result = fastExecutor.execute(context(stepDef));
         assertThat(result.getStatus().name()).isEqualTo("FAILED");
+    }
+
+    @Test
+    void cancellingRunKillsExecutionAndReturnsCancelled() {
+        String triggerResponse = "{\"id\":\"exec-cancel\",\"state\":{\"current\":\"CREATED\"}}";
+
+        when(restTemplate.exchange(contains("/executions/my-ns/my-flow"), eq(HttpMethod.POST), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok(triggerResponse));
+        when(runRepository.findStatusById(RUN_ID)).thenReturn(Optional.of(WorkflowRunStatus.CANCELLING));
+
+        Map<String, Object> stepDef = Map.of(
+                "namespace", "my-ns",
+                "flow_id", "my-flow",
+                "wait", true,
+                "timeout_minutes", 1
+        );
+
+        KestraStepExecutor fastExecutor = new KestraStepExecutor(new WorkflowInterpolator(), objectMapper, restTemplate, runRepository) {
+            @Override
+            protected void sleepMs(long ms) { }
+        };
+
+        StepResult result = fastExecutor.execute(context(stepDef));
+
+        assertThat(result.getStatus().name()).isEqualTo("CANCELLED");
+        verify(restTemplate).exchange(contains("/executions/exec-cancel/kill"), eq(HttpMethod.DELETE),
+                any(), eq(String.class));
+        verify(restTemplate, never()).exchange(anyString(), eq(HttpMethod.GET), any(), eq(String.class));
     }
 
     @Test

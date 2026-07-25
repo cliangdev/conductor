@@ -263,6 +263,12 @@
       "requiredParams": ["workflowId"]
     },
     {
+      "name": "cancel_workflow_run",
+      "description": "Cancel a PENDING or RUNNING workflow run. Idempotent while already CANCELLING; fails once the run has finished.",
+      "category": "workflows",
+      "requiredParams": ["workflowId", "runId"]
+    },
+    {
       "name": "get_workflow_run",
       "description": "Get status and step details for a workflow run (PENDING/RUNNING/SUCCESS/FAILED). Call after dispatch_workflow to verify the run.",
       "category": "workflows",

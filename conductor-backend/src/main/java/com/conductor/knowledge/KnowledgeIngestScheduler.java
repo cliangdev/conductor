@@ -57,7 +57,8 @@ public class KnowledgeIngestScheduler {
     /** Total attempts before a stuck PROCESSING source is dead-lettered. */
     static final int MAX_ATTEMPTS = 5;
     private static final Set<WorkflowRunStatus> ACTIVE_RUN_STATUSES =
-            Set.of(WorkflowRunStatus.PENDING, WorkflowRunStatus.PENDING_LOCAL_PICKUP, WorkflowRunStatus.RUNNING);
+            Set.of(WorkflowRunStatus.PENDING, WorkflowRunStatus.PENDING_LOCAL_PICKUP,
+                    WorkflowRunStatus.RUNNING, WorkflowRunStatus.CANCELLING);
     private static final Set<WorkflowRunStatus> TERMINAL_FAILED_STATUSES =
             Set.of(WorkflowRunStatus.FAILED, WorkflowRunStatus.CANCELLED, WorkflowRunStatus.LOCAL_PICKUP_TIMEOUT);
 

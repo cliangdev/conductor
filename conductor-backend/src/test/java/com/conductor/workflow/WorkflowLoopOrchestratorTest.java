@@ -78,6 +78,7 @@ class WorkflowLoopOrchestratorTest {
 
         WorkflowRun run = new WorkflowRun();
         run.setId("run-1");
+        run.setStatus(WorkflowRunStatus.RUNNING);
         run.setWorkflow(def);
         return run;
     }

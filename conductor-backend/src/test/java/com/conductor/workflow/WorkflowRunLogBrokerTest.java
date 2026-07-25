@@ -106,6 +106,7 @@ class WorkflowRunLogBrokerTest {
         WorkflowStepRun step = new WorkflowStepRun();
         step.setId("step-1");
         step.setWorkerJobId("jobrun-1:0");
+        step.setStatus(WorkflowStepStatus.RUNNING);
         java.time.OffsetDateTime startedAt = java.time.OffsetDateTime.now().minusMinutes(5);
         step.setStartedAt(startedAt);
         WorkflowJobRun jobRun = jobRunWithStep(step);

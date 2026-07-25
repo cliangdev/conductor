@@ -3,21 +3,25 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet } from '@/lib/api';
+import { apiGet, apiErrorMessage } from '@/lib/api';
 import { WorkflowRunDetailDto, WorkflowJobRunDto, WorkflowStepRunDto } from '@/types/workflow';
 import dynamic from 'next/dynamic';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { CopyableId } from '@/components/ui/copyable-id';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Can } from '@/components/auth/Can';
+import { useToast } from '@/components/ui/toast';
 import { formatElapsed } from '@/lib/format';
 import { parseWorkflowYaml } from '@/lib/workflowAutomation';
+import { cancelWorkflowRun } from '@/lib/workflows';
 import { stepNodeId } from '@/components/workflow/automation/graphBuilder';
 
 const WorkflowDiagram = dynamic(() => import('@/components/workflow/WorkflowDiagram'), { ssr: false });
 
-type JobStatus = 'SUCCESS' | 'FAILED' | 'RUNNING' | 'SKIPPED' | 'PENDING' | 'LOOP_EXHAUSTED';
+type JobStatus = 'SUCCESS' | 'FAILED' | 'RUNNING' | 'SKIPPED' | 'PENDING' | 'LOOP_EXHAUSTED' | 'CANCELLED';
 
 interface JobRunStatus {
   status: JobStatus;
@@ -38,7 +42,9 @@ export default function RunDetailPage() {
     projectId: string; workflowId: string; runId: string;
   }>();
   const { accessToken } = useAuth();
+  const { showToast } = useToast();
   const [run, setRun] = useState<WorkflowRunDetailDto | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   const fetchRun = useCallback(() => {
     if (!accessToken) return;
@@ -51,10 +57,24 @@ export default function RunDetailPage() {
   useEffect(() => { fetchRun(); }, [fetchRun]);
 
   useEffect(() => {
-    if (!run || (run.status !== 'RUNNING' && run.status !== 'PENDING')) return;
+    if (!run || (run.status !== 'RUNNING' && run.status !== 'PENDING' && run.status !== 'CANCELLING')) return;
     const interval = setInterval(fetchRun, 5000);
     return () => clearInterval(interval);
   }, [run, fetchRun]);
+
+  const handleCancel = async () => {
+    if (!accessToken) return;
+    setCancelling(true);
+    try {
+      await cancelWorkflowRun(projectId, workflowId, runId, accessToken);
+      fetchRun();
+      showToast('Cancellation requested.', 'success');
+    } catch (e) {
+      showToast(apiErrorMessage(e, "Couldn't cancel this run — try again."), 'error');
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   if (!run) {
     return (
@@ -122,6 +142,19 @@ export default function RunDetailPage() {
             <span>· Trigger: {run.triggerType}</span>
             <span>· Duration: {formatElapsed(run.startedAt, run.completedAt)}</span>
           </span>
+        }
+        actions={
+          (run.status === 'RUNNING' || run.status === 'PENDING' || run.status === 'CANCELLING') && (
+            <Can do="workflow.run">
+              <Button
+                variant="outline"
+                onClick={handleCancel}
+                disabled={run.status === 'CANCELLING' || cancelling}
+              >
+                {run.status === 'CANCELLING' || cancelling ? 'Cancelling…' : 'Cancel run'}
+              </Button>
+            </Can>
+          )
         }
       />
 

@@ -20,6 +20,7 @@ import {
   recordAsset,
   reportStepRun,
   listWorkflowRuns,
+  cancelWorkflowRun,
   listWorkflowSecrets,
   getWorkflowStepSchema,
   deleteWorkflow,
@@ -133,6 +134,17 @@ describe('workflow-aware MCP tools', () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
     await listWorkflowRuns({ workflowId: 'wf-1', page: 2, size: 10 }, config)
     expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/runs?page=2&size=10', config)
+  })
+
+  it('cancel_workflow_run POSTs an empty body to the run cancel resource', async () => {
+    ;(apiPost as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'run-1', status: 'CANCELLING' })
+    const result = await cancelWorkflowRun({ workflowId: 'wf-1', runId: 'run-1' }, config)
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/workflows/wf-1/runs/run-1/cancel',
+      {},
+      config
+    )
+    expect(result).toEqual({ id: 'run-1', status: 'CANCELLING' })
   })
 
   it('list_workflow_secrets GETs the secrets resource and returns keys only, stripping other fields', async () => {
