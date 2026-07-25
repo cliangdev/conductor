@@ -51,6 +51,9 @@ export interface WorkflowTrigger {
   raw: Record<string, unknown>
   /** schedule triggers only */
   cron?: string
+  /** workflow_dispatch triggers only — defaults to true when the YAML omits it, matching the
+   *  backend's TriggersSpec#allowsManualDispatch default */
+  manual?: boolean
 }
 
 export interface ParsedWorkflow {
@@ -137,7 +140,8 @@ function parseTriggers(onBlock: unknown): WorkflowTrigger[] {
   const triggers: WorkflowTrigger[] = []
 
   if ('workflow_dispatch' in on) {
-    triggers.push({ kind: 'workflow_dispatch', raw: asRecord(on['workflow_dispatch']) })
+    const raw = asRecord(on['workflow_dispatch'])
+    triggers.push({ kind: 'workflow_dispatch', raw, manual: raw['manual'] !== false })
   }
   if ('webhook' in on) {
     triggers.push({ kind: 'webhook', raw: asRecord(on['webhook']) })
@@ -161,6 +165,17 @@ function parseTriggers(onBlock: unknown): WorkflowTrigger[] {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {}
+}
+
+/**
+ * True for a `workflow_dispatch` trigger a human can actually fire — false when the workflow opts
+ * out with `on.workflow_dispatch.manual: false`, used by system-dispatched workflows like the
+ * Knowledge Librarian whose event payload is built by the process that dispatches them, not by a
+ * human clicking Run. Always true for other trigger kinds, which have no such ambiguity. Mirrors
+ * the backend's `TriggersSpec#allowsManualDispatch`.
+ */
+export function isManualTrigger(trigger: WorkflowTrigger): boolean {
+  return trigger.kind !== 'workflow_dispatch' || trigger.manual !== false
 }
 
 /** Throws on invalid YAML, matching the previous inline-parser behavior callers already handle. */

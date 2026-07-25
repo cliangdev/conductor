@@ -17,15 +17,17 @@ import { WorkflowStatusBadge } from '@/components/workflow/WorkflowStatusBadge'
 import { WorkflowProvider, useWorkflow } from '@/contexts/WorkflowContext'
 import { useCan } from '@/contexts/PermissionsContext'
 import { allowsManualDispatch } from '@/lib/workflows'
+import { parseWorkflowYaml } from '@/lib/workflowAutomation'
+import { triggerLabel } from '@/components/workflow/TriggerBadges'
 import { useToast } from '@/components/ui/toast'
 import { timeAgo } from '@/lib/format'
 
 function parseTriggers(yaml: string): string[] {
-  const triggers: string[] = []
-  if (yaml.includes('conductor.work_item.status_changed')) triggers.push('work item')
-  if (yaml.includes('webhook:')) triggers.push('webhook')
-  if (yaml.includes('workflow_dispatch')) triggers.push('manual')
-  return triggers
+  try {
+    return parseWorkflowYaml(yaml).triggers.map(triggerLabel)
+  } catch {
+    return []
+  }
 }
 
 /** Workflow identity + breadcrumb + the single canonical Run action, shared across all tabs. */

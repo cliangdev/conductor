@@ -5,7 +5,7 @@ import cronstrue from 'cronstrue'
 import { cn } from '@/lib/utils'
 import { WorkflowTriggerTypeIcon, triggerTypeAvatarColor } from '@/components/workflow/WorkflowStepTypeIcon'
 import { AVATAR_COLOR_CLASSES } from '@/components/agents/AgentAvatar'
-import type { WorkflowTrigger, TriggerKind } from '@/lib/workflowAutomation'
+import { isManualTrigger, type WorkflowTrigger, type TriggerKind } from '@/lib/workflowAutomation'
 import { TRIGGER_W, TRIGGER_H } from './dimensions'
 
 const TRIGGER_LABEL: Record<TriggerKind, string> = {
@@ -14,6 +14,11 @@ const TRIGGER_LABEL: Record<TriggerKind, string> = {
   work_item_status_changed: 'Work item status',
   github_pull_request: 'GitHub PR',
   schedule: 'Schedule',
+}
+
+function triggerLabel(trigger: WorkflowTrigger): string {
+  if (trigger.kind === 'workflow_dispatch' && !isManualTrigger(trigger)) return 'System-triggered'
+  return TRIGGER_LABEL[trigger.kind]
 }
 
 function triggerSubtitle(trigger: WorkflowTrigger): string | undefined {
@@ -46,7 +51,7 @@ export function TriggerNode({ data }: { data: TriggerNodeData }) {
         <WorkflowTriggerTypeIcon kind={trigger.kind} className="h-3.5 w-3.5" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-[11px] font-semibold text-primary">{TRIGGER_LABEL[trigger.kind]}</div>
+        <div className="truncate text-[11px] font-semibold text-primary">{triggerLabel(trigger)}</div>
         {subtitle && <div className="truncate text-[10px] text-primary/70">{subtitle}</div>}
       </div>
       <Handle type="source" position={Position.Right} className="!bg-primary" />

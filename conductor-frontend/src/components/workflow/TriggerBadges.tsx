@@ -2,7 +2,7 @@
 
 import cronstrue from 'cronstrue';
 import { Badge } from '@/components/ui/badge';
-import { parseWorkflowYaml, type TriggerKind } from '@/lib/workflowAutomation';
+import { parseWorkflowYaml, isManualTrigger, type TriggerKind, type WorkflowTrigger } from '@/lib/workflowAutomation';
 import { WorkflowTriggerTypeIcon } from '@/components/workflow/WorkflowStepTypeIcon';
 
 interface TriggerBadgesProps {
@@ -17,17 +17,16 @@ const TRIGGER_LABEL: Record<TriggerKind, string> = {
   schedule: 'schedule',
 };
 
+/** Lowercase trigger label, shared with the workflow detail header's breadcrumb description. */
+export function triggerLabel(trigger: WorkflowTrigger): string {
+  if (trigger.kind === 'workflow_dispatch' && !isManualTrigger(trigger)) return 'system-triggered';
+  return TRIGGER_LABEL[trigger.kind];
+}
+
 export function TriggerBadges({ yaml }: TriggerBadgesProps) {
-  let triggers: Array<{ kind: TriggerKind; nextRun?: string }> = [];
+  let triggers: WorkflowTrigger[] = [];
   try {
-    triggers = parseWorkflowYaml(yaml).triggers.map(t => {
-      if (t.kind !== 'schedule' || !t.cron) return { kind: t.kind };
-      let humanReadable = t.cron;
-      try {
-        humanReadable = cronstrue.toString(t.cron, { throwExceptionOnParseError: false });
-      } catch {}
-      return { kind: t.kind, nextRun: humanReadable };
-    });
+    triggers = parseWorkflowYaml(yaml).triggers;
   } catch {
     // Invalid YAML — render no badges rather than throwing during a keystroke-driven preview.
     triggers = [];
@@ -35,12 +34,21 @@ export function TriggerBadges({ yaml }: TriggerBadgesProps) {
 
   return (
     <div className="flex gap-1 flex-wrap">
-      {triggers.map(t => (
-        <Badge key={t.kind} variant="secondary" className="text-xs gap-1">
-          <WorkflowTriggerTypeIcon kind={t.kind} className="h-3 w-3" />
-          {TRIGGER_LABEL[t.kind]}{t.nextRun ? ` · ${t.nextRun}` : ''}
-        </Badge>
-      ))}
+      {triggers.map(t => {
+        let nextRun: string | undefined;
+        if (t.kind === 'schedule' && t.cron) {
+          nextRun = t.cron;
+          try {
+            nextRun = cronstrue.toString(t.cron, { throwExceptionOnParseError: false });
+          } catch {}
+        }
+        return (
+          <Badge key={t.kind} variant="secondary" className="text-xs gap-1">
+            <WorkflowTriggerTypeIcon kind={t.kind} className="h-3 w-3" />
+            {triggerLabel(t)}{nextRun ? ` · ${nextRun}` : ''}
+          </Badge>
+        );
+      })}
     </div>
   );
 }
