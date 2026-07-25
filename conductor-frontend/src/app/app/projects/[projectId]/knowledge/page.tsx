@@ -108,7 +108,7 @@ function RecentlyUpdatedSection({
                 {entry.action === 'CREATE' ? 'new' : 'updated'}
               </span>
               <span className="shrink-0 text-foreground-subtle text-xs text-right">
-                {timeAgo(entry.day)}
+                {timeAgo(entry.timestamp)}
                 {entry.sourceRefs?.[0] && <span className="block truncate max-w-[8rem]">from {entry.sourceRefs[0]}</span>}
               </span>
             </Link>
@@ -122,7 +122,7 @@ function RecentlyUpdatedSection({
 interface AreaCard {
   domain: KnowledgeDomainDto
   pages: KnowledgeIndexPage[]
-  updatedDay: string | null
+  updatedAt: string | null
 }
 
 function BrowseByAreaSection({ projectId, areas }: { projectId: string; areas: AreaCard[] }) {
@@ -138,7 +138,7 @@ function BrowseByAreaSection({ projectId, areas }: { projectId: string; areas: A
     <div className="space-y-2">
       <h2 className="text-[11.5px] font-semibold uppercase tracking-wider text-muted-foreground">Browse by area</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {withPages.map(({ domain, pages, updatedDay }) => (
+        {withPages.map(({ domain, pages, updatedAt }) => (
           <Link
             key={domain.slug}
             href={`/app/projects/${projectId}/knowledge/page?path=${encodeURIComponent(pages[0].path)}`}
@@ -147,7 +147,7 @@ function BrowseByAreaSection({ projectId, areas }: { projectId: string; areas: A
             <div className="font-medium text-foreground">{domain.displayName}</div>
             <p className="text-sm text-muted-foreground mt-1">
               {pages.length} page{pages.length === 1 ? '' : 's'}
-              {updatedDay && ` · updated ${timeAgo(updatedDay)}`}
+              {updatedAt && ` · updated ${timeAgo(updatedAt)}`}
             </p>
             <p className="text-sm text-foreground-subtle mt-2">
               {domain.description?.trim() || `Pages the Librarian files under ${domain.pathPrefix}`}
@@ -296,7 +296,7 @@ export default function KnowledgeIndexPage() {
         const newestEntry = logEntries?.find(
           (e) => e.path.startsWith(domain.pathPrefix) && pagesByPath.has(e.path),
         )
-        return { domain, pages, updatedDay: newestEntry?.day ?? null }
+        return { domain, pages, updatedAt: newestEntry?.timestamp ?? null }
       })
   }, [domains, contentPages, logEntries, pagesByPath])
 
@@ -430,7 +430,7 @@ export default function KnowledgeIndexPage() {
     'maintained by the Librarian',
   ]
   if (logEntries && logEntries.length > 0) {
-    subtitleParts.push(`last updated ${timeAgo(logEntries[0].day)}`)
+    subtitleParts.push(`last updated ${timeAgo(logEntries[0].timestamp)}`)
   }
 
   return (

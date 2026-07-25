@@ -388,7 +388,13 @@ public class KnowledgePageService {
             for (KnowledgePageRevision revision : entry.getValue()) {
                 List<String> refs = refsByRevisionId.getOrDefault(revision.getId(), List.of());
                 String suffix = refs.isEmpty() ? "" : " ← " + String.join(", ", refs);
-                sb.append("* **").append(changeLabel(revision.getChangeKind())).append("**: ")
+                // The day heading above is the finest grouping a human needs, but "last updated X ago"
+                // UI reads need real precision -- a day-only value parses as UTC midnight, making every
+                // same-day write since yesterday's midnight read as "hours ago" regardless of how
+                // recent it actually was. Carry the instant per-line so the frontend can diff against
+                // it instead (see conductor-frontend/src/lib/knowledgeLog.ts).
+                sb.append("* **").append(changeLabel(revision.getChangeKind())).append("** (")
+                        .append(revision.getCreatedAt().toInstant()).append("): ")
                         .append(revision.getPage().getPath()).append(suffix).append("\n");
             }
             sb.append('\n');

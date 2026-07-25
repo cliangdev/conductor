@@ -123,7 +123,7 @@ describe('KnowledgeIndexPage (composed Home)', () => {
 
   it('adds a "last updated" clause when the log has entries', async () => {
     getKnowledgePagesBehavior = () =>
-      Promise.resolve([logContent('## 2026-07-19\n\n* **Update**: engineering/design.md\n')])
+      Promise.resolve([logContent('## 2026-07-19\n\n* **Update** (2026-07-19T10:00:00Z): engineering/design.md\n')])
 
     render(<KnowledgeIndexPage />)
 
@@ -149,7 +149,7 @@ describe('KnowledgeIndexPage (composed Home)', () => {
       })
     getKnowledgePagesBehavior = () =>
       Promise.resolve([
-        logContent('## 2026-07-19\n\n* **Update**: engineering/design.md ← slack://C123/p456\n'),
+        logContent('## 2026-07-19\n\n* **Update** (2026-07-19T10:00:00Z): engineering/design.md ← slack://C123/p456\n'),
       ])
 
     render(<KnowledgeIndexPage />)
@@ -170,7 +170,7 @@ describe('KnowledgeIndexPage (composed Home)', () => {
         content: indexContent(['* [Design Doc](/engineering/design.md) (type: architecture)']),
       })
     getKnowledgePagesBehavior = () =>
-      Promise.resolve([logContent('## 2026-07-19\n\n* **Update**: engineering/deleted.md\n')])
+      Promise.resolve([logContent('## 2026-07-19\n\n* **Update** (2026-07-19T10:00:00Z): engineering/deleted.md\n')])
 
     render(<KnowledgeIndexPage />)
 
@@ -182,7 +182,7 @@ describe('KnowledgeIndexPage (composed Home)', () => {
     const bullets = Array.from({ length: 8 }, (_, i) => `* [Page ${i}](/notes/p${i}.md) (type: note)`)
     getKnowledgeIndexBehavior = () =>
       Promise.resolve({ path: 'index.md', version: 0, type: 'index', content: indexContent(bullets) })
-    const logLines = Array.from({ length: 8 }, (_, i) => `* **Update**: notes/p${i}.md`).join('\n')
+    const logLines = Array.from({ length: 8 }, (_, i) => `* **Update** (2026-07-19T10:00:00Z): notes/p${i}.md`).join('\n')
     getKnowledgePagesBehavior = () => Promise.resolve([logContent(`## 2026-07-19\n\n${logLines}\n`)])
 
     render(<KnowledgeIndexPage />)
