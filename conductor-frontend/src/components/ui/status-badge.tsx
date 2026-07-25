@@ -6,13 +6,14 @@ export { statusHue }
 
 // Static class lookup, not interpolated — Tailwind can't see a `` `bg-status-${hue}` `` template
 // at build time and would drop the class.
-const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; border: string; borderStrong: string }> = {
+const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; border: string; borderStrong: string; ring: string }> = {
   gray: {
     bg: 'bg-status-draft/10',
     text: 'text-status-draft',
     dot: 'bg-status-draft',
     border: 'border-status-draft/30',
     borderStrong: 'border-status-draft',
+    ring: 'ring-status-draft',
   },
   blue: {
     bg: 'bg-status-review/10',
@@ -20,6 +21,7 @@ const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; bo
     dot: 'bg-status-review',
     border: 'border-status-review/30',
     borderStrong: 'border-status-review',
+    ring: 'ring-status-review',
   },
   amber: {
     bg: 'bg-status-progress/10',
@@ -27,6 +29,7 @@ const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; bo
     dot: 'bg-status-progress',
     border: 'border-status-progress/30',
     borderStrong: 'border-status-progress',
+    ring: 'ring-status-progress',
   },
   violet: {
     bg: 'bg-status-code-review/10',
@@ -34,6 +37,7 @@ const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; bo
     dot: 'bg-status-code-review',
     border: 'border-status-code-review/30',
     borderStrong: 'border-status-code-review',
+    ring: 'ring-status-code-review',
   },
   teal: {
     bg: 'bg-status-approved/10',
@@ -41,6 +45,7 @@ const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; bo
     dot: 'bg-status-approved',
     border: 'border-status-approved/30',
     borderStrong: 'border-status-approved',
+    ring: 'ring-status-approved',
   },
   green: {
     bg: 'bg-status-done/10',
@@ -48,6 +53,7 @@ const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; bo
     dot: 'bg-status-done',
     border: 'border-status-done/30',
     borderStrong: 'border-status-done',
+    ring: 'ring-status-done',
   },
   slate: {
     bg: 'bg-status-closed/10',
@@ -55,6 +61,7 @@ const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; bo
     dot: 'bg-status-closed',
     border: 'border-status-closed/30',
     borderStrong: 'border-status-closed',
+    ring: 'ring-status-closed',
   },
   red: {
     bg: 'bg-status-failed/10',
@@ -62,6 +69,7 @@ const HUE_CLASSES: Record<StatusHue, { bg: string; text: string; dot: string; bo
     dot: 'bg-status-failed',
     border: 'border-status-failed/30',
     borderStrong: 'border-status-failed',
+    ring: 'ring-status-failed',
   },
 }
 
