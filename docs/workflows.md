@@ -21,6 +21,7 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Self-hosted](#self-hosted)
   - [Cloud Run](#cloud-run)
   - [Runtime targets (bring your own Cloud Run)](#runtime-targets-bring-your-own-cloud-run)
+- [Cancelling a run](#cancelling-a-run)
 - [Auto-pause on repeated failures](#auto-pause-on-repeated-failures)
 - [System-managed workflows](#system-managed-workflows)
 - [Self-hosted setup](#self-hosted-setup)
@@ -1233,6 +1234,19 @@ Deleting a target removes only Conductor's record — **the Cloud Run Job in you
   Build and push it from your own CI. The base image already contains the Claude CLI and the entrypoint — don't override `ENTRYPOINT`/`CMD`, don't switch off the non-root `runner` user, and leave `/conductor/{workspace,inputs,outputs}` alone. A step prompt can then just say *"Use the seo-report skill on the inputs in /conductor/inputs/"* (add `Skill` to `allowed_tools`).
 
 Credential-wise a runtime-target job behaves like `cloud-run`: the project's Claude Code subscription token, and — when `conductor_mcp: true` — a freshly-minted run-scoped MCP token, are injected by the backend; compute runs — and is billed — in your GCP project.
+
+---
+
+## Cancelling a run
+
+A **Cancel run** button appears on the run detail page for any run that's `PENDING` or `RUNNING` (also available as the `cancel_workflow_run` MCP tool, or `POST .../runs/{runId}/cancel`). Cancellation is a request, not an instant stop: the run immediately flips to **`CANCELLING`** — no further jobs are dispatched, and any job that hadn't started yet is marked `CANCELLED` right away — while whatever step is actually in flight is torn down best-effort by its execution backend. The run settles to the terminal **`CANCELLED`** once nothing is left running, typically within one poll interval (a few seconds). Cancelling an already-`CANCELLING` run is a no-op; cancelling a run that's already finished (`SUCCESS`/`FAILED`/`CANCELLED`) fails with a 409.
+
+What "torn down" means depends on where the in-flight step is running:
+
+- **Cloud Run** (`claude-code`/`agent` steps, conductor-hosted or a runtime target): the Cloud Run execution is cancelled via the Cloud Run Admin API — the container is stopped promptly.
+- **Self-hosted worker VM** (`docker://` steps via `conductor-worker`): the container is `docker kill`ed then removed.
+- **Kestra** (`kestra` steps): the Kestra execution is killed via its Executions API.
+- **Self-hosted daemon** (`runs-on: self-hosted`, any step type, picked up by the `conductor` CLI's daemon): **soft-cancel only** — the job/step is marked `CANCELLED` and Conductor stops waiting on it, but the daemon isn't (yet) told to kill an already-running container. If one was in flight, it keeps running to completion in the background and its result is simply discarded. Hard-kill support for this path is a known follow-up.
 
 ---
 
