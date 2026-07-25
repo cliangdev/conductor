@@ -4,6 +4,7 @@ import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.entity.WorkflowSchedule;
+import com.conductor.exception.ConflictException;
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkflowDefinitionRepository;
@@ -41,19 +42,22 @@ public class WorkflowTriggerService {
     private final WorkflowScheduleRepository scheduleRepository;
     private final ObjectMapper objectMapper;
     private final WorkflowYamlParser yamlParser;
+    private final WorkflowFailureCircuitBreaker circuitBreaker;
 
     public WorkflowTriggerService(WorkflowDefinitionRepository workflowRepository,
                                    WorkflowRunRepository workflowRunRepository,
                                    @Lazy WorkflowExecutionEngine executionEngine,
                                    WorkflowScheduleRepository scheduleRepository,
                                    ObjectMapper objectMapper,
-                                   WorkflowYamlParser yamlParser) {
+                                   WorkflowYamlParser yamlParser,
+                                   WorkflowFailureCircuitBreaker circuitBreaker) {
         this.workflowRepository = workflowRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.executionEngine = executionEngine;
         this.scheduleRepository = scheduleRepository;
         this.objectMapper = objectMapper;
         this.yamlParser = yamlParser;
+        this.circuitBreaker = circuitBreaker;
     }
 
     /**
@@ -130,9 +134,19 @@ public class WorkflowTriggerService {
      *
      * @param inputs dispatch-time input values (exposed to steps as {@code ${{ inputs.KEY }}}), or
      *               null/empty to omit the key entirely — same shape as no inputs at all.
+     * @throws ConflictException if the workflow declares {@code concurrency: single} and already has
+     *         an active run. Scoped to manual dispatch only — deliberately NOT applied to {@link
+     *         #fireTrigger}/{@link #triggerWebhook}: {@code WorkflowScheduler} already gates its own
+     *         cron path before calling {@code fireTrigger}, and the knowledge-librarian workflow (also
+     *         declared {@code concurrency: single}) intentionally dispatches in parallel across domain
+     *         lanes via {@code LibrarianDispatchService} -- gating it here would break that.
      */
     @Transactional
     public WorkflowRun triggerManual(WorkflowDefinition workflow, String triggeredByUserId, Map<String, String> inputs) {
+        if (hasActiveRunBlockingConcurrencySingle(workflow)) {
+            throw new ConflictException("'" + workflow.getName()
+                    + "' already has an active run — wait for it to finish before dispatching again.");
+        }
         Map<String, Object> payload = new HashMap<>();
         payload.put("type", "workflow_dispatch");
         payload.put("triggeredBy", triggeredByUserId);
@@ -194,6 +208,14 @@ public class WorkflowTriggerService {
         }
     }
 
+    /** True if {@code workflow} declares {@code concurrency: single} and already has a non-terminal run. */
+    private boolean hasActiveRunBlockingConcurrencySingle(WorkflowDefinition workflow) {
+        WorkflowSpec spec = parseYaml(workflow.getYaml());
+        if (spec == null || !"single".equals(spec.concurrency())) return false;
+        return !workflowRunRepository.findByWorkflowIdAndStatusIn(workflow.getId(),
+                WorkflowRunStatus.ACTIVE_RUN_STATUSES).isEmpty();
+    }
+
     private String extractScheduleCron(String yaml) {
         WorkflowSpec spec = parseYaml(yaml);
         if (spec == null || spec.triggers().schedule() == null) return null;
@@ -222,16 +244,31 @@ public class WorkflowTriggerService {
 
         // All jobs flow through the queue now — self-hosted jobs dispatch per-job at readiness time
         // (WorkflowJobOrchestrator.planJobExecution -> SelfHostedJobDispatcher), not the whole run upfront.
-        enqueueInitialJobs(workflow, saved);
+        int enqueuedCount = enqueueInitialJobs(workflow, saved);
+        if (enqueuedCount == 0) {
+            // Nothing was queued (unparsable YAML, or a job graph with no eligible root job) — without
+            // this, the run would sit in PENDING with jobs:[] forever: nothing else ever revisits a
+            // PENDING run to retry or fail it (only the punitive 24h cleanupStuckRuns sweep would,
+            // eventually). Fail loudly and immediately instead, and let the circuit breaker count it
+            // like any other FAILED run so a permanently-broken workflow still auto-pauses.
+            log.warn("Run {} for workflow {} enqueued zero jobs — marking FAILED instead of leaving it PENDING",
+                    saved.getId(), workflow.getId());
+            saved.setStatus(WorkflowRunStatus.FAILED);
+            saved.setCompletedAt(java.time.OffsetDateTime.now());
+            saved = workflowRunRepository.save(saved);
+            circuitBreaker.recordOutcome(saved);
+        }
 
         return saved;
     }
 
-    private void enqueueInitialJobs(WorkflowDefinition workflow, WorkflowRun run) {
+    /** @return the number of jobs actually enqueued (0 means the run has nothing to run and would
+     *          otherwise be orphaned in PENDING forever — see the caller's fail-fast check). */
+    private int enqueueInitialJobs(WorkflowDefinition workflow, WorkflowRun run) {
         WorkflowSpec spec = parseYaml(workflow.getYaml());
         if (spec == null) {
             log.warn("Failed to enqueue initial jobs for run {}: could not parse workflow YAML", run.getId());
-            return;
+            return 0;
         }
         Map<String, JobSpec> jobs = spec.jobs();
 
@@ -239,12 +276,15 @@ public class WorkflowTriggerService {
         // they are enqueued at runtime when the condition step evaluates.
         java.util.Set<String> conditionTargets = collectConditionTargets(jobs);
 
+        int enqueuedCount = 0;
         for (JobSpec job : jobs.values()) {
             if (conditionTargets.contains(job.id())) continue;
             if (job.needs().isEmpty()) {
                 executionEngine.enqueueJob(run.getId(), job.id());
+                enqueuedCount++;
             }
         }
+        return enqueuedCount;
     }
 
     /**

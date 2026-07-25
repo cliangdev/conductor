@@ -82,7 +82,7 @@ public class WorkflowScheduler {
 
         if (hasConcurrencySingle(workflow.getYaml())) {
             List<WorkflowRun> activeRuns = runRepository.findByWorkflowIdAndStatusIn(
-                    workflow.getId(), List.of(WorkflowRunStatus.RUNNING, WorkflowRunStatus.PENDING));
+                    workflow.getId(), WorkflowRunStatus.ACTIVE_RUN_STATUSES);
             if (!activeRuns.isEmpty()) {
                 String activeRunId = activeRuns.get(0).getId();
                 recordSkip(schedule, activeRunId);

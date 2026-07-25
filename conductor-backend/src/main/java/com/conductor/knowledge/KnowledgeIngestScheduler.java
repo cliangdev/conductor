@@ -56,9 +56,6 @@ public class KnowledgeIngestScheduler {
     int batchSize = 10;
     /** Total attempts before a stuck PROCESSING source is dead-lettered. */
     static final int MAX_ATTEMPTS = 5;
-    private static final Set<WorkflowRunStatus> ACTIVE_RUN_STATUSES =
-            Set.of(WorkflowRunStatus.PENDING, WorkflowRunStatus.PENDING_LOCAL_PICKUP,
-                    WorkflowRunStatus.RUNNING, WorkflowRunStatus.CANCELLING);
     private static final Set<WorkflowRunStatus> TERMINAL_FAILED_STATUSES =
             Set.of(WorkflowRunStatus.FAILED, WorkflowRunStatus.CANCELLED, WorkflowRunStatus.LOCAL_PICKUP_TIMEOUT);
 
@@ -141,7 +138,8 @@ public class KnowledgeIngestScheduler {
         if (workflow.isEmpty()) {
             return false;
         }
-        return !workflowRunRepository.findByWorkflowIdAndStatusIn(workflow.get().getId(), ACTIVE_RUN_STATUSES).isEmpty();
+        return !workflowRunRepository.findByWorkflowIdAndStatusIn(workflow.get().getId(),
+                WorkflowRunStatus.ACTIVE_RUN_STATUSES).isEmpty();
     }
 
     /** True if the project's {@code knowledge-librarian} workflow exists and is disabled -- most
