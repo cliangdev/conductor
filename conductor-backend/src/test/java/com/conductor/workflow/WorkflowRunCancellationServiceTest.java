@@ -114,6 +114,23 @@ class WorkflowRunCancellationServiceTest {
     }
 
     @Test
+    void cancelRun_succeeds_forAPendingRunWithNoJobsYet() {
+        // A run whose enqueueInitialJobs hasn't produced a WorkflowJobRun row yet (or, per the
+        // WorkflowTriggerService fail-fast fix, never will) — jobRunRepository.findByRunId returns
+        // empty. requestCancellation's loop over job runs must not choke on zero rows, and completion
+        // still gets delegated to the engine (mocked here; its own tests cover terminalJobs(0) settling
+        // a job-less CANCELLING run straight to CANCELLED).
+        WorkflowRun run = runWithStatus(WorkflowRunStatus.PENDING);
+        when(jobRunRepository.findByRunId(RUN_ID)).thenReturn(List.of());
+
+        service.cancelRun(RUN_ID);
+
+        assertThat(run.getStatus()).isEqualTo(WorkflowRunStatus.CANCELLING);
+        verify(queueRepository).deleteUnclaimedByRunId(RUN_ID);
+        verify(engine).checkRunCompletion(run);
+    }
+
+    @Test
     void cancelRun_isIdempotentWhileAlreadyCancelling() {
         WorkflowRun run = runWithStatus(WorkflowRunStatus.CANCELLING);
 

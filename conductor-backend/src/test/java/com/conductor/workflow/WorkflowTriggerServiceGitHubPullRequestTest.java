@@ -39,13 +39,14 @@ class WorkflowTriggerServiceGitHubPullRequestTest {
     @Mock private WorkflowRunRepository workflowRunRepository;
     @Mock private WorkflowExecutionEngine executionEngine;
     @Mock private WorkflowScheduleRepository scheduleRepository;
+    @Mock private WorkflowFailureCircuitBreaker circuitBreaker;
 
     private WorkflowTriggerService service;
 
     @BeforeEach
     void setUp() {
         service = new WorkflowTriggerService(workflowRepository, workflowRunRepository, executionEngine,
-                scheduleRepository, new ObjectMapper(), new WorkflowYamlParser());
+                scheduleRepository, new ObjectMapper(), new WorkflowYamlParser(), circuitBreaker);
         lenient().when(workflowRunRepository.save(any(WorkflowRun.class))).thenAnswer(inv -> {
             WorkflowRun run = inv.getArgument(0);
             if (run.getId() == null) run.setId("run-1");

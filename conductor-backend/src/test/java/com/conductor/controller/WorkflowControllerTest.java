@@ -351,6 +351,29 @@ class WorkflowControllerTest {
     }
 
     @Test
+    void cancelWorkflowRun_succeeds_forAGenuinelyPendingRun() throws Exception {
+        // Regression test for a reported "Resource not found" 404 on a genuinely PENDING run: this
+        // exercises the real POST .../cancel route end-to-end (no test previously hit it at all), to
+        // catch any future routing regression that would reproduce that report.
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(automationWorkflow());
+        when(runRepository.findByIdWithWorkflow("run-1"))
+                .thenReturn(Optional.of(runWithEventPayload("{\"type\":\"workflow_dispatch\"}")));
+
+        WorkflowRun cancellingRun = runWithEventPayload("{\"type\":\"workflow_dispatch\"}");
+        cancellingRun.setStatus(WorkflowRunStatus.CANCELLING);
+        when(runCancellationService.cancelRun("run-1")).thenReturn(cancellingRun);
+
+        mockMvc.perform(post("/api/v1/projects/{p}/workflows/{w}/runs/{r}/cancel", PROJECT_ID, "wf-auto", "run-1")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value("run-1"))
+                .andExpect(jsonPath("$.status").value("CANCELLING"));
+
+        verify(runCancellationService).cancelRun("run-1");
+    }
+
+    @Test
     void getWorkflowRun_stampsExplanationAndRemediationForFailedStep() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(runRepository.findByIdWithWorkflow("run-1"))

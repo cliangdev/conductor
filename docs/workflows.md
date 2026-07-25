@@ -76,11 +76,19 @@ jobs:
         body: '{"text": "Hello from Conductor!"}'
 ```
 
-An optional `concurrency` key can be set to `"single"` to ensure only one run of the workflow is active at a time (useful for scheduled jobs):
+An optional `concurrency` key can be set to `"single"` to ensure only one run of the workflow is active at a time:
 
 ```yaml
 concurrency: single
 ```
+
+Enforced for scheduled runs (a due cron tick is skipped, not queued, while a run is already active — see
+[Schedule](#schedule)) and for manual dispatch (`POST .../dispatch` rejects with 409 while a run is already
+active, rather than letting a second run silently race the first). **Not** enforced for a workflow fired
+programmatically via `fireTrigger` outside those two paths — e.g. `knowledge-librarian`'s dispatches from
+`LibrarianDispatchService`, which intentionally run one per domain lane in parallel (see
+[System-managed workflows](#system-managed-workflows)) and serialize within a lane through their own
+mechanism instead of this flag.
 
 ---
 
@@ -1305,7 +1313,7 @@ Two ship today, both seeded the first time a project turns on the **Knowledge Ce
 | Workflow name | Trigger | Purpose |
 |---|---|---|
 | `knowledge-librarian` | `workflow_dispatch` (`manual: false` — fired only by `LibrarianDispatchService`, see [Manual dispatch](#manual-dispatch)) | Files a batch of newly-ingested knowledge sources into wiki pages. `concurrency: single`. Its scheduler (`KnowledgeIngestScheduler`, 30s tick) also checks `enabled` before claiming sources, so an [auto-paused](#auto-pause-on-repeated-failures) librarian leaves sources untouched (not stuck mid-claim) until re-enabled. |
-| `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input | Operator-triggered, once, to seed the wiki from an existing GitHub codebase. |
+| `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input | Operator-triggered, once, to seed the wiki from an existing GitHub codebase. `concurrency: single` — enforced here since this is manual dispatch, so a second bootstrap can't be started while one is still running. |
 
 Both are ordinary workflows once created — visible and re-editable in the workflow list like any other —
 just authored by Conductor instead of a person. `knowledge-librarian` is a thin `uses: agent` step
