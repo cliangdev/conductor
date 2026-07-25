@@ -3,13 +3,17 @@
 import { cn } from '@/lib/utils'
 import { statusHueClasses } from '@/components/ui/status-badge'
 import { statusHue } from '@/lib/workflows'
-import type { StepRunStatus } from './StepNode'
+
+/** Job-level run status — a superset of StepRunStatus (adds LOOP_EXHAUSTED, which only applies to
+ * a whole loop job, never an individual step). Defined here (not shared with StepNode's
+ * StepRunStatus) since the two sets genuinely differ. */
+export type JobRunStatusValue = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'LOOP_EXHAUSTED'
 
 export interface JobFrameNodeData {
   jobId: string
   runsOn?: string
   iteration?: { current?: number; max?: number }
-  status?: StepRunStatus
+  status?: JobRunStatusValue
   [key: string]: unknown
 }
 
