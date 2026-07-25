@@ -25,9 +25,9 @@ jobs:
         uses: claude-code
         with:
           conductor_mcp: true
-          allowed_tools: "Bash,Read,Glob,Grep,mcp__conductor__submit_knowledge_source,mcp__conductor__write_knowledge_pages,mcp__conductor__read_knowledge_pages"
-          max_turns: 60
-          timeout_minutes: 45
+          allowed_tools: "Bash,Read,Glob,Grep,mcp__conductor__submit_knowledge_source,mcp__conductor__write_knowledge_pages,mcp__conductor__read_knowledge_pages,mcp__conductor__search_knowledge"
+          max_turns: 80
+          timeout_minutes: 60
           prompt: |
             You are bootstrapping the Knowledge Center wiki for this Conductor project from an
             existing codebase. Target repo: ${{ inputs.repo }}
@@ -37,27 +37,48 @@ jobs:
                `git clone --depth 1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ inputs.repo }}.git repo`
                (if GITHUB_TOKEN is unset this still works for a public repo — the token segment is just
                empty). `cd repo` and run `git rev-parse HEAD` to capture the commit SHA you're reading.
-            2. Read `_schema.md` via read_knowledge_pages(["_schema.md"]) for the frontmatter contract,
-               page-type taxonomy, path layout, and create-vs-edit heuristics. Follow it exactly.
+            2. Read `_schema.md` via read_knowledge_pages(["_schema.md"]) for the frontmatter contract
+               and linking/create-vs-edit heuristics. It delegates page-type taxonomy to each domain's
+               own schema — in the same call also read `engineering/_schema.md` and
+               `product/_schema.md` for the actual `architecture`/`integration`/`feature` page-type
+               taxonomy, path layout, and body templates. Follow those exactly; don't invent a type or
+               template not defined there. Also read `index.md` to see what pages already exist — this
+               run may be re-seeding a project that was already bootstrapped.
             3. Explore the repo (README, top-level directory structure, CLAUDE.md-style docs if
-               present, major modules/services) using Read/Glob/Grep — enough to describe its
-               architecture and main features, not an exhaustive file-by-file audit.
+               present, major modules/services, and any obvious third-party integrations/connectors/
+               SDKs it talks to) using Read/Glob/Grep — enough to describe its architecture,
+               integrations, and main features, not an exhaustive file-by-file audit.
             4. Register the snapshot as ONE by-reference knowledge source:
                submit_knowledge_source({
                  sourceType: "codebase.snapshot",
                  sourceRef: "github:${{ inputs.repo }}@<the SHA from step 1>",
-                 title: "Codebase snapshot: ${{ inputs.repo }}"
+                 title: "Codebase snapshot: ${{ inputs.repo }}",
+                 domain: "engineering"
                })
                Note the returned sourceId — every page you write in step 5 must be provenance-linked
                to it.
-            5. Write pages seeding two areas, in one or more write_knowledge_pages batches, each call
-               passing `sourceIds: [<the sourceId from step 4>]`:
+            5. Write pages seeding three areas. Stay concise: judge "major" by materiality, not
+               exhaustiveness — a handful of focused pages per area that together give an accurate,
+               load-bearing picture beats one page per file or class. Within each page, keep every
+               section tight (no restating what the code obviously does, no filler paragraphs), but
+               never drop a component/integration/feature just to save space if omitting it would leave
+               a real gap in the project's picture — completeness of coverage matters more than page
+               count or page length. In one or more write_knowledge_pages batches, each call passing
+               `sourceIds: [<the sourceId from step 4>]`:
                - `engineering/architecture/*.md` — one page per major architectural
-                 component/service/module (per `_schema.md`'s "architecture" type).
-               - `product/features/*.md` — one page per major user-facing feature you can identify
-                 (per `_schema.md`'s "feature" type).
-               Cross-link related pages with bundle-absolute links (`/dir/page.md`). Prefer several
-               focused pages over one giant page.
+                 component/service/module, per `engineering/_schema.md`'s `architecture` template
+                 (backend or frontend, as applicable).
+               - `engineering/integrations/*.md` — one page per major third-party
+                 integration/connector/SDK the codebase talks to, per `engineering/_schema.md`'s
+                 `integration` template. Skip this area entirely if the codebase has none.
+               - `product/features/*.md` — one page per major user-facing feature you can identify,
+                 per `product/_schema.md`'s `feature` template.
+               Before writing, use search_knowledge and check `index.md` for a near-miss existing page
+               covering the same component/integration/feature — edit that page in place (passing its
+               current `baseVersion`) rather than creating a near-duplicate. If a write_knowledge_pages
+               call returns `{conflict: true}` for a page, re-read it and retry once with the returned
+               currentVersion. Cross-link related pages with bundle-absolute links (`/dir/page.md`).
+               Prefer several focused pages over one giant page.
 
             Return a short JSON summary: {"sourceId": "...", "pagesWritten": <int>}.
           output_schema:
