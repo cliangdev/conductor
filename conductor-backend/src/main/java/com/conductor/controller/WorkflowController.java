@@ -9,6 +9,7 @@ import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.entity.WorkflowSchedule;
 import com.conductor.entity.WorkflowScheduleSkip;
 import com.conductor.entity.WorkflowStepRun;
+import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.WorkflowsApi;
@@ -46,6 +47,7 @@ import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.WorkflowDefinitionLifecycleService;
 import com.conductor.service.WorkflowService;
 import com.conductor.service.WorkflowViewService;
+import com.conductor.workflow.StepFailureExplanations;
 import com.conductor.workflow.WorkflowFailureCircuitBreaker;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowTriggerService;
@@ -485,6 +487,12 @@ public class WorkflowController implements WorkflowsApi {
         dto.setErrorReason(step.getErrorReason());
         dto.setStartedAt(step.getStartedAt());
         dto.setCompletedAt(step.getCompletedAt());
+        if (step.getStatus() == WorkflowStepStatus.FAILED) {
+            StepFailureExplanations.explain(step.getErrorReason()).ifPresent(explanation -> {
+                dto.setExplanation(explanation.summary());
+                dto.setRemediation(explanation.remediation());
+            });
+        }
         return dto;
     }
 

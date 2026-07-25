@@ -499,6 +499,16 @@ The Knowledge Center's librarian and domain-specialist agents (seeded by `Knowle
 
 **`credentials:`/`env:` (claude-code runtime only).** An `agent` step also accepts the `claude-code` step's [`credentials:`/`env:`](#claude-code--run-claude-code-headlessly) fields — same shape, same resolution — but only the `claude-code` runtime has a container to inject them into. On the `api` runtime, declaring either fails the step immediately with `CREDENTIALS_NOT_AVAILABLE_ON_API_RUNTIME: agent=<ref> declares credentials/env, but the 'api' runtime has no container to inject them into`.
 
+**Failure modes (`api` runtime).** Anything else escaping the in-process ReAct loop is classified into one of these `errorReason` codes rather than surfacing the raw exception message:
+
+| errorReason | Meaning |
+|-------------|---------|
+| `CLAUDE_CREDENTIAL_ERROR` | The agent's provider credential couldn't be decrypted (same code the `claude-code` runtime uses for its own credential failures). |
+| `TRANSIENT_INFRA_ERROR` | A transient database/transaction failure interrupted the run (e.g. a JDBC commit error) — not a problem with the agent or its configuration. Safe to retry. |
+| `AGENT_RUN_ERROR` | Anything else — check the step log for the underlying exception message. |
+
+The `claude-code` runtime's failures are classified under the same codes as a raw `claude-code` step — see below.
+
 #### `claude-code` — Run Claude Code headlessly
 
 Hands a prompt to **Claude Code running headlessly** (`claude -p`) inside the Conductor runner image, optionally with tool access to the Conductor MCP server, and exposes its answer as step outputs. Unlike `agent`, this runs the actual Claude Code CLI — full tool-calling agent loop, not just a single model call — so it can read the input files it's given, use `Read`/`Glob`/MCP tools, and write a Conductor document directly.
@@ -590,7 +600,7 @@ The step exposes these outputs:
 
 Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answer the same way as the `http`/`agent` steps.
 
-**Failure modes** — a `claude-code` step fails with one of these `errorReason` values:
+**Failure modes** — a `claude-code` step fails with one of these `errorReason` values. Every code below (plus the `agent` step's `api`-runtime codes above) also has a static explanation/remediation, surfaced read-only as `explanation`/`remediation` on a FAILED step via `get_workflow_run` — derived at read time from the code, never persisted:
 
 | errorReason | Meaning |
 |-------------|---------|

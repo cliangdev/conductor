@@ -1,5 +1,6 @@
 package com.conductor.workflow;
 
+import com.conductor.agent.run.AgentErrorReasons;
 import com.conductor.agent.run.AgentExecutionService;
 import com.conductor.agent.run.AgentRunResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -89,7 +90,7 @@ public class ApiAgentStepRuntime implements AgentStepRuntime {
 
         } catch (Exception e) {
             log.warn("ApiAgentStepRuntime failed for agent={}: {}", agentRef, e.getMessage());
-            return StepResult.failed("Agent run failed: " + e.getMessage(), e.getMessage());
+            return StepResult.failed("Agent run failed: " + e.getMessage(), AgentErrorReasons.classify(e));
         }
     }
 

@@ -6378,6 +6378,16 @@ components:
           type: string
         errorReason:
           type: string
+        explanation:
+          type: string
+          nullable: true
+          description: >
+            Human-readable explanation of a FAILED step's errorReason code, derived at read time from a
+            static taxonomy. Null when the step isn't FAILED or the errorReason has no known explanation.
+        remediation:
+          type: string
+          nullable: true
+          description: Actionable next step for a FAILED step's errorReason, alongside explanation.
         startedAt:
           type: string
           format: date-time

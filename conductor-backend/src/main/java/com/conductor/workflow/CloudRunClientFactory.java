@@ -103,7 +103,13 @@ public class CloudRunClientFactory {
     private Clients buildForConnection(String connectionId) {
         Connection connection = connectionService.getById(connectionId)
                 .orElseThrow(() -> new IllegalStateException("Connection not found: " + connectionId));
-        ConnectionContext ctx = connectionService.toContext(connection);
+        ConnectionContext ctx;
+        try {
+            ctx = connectionService.toContext(connection);
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    "Failed to resolve credentials for connection " + connectionId + ": " + e.getMessage(), e);
+        }
         String key = ctx.accessToken();
         if (key == null || key.isBlank()) {
             throw new BusinessException("Connection has no service-account key configured");

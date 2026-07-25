@@ -93,6 +93,23 @@ class CloudRunClientFactoryTest {
     }
 
     @Test
+    void forTarget_toContextThrows_wrapsMessageWithConnectionId() {
+        CloudRunClientFactory factory = new CloudRunClientFactory(
+                defaultJobsClient, defaultExecutionsClient, defaultTasksClient, connectionService,
+                key -> { throw new AssertionError("unreachable"); });
+        Connection connection = connection("conn-3");
+        when(connectionService.getById("conn-3")).thenReturn(Optional.of(connection));
+        when(connectionService.toContext(connection)).thenThrow(
+                new com.conductor.exception.CredentialEncryptionException("Failed to decrypt credentials", null));
+
+        CloudRunTarget target = new CloudRunTarget("p", "r", "j", "conn-3");
+        assertThatThrownBy(() -> factory.forTarget(target))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("conn-3")
+                .hasMessageContaining("Failed to decrypt credentials");
+    }
+
+    @Test
     void forTarget_connectionWithNoAccessToken_throwsBusinessException() {
         CloudRunClientFactory factory = new CloudRunClientFactory(
                 defaultJobsClient, defaultExecutionsClient, defaultTasksClient, connectionService,
