@@ -11,6 +11,11 @@ import { retryDeadKnowledgeSources, KNOWLEDGE_LIBRARIAN_SLUG } from '@/lib/knowl
 import { apiErrorMessage } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
+// Matches KnowledgeRailFooter's own poll interval (see its comment) — this banner has the same
+// mount-once-and-go-stale risk: it's shown for as long as the Inbox tab stays open, so without
+// polling it would keep saying "runs are failing" long after the librarian recovered.
+const LAST_RUN_POLL_INTERVAL_MS = 30_000
+
 /**
  * Attention banner for the Activity page's Inbox tab, shown when there are DEAD sources. Own
  * component (rather than inline in KnowledgeInbox) so a Phase 3 Retry action has a clear, isolated
@@ -50,21 +55,29 @@ export function KnowledgeAttentionBanner({
   useEffect(() => {
     if (deadCount === 0) return
     let cancelled = false
-    listWorkflows(projectId, token)
-      .then((workflows) => {
-        const librarian = workflows.find((w) => w.name === KNOWLEDGE_LIBRARIAN_SLUG)
-        if (!librarian) return []
-        return listWorkflowRuns(projectId, librarian.id, token, { page: 0, size: 1 })
-      })
-      .then((runs) => {
-        if (!cancelled) setLastRunSucceeded(runs?.[0]?.status === 'SUCCESS')
-      })
-      .catch(() => {
-        // Best-effort — falls back to the "runs are failing" framing below, which is the safer
-        // default when we can't confirm otherwise.
-      })
+
+    function refresh() {
+      listWorkflows(projectId, token)
+        .then((workflows) => {
+          const librarian = workflows.find((w) => w.name === KNOWLEDGE_LIBRARIAN_SLUG)
+          if (!librarian) return []
+          return listWorkflowRuns(projectId, librarian.id, token, { page: 0, size: 1 })
+        })
+        .then((runs) => {
+          if (!cancelled) setLastRunSucceeded(runs?.[0]?.status === 'SUCCESS')
+        })
+        .catch(() => {
+          // Best-effort — falls back to the "runs are failing" framing below, which is the safer
+          // default when we can't confirm otherwise.
+        })
+    }
+
+    refresh()
+    const interval = setInterval(refresh, LAST_RUN_POLL_INTERVAL_MS)
+
     return () => {
       cancelled = true
+      clearInterval(interval)
     }
   }, [projectId, token, deadCount])
 
