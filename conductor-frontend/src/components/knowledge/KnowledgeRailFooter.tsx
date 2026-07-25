@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { SettingsIcon } from 'lucide-react'
 import { usePermissions } from '@/contexts/PermissionsContext'
@@ -14,6 +14,12 @@ import {
 import { listWorkflows, listWorkflowRuns } from '@/lib/workflows'
 
 type HealthState = 'needs-attention' | 'working' | 'up-to-date' | 'waiting-for-sources'
+
+// Matches KnowledgeIngestScheduler's own 30s tick, so the chip never lags meaningfully behind the
+// pipeline it's summarizing — this component lives in the persistent Knowledge layout and, absent
+// polling, would otherwise show whatever was true at the moment the user first opened the section
+// for the rest of that browser session.
+const HEALTH_POLL_INTERVAL_MS = 30_000
 
 interface HealthData {
   counts: KnowledgeSourceCounts
@@ -45,39 +51,45 @@ export function KnowledgeRailFooter({
   const [health, setHealth] = useState<HealthData | null>(null)
   const [suggestedCount, setSuggestedCount] = useState(0)
 
+  const loadHealth = useCallback(async (): Promise<HealthData> => {
+    const counts = await getKnowledgeSourceCounts(projectId, token)
+
+    let lastRunFailed = false
+    try {
+      const workflows = await listWorkflows(projectId, token)
+      const librarian = workflows.find((w) => w.name === KNOWLEDGE_LIBRARIAN_SLUG)
+      if (librarian) {
+        const runs = await listWorkflowRuns(projectId, librarian.id, token, { page: 0, size: 1 })
+        lastRunFailed = runs[0]?.status === 'FAILED'
+      }
+    } catch {
+      // Run history is a nice-to-have for the health chip — fall back to counts-only.
+    }
+
+    return { counts, lastRunFailed }
+  }, [projectId, token])
+
   useEffect(() => {
     let cancelled = false
 
-    async function loadHealth(): Promise<HealthData> {
-      const counts = await getKnowledgeSourceCounts(projectId, token)
-
-      let lastRunFailed = false
-      try {
-        const workflows = await listWorkflows(projectId, token)
-        const librarian = workflows.find((w) => w.name === KNOWLEDGE_LIBRARIAN_SLUG)
-        if (librarian) {
-          const runs = await listWorkflowRuns(projectId, librarian.id, token, { page: 0, size: 1 })
-          lastRunFailed = runs[0]?.status === 'FAILED'
-        }
-      } catch {
-        // Run history is a nice-to-have for the health chip — fall back to counts-only.
-      }
-
-      return { counts, lastRunFailed }
+    function refresh() {
+      loadHealth()
+        .then((result) => {
+          if (!cancelled) setHealth(result)
+        })
+        .catch(() => {
+          if (!cancelled) setHealth(null)
+        })
     }
 
-    loadHealth()
-      .then((result) => {
-        if (!cancelled) setHealth(result)
-      })
-      .catch(() => {
-        if (!cancelled) setHealth(null)
-      })
+    refresh()
+    const interval = setInterval(refresh, HEALTH_POLL_INTERVAL_MS)
 
     return () => {
       cancelled = true
+      clearInterval(interval)
     }
-  }, [projectId, token])
+  }, [loadHealth])
 
   useEffect(() => {
     if (!isAdmin) return
