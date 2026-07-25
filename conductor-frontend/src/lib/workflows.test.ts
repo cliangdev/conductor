@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
+  cancelWorkflowRun,
   categoriesForView,
   dispatchWorkflow,
   humanizeId,
@@ -47,6 +48,22 @@ describe('dispatchWorkflow', () => {
     await dispatchWorkflow('proj-1', 'wf-1', undefined, 'tok')
 
     expect(apiPost).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/dispatch', {}, 'tok')
+  })
+})
+
+describe('cancelWorkflowRun', () => {
+  it('POSTs an empty body to the run cancel endpoint', async () => {
+    const run: WorkflowRunDto = { id: 'run-1', workflowId: 'wf-1', triggerType: 'workflow_dispatch', status: 'CANCELLING', startedAt: '2026-07-19T00:00:00Z' }
+    vi.mocked(apiPost).mockResolvedValueOnce(run)
+
+    const result = await cancelWorkflowRun('proj-1', 'wf-1', 'run-1', 'tok')
+
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/workflows/wf-1/runs/run-1/cancel',
+      {},
+      'tok',
+    )
+    expect(result).toBe(run)
   })
 })
 
@@ -181,6 +198,7 @@ describe('statusHue', () => {
     expect(statusHue('code_review')).toBe('violet')
     expect(statusHue('loop_exhausted')).toBe('amber')
     expect(statusHue('cancelled')).toBe('slate')
+    expect(statusHue('cancelling')).toBe('slate')
   })
 
   it('normalizes case, underscores, and hyphens before lookup', () => {

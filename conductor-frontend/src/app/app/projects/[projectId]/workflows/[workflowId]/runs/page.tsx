@@ -32,7 +32,9 @@ export default function RunListPage() {
   useEffect(() => { fetchRuns(); }, [fetchRuns]);
 
   useEffect(() => {
-    const hasRunning = runs.some(r => r.status === 'RUNNING' || r.status === 'PENDING');
+    const hasRunning = runs.some(
+      r => r.status === 'RUNNING' || r.status === 'PENDING' || r.status === 'CANCELLING'
+    );
     if (!hasRunning) return;
     const interval = setInterval(fetchRuns, 5000);
     return () => clearInterval(interval);

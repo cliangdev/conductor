@@ -69,7 +69,7 @@ export interface WorkflowRunDto {
   id: string;
   workflowId: string;
   triggerType: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLING' | 'CANCELLED';
   startedAt: string;
   completedAt?: string;
 }
@@ -79,7 +79,7 @@ export interface WorkflowStepRunDto {
   stepId?: string;
   stepName: string;
   stepType: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED';
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'CANCELLED';
   log?: string;
   outputJson?: string;
   errorReason?: string;
@@ -92,7 +92,7 @@ export interface WorkflowStepRunDto {
 export interface WorkflowJobRunDto {
   id: string;
   jobId: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'LOOP_EXHAUSTED';
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'LOOP_EXHAUSTED' | 'CANCELLED';
   iteration?: number;
   startedAt?: string;
   completedAt?: string;
@@ -104,7 +104,7 @@ export interface WorkflowRunDetailDto {
   workflowId: string;
   workflowYaml: string;
   triggerType: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLING' | 'CANCELLED';
   startedAt: string;
   completedAt?: string;
   jobs: WorkflowJobRunDto[];
