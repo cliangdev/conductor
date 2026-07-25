@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Handle, Position, type Node, type Edge } from '@xyflow/react';
+import { Handle, Position, MarkerType, type Node, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 import { FlowCanvas } from '@/components/workflow/FlowCanvas';
@@ -140,7 +140,7 @@ function buildFlowGraph(
   const workflow = parsed as Record<string, unknown>;
 
   const nodes: Node[] = [];
-  const edges: Edge[] = [];
+  const edges: (Edge & { pathOptions?: { borderRadius?: number } })[] = [];
 
   // Trigger node
   const onBlock = workflow['on'];
@@ -215,8 +215,10 @@ function buildFlowGraph(
           source: jobId,
           target: jobId,
           label: 'loop',
-          type: 'default',
+          type: 'smoothstep',
+          pathOptions: { borderRadius: 8 },
           style: { strokeDasharray: '4 2' },
+          markerEnd: { type: MarkerType.ArrowClosed },
         });
       }
 
@@ -226,7 +228,14 @@ function buildFlowGraph(
         : [];
 
       if (needsList.length === 0) {
-        edges.push({ id: `__trigger__->${jobId}`, source: '__trigger__', target: jobId });
+        edges.push({
+          id: `__trigger__->${jobId}`,
+          source: '__trigger__',
+          target: jobId,
+          type: 'smoothstep',
+          pathOptions: { borderRadius: 8 },
+          markerEnd: { type: MarkerType.ArrowClosed },
+        });
       } else {
         for (const dep of needsList) {
           const ifCond = job['if'] as string | undefined;
@@ -239,6 +248,9 @@ function buildFlowGraph(
             target: jobId,
             label,
             labelStyle: { fontSize: 10 },
+            type: 'smoothstep',
+            pathOptions: { borderRadius: 8 },
+            markerEnd: { type: MarkerType.ArrowClosed },
           });
         }
       }
@@ -255,6 +267,9 @@ function buildFlowGraph(
             sourceHandle: 'true',
             label: 'true',
             labelStyle: { fontSize: 10 },
+            type: 'smoothstep',
+            pathOptions: { borderRadius: 8 },
+            markerEnd: { type: MarkerType.ArrowClosed },
           });
         }
         if (elseJob) {
@@ -265,6 +280,9 @@ function buildFlowGraph(
             sourceHandle: 'false',
             label: 'false',
             labelStyle: { fontSize: 10 },
+            type: 'smoothstep',
+            pathOptions: { borderRadius: 8 },
+            markerEnd: { type: MarkerType.ArrowClosed },
           });
         }
       }

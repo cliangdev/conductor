@@ -24,6 +24,7 @@ vi.mock('@xyflow/react', () => ({
   Handle: () => null,
   Position: { Top: 'top', Bottom: 'bottom' },
   useReactFlow: () => ({ zoomIn: vi.fn(), zoomOut: vi.fn() }),
+  MarkerType: { ArrowClosed: 'arrowclosed' },
 }))
 
 // Mock dagre — stub layout so it doesn't crash in jsdom
