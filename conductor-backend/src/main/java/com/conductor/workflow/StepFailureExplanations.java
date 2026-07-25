@@ -62,10 +62,17 @@ public final class StepFailureExplanations {
 
     private StepFailureExplanations() {}
 
+    /**
+     * Several {@code claude-code} codes (e.g. {@code RUNTIME_TARGET_NOT_READY}, {@code
+     * CLAUDE_SUBSCRIPTION_NOT_CONFIGURED}) are persisted as {@code "<CODE>: <dynamic message>"}, not
+     * a bare code — see {@code ClaudeCodeContainerRunner}'s {@code StepResult.failed} call sites. An
+     * exact-match lookup would silently miss every one of those, so match on the leading code token.
+     */
     public static Optional<Explanation> explain(String errorReason) {
         if (errorReason == null) {
             return Optional.empty();
         }
-        return Optional.ofNullable(EXPLANATIONS.get(errorReason));
+        String code = errorReason.split(":", 2)[0].trim();
+        return Optional.ofNullable(EXPLANATIONS.get(code));
     }
 }

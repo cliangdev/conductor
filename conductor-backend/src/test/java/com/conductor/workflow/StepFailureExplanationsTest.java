@@ -26,6 +26,18 @@ class StepFailureExplanationsTest {
     }
 
     @Test
+    void codeWithDynamicMessageSuffixStillMatches() {
+        // ClaudeCodeContainerRunner persists several codes as "<CODE>: <dynamic message>", not bare.
+        assertThat(StepFailureExplanations.explain(
+                "RUNTIME_TARGET_NOT_READY: target 'prod' is not ACTIVE")).isPresent();
+        assertThat(StepFailureExplanations.explain(
+                "CLAUDE_SUBSCRIPTION_NOT_CONFIGURED: no Claude Code subscription token configured for this project."))
+                .isPresent();
+        assertThat(StepFailureExplanations.explain("CLAUDE_CREDENTIAL_ERROR: no active connection for 'github'"))
+                .isPresent();
+    }
+
+    @Test
     void nullCodeReturnsEmpty() {
         assertThat(StepFailureExplanations.explain(null)).isEmpty();
     }
