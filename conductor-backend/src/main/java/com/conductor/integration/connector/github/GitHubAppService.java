@@ -1,5 +1,6 @@
 package com.conductor.integration.connector.github;
 
+import com.conductor.exception.BusinessException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Jwts;
@@ -9,20 +10,25 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -38,6 +44,10 @@ public class GitHubAppService {
     private static final Logger log = LoggerFactory.getLogger(GitHubAppService.class);
     private static final String API_BASE = "https://api.github.com";
     private static final String API_VERSION = "2022-11-28";
+    /** GitHub's documented format for the {@code github-authentication-token-expiration} response
+     *  header, e.g. {@code "2023-04-27 00:38:52 UTC"}. */
+    private static final DateTimeFormatter TOKEN_EXPIRATION_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss zzz", Locale.US);
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -102,6 +112,50 @@ public class GitHubAppService {
             page++;
         }
         return repos;
+    }
+
+    /**
+     * Validate a user-supplied Personal Access Token by calling {@code GET /user} with it as bearer
+     * auth (same header conventions as the App flow) — rejects a bad/revoked token immediately
+     * instead of failing silently on first workflow run. Uses {@code restTemplate.exchange} directly
+     * (not {@link #exchangeJson}, which discards response headers) so the GitHub-reported
+     * {@code github-authentication-token-expiration} header can be read; that header is only sent
+     * for tokens that actually expire (fine-grained PATs, expiring classic PATs), so the returned
+     * {@code expiresAt} is null for non-expiring classic PATs.
+     *
+     * @throws BusinessException if GitHub rejects the token (401/403)
+     */
+    public PatValidationResult validatePersonalAccessToken(String token) {
+        ResponseEntity<String> resp;
+        try {
+            resp = restTemplate.exchange(API_BASE + "/user", HttpMethod.GET, new HttpEntity<>(bearer(token)), String.class);
+        } catch (HttpClientErrorException e) {
+            if (e.getStatusCode() == HttpStatus.UNAUTHORIZED || e.getStatusCode() == HttpStatus.FORBIDDEN) {
+                throw new BusinessException("GitHub rejected this token — check it's valid and hasn't expired");
+            }
+            throw new RuntimeException("GitHub API call failed: " + e.getMessage(), e);
+        }
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(resp.getBody());
+        } catch (Exception e) {
+            throw new RuntimeException("GitHub API call failed: " + e.getMessage(), e);
+        }
+        String login = root.path("login").asText(null);
+        Instant expiresAt = parseTokenExpiration(resp.getHeaders().getFirst("github-authentication-token-expiration"));
+        return new PatValidationResult(login, expiresAt);
+    }
+
+    private Instant parseTokenExpiration(String header) {
+        if (header == null || header.isBlank()) {
+            return null;
+        }
+        try {
+            return ZonedDateTime.parse(header.trim(), TOKEN_EXPIRATION_FORMAT).toInstant();
+        } catch (Exception e) {
+            log.warn("Failed to parse github-authentication-token-expiration header '{}': {}", header, e.getMessage());
+            return null;
+        }
     }
 
     /** A cached, unscoped installation access token (~1h GitHub lifetime; refreshed shortly before expiry). */
@@ -234,6 +288,10 @@ public class GitHubAppService {
     }
 
     public record InstallationInfo(String accountLogin, String htmlUrl, String repositorySelection) {}
+
+    /** Result of {@link #validatePersonalAccessToken}: the token's owning login and GitHub-reported
+     *  expiry ({@code null} for non-expiring classic PATs). */
+    public record PatValidationResult(String login, Instant expiresAt) {}
 
     public record Repo(String fullName, boolean isPrivate) {}
 

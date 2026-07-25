@@ -177,6 +177,29 @@ class AgentServiceTest {
                 .hasMessageContaining("Invalid avatar color");
     }
 
+    // ---- delete guard ----
+
+    @Test
+    void delete_activeAgent_isRejectedWithAnActionableMessage() {
+        existingAgent();
+
+        assertThatThrownBy(() -> service.delete(PROJECT_ID, AGENT_ID))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("ACTIVE")
+                .hasMessageContaining("Set the agent to Draft first");
+        Mockito.verify(repository, Mockito.never()).delete(any(Agent.class));
+    }
+
+    @Test
+    void delete_draftAgent_removesIt() {
+        Agent agent = existingAgent();
+        agent.setState("DRAFT");
+
+        service.delete(PROJECT_ID, AGENT_ID);
+
+        Mockito.verify(repository).delete(agent);
+    }
+
     @Test
     void listProviders_mapsIdAndDefaultModel() {
         ChatModelProvider claude = mock(ChatModelProvider.class);

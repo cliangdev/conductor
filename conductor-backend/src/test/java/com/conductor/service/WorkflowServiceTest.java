@@ -287,6 +287,56 @@ class WorkflowServiceTest {
         verify(workflowRepository).delete(automation);
     }
 
+    @Test
+    void deleteWorkflow_publishedWorkflow_throws() {
+        WorkflowDefinition published = new WorkflowDefinition();
+        published.setId("wf-pub");
+        published.setProject(projectWithId("proj-1"));
+        published.setName("my-workflow");
+        published.setState("PUBLISHED");
+
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(workflowRepository.findById("wf-pub")).thenReturn(Optional.of(published));
+
+        assertThatThrownBy(() -> service.deleteWorkflow("proj-1", "wf-pub", "user-1"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Only a Draft workflow can be deleted");
+        verify(workflowRepository, never()).delete(any());
+    }
+
+    @Test
+    void deleteWorkflow_disabledWorkflow_throws() {
+        WorkflowDefinition disabled = new WorkflowDefinition();
+        disabled.setId("wf-dis");
+        disabled.setProject(projectWithId("proj-1"));
+        disabled.setName("my-workflow");
+        disabled.setState("DISABLED");
+
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(workflowRepository.findById("wf-dis")).thenReturn(Optional.of(disabled));
+
+        assertThatThrownBy(() -> service.deleteWorkflow("proj-1", "wf-dis", "user-1"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Only a Draft workflow can be deleted");
+        verify(workflowRepository, never()).delete(any());
+    }
+
+    @Test
+    void deleteWorkflow_draftWorkflow_succeeds() {
+        WorkflowDefinition draft = new WorkflowDefinition();
+        draft.setId("wf-draft");
+        draft.setProject(projectWithId("proj-1"));
+        draft.setName("my-workflow");
+        draft.setState("DRAFT");
+
+        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(workflowRepository.findById("wf-draft")).thenReturn(Optional.of(draft));
+
+        service.deleteWorkflow("proj-1", "wf-draft", "user-1");
+
+        verify(workflowRepository).delete(draft);
+    }
+
     private Project projectWithId(String id) {
         Project p = new Project();
         p.setId(id);

@@ -122,6 +122,20 @@ public class ConnectionService {
         return create(projectId, connectorId, authType, connectorId, null);
     }
 
+    /**
+     * Same isolated-tx shape as {@link #createSingleInNewTx}, but for callers with their own
+     * partial-unique-index guarantee outside {@code ConnectorSpec.singleInstance()} — e.g. "at most
+     * one ACTIVE row per (project, connector) for a given authType" ({@code
+     * uq_connection_pat_per_project_connector}). Callers are expected to catch {@link
+     * DataIntegrityViolationException} on a losing race and re-read the winning row themselves, the
+     * same way {@link #getOrCreateSingle} does.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public Connection createInNewTx(String projectId, String connectorId, AuthType authType,
+                                    String displayLabel, String connectedBy) {
+        return create(projectId, connectorId, authType, displayLabel, connectedBy);
+    }
+
     @Transactional
     public Connection create(String projectId, String connectorId, AuthType authType,
                              String displayLabel, String connectedBy) {

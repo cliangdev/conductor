@@ -167,6 +167,12 @@ public class AgentService {
     @Transactional
     public void delete(String projectId, String agentId) {
         Agent agent = requireAgent(projectId, agentId);
+        // Deletion is irreversible and this API is called by LLM tools as well as the UI, so only an
+        // agent its owner has already stood down (Draft) can be removed.
+        if (!"DRAFT".equals(agent.getState())) {
+            throw new BusinessException("Cannot delete an agent in state " + agent.getState()
+                    + ". Set the agent to Draft first, then delete it.");
+        }
         repository.delete(agent);
     }
 

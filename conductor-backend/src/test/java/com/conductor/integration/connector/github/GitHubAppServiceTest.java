@@ -1,5 +1,6 @@
 package com.conductor.integration.connector.github;
 
+import com.conductor.exception.BusinessException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
@@ -11,8 +12,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.security.KeyPair;
@@ -22,6 +26,7 @@ import java.time.Instant;
 import java.util.Base64;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -162,6 +167,55 @@ class GitHubAppServiceTest {
 
         verify(restTemplate, times(5))
                 .exchange(any(String.class), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class));
+    }
+
+    // --- validatePersonalAccessToken() : PAT bind-time validation against GitHub's GET /user ---
+
+    @Test
+    void validatePersonalAccessToken_parsesGitHubExpirationHeader() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("github-authentication-token-expiration", "2023-04-27 00:38:52 UTC");
+        when(restTemplate.exchange(eq("https://api.github.com/user"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(new ResponseEntity<>("{\"login\":\"octocat\"}", headers, HttpStatus.OK));
+
+        GitHubAppService.PatValidationResult result = service.validatePersonalAccessToken("ghp_fine_grained");
+
+        assertThat(result.login()).isEqualTo("octocat");
+        assertThat(result.expiresAt()).isEqualTo(Instant.parse("2023-04-27T00:38:52Z"));
+    }
+
+    @Test
+    void validatePersonalAccessToken_noExpirationHeader_returnsNullExpiry() {
+        // Non-expiring classic PATs — GitHub simply omits the header.
+        when(restTemplate.exchange(eq("https://api.github.com/user"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"login\":\"octocat\"}"));
+
+        GitHubAppService.PatValidationResult result = service.validatePersonalAccessToken("ghp_classic");
+
+        assertThat(result.login()).isEqualTo("octocat");
+        assertThat(result.expiresAt()).isNull();
+    }
+
+    @Test
+    void validatePersonalAccessToken_unauthorized_throwsActionableBusinessException() {
+        when(restTemplate.exchange(eq("https://api.github.com/user"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.UNAUTHORIZED, "Unauthorized",
+                        HttpHeaders.EMPTY, new byte[0], null));
+
+        assertThatThrownBy(() -> service.validatePersonalAccessToken("bad-token"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("GitHub rejected this token");
+    }
+
+    @Test
+    void validatePersonalAccessToken_forbidden_throwsActionableBusinessException() {
+        when(restTemplate.exchange(eq("https://api.github.com/user"), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden",
+                        HttpHeaders.EMPTY, new byte[0], null));
+
+        assertThatThrownBy(() -> service.validatePersonalAccessToken("revoked-token"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("GitHub rejected this token");
     }
 
     @Test

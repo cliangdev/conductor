@@ -3672,6 +3672,42 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /projects/{projectId}/integrations/github/pat:
+    post:
+      tags: [github]
+      summary: >-
+        Bind a project-level GitHub Personal Access Token. A second, project-owned credential
+        alongside the App connection — takes precedence over it for credential resolution
+        (credentials: [{connector: github, as: GH_TOKEN}]) while ACTIVE. Binding again replaces
+        the existing PAT in place (rotation-friendly).
+      operationId: bindGithubPat
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BindGithubPatRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /projects/{projectId}/runtime-targets:
     get:
       tags: [runtime-targets]
@@ -4940,6 +4976,24 @@ components:
           type: string
         repositorySelection:
           type: string
+    BindGithubPatRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+        label:
+          type: string
+          nullable: true
+          description: Defaults to "PAT (@<login>)" (GitHub-reported login) when omitted.
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            Fallback only — used when GitHub does not report an expiration for this token (e.g. a
+            non-expiring classic PAT). Ignored when GitHub's own
+            github-authentication-token-expiration response header is present.
     IntegrationListItem:
       type: object
       properties:
@@ -5061,6 +5115,13 @@ components:
           nullable: true
         status:
           type: string
+        authType:
+          type: string
+          nullable: true
+        tokenExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
         healthStatus:
           type: string
           nullable: true
@@ -5118,6 +5179,10 @@ components:
           nullable: true
         webhookSecret:
           type: string
+          nullable: true
+        tokenExpiresAt:
+          type: string
+          format: date-time
           nullable: true
         connectedAt:
           type: string

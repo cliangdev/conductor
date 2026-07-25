@@ -510,7 +510,9 @@ public class IntegrationController implements IntegrationsApi {
         ConnectionSummary summary = new ConnectionSummary()
                 .id(conn.getId())
                 .label(conn.getDisplayLabel())
-                .status(conn.getStatus());
+                .status(conn.getStatus())
+                .authType(conn.getAuthType())
+                .tokenExpiresAt(conn.getTokenExpiresAt());
         cacheRepository.findByConnectionId(conn.getId()).ifPresent(cache -> {
             summary.setHealthStatus(cache.getHealthStatus());
             summary.setFetchedAt(cache.getFetchedAt());

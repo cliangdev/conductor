@@ -11,7 +11,7 @@ vi.mock('../mcp/queue.js', () => ({
   queueChange: vi.fn(() => 1),
 }))
 
-import { apiGet, apiPost, apiPatch } from '../mcp/api.js'
+import { apiGet, apiPost, apiPatch, apiDelete } from '../mcp/api.js'
 import { queueChange } from '../mcp/queue.js'
 import {
   listWorkflows,
@@ -22,6 +22,7 @@ import {
   listWorkflowRuns,
   listWorkflowSecrets,
   getWorkflowStepSchema,
+  deleteWorkflow,
 } from '../mcp/tools/workflows.js'
 
 const config: Config = {
@@ -158,5 +159,12 @@ describe('workflow-aware MCP tools', () => {
     const result = await getWorkflowStepSchema({}, config)
     expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/step-schema', config)
     expect(result).toEqual(schema)
+  })
+
+  it('delete_workflow DELETEs the workflow resource', async () => {
+    ;(apiDelete as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+    const result = await deleteWorkflow({ workflowId: 'wf-1' }, config)
+    expect(apiDelete).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1', config)
+    expect(result).toEqual({ success: true })
   })
 })

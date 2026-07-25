@@ -1,8 +1,10 @@
 package com.conductor.integration.connector.github;
 
 import com.conductor.entity.Connection;
+import com.conductor.integration.AuthType;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.CredentialRequest;
+import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.InboundEvent;
 import com.conductor.integration.RuntimeCredential;
 import com.conductor.integration.WebhookRouting;
@@ -413,5 +415,40 @@ class GitHubConnectorTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("installationId");
         verify(gitHubAppService, never()).installationToken(anyString(), any());
+    }
+
+    // --- issueRuntimeCredential() : PAT connections return the stored token, no GitHubAppService call ---
+
+    @Test
+    void issueRuntimeCredential_patConnection_returnsStoredTokenWithoutCallingGitHubAppService() {
+        Connection conn = new Connection();
+        conn.setId("conn-pat");
+        conn.setAuthType(AuthType.PAT.name());
+        java.time.OffsetDateTime expiry = java.time.OffsetDateTime.now().plusDays(30);
+        conn.setTokenExpiresAt(expiry);
+        when(connectionService.decrypt(conn))
+                .thenReturn(new DecryptedCredentials("ghp_stored", null, null, Map.of()));
+
+        RuntimeCredential credential = connector.issueRuntimeCredential(conn, new CredentialRequest("owner/repo"));
+
+        assertThat(credential.envHint()).isEqualTo("GH_TOKEN");
+        assertThat(credential.value()).isEqualTo("ghp_stored");
+        assertThat(credential.expiresAt()).isEqualTo(expiry.toInstant());
+        verify(gitHubAppService, never()).installationToken(anyString(), any());
+        verify(gitHubAppService, never()).installationToken(anyString());
+    }
+
+    @Test
+    void issueRuntimeCredential_patConnection_blankStoredToken_throwsClearly() {
+        Connection conn = new Connection();
+        conn.setId("conn-pat");
+        conn.setAuthType(AuthType.PAT.name());
+        when(connectionService.decrypt(conn))
+                .thenReturn(new DecryptedCredentials("", null, null, Map.of()));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> connector.issueRuntimeCredential(conn, new CredentialRequest(null)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("conn-pat");
     }
 }

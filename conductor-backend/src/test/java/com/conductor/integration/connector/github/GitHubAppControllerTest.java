@@ -3,7 +3,11 @@ package com.conductor.integration.connector.github;
 import com.conductor.entity.Connection;
 import com.conductor.entity.IntegrationOAuthState;
 import com.conductor.entity.User;
+import com.conductor.exception.BusinessException;
+import com.conductor.generated.model.BindGithubPatRequest;
+import com.conductor.generated.model.ConnectionResponse;
 import com.conductor.generated.model.GithubRepositoriesResponse;
+import com.conductor.integration.AuthType;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.conductor.service.ConnectionService;
@@ -22,7 +26,9 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -32,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -180,5 +187,145 @@ class GitHubAppControllerTest {
                 .isInstanceOf(AccessDeniedException.class);
 
         verify(stateRepository, never()).save(any());
+    }
+
+    // ---- bindGithubPat: bind, rebind, invalid token, ADMIN/CREATOR gate ----
+
+    @Test
+    void bindGithubPat_firstBind_createsPatConnection_withGitHubSourcedExpiry() {
+        authenticateAs("admin-1");
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(connectionRepository.findByProjectIdAndConnectorId(PROJECT_ID, "github")).thenReturn(List.of());
+        Instant githubExpiry = Instant.parse("2030-01-01T00:00:00Z");
+        when(gitHubAppService.validatePersonalAccessToken("ghp_abc"))
+                .thenReturn(new GitHubAppService.PatValidationResult("octocat", githubExpiry));
+        Connection created = new Connection();
+        created.setId("conn-pat");
+        created.setProjectId(PROJECT_ID);
+        created.setConnectorId("github");
+        when(connectionService.createInNewTx(eq(PROJECT_ID), eq("github"), eq(AuthType.PAT), eq("PAT (@octocat)"), eq("admin-1")))
+                .thenReturn(created);
+
+        ResponseEntity<ConnectionResponse> resp =
+                controller.bindGithubPat(PROJECT_ID, new BindGithubPatRequest().token("ghp_abc"));
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(resp.getBody()).isNotNull();
+        assertThat(resp.getBody().getId()).isEqualTo("conn-pat");
+        verify(connectionService).updateLabel(created, "PAT (@octocat)");
+        verify(connectionService).storeTokens(eq(created), eq("ghp_abc"), isNull(),
+                eq(githubExpiry.atOffset(ZoneOffset.UTC)));
+    }
+
+    @Test
+    void bindGithubPat_noExpiryHeader_fallsBackToRequestExpiresAt() {
+        authenticateAs("admin-1");
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(connectionRepository.findByProjectIdAndConnectorId(PROJECT_ID, "github")).thenReturn(List.of());
+        when(gitHubAppService.validatePersonalAccessToken("ghp_classic"))
+                .thenReturn(new GitHubAppService.PatValidationResult("octocat", null));
+        Connection created = new Connection();
+        created.setId("conn-pat");
+        when(connectionService.createInNewTx(any(), any(), any(), any(), any())).thenReturn(created);
+        OffsetDateTime requestExpiry = OffsetDateTime.now().plusDays(30);
+
+        controller.bindGithubPat(PROJECT_ID,
+                new BindGithubPatRequest().token("ghp_classic").expiresAt(requestExpiry));
+
+        verify(connectionService).storeTokens(created, "ghp_classic", null, requestExpiry);
+    }
+
+    @Test
+    void bindGithubPat_rebind_updatesExistingRow_doesNotCreateSecondConnection() {
+        authenticateAs("admin-1");
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        Connection existing = new Connection();
+        existing.setId("conn-pat");
+        existing.setProjectId(PROJECT_ID);
+        existing.setConnectorId("github");
+        existing.setAuthType(AuthType.PAT.name());
+        existing.setStatus("ACTIVE");
+        when(connectionRepository.findByProjectIdAndConnectorId(PROJECT_ID, "github")).thenReturn(List.of(existing));
+        when(gitHubAppService.validatePersonalAccessToken("ghp_new"))
+                .thenReturn(new GitHubAppService.PatValidationResult("octocat", null));
+
+        ResponseEntity<ConnectionResponse> resp =
+                controller.bindGithubPat(PROJECT_ID, new BindGithubPatRequest().token("ghp_new"));
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        // No second connection created — the existing ACTIVE PAT row is updated in place, so this
+        // never hits uq_connection_pat_per_project_connector.
+        verify(connectionService, never()).createInNewTx(any(), any(), any(), any(), any());
+        verify(connectionService).updateLabel(existing, "PAT (@octocat)");
+        verify(connectionService).storeTokens(existing, "ghp_new", null, null);
+    }
+
+    @Test
+    void bindGithubPat_concurrentFirstBind_losesInsertRace_recoversByReReadingWinningRow() {
+        authenticateAs("admin-1");
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(gitHubAppService.validatePersonalAccessToken("ghp_race"))
+                .thenReturn(new GitHubAppService.PatValidationResult("octocat", null));
+
+        Connection winning = new Connection();
+        winning.setId("conn-pat-winner");
+        winning.setProjectId(PROJECT_ID);
+        winning.setConnectorId("github");
+        winning.setAuthType(AuthType.PAT.name());
+        winning.setStatus("ACTIVE");
+
+        // First read: no PAT connection yet (both racers see this). The insert then loses the race
+        // against a concurrent bind that committed first.
+        when(connectionRepository.findByProjectIdAndConnectorId(PROJECT_ID, "github"))
+                .thenReturn(List.of())
+                .thenReturn(List.of(winning));
+        when(connectionService.createInNewTx(eq(PROJECT_ID), eq("github"), eq(AuthType.PAT), anyString(), eq("admin-1")))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq_connection_pat_per_project_connector"));
+
+        ResponseEntity<ConnectionResponse> resp =
+                controller.bindGithubPat(PROJECT_ID, new BindGithubPatRequest().token("ghp_race"));
+
+        // No 500 — recovers onto the winning row instead of propagating the constraint violation.
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(resp.getBody()).isNotNull();
+        assertThat(resp.getBody().getId()).isEqualTo("conn-pat-winner");
+        verify(connectionService).storeTokens(eq(winning), eq("ghp_race"), isNull(), isNull());
+    }
+
+    @Test
+    void bindGithubPat_invalidToken_bubblesActionableBusinessException() {
+        authenticateAs("admin-1");
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(gitHubAppService.validatePersonalAccessToken("bad-token"))
+                .thenThrow(new BusinessException("GitHub rejected this token — check it's valid and hasn't expired"));
+
+        assertThatThrownBy(() -> controller.bindGithubPat(PROJECT_ID, new BindGithubPatRequest().token("bad-token")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("GitHub rejected this token");
+
+        verify(connectionRepository, never()).findByProjectIdAndConnectorId(any(), any());
+        verify(connectionService, never()).storeTokens(any(), any(), any(), any());
+    }
+
+    @Test
+    void bindGithubPat_blankToken_throwsBusinessException() {
+        authenticateAs("admin-1");
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+
+        assertThatThrownBy(() -> controller.bindGithubPat(PROJECT_ID, new BindGithubPatRequest().token("  ")))
+                .isInstanceOf(BusinessException.class);
+
+        verify(gitHubAppService, never()).validatePersonalAccessToken(anyString());
+    }
+
+    @Test
+    void bindGithubPat_rejectsNonAdminCreator() {
+        authenticateAs("reviewer-1");
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "reviewer-1")).thenReturn(false);
+
+        assertThatThrownBy(() -> controller.bindGithubPat(PROJECT_ID, new BindGithubPatRequest().token("ghp_abc")))
+                .isInstanceOf(AccessDeniedException.class);
+
+        verify(gitHubAppService, never()).validatePersonalAccessToken(anyString());
     }
 }
