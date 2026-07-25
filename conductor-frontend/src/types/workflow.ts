@@ -107,3 +107,38 @@ export interface WorkflowRunDetailDto {
   completedAt?: string;
   jobs: WorkflowJobRunDto[];
 }
+
+/** GET /projects/{projectId}/workflows/step-schema — registry-driven, see StepSchemaRegistry (backend). */
+export interface StepFieldSchemaDto {
+  name: string;
+  type: 'STRING' | 'INTEGER' | 'BOOLEAN' | 'OBJECT' | 'ARRAY' | 'MAP';
+  required: boolean;
+  description: string;
+  constraints?: string | null;
+}
+
+export interface StepTypeSchemaDto {
+  type: string;
+  description: string;
+  fields: StepFieldSchemaDto[];
+}
+
+export interface InterpolationRootDto {
+  name: string;
+  description: string;
+}
+
+export interface InterpolationFunctionDto {
+  name: string;
+  description: string;
+}
+
+export interface InterpolationSchemaDto {
+  roots: InterpolationRootDto[];
+  functions: InterpolationFunctionDto[];
+}
+
+export interface WorkflowStepSchemaResponse {
+  stepTypes: StepTypeSchemaDto[];
+  interpolation: InterpolationSchemaDto;
+}

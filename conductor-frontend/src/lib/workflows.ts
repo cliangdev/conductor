@@ -10,6 +10,7 @@
 import pluralize from 'pluralize'
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost, apiPut } from '@/lib/api'
+import { parseWorkflowYaml } from '@/lib/workflowAutomation'
 import type {
   WorkflowView,
   WorkflowStatusCategory,
@@ -300,14 +301,11 @@ export function isLifecycleWorkflow(wf: WorkflowDefinitionDto): boolean {
 export function allowsManualDispatch(yaml: string | null | undefined): boolean {
   if (!yaml) return false
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const jsYaml = require('js-yaml') as typeof import('js-yaml')
-    const parsed = jsYaml.load(yaml) as Record<string, unknown> | null
-    const on = parsed?.['on'] as Record<string, unknown> | undefined
-    const workflowDispatch = on?.['workflow_dispatch']
-    if (workflowDispatch === undefined) return false
-    if (workflowDispatch && typeof workflowDispatch === 'object' && 'manual' in workflowDispatch) {
-      return (workflowDispatch as { manual?: unknown }).manual !== false
+    const { triggers } = parseWorkflowYaml(yaml)
+    const dispatch = triggers.find(t => t.kind === 'workflow_dispatch')
+    if (!dispatch) return false
+    if ('manual' in dispatch.raw) {
+      return dispatch.raw['manual'] !== false
     }
     return true
   } catch {

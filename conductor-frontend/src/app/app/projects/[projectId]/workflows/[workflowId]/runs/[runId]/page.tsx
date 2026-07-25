@@ -4,16 +4,16 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { apiGet } from '@/lib/api';
-import { WorkflowRunDetailDto, WorkflowJobRunDto } from '@/types/workflow';
+import { WorkflowRunDetailDto, WorkflowJobRunDto, WorkflowStepRunDto } from '@/types/workflow';
 import dynamic from 'next/dynamic';
-import { ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { StepRow } from '@/components/workflow/StepRow';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { CopyableId } from '@/components/ui/copyable-id';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatElapsed } from '@/lib/format';
+import { parseWorkflowYaml } from '@/lib/workflowAutomation';
+import { stepNodeId } from '@/components/workflow/automation/graphBuilder';
 
 const WorkflowDiagram = dynamic(() => import('@/components/workflow/WorkflowDiagram'), { ssr: false });
 
@@ -25,19 +25,9 @@ interface JobRunStatus {
   maxIterations?: number;
 }
 
-function parseMaxIterations(workflowYaml: string, jobId: string): number | undefined {
+function maxIterationsForJob(workflowYaml: string, jobId: string): number | undefined {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const jsYaml = require('js-yaml') as typeof import('js-yaml');
-    const parsed = jsYaml.load(workflowYaml) as Record<string, unknown> | null;
-    if (!parsed) return undefined;
-    const jobs = parsed['jobs'] as Record<string, unknown> | undefined;
-    if (!jobs) return undefined;
-    const job = jobs[jobId] as Record<string, unknown> | undefined;
-    if (!job) return undefined;
-    const loop = job['loop'] as Record<string, unknown> | undefined;
-    if (!loop) return undefined;
-    return Number(loop['max_iterations']) || undefined;
+    return parseWorkflowYaml(workflowYaml).jobs.find(j => j.jobId === jobId)?.loop?.maxIterations;
   } catch {
     return undefined;
   }
@@ -49,7 +39,6 @@ export default function RunDetailPage() {
   }>();
   const { accessToken } = useAuth();
   const [run, setRun] = useState<WorkflowRunDetailDto | null>(null);
-  const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
 
   const fetchRun = useCallback(() => {
     if (!accessToken) return;
@@ -66,14 +55,6 @@ export default function RunDetailPage() {
     const interval = setInterval(fetchRun, 5000);
     return () => clearInterval(interval);
   }, [run, fetchRun]);
-
-  const toggleJob = (jobId: string) => {
-    setExpandedJobs(prev => {
-      const next = new Set(prev);
-      if (next.has(jobId)) next.delete(jobId); else next.add(jobId);
-      return next;
-    });
-  };
 
   if (!run) {
     return (
@@ -94,7 +75,7 @@ export default function RunDetailPage() {
     const current = j.iteration ?? 0;
     const existingIter = existing?.iteration ?? -1;
     if (!existing || current > existingIter) {
-      const maxIterations = parseMaxIterations(run.workflowYaml, j.jobId);
+      const maxIterations = maxIterationsForJob(run.workflowYaml, j.jobId);
       jobRunData[j.jobId] = {
         status: j.status as JobStatus,
         iteration: j.iteration,
@@ -119,6 +100,16 @@ export default function RunDetailPage() {
   );
   const uniqueJobIds = [...new Set(run.jobs.map(j => j.jobId))];
 
+  // Step-level run data for the diagram's status rings and detail panel, keyed the same way
+  // graphBuilder ids step nodes — built from each job's latest iteration (group[0], since groups
+  // are sorted latest-first above).
+  const stepRunData: Record<string, WorkflowStepRunDto> = {};
+  Object.entries(jobGroups).forEach(([jobId, group]) => {
+    group[0]?.steps.forEach((step, index) => {
+      stepRunData[stepNodeId(jobId, index)] = step;
+    });
+  });
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -139,17 +130,19 @@ export default function RunDetailPage() {
           yaml={run.workflowYaml}
           jobStatuses={jobStatuses}
           jobRunData={jobRunData}
+          stepRunData={stepRunData}
+          runId={run.id}
+          projectId={projectId}
+          token={accessToken}
         />
       </div>
 
       <div className="space-y-2">
         {uniqueJobIds.map(jobId => (
-          <JobGroupRow
+          <JobSummaryRow
             key={jobId}
             jobId={jobId}
             iterations={jobGroups[jobId]}
-            expanded={expandedJobs.has(jobId)}
-            onToggle={() => toggleJob(jobId)}
             workflowYaml={run.workflowYaml}
           />
         ))}
@@ -158,73 +151,33 @@ export default function RunDetailPage() {
   );
 }
 
-function JobGroupRow({
+// A scannable, non-expandable overview row per job — step-level detail lives in the diagram above
+// (click a step node to open its detail panel), so this stays a summary, not a second copy of it.
+function JobSummaryRow({
   jobId,
   iterations,
-  expanded,
-  onToggle,
   workflowYaml,
 }: {
   jobId: string;
   iterations: WorkflowJobRunDto[];
-  expanded: boolean;
-  onToggle: () => void;
   workflowYaml: string;
 }) {
   const latest = iterations[0];
   const isLoop = iterations.length > 1 || (iterations[0]?.iteration ?? 0) > 0;
-  const maxIterations = isLoop ? parseMaxIterations(workflowYaml, jobId) : undefined;
+  const maxIterations = isLoop ? maxIterationsForJob(workflowYaml, jobId) : undefined;
 
   return (
-    <div className="border rounded-lg overflow-hidden">
-      <button
-        className="w-full flex items-center gap-3 p-3 hover:bg-muted/25 text-left"
-        onClick={onToggle}
-      >
-        <span className="font-medium flex-1">{jobId}</span>
-        {isLoop && (
-          <Badge variant="status-progress">
-            {(latest.iteration ?? 0) + 1}/{maxIterations ?? '?'}
-          </Badge>
-        )}
-        <StatusBadge status={latest.status} />
-        <span className="text-sm text-muted-foreground">
-          {formatElapsed(latest.startedAt, latest.completedAt)}
-        </span>
-        {expanded ? (
-          <ChevronUpIcon className="h-4 w-4 text-muted-foreground" />
-        ) : (
-          <ChevronDownIcon className="h-4 w-4 text-muted-foreground" />
-        )}
-      </button>
-      {expanded && (
-        <div className="border-t divide-y">
-          {isLoop ? (
-            iterations.map(iter => (
-              <div key={iter.id} className="p-2 pl-6">
-                <div className="text-xs font-medium text-muted-foreground mb-1">
-                  Iteration {(iter.iteration ?? 0) + 1}
-                </div>
-                {iter.steps.map(step => (
-                  <StepRow key={step.id} step={step} />
-                ))}
-                {iter.steps.length === 0 && (
-                  <div className="p-3 text-sm text-muted-foreground">No steps recorded</div>
-                )}
-              </div>
-            ))
-          ) : (
-            <>
-              {latest.steps.map(step => (
-                <StepRow key={step.id} step={step} />
-              ))}
-              {latest.steps.length === 0 && (
-                <div className="p-3 text-sm text-muted-foreground">No steps recorded</div>
-              )}
-            </>
-          )}
-        </div>
+    <div className="flex items-center gap-3 border rounded-lg p-3">
+      <span className="font-medium flex-1">{jobId}</span>
+      {isLoop && (
+        <Badge variant="status-progress">
+          {(latest.iteration ?? 0) + 1}/{maxIterations ?? '?'}
+        </Badge>
       )}
+      <StatusBadge status={latest.status} />
+      <span className="text-sm text-muted-foreground">
+        {formatElapsed(latest.startedAt, latest.completedAt)}
+      </span>
     </div>
   );
 }

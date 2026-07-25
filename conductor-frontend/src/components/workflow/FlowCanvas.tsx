@@ -12,6 +12,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   Background,
+  MiniMap,
   useReactFlow,
   type Node,
   type Edge,
@@ -67,11 +68,24 @@ export interface FlowCanvasProps {
   nodes: Node[]
   edges: Edge[]
   nodeTypes: NodeTypes
+  /** Off by default. Pass `true` (uses a 12-node threshold) or `{ thresholdNodeCount }` to show a
+   * MiniMap once the graph has more nodes than that — small workflows don't need one. */
+  minimap?: boolean | { thresholdNodeCount?: number }
+  /** Off by default, preserving the fully read-only behavior every current caller relies on.
+   * Nodes never become draggable/connectable regardless — this only toggles element selectability
+   * (needed for click-to-inspect interactions) so positions stay layout-generated. */
+  interactive?: boolean
+  onNodeClick?: (event: React.MouseEvent, node: Node) => void
 }
 
-export function FlowCanvas({ nodes, edges, nodeTypes }: FlowCanvasProps) {
+const DEFAULT_MINIMAP_THRESHOLD = 12
+
+export function FlowCanvas({ nodes, edges, nodeTypes, minimap, interactive, onNodeClick }: FlowCanvasProps) {
   const [fullscreen, setFullscreen] = useState(false)
   const toggleFullscreen = useCallback(() => setFullscreen((v) => !v), [])
+
+  const minimapThreshold = typeof minimap === 'object' ? minimap.thresholdNodeCount ?? DEFAULT_MINIMAP_THRESHOLD : DEFAULT_MINIMAP_THRESHOLD
+  const showMinimap = !!minimap && nodes.length > minimapThreshold
 
   // Escape always exits fullscreen — a guaranteed way out beyond the toggle button.
   useEffect(() => {
@@ -96,10 +110,14 @@ export function FlowCanvas({ nodes, edges, nodeTypes }: FlowCanvasProps) {
             fitViewOptions={{ padding: 0.3 }}
             nodesDraggable={false}
             nodesConnectable={false}
-            elementsSelectable={false}
+            elementsSelectable={!!interactive}
+            onNodeClick={onNodeClick}
             proOptions={{ hideAttribution: true }}
           >
             <Background color="hsl(var(--border))" gap={16} />
+            {showMinimap && (
+              <MiniMap className="!bg-surface !border !border-border" maskColor="hsl(var(--foreground) / 0.05)" />
+            )}
           </ReactFlow>
         </div>
         <CanvasControls fullscreen={fullscreen} onToggleFullscreen={toggleFullscreen} />
