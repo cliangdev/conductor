@@ -989,9 +989,9 @@ jobs:
 
 ---
 
-### Example: PR code review
+### Example: PR code review (multi-repo org)
 
-A `github.pull_request` trigger gated to a specific label, fanning out to a per-repo review job, then notifying regardless of outcome.
+A `github.pull_request` trigger gated to a specific label, fanning out to a per-repo review job, then notifying regardless of outcome. This shape fits an org where backend and frontend live in **separate repos**, so `event.repoFullName` alone tells you which reviewer applies.
 
 ```yaml
 name: PR Code Review
@@ -1052,6 +1052,32 @@ jobs:
 ```
 
 The label gate happens once at trigger time; per-repo routing happens per-job via `if:` so a backend-only PR never spins up the frontend container. `notify` runs regardless of review outcome via `needs` + `always()`. Either reviewer job could equally use a persisted `uses: agent` step (with the same `credentials:` field) instead of an inline `uses: claude-code` prompt — both are supported.
+
+### Example: PR code review (monorepo)
+
+For a **monorepo** (one repo, multiple areas — e.g. this repo's own `conductor-backend/`/`conductor-frontend/`/`conductor-tools/`), don't port the multi-repo shape above by adding a job that detects which paths changed and routes to per-area jobs — that's an extra Cloud Run execution and an extra full `git clone` per area for a decision a single `git diff --stat` line answers. Instead, use **one** job whose agent self-detects the touched areas from the diff and reviews only those, in one pass, posting one comment:
+
+```yaml
+jobs:
+  review:
+    runs-on: cloud-run
+    steps:
+      - id: review
+        uses: agent
+        with:
+          agent: pr-review-agent
+          credentials:
+            - connector: github
+              as: GH_TOKEN
+          timeout_minutes: 30
+          task: |
+            Review PR #${{ event.prNumber }} in ${{ event.repoFullName }}. Check out the PR, diff it
+            against ${{ event.baseRef }}, and apply the checklist for whichever areas the diff touches
+            (your system prompt defines the per-area checklists). Post one comment covering every
+            touched area.
+```
+
+The agent's system prompt carries the per-area checklists (backend conventions, frontend design-system conventions, etc.) and the instruction to skip whatever the diff doesn't touch — that logic belongs in the agent, not in extra workflow jobs. This also avoids each area re-cloning the repo: one checkout, one review pass, one comment.
 
 ---
 
