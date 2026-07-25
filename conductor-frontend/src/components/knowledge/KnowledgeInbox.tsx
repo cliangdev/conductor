@@ -12,6 +12,11 @@ import { Alert } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { timeAgo } from '@/lib/format'
 
+// Matches KnowledgeRailFooter/KnowledgeAttentionBanner's own poll interval (KnowledgeIngestScheduler's
+// 30s tick) — an admin watching this tab needs to see a source move through PENDING/PROCESSING/DEAD
+// on its own, not just at whatever moment the tab happened to load.
+const SOURCES_POLL_INTERVAL_MS = 30_000
+
 const STATUSES: KnowledgeSourceStatus[] = ['PENDING', 'PROCESSING', 'PROCESSED', 'DEAD']
 
 const STATUS_LABELS: Record<KnowledgeSourceStatus, string> = {
@@ -60,20 +65,32 @@ export function KnowledgeInbox({ projectId, token }: { projectId: string; token:
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setError(null)
-    listKnowledgeSources(projectId, token, { status, domain: domainParam ?? undefined })
-      .then((rows) => {
-        if (!cancelled) setSources(rows)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(apiErrorMessage(err, 'Failed to load sources'))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+
+    // `background` polls never touch loading/error state — a silent poll failure just leaves the
+    // list stale for one more tick rather than replacing a populated list with an error banner.
+    function load(background: boolean) {
+      if (!background) {
+        setLoading(true)
+        setError(null)
+      }
+      listKnowledgeSources(projectId, token, { status, domain: domainParam ?? undefined })
+        .then((rows) => {
+          if (!cancelled) setSources(rows)
+        })
+        .catch((err) => {
+          if (!cancelled && !background) setError(apiErrorMessage(err, 'Failed to load sources'))
+        })
+        .finally(() => {
+          if (!cancelled && !background) setLoading(false)
+        })
+    }
+
+    load(false)
+    const interval = setInterval(() => load(true), SOURCES_POLL_INTERVAL_MS)
+
     return () => {
       cancelled = true
+      clearInterval(interval)
     }
   }, [projectId, token, status, domainParam])
 
