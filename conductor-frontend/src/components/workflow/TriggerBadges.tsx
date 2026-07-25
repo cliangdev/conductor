@@ -3,6 +3,7 @@
 import cronstrue from 'cronstrue';
 import { Badge } from '@/components/ui/badge';
 import { parseWorkflowYaml, type TriggerKind } from '@/lib/workflowAutomation';
+import { WorkflowTriggerTypeIcon } from '@/components/workflow/WorkflowStepTypeIcon';
 
 interface TriggerBadgesProps {
   yaml: string;
@@ -35,7 +36,8 @@ export function TriggerBadges({ yaml }: TriggerBadgesProps) {
   return (
     <div className="flex gap-1 flex-wrap">
       {triggers.map(t => (
-        <Badge key={t.kind} variant="secondary" className="text-xs">
+        <Badge key={t.kind} variant="secondary" className="text-xs gap-1">
+          <WorkflowTriggerTypeIcon kind={t.kind} className="h-3 w-3" />
           {TRIGGER_LABEL[t.kind]}{t.nextRun ? ` · ${t.nextRun}` : ''}
         </Badge>
       ))}
