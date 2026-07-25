@@ -10,6 +10,7 @@ import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.ProjectSettingsRepository;
+import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ActiveConnectionResolver;
 import com.conductor.service.RuntimeTargetService;
@@ -40,6 +41,7 @@ class ClaudeCodeStepExecutorTest {
     @Mock private CloudRunJobLauncher launcher;
     @Mock private ProviderCredentialService credentialService;
     @Mock private WorkflowStepRunRepository stepRunRepository;
+    @Mock private WorkflowRunRepository runRepository;
     @Mock private RunTokenService runTokenService;
     @Mock private ProjectSettingsRepository projectSettingsRepository;
     @Mock private RuntimeTargetService runtimeTargetService;
@@ -60,7 +62,7 @@ class ClaudeCodeStepExecutorTest {
         // container-execution mechanics to it) — this test still exercises the executor end-to-end
         // through that runner, just with the poll sleep stubbed out for speed.
         runner = new ClaudeCodeContainerRunner(launcher, runtimeTargetResolver, credentialService,
-                stepRunRepository, runTokenService, projectSettingsRepository,
+                stepRunRepository, runRepository, runTokenService, projectSettingsRepository,
                 new WorkflowInterpolator(), new ObjectMapper(), logBroker,
                 new ActiveConnectionResolver(connectionRepository), connectorRegistry, "http://localhost:8080") {
             @Override

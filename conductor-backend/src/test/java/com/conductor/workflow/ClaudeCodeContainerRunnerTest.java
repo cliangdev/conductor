@@ -4,12 +4,14 @@ import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.entity.Connection;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
+import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.CredentialConnector;
 import com.conductor.integration.CredentialRequest;
 import com.conductor.integration.RuntimeCredential;
 import com.conductor.repository.ProjectSettingsRepository;
+import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ActiveConnectionResolver;
 import com.conductor.service.RuntimeTargetService;
@@ -52,6 +54,7 @@ class ClaudeCodeContainerRunnerTest {
     @Mock private CloudRunJobLauncher launcher;
     @Mock private ProviderCredentialService credentialService;
     @Mock private WorkflowStepRunRepository stepRunRepository;
+    @Mock private WorkflowRunRepository runRepository;
     @Mock private RunTokenService runTokenService;
     @Mock private ProjectSettingsRepository projectSettingsRepository;
     @Mock private RuntimeTargetService runtimeTargetService;
@@ -67,7 +70,7 @@ class ClaudeCodeContainerRunnerTest {
         RuntimeTargetResolver runtimeTargetResolver = new RuntimeTargetResolver("gcp-proj", "us-central1",
                 "conductor-claude-code", runtimeTargetService, projectSettingsRepository);
         runner = new ClaudeCodeContainerRunner(launcher, runtimeTargetResolver, credentialService,
-                stepRunRepository, runTokenService, projectSettingsRepository, new WorkflowInterpolator(),
+                stepRunRepository, runRepository, runTokenService, projectSettingsRepository, new WorkflowInterpolator(),
                 new ObjectMapper(), logBroker, activeConnectionResolver, connectorRegistry, "http://localhost:8080") {
             @Override
             protected void sleepSeconds(int seconds) {
@@ -133,6 +136,42 @@ class ClaudeCodeContainerRunnerTest {
         ArgumentCaptor<CredentialRequest> requestCaptor = ArgumentCaptor.forClass(CredentialRequest.class);
         verify(githubCredentialConnector).issueRuntimeCredential(eq(conn), requestCaptor.capture());
         assertThat(requestCaptor.getValue().repoFullName()).isEqualTo("Rexworks-LLC/nexus-backend");
+    }
+
+    @Test
+    void cancellingRun_cancelsCloudRunExecutionAndReturnsCancelled() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class)))
+                .thenReturn(CloudRunJobLauncher.LaunchResult.confirmed("op-1", "exec-1"));
+        when(runRepository.findStatusById("run-123")).thenReturn(Optional.of(WorkflowRunStatus.CANCELLING));
+
+        StepResult result = runner.run(context(Map.of()), invocation(List.of(), Map.of()));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.CANCELLED);
+        verify(launcher).cancelExecution(any(CloudRunTarget.class), eq("exec-1"));
+        verify(launcher, never()).pollExecution(any(CloudRunTarget.class), anyString());
+    }
+
+    @Test
+    void cancellingRun_beforeExecutionNameResolves_stillCancelsWithoutCallingCloudRun() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class)))
+                .thenReturn(CloudRunJobLauncher.LaunchResult.unconfirmed("op-1"));
+        when(runRepository.findStatusById("run-123")).thenReturn(Optional.of(WorkflowRunStatus.CANCELLING));
+
+        StepResult result = runner.run(context(Map.of()), invocation(List.of(), Map.of()));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.CANCELLED);
+        verify(launcher, never()).cancelExecution(any(CloudRunTarget.class), anyString());
+        verify(launcher, never()).tryResolveExecutionName(any(CloudRunTarget.class), anyString());
     }
 
     @Test

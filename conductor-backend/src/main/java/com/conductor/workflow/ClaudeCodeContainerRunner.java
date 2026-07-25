@@ -4,6 +4,7 @@ import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.entity.Connection;
 import com.conductor.entity.ProjectSettings;
 import com.conductor.entity.WorkflowJobRun;
+import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.entity.WorkflowStepRun;
 import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.integration.ConnectorRegistry;
@@ -11,6 +12,7 @@ import com.conductor.integration.CredentialConnector;
 import com.conductor.integration.CredentialRequest;
 import com.conductor.integration.RuntimeCredential;
 import com.conductor.repository.ProjectSettingsRepository;
+import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ActiveConnectionResolver;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -92,6 +94,7 @@ public class ClaudeCodeContainerRunner {
     private final RuntimeTargetResolver runtimeTargetResolver;
     private final ProviderCredentialService credentialService;
     private final WorkflowStepRunRepository stepRunRepository;
+    private final WorkflowRunRepository runRepository;
     private final RunTokenService runTokenService;
     private final ProjectSettingsRepository projectSettingsRepository;
     private final WorkflowInterpolator interpolator;
@@ -105,6 +108,7 @@ public class ClaudeCodeContainerRunner {
                                       RuntimeTargetResolver runtimeTargetResolver,
                                       ProviderCredentialService credentialService,
                                       WorkflowStepRunRepository stepRunRepository,
+                                      WorkflowRunRepository runRepository,
                                       RunTokenService runTokenService,
                                       ProjectSettingsRepository projectSettingsRepository,
                                       WorkflowInterpolator interpolator,
@@ -117,6 +121,7 @@ public class ClaudeCodeContainerRunner {
         this.runtimeTargetResolver = runtimeTargetResolver;
         this.credentialService = credentialService;
         this.stepRunRepository = stepRunRepository;
+        this.runRepository = runRepository;
         this.runTokenService = runTokenService;
         this.projectSettingsRepository = projectSettingsRepository;
         this.interpolator = interpolator;
@@ -213,8 +218,8 @@ public class ClaudeCodeContainerRunner {
                     + "skipping relaunch", stepId, executionName, workerJobId);
             appendLauncherLine(inFlightRow, projectId, logBuilder,
                     "→ Resuming poll on prior Cloud Run execution: " + executionName);
-            return pollUntilTerminal(target, executionName, null, jobRun.getId(), workerJobId, stepDef, timeoutMinutes,
-                    logBuilder, inFlightRow, projectId);
+            return pollUntilTerminal(target, executionName, null, runId, jobRun.getId(), workerJobId, stepDef,
+                    timeoutMinutes, logBuilder, inFlightRow, projectId);
         }
 
         // The launch was previously accepted by Cloud Run (operationName persisted) but never resolved
@@ -228,8 +233,8 @@ public class ClaudeCodeContainerRunner {
                     + "skipping relaunch", stepId, operationName, workerJobId);
             appendLauncherLine(inFlightRow, projectId, logBuilder,
                     "→ Resuming check on unconfirmed Cloud Run launch: " + operationName);
-            return pollUntilTerminal(target, null, operationName, jobRun.getId(), workerJobId, stepDef, timeoutMinutes,
-                    logBuilder, inFlightRow, projectId);
+            return pollUntilTerminal(target, null, operationName, runId, jobRun.getId(), workerJobId, stepDef,
+                    timeoutMinutes, logBuilder, inFlightRow, projectId);
         }
 
         Map<String, String> env;
@@ -269,7 +274,7 @@ public class ClaudeCodeContainerRunner {
         stepRunRepository.save(stepRun);
 
         return pollUntilTerminal(target, launch.executionName().orElse(null), launch.operationName(),
-                jobRun.getId(), workerJobId, stepDef, timeoutMinutes, logBuilder, stepRun, projectId);
+                runId, jobRun.getId(), workerJobId, stepDef, timeoutMinutes, logBuilder, stepRun, projectId);
     }
 
     /**
@@ -464,12 +469,26 @@ public class ClaudeCodeContainerRunner {
      * this one bounded budget rather than getting a fresh timeout window of its own.
      */
     private StepResult pollUntilTerminal(CloudRunTarget target, String executionName, String operationName,
-                                          String jobRunId, String workerJobId, Map<String, Object> stepDef,
-                                          int timeoutMinutes, StringBuilder logBuilder, WorkflowStepRun stepRun,
-                                          String projectId) {
+                                          String runId, String jobRunId, String workerJobId,
+                                          Map<String, Object> stepDef, int timeoutMinutes, StringBuilder logBuilder,
+                                          WorkflowStepRun stepRun, String projectId) {
         int maxIterations = Math.max(1, (timeoutMinutes * 60) / POLL_INTERVAL_SECONDS);
         for (int i = 0; i < maxIterations; i++) {
             sleepSeconds(POLL_INTERVAL_SECONDS);
+
+            if (runRepository.findStatusById(runId).orElse(null) == WorkflowRunStatus.CANCELLING) {
+                if (executionName != null) {
+                    launcher.cancelExecution(target, executionName);
+                } else {
+                    // Cloud Run accepted the launch but hasn't named the execution yet, so there's
+                    // nothing to cancel by name. The execution it eventually starts is orphaned and
+                    // runs to completion; Conductor still treats the step as cancelled.
+                    log.warn("Run {} cancelled before its Cloud Run execution name resolved (operation {}) — "
+                            + "the execution may run to completion orphaned", runId, operationName);
+                }
+                appendLauncherLine(stepRun, projectId, logBuilder, "✗ Cancelled");
+                return StepResult.cancelled(logBuilder.toString()).withWorkerJobId(workerJobId);
+            }
 
             if (executionName == null) {
                 Optional<WorkflowStepRun> current = stepRunRepository.findByJobRunIdAndWorkerJobId(jobRunId, workerJobId);

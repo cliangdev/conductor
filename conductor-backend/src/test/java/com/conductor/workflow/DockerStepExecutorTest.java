@@ -2,6 +2,7 @@ package com.conductor.workflow;
 
 import com.conductor.entity.*;
 import com.conductor.repository.ProjectSettingsRepository;
+import com.conductor.repository.WorkflowRunRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +26,8 @@ class DockerStepExecutorTest {
     private RunTokenService runTokenService;
     @Mock
     private ProjectSettingsRepository projectSettingsRepository;
+    @Mock
+    private WorkflowRunRepository runRepository;
 
     private WorkflowInterpolator interpolator = new WorkflowInterpolator();
 
@@ -33,7 +36,7 @@ class DockerStepExecutorTest {
     @BeforeEach
     void setUp() {
         executor = new DockerStepExecutor(
-                workerVmClient, runTokenService, projectSettingsRepository,
+                workerVmClient, runTokenService, projectSettingsRepository, runRepository,
                 interpolator, "http://localhost:8080") {
             @Override
             protected void sleepSeconds(int seconds) {
@@ -201,6 +204,42 @@ class DockerStepExecutorTest {
                 req.logCallbackUrl().equals("http://localhost:8080/internal/v1/workflow-runs/run-123/log-chunk") &&
                 req.outputsCallbackUrl().equals("http://localhost:8080/internal/v1/workflow-runs/run-123/outputs") &&
                 req.jobFailedCallbackUrl().equals("http://localhost:8080/internal/v1/workflow-runs/run-123/job-failed")));
+    }
+
+    @Test
+    void execute_cancelsWorkerJobWhenRunIsCancelling() {
+        Map<String, Object> stepDef = new HashMap<>();
+        stepDef.put("uses", "docker://ubuntu:22.04");
+
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(workerVmClient.submitJob(any())).thenReturn("worker-job-cancel");
+        when(runRepository.findStatusById("run-123")).thenReturn(Optional.of(WorkflowRunStatus.CANCELLING));
+
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
+        StepResult result = executor.execute(buildContext(stepDef, ctx));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.CANCELLED);
+        verify(workerVmClient).cancelJob("worker-job-cancel");
+        verify(workerVmClient, never()).getJobStatus(anyString());
+    }
+
+    @Test
+    void execute_stillCancelsWhenWorkerCancelCallFails() {
+        Map<String, Object> stepDef = new HashMap<>();
+        stepDef.put("uses", "docker://ubuntu:22.04");
+
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(workerVmClient.submitJob(any())).thenReturn("worker-job-cancel-fail");
+        when(runRepository.findStatusById("run-123")).thenReturn(Optional.of(WorkflowRunStatus.CANCELLING));
+        doThrow(new WorkerVmClient.WorkerCommunicationException("boom", null))
+                .when(workerVmClient).cancelJob("worker-job-cancel-fail");
+
+        RuntimeContext ctx = new RuntimeContext(Map.of(), Map.of(), Map.of(), Map.of());
+        StepResult result = executor.execute(buildContext(stepDef, ctx));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.CANCELLED);
     }
 
     @Test

@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { bearerAuth } from './auth';
 import { addJob, getJob, updateJobStatus, countRunningJobs } from './job-store';
-import { buildContainerName, buildVolumeName, launchJob, cleanupContainer } from './docker';
+import { buildContainerName, buildVolumeName, launchJob, cleanupContainer, killContainer } from './docker';
 import { recoverStoppedContainers } from './startup';
 
 const app = express();
@@ -86,9 +86,11 @@ app.delete('/job/:workerJobId', bearerAuth, async (req: Request, res: Response) 
 
   updateJobStatus(job.workerJobId, 'CANCELLED');
 
-  cleanupContainer(job.containerName).catch((err) => {
-    console.error(`Cleanup failed for ${job.containerName}:`, err);
-  });
+  killContainer(job.containerName)
+    .then(() => cleanupContainer(job.containerName))
+    .catch((err) => {
+      console.error(`Cleanup failed for ${job.containerName}:`, err);
+    });
 
   res.status(200).json({ workerJobId: job.workerJobId, status: 'CANCELLED' });
 });

@@ -1,7 +1,9 @@
 package com.conductor.workflow;
 
 import com.conductor.entity.ProjectSettings;
+import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.repository.ProjectSettingsRepository;
+import com.conductor.repository.WorkflowRunRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +26,7 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
     private final WorkerVmClient workerVmClient;
     private final RunTokenService runTokenService;
     private final ProjectSettingsRepository projectSettingsRepository;
+    private final WorkflowRunRepository runRepository;
     private final WorkflowInterpolator interpolator;
     private final String backendBaseUrl;
 
@@ -31,11 +34,13 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
             WorkerVmClient workerVmClient,
             RunTokenService runTokenService,
             ProjectSettingsRepository projectSettingsRepository,
+            WorkflowRunRepository runRepository,
             WorkflowInterpolator interpolator,
             @Value("${conductor.backend.url:http://localhost:8080}") String backendBaseUrl) {
         this.workerVmClient = workerVmClient;
         this.runTokenService = runTokenService;
         this.projectSettingsRepository = projectSettingsRepository;
+        this.runRepository = runRepository;
         this.interpolator = interpolator;
         this.backendBaseUrl = backendBaseUrl;
     }
@@ -79,16 +84,26 @@ public class DockerStepExecutor implements WorkflowExecutionBackend {
         log.info("Submitted docker job: workerJobId={}, runId={}, jobId={}, image={}", workerJobId, runId, jobId, image);
 
         int timeoutMinutes = resolveTimeoutMinutes(stepDef);
-        return pollForCompletion(workerJobId, image, timeoutMinutes);
+        return pollForCompletion(runId, workerJobId, image, timeoutMinutes);
     }
 
-    private StepResult pollForCompletion(String workerJobId, String image, int timeoutMinutes) {
+    private StepResult pollForCompletion(String runId, String workerJobId, String image, int timeoutMinutes) {
         StringBuilder logBuilder = new StringBuilder();
         logBuilder.append("Running docker image: ").append(image).append("\n");
 
         int maxPollIterations = (timeoutMinutes * 60) / POLL_INTERVAL_SECONDS;
         for (int i = 0; i < maxPollIterations; i++) {
             sleepSeconds(POLL_INTERVAL_SECONDS);
+
+            if (runRepository.findStatusById(runId).orElse(null) == WorkflowRunStatus.CANCELLING) {
+                try {
+                    workerVmClient.cancelJob(workerJobId);
+                } catch (WorkerVmClient.WorkerCommunicationException e) {
+                    log.warn("Failed to cancel worker job {}: {}", workerJobId, e.getMessage());
+                }
+                logBuilder.append("Job cancelled\n");
+                return StepResult.cancelled(logBuilder.toString());
+            }
 
             WorkerVmClient.WorkerJobStatus status;
             try {
