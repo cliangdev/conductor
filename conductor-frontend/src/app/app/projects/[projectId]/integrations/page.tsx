@@ -5,8 +5,8 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { apiGet, apiPost, createConnection, deleteConnection, apiErrorMessage } from '@/lib/api';
-import type { ConnectionSummary } from '@/lib/api';
+import { apiPost, createConnection, deleteConnection, apiErrorMessage, listIntegrations } from '@/lib/api';
+import type { IntegrationListItem } from '@/lib/api';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { ServiceAccountKeyField } from '@/components/integrations/ServiceAccountKeyField';
 import { usePermissions } from '@/contexts/PermissionsContext';
@@ -24,30 +24,6 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Tabs } from '@/components/ui/tabs';
 import { Can } from '@/components/auth/Can';
-
-interface ConnectorConfigField {
-  key: string;
-  label: string;
-  hint: string | null;
-  type: 'STRING' | 'SECRET' | 'SELECT' | 'MULTISELECT' | 'BOOLEAN' | 'URL_READONLY' | 'JSON';
-  source: 'USER_INPUT' | 'GENERATED';
-  required: boolean;
-  secret: boolean;
-}
-
-interface IntegrationListItem {
-  connectorId: string;
-  name: string;
-  category: string;
-  authType: 'NONE' | 'API_KEY' | 'BASIC' | 'OAUTH2' | 'WEBHOOK' | 'APP' | 'SERVICE_ACCOUNT';
-  capabilities: string[];
-  singleInstance: boolean;
-  description: string;
-  iconLabel: string;
-  connected: boolean;
-  configFields: ConnectorConfigField[];
-  connections: ConnectionSummary[];
-}
 
 type Tab = 'connected' | 'browse';
 
@@ -76,10 +52,7 @@ export default function IntegrationsPage() {
   const loadIntegrations = async () => {
     if (!accessToken || !projectId) return;
     try {
-      const data = await apiGet<IntegrationListItem[]>(
-        `/api/v1/projects/${projectId}/integrations`,
-        accessToken
-      );
+      const data = await listIntegrations(projectId, accessToken);
       setIntegrations(data);
     } catch (e) {
       console.error(e);

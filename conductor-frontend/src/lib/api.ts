@@ -123,6 +123,34 @@ export function listConnectionWebhookEvents(
   )
 }
 
+export interface ConnectorConfigField {
+  key: string
+  label: string
+  hint: string | null
+  type: 'STRING' | 'SECRET' | 'SELECT' | 'MULTISELECT' | 'BOOLEAN' | 'URL_READONLY' | 'JSON'
+  source: 'USER_INPUT' | 'GENERATED'
+  required: boolean
+  secret: boolean
+}
+
+export interface IntegrationListItem {
+  connectorId: string
+  name: string
+  category: string
+  authType: 'NONE' | 'API_KEY' | 'BASIC' | 'OAUTH2' | 'WEBHOOK' | 'APP' | 'SERVICE_ACCOUNT'
+  capabilities: string[]
+  singleInstance: boolean
+  description: string
+  iconLabel: string
+  connected: boolean
+  configFields: ConnectorConfigField[]
+  connections: ConnectionSummary[]
+}
+
+export function listIntegrations(projectId: string, token: string): Promise<IntegrationListItem[]> {
+  return apiGet<IntegrationListItem[]>(`/api/v1/projects/${projectId}/integrations`, token)
+}
+
 export interface ConnectionHealthResponse {
   oauthConnected: boolean
   configured: boolean
