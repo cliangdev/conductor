@@ -4,9 +4,10 @@
 
 import { MarkerType, type Node, type Edge } from '@xyflow/react'
 import type { ParsedWorkflow, WorkflowJob } from '@/lib/workflowAutomation'
+import type { WorkflowStepRunDto } from '@/types/workflow'
 import type { AutomationLayout } from './layout'
 import type { JobFrameNodeData, JobRunStatusValue } from './JobFrameNode'
-import type { StepNodeData, StepRunStatus } from './StepNode'
+import type { StepNodeData } from './StepNode'
 import type { TriggerNodeData } from './TriggerNode'
 
 export type JobStatus = JobRunStatusValue
@@ -19,11 +20,12 @@ export interface JobRunStatus {
 
 type FlowEdge = Edge & { pathOptions?: { borderRadius?: number } }
 
-function frameNodeId(jobId: string): string {
+export function frameNodeId(jobId: string): string {
   return `job-${jobId}`
 }
 
-function stepNodeId(jobId: string, index: number): string {
+/** Exported so callers (e.g. the run-detail page) can build a stepRunData map keyed the same way. */
+export function stepNodeId(jobId: string, index: number): string {
   return `step-${jobId}::${index}`
 }
 
@@ -54,7 +56,7 @@ export function buildAutomationGraph(
   layout: AutomationLayout,
   jobStatuses?: Record<string, JobStatus>,
   jobRunData?: Record<string, JobRunStatus>,
-  stepStatuses?: Record<string, StepRunStatus>,
+  stepRunData?: Record<string, WorkflowStepRunDto>,
 ): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = []
   const edges: FlowEdge[] = []
@@ -89,7 +91,7 @@ export function buildAutomationGraph(
       const relPos = frameLayout.stepPositions[index] ?? { x: 0, y: 0 }
       const stepData: StepNodeData = {
         step,
-        status: stepStatuses?.[stepNodeId(job.jobId, index)],
+        runData: stepRunData?.[stepNodeId(job.jobId, index)],
       }
       nodes.push({
         id: stepNodeId(job.jobId, index),

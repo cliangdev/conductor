@@ -1,14 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import type { WorkflowStep, WorkflowTrigger } from '@/lib/workflowAutomation'
 import type { JobFrameNodeData } from '@/components/workflow/automation/JobFrameNode'
 
+vi.mock('@/lib/workflowStepSchema', () => ({
+  useWorkflowStepSchema: () => undefined,
+}))
+
+vi.mock('@/components/workflow/WorkflowLogStream', () => ({
+  WorkflowLogStream: () => <div data-testid="log-stream" />,
+}))
+
 // Mock @xyflow/react — expose nodes/edges via data-testid so we can assert on the graph shape
-// without mounting real xyflow (which needs ResizeObserver etc. jsdom doesn't provide).
+// without mounting real xyflow (which needs ResizeObserver etc. jsdom doesn't provide). Each node
+// div is clickable, invoking the same onNodeClick prop the diagram passes to the real <ReactFlow>,
+// so click-to-inspect wiring is covered without needing real xyflow interaction internals.
 vi.mock('@xyflow/react', () => ({
-  ReactFlow: ({ nodes, edges }: {
+  ReactFlow: ({ nodes, edges, onNodeClick }: {
     nodes: { id: string; type?: string; parentId?: string; data: Record<string, unknown> }[]
     edges: { id: string; label?: string; sourceHandle?: string }[]
+    onNodeClick?: (event: unknown, node: unknown) => void
   }) => (
     <div data-testid="react-flow">
       {nodes.map(n => {
@@ -16,7 +27,13 @@ vi.mock('@xyflow/react', () => ({
         const trigger = n.data.trigger as WorkflowTrigger | undefined
         const frame = n.type === 'jobFrame' ? (n.data as unknown as JobFrameNodeData) : undefined
         return (
-          <div key={n.id} data-testid={`node-${n.id}`} data-type={n.type} data-parent={n.parentId ?? ''}>
+          <div
+            key={n.id}
+            data-testid={`node-${n.id}`}
+            data-type={n.type}
+            data-parent={n.parentId ?? ''}
+            onClick={() => onNodeClick?.({}, n)}
+          >
             {step && <span data-testid={`node-stepkind-${n.id}`}>{step.kind}</span>}
             {step && <span data-testid={`node-stepname-${n.id}`}>{step.name ?? step.stepId ?? ''}</span>}
             {!!n.data.status && <span data-testid={`node-status-${n.id}`}>{String(n.data.status)}</span>}
@@ -308,5 +325,27 @@ describe('WorkflowDiagram', () => {
   it('uses jobRunData status over jobStatuses when both are provided', () => {
     render(<WorkflowDiagram yaml={LOOP_YAML} jobStatuses={{ poll: 'PENDING' }} jobRunData={{ poll: { status: 'LOOP_EXHAUSTED' } }} />)
     expect(screen.getByTestId('node-status-job-poll')).toHaveTextContent('LOOP_EXHAUSTED')
+  })
+
+  // ── Click-to-inspect ─────────────────────────────────────────────────────────
+
+  it('opens the step detail panel when a step node is clicked', () => {
+    render(<WorkflowDiagram yaml={SIMPLE_YAML} />)
+    expect(screen.queryByText('New issue submitted')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('node-step-notify::0'))
+    expect(screen.getByText('Action')).toBeInTheDocument()
+  })
+
+  it('opens the panel for a condition step node', () => {
+    render(<WorkflowDiagram yaml={CONDITION_YAML} />)
+    fireEvent.click(screen.getByTestId('node-step-check_status::1'))
+    expect(screen.getByText('Condition')).toBeInTheDocument()
+  })
+
+  it('does not open the panel when a trigger or job frame node is clicked', () => {
+    render(<WorkflowDiagram yaml={SIMPLE_YAML} />)
+    fireEvent.click(screen.getByTestId('node-trigger-work_item_status_changed'))
+    fireEvent.click(screen.getByTestId('node-job-notify'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

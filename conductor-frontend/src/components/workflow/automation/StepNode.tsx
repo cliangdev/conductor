@@ -7,13 +7,17 @@ import { statusHue } from '@/lib/workflows'
 import { WorkflowStepTypeIcon, stepTypeAvatarColor } from '@/components/workflow/WorkflowStepTypeIcon'
 import { AVATAR_COLOR_CLASSES } from '@/components/agents/AgentAvatar'
 import type { WorkflowStep } from '@/lib/workflowAutomation'
+import type { WorkflowStepRunDto } from '@/types/workflow'
 import { STEP_W, STEP_H, CONDITION_W, CONDITION_H } from './dimensions'
 
-export type StepRunStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED'
+export type StepRunStatus = WorkflowStepRunDto['status']
 
 export interface StepNodeData {
   step: WorkflowStep
-  status?: StepRunStatus
+  /** Full run data when this diagram is rendering a run's live/historical state — carried on the
+   * node so a click can open the detail panel with everything (status/log/outputs) already in hand,
+   * no separate lookup needed. */
+  runData?: WorkflowStepRunDto
   [key: string]: unknown
 }
 
@@ -44,11 +48,11 @@ function stepSubtitle(step: WorkflowStep): string | undefined {
 }
 
 export function StepNode({ data }: { data: StepNodeData }) {
-  const { step, status } = data
+  const { step, runData } = data
   const title = step.name ?? step.stepId ?? step.kind
   const subtitle = stepSubtitle(step)
   const iconColor = AVATAR_COLOR_CLASSES[stepTypeAvatarColor(step.kind)]
-  const ring = status ? statusHueClasses(statusHue(status)) : undefined
+  const ring = runData ? statusHueClasses(statusHue(runData.status)) : undefined
 
   return (
     <div
@@ -72,9 +76,9 @@ export function StepNode({ data }: { data: StepNodeData }) {
 }
 
 export function ConditionStepNode({ data }: { data: StepNodeData }) {
-  const { step, status } = data
+  const { step, runData } = data
   const title = step.name ?? step.stepId ?? 'condition'
-  const style = statusHueClasses(status ? statusHue(status) : 'gray')
+  const style = statusHueClasses(runData ? statusHue(runData.status) : 'gray')
 
   return (
     <div className="relative flex items-center justify-center" style={{ width: CONDITION_W, height: CONDITION_H }}>
