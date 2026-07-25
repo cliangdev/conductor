@@ -313,7 +313,7 @@
     },
     {
       "name": "delete_agent",
-      "description": "Delete a DRAFT AI Agent. An ACTIVE agent is rejected — set it to DRAFT with update_agent first.",
+      "description": "Delete a DRAFT AI Agent. An ACTIVE agent is rejected — set it to DRAFT with update_agent first. Also rejected if a workflow still references this agent.",
       "category": "discovery",
       "requiredParams": ["agentId"]
     },

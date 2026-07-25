@@ -1,5 +1,6 @@
 package com.conductor.exception;
 
+import com.conductor.agent.AgentReferencedByWorkflowsException;
 import com.conductor.knowledge.page.FrontmatterException;
 import com.conductor.knowledge.page.KnowledgeConflictException;
 import jakarta.persistence.EntityNotFoundException;
@@ -110,6 +111,23 @@ public class GlobalExceptionHandler {
                     m.put("path", c.path());
                     m.put("currentVersion", c.currentVersion());
                     m.put("currentContent", c.currentContent());
+                    return m;
+                })
+                .collect(Collectors.toList());
+        problem.setProperty("conflicts", conflicts);
+        return problem;
+    }
+
+    @ExceptionHandler(AgentReferencedByWorkflowsException.class)
+    public ProblemDetail handleAgentReferencedByWorkflowsException(AgentReferencedByWorkflowsException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.CONFLICT);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        List<Map<String, Object>> conflicts = e.references().stream()
+                .map(r -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("workflowId", r.workflowId());
+                    m.put("workflowName", r.workflowName());
                     return m;
                 })
                 .collect(Collectors.toList());

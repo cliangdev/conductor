@@ -2,14 +2,20 @@ package com.conductor.agent;
 
 import com.conductor.agent.provider.ModelProviderRegistry;
 import com.conductor.agent.tool.AgentToolRegistry;
+import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
+import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.workflow.model.StepSpec;
+import com.conductor.workflow.model.WorkflowYamlException;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -29,15 +35,21 @@ public class AgentService {
     private final ModelProviderRegistry providerRegistry;
     private final AgentToolRegistry toolRegistry;
     private final ObjectMapper objectMapper;
+    private final WorkflowDefinitionRepository workflowRepository;
+    private final WorkflowYamlParser workflowYamlParser;
 
     public AgentService(AgentRepository repository,
                         ModelProviderRegistry providerRegistry,
                         AgentToolRegistry toolRegistry,
-                        ObjectMapper objectMapper) {
+                        ObjectMapper objectMapper,
+                        WorkflowDefinitionRepository workflowRepository,
+                        WorkflowYamlParser workflowYamlParser) {
         this.repository = repository;
         this.providerRegistry = providerRegistry;
         this.toolRegistry = toolRegistry;
         this.objectMapper = objectMapper;
+        this.workflowRepository = workflowRepository;
+        this.workflowYamlParser = workflowYamlParser;
     }
 
     /** A model provider available to agents: its id and the model applied when none is pinned. */
@@ -173,7 +185,48 @@ public class AgentService {
             throw new BusinessException("Cannot delete an agent in state " + agent.getState()
                     + ". Set the agent to Draft first, then delete it.");
         }
+        List<AgentReferencedByWorkflowsException.Reference> references = referencingWorkflows(projectId, agent);
+        if (!references.isEmpty()) {
+            throw new AgentReferencedByWorkflowsException(references);
+        }
         repository.delete(agent);
+    }
+
+    /**
+     * Automation workflows reference an agent by slug-or-id from an {@code agent} step's
+     * {@code with.agent} (see {@code AgentExecutionService#resolveDefinition}'s slug-then-id lookup)
+     * — there's no DB foreign key, so this parses each candidate workflow's YAML rather than a
+     * repository query. Lifecycle (statechart) workflows have no steps and are skipped, as are rows
+     * whose YAML fails to parse (already-broken and none of this delete's business to report).
+     */
+    private List<AgentReferencedByWorkflowsException.Reference> referencingWorkflows(String projectId, Agent agent) {
+        List<AgentReferencedByWorkflowsException.Reference> references = new ArrayList<>();
+        for (WorkflowDefinition def : workflowRepository.findByProjectId(projectId)) {
+            if (def.isLifecycle() || def.getYaml() == null) {
+                continue;
+            }
+            boolean referenced;
+            try {
+                referenced = workflowYamlParser.parse(def.getYaml()).jobs().values().stream()
+                        .flatMap(job -> job.steps().stream())
+                        .anyMatch(step -> "agent".equals(step.type()) && referencesAgent(step, agent));
+            } catch (WorkflowYamlException e) {
+                continue;
+            }
+            if (referenced) {
+                references.add(new AgentReferencedByWorkflowsException.Reference(def.getId(), def.getName()));
+            }
+        }
+        return references;
+    }
+
+    private boolean referencesAgent(StepSpec step, Agent agent) {
+        Object ref = step.with().get("agent");
+        if (ref == null) {
+            return false;
+        }
+        String value = ref.toString();
+        return value.equals(agent.getSlug()) || value.equals(agent.getId());
     }
 
     // ---- helpers ----

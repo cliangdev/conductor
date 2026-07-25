@@ -35,8 +35,10 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -622,6 +624,42 @@ class AgentControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"state\":\"DRAFT\"}"))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- deleteAgent ----
+
+    @Test
+    void deleteAgent_happyPath_returns204() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+
+        mockMvc.perform(delete("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isNoContent());
+
+        verify(agentService).delete(PROJECT_ID, "agent-1");
+    }
+
+    @Test
+    void deleteAgent_nonAdmin_returns403() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(delete("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void deleteAgent_referencedByWorkflow_returns409WithConflictsList() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        doThrow(new com.conductor.agent.AgentReferencedByWorkflowsException(
+                List.of(new com.conductor.agent.AgentReferencedByWorkflowsException.Reference("wf-1", "PR Review"))))
+                .when(agentService).delete(PROJECT_ID, "agent-1");
+
+        mockMvc.perform(delete("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.conflicts[0].workflowId").value("wf-1"))
+                .andExpect(jsonPath("$.conflicts[0].workflowName").value("PR Review"));
     }
 
     /** Minimal persisted agent whose null config/toolIds let the response map without the mocked ObjectMapper. */

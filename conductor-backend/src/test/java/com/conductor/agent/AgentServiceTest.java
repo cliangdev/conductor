@@ -4,7 +4,10 @@ import com.conductor.agent.provider.ChatModelProvider;
 import com.conductor.agent.provider.ModelProviderRegistry;
 import com.conductor.agent.tool.AgentTool;
 import com.conductor.agent.tool.AgentToolRegistry;
+import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.BusinessException;
+import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,6 +34,7 @@ class AgentServiceTest {
     private AgentRepository repository;
     private ModelProviderRegistry providerRegistry;
     private AgentToolRegistry toolRegistry;
+    private WorkflowDefinitionRepository workflowRepository;
     private AgentService service;
 
     @BeforeEach
@@ -38,8 +42,11 @@ class AgentServiceTest {
         repository = mock(AgentRepository.class);
         providerRegistry = mock(ModelProviderRegistry.class);
         toolRegistry = mock(AgentToolRegistry.class);
-        service = new AgentService(repository, providerRegistry, toolRegistry, new ObjectMapper());
+        workflowRepository = mock(WorkflowDefinitionRepository.class);
+        service = new AgentService(repository, providerRegistry, toolRegistry, new ObjectMapper(),
+                workflowRepository, new WorkflowYamlParser());
         when(repository.save(any(Agent.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(workflowRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of());
     }
 
     private Agent existingAgent() {
@@ -194,6 +201,83 @@ class AgentServiceTest {
     void delete_draftAgent_removesIt() {
         Agent agent = existingAgent();
         agent.setState("DRAFT");
+
+        service.delete(PROJECT_ID, AGENT_ID);
+
+        Mockito.verify(repository).delete(agent);
+    }
+
+    private static WorkflowDefinition workflowWithYaml(String id, String name, String yaml) {
+        WorkflowDefinition def = new WorkflowDefinition();
+        def.setId(id);
+        def.setName(name);
+        def.setYaml(yaml);
+        return def;
+    }
+
+    @Test
+    void delete_draftAgentReferencedBySlugInAgentStep_isRejectedNamingTheWorkflow() {
+        Agent agent = existingAgent();
+        agent.setState("DRAFT");
+        String yaml = """
+                on:
+                  webhook: {}
+                jobs:
+                  review:
+                    steps:
+                      - type: agent
+                        with:
+                          agent: marketer
+                          task: hi
+                """;
+        when(workflowRepository.findByProjectId(PROJECT_ID))
+                .thenReturn(List.of(workflowWithYaml("wf-1", "PR Review", yaml)));
+
+        assertThatThrownBy(() -> service.delete(PROJECT_ID, AGENT_ID))
+                .isInstanceOf(AgentReferencedByWorkflowsException.class)
+                .hasMessageContaining("PR Review");
+        Mockito.verify(repository, Mockito.never()).delete(any(Agent.class));
+    }
+
+    @Test
+    void delete_draftAgentReferencedByIdInAgentStep_isRejected() {
+        Agent agent = existingAgent();
+        agent.setState("DRAFT");
+        String yaml = """
+                on:
+                  webhook: {}
+                jobs:
+                  review:
+                    steps:
+                      - type: agent
+                        with:
+                          agent: agent-1
+                          task: hi
+                """;
+        when(workflowRepository.findByProjectId(PROJECT_ID))
+                .thenReturn(List.of(workflowWithYaml("wf-1", "PR Review", yaml)));
+
+        assertThatThrownBy(() -> service.delete(PROJECT_ID, AGENT_ID))
+                .isInstanceOf(AgentReferencedByWorkflowsException.class);
+    }
+
+    @Test
+    void delete_draftAgentUnreferenced_removesItDespiteOtherWorkflows() {
+        Agent agent = existingAgent();
+        agent.setState("DRAFT");
+        String yaml = """
+                on:
+                  webhook: {}
+                jobs:
+                  review:
+                    steps:
+                      - type: agent
+                        with:
+                          agent: someone-else
+                          task: hi
+                """;
+        when(workflowRepository.findByProjectId(PROJECT_ID))
+                .thenReturn(List.of(workflowWithYaml("wf-1", "Other Workflow", yaml)));
 
         service.delete(PROJECT_ID, AGENT_ID);
 

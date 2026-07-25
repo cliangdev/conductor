@@ -286,7 +286,7 @@ const TOOLS = [
   },
   {
     name: 'delete_agent',
-    description: 'Delete an AI Agent. Only a DRAFT agent can be deleted — the backend rejects deleting an ACTIVE one, so set it to Draft first with update_agent ({state: "DRAFT"}). Call list_agents after to verify it is gone.',
+    description: 'Delete an AI Agent. Only a DRAFT agent can be deleted — the backend rejects deleting an ACTIVE one, so set it to Draft first with update_agent ({state: "DRAFT"}). Also rejected if any automation workflow still references this agent from an agent step — the error names the referencing workflows; repoint or remove those steps first. Call list_agents after to verify it is gone.',
     inputSchema: {
       type: 'object',
       properties: {
