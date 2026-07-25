@@ -5,7 +5,8 @@ import cronstrue from 'cronstrue'
 import { cn } from '@/lib/utils'
 import { WorkflowTriggerTypeIcon, triggerTypeAvatarColor } from '@/components/workflow/WorkflowStepTypeIcon'
 import { AVATAR_COLOR_CLASSES } from '@/components/agents/AgentAvatar'
-import { isManualTrigger, type WorkflowTrigger, type TriggerKind } from '@/lib/workflowAutomation'
+import { type WorkflowTrigger, type TriggerKind } from '@/lib/workflowAutomation'
+import { triggerLabel as sharedTriggerLabel } from '@/components/workflow/TriggerBadges'
 import { TRIGGER_W, TRIGGER_H } from './dimensions'
 
 const TRIGGER_LABEL: Record<TriggerKind, string> = {
@@ -17,8 +18,7 @@ const TRIGGER_LABEL: Record<TriggerKind, string> = {
 }
 
 function triggerLabel(trigger: WorkflowTrigger): string {
-  if (trigger.kind === 'workflow_dispatch' && !isManualTrigger(trigger)) return 'System-triggered'
-  return TRIGGER_LABEL[trigger.kind]
+  return sharedTriggerLabel(trigger, TRIGGER_LABEL, 'System-triggered')
 }
 
 function triggerSubtitle(trigger: WorkflowTrigger): string | undefined {

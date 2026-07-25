@@ -17,10 +17,19 @@ const TRIGGER_LABEL: Record<TriggerKind, string> = {
   schedule: 'schedule',
 };
 
-/** Lowercase trigger label, shared with the workflow detail header's breadcrumb description. */
-export function triggerLabel(trigger: WorkflowTrigger): string {
-  if (trigger.kind === 'workflow_dispatch' && !isManualTrigger(trigger)) return 'system-triggered';
-  return TRIGGER_LABEL[trigger.kind];
+/**
+ * Trigger label, shared with the workflow detail header's breadcrumb description and the
+ * automation canvas's TriggerNode. Defaults to this file's lowercase prose labels; TriggerNode
+ * passes its own Title Case map — only the `isManualTrigger` branching logic is actually shared,
+ * since the two surfaces intentionally use different copy (inline prose vs. a canvas node title).
+ */
+export function triggerLabel(
+  trigger: WorkflowTrigger,
+  labels: Record<TriggerKind, string> = TRIGGER_LABEL,
+  systemTriggeredLabel = 'system-triggered',
+): string {
+  if (trigger.kind === 'workflow_dispatch' && !isManualTrigger(trigger)) return systemTriggeredLabel;
+  return labels[trigger.kind];
 }
 
 export function TriggerBadges({ yaml }: TriggerBadgesProps) {

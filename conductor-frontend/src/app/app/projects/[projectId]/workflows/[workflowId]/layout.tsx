@@ -24,7 +24,7 @@ import { timeAgo } from '@/lib/format'
 
 function parseTriggers(yaml: string): string[] {
   try {
-    return parseWorkflowYaml(yaml).triggers.map(triggerLabel)
+    return parseWorkflowYaml(yaml).triggers.map((t) => triggerLabel(t))
   } catch {
     return []
   }
