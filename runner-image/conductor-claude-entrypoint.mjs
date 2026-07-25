@@ -272,11 +272,18 @@ function writeMcpConfig(env) {
   if (!env.CONDUCTOR_API_KEY) {
     throw new ConfigError('CONDUCTOR_API_KEY is required when CONDUCTOR_MCP_ENABLED is true');
   }
+  // CONDUCTOR_TOOLS_VERSION is baked into the dedicated claude-runner image (see
+  // Dockerfile.claude-runner) so its pre-warmed npx cache and this invocation agree on the exact
+  // same package spec — no network resolution at job start, no drift from what was pinned at
+  // image-build time. Absent on the general-purpose image, which always resolves latest.
+  const pkgSpec = env.CONDUCTOR_TOOLS_VERSION
+    ? `@cliangdev/conductor@${env.CONDUCTOR_TOOLS_VERSION}`
+    : '@cliangdev/conductor';
   const config = {
     mcpServers: {
       conductor: {
         command: 'npx',
-        args: ['-y', '@cliangdev/conductor', 'mcp'],
+        args: ['-y', pkgSpec, 'mcp'],
         env: {
           CONDUCTOR_API_KEY: env.CONDUCTOR_API_KEY,
           CONDUCTOR_API_URL: env.CONDUCTOR_API_URL,
@@ -575,12 +582,17 @@ function translateEvent(event) {
 }
 
 /** Cheap, non-blocking start-line text — never shells out (a `claude --version` subprocess costs
- * ~300-400ms, too slow for "first line out"). Only uses an env var if one happens to be set. */
+ * ~300-400ms, too slow for "first line out"). Only uses env vars that happen to be set, so every
+ * run's own log states which pinned versions it's running without needing to exec into the
+ * container or dig through image-build history. */
 function buildStartLine(env) {
-  if (env.CONDUCTOR_CLAUDE_VERSION) {
-    return `→ container started (claude ${env.CONDUCTOR_CLAUDE_VERSION})`;
+  const versions = [];
+  if (env.CONDUCTOR_CLAUDE_VERSION) versions.push(`claude ${env.CONDUCTOR_CLAUDE_VERSION}`);
+  if (env.CONDUCTOR_TOOLS_VERSION) versions.push(`conductor-tools ${env.CONDUCTOR_TOOLS_VERSION}`);
+  if (versions.length === 0) {
+    return '→ container started, launching claude';
   }
-  return '→ container started, launching claude';
+  return `→ container started (${versions.join(', ')})`;
 }
 
 /**

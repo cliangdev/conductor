@@ -314,6 +314,39 @@ process.exit(0);`,
   );
 }
 
+async function testMcpConfigUsesPinnedToolsVersionWhenSet() {
+  console.log('test: CONDUCTOR_TOOLS_VERSION pins the npx spec and appears in the start line');
+  const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
+  writeFakeClaude(
+    binDir,
+    `console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'OK'}));
+process.exit(0);`,
+  );
+  const { server, calls, port } = await startFakeBackend();
+  const env = baseEnv({
+    binDir,
+    port,
+    extra: { CONDUCTOR_MCP_ENABLED: 'true', CONDUCTOR_API_KEY: 'proj-api-key', CONDUCTOR_TOOLS_VERSION: '0.11.4' },
+  });
+  const { code } = await runEntrypoint(env);
+  server.close();
+  rmSync(binDir, { recursive: true, force: true });
+
+  const allLoggedLines = calls.logChunks.flatMap((c) => c.lines || []);
+  const configPath = path.join(env.CONDUCTOR_RUNNER_ROOT, 'mcp-config.json');
+  const config = JSON.parse(readFileSync(configPath, 'utf8'));
+
+  assert(code === 0, `exit code is 0 (got ${code})`);
+  assert(
+    config?.mcpServers?.conductor?.args?.includes('@cliangdev/conductor@0.11.4'),
+    'mcp-config.json pins the exact CONDUCTOR_TOOLS_VERSION spec',
+  );
+  assert(
+    allLoggedLines.some((l) => l.includes('conductor-tools 0.11.4')),
+    'the start line reports the pinned conductor-tools version',
+  );
+}
+
 /** Serializes a stream-json event to a `console.log(JSON.stringify(...))` source line for a fake
  * claude stub, without manual string-escaping — safe for arbitrary embedded values. */
 function logLine(event) {
@@ -601,6 +634,7 @@ async function main() {
   await testAuthHygieneAndSecretScrubbing();
   await testUnsafeInputFilenameRejected();
   await testMcpConfigWritten();
+  await testMcpConfigUsesPinnedToolsVersionWhenSet();
   await testMcpEnabledWithoutApiKeyFails();
   await testStreamJsonTranslation();
   await testWorkerJobIdInLogChunkBody();

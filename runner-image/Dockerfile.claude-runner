@@ -34,26 +34,41 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | g
     && rm -rf /var/lib/apt/lists/*
 
 # Claude CLI pinned (same version as ../Dockerfile — bump deliberately, verify against the exit
-# taxonomy in conductor-claude-entrypoint.mjs when upgrading). Installed with npm's default
-# (ephemeral) cache, then cleaned — that cache would otherwise sit in the image holding tarballs
-# for claude-code and its deps that are already extracted into node_modules, pure waste.
-RUN npm install -g @anthropic-ai/claude-code@2.1.206 @cliangdev/conductor \
+# taxonomy in conductor-claude-entrypoint.mjs when upgrading). @cliangdev/conductor (the CLI/MCP
+# server) is pinned too, via this ARG — bumping it is a deliberate, reviewable Dockerfile diff
+# instead of an invisible side effect of whenever this image happens to rebuild (an unpinned
+# `npm install -g @cliangdev/conductor` silently resolves to whatever's "latest" on npm at build
+# time, which a BYO runtime target can then run for weeks past whatever bugfix npm has since
+# published). CONDUCTOR_TOOLS_VERSION is read by conductor-claude-entrypoint.mjs to pin its own `npx` MCP
+# server invocation to this exact version (see writeMcpConfig/buildStartLine) and to log it at
+# container start. Installed with npm's default (ephemeral) cache, then cleaned — that cache would
+# otherwise sit in the image holding tarballs for claude-code and its deps that are already
+# extracted into node_modules, pure waste.
+ARG CONDUCTOR_TOOLS_VERSION=0.11.4
+ENV CONDUCTOR_TOOLS_VERSION=${CONDUCTOR_TOOLS_VERSION}
+RUN npm install -g @anthropic-ai/claude-code@2.1.206 @cliangdev/conductor@${CONDUCTOR_TOOLS_VERSION} \
     && npm cache clean --force
 
 # @cliangdev/conductor (the MCP server) needs a *second*, separate warm-up so the entrypoint's
-# `npx -y @cliangdev/conductor mcp` resolves with no network call at job start: npx resolves a
-# scoped package spec through its own resolution cache, which a plain global install never
-# populates — it's only written the first time npx itself runs that exact spec. NPM_CONFIG_CACHE
-# is scoped to just this step (not the install above) so the persisted cache holds only what npx
-# needs for this one spec, not the entire install's download cache.
+# `npx -y @cliangdev/conductor@${CONDUCTOR_TOOLS_VERSION} mcp` resolves with no network call at job
+# start: npx resolves a scoped package spec through its own resolution cache, which a plain global
+# install never populates — it's only written the first time npx itself runs that exact spec.
+# NPM_CONFIG_CACHE is scoped to just this step (not the install above) so the persisted cache holds
+# only what npx needs for this one spec, not the entire install's download cache.
 ENV NPM_CONFIG_CACHE=/opt/npm-cache
 RUN mkdir -p /opt/npm-cache \
-    && npx -y @cliangdev/conductor --version \
+    && npx -y @cliangdev/conductor@${CONDUCTOR_TOOLS_VERSION} --version \
     && chmod -R a+rwX /opt/npm-cache
 
-# The pinned CLI must not self-update at container start: that would reintroduce version drift and
+# The pinned CLIs must not self-update at container start: that would reintroduce version drift and
 # a startup-time network dependency this image is specifically built to avoid.
 ENV DISABLE_AUTOUPDATER=1
+
+# Declares this image honors the Conductor runner contract (conductor-claude-entrypoint's
+# log/exit-code/callback protocol — see docs/workflows.md#runner-image). Checked by
+# GcpConnector.verifyImage() via the Docker Registry v2 manifest/config-blob API when a BYO Cloud
+# Run runtime target provisions; bump the value on a breaking contract change.
+LABEL dev.conductor.runner.protocol="1"
 
 # Create non-root user. node:22-slim already ships a `node` user, but we create a dedicated
 # `runner` user to match ../Dockerfile's contract (uid/gid-agnostic, same username either image).

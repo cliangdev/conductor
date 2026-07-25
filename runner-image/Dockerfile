@@ -44,6 +44,14 @@ RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /
 # conductor-claude-entrypoint.mjs when upgrading)
 RUN npm install -g @anthropic-ai/claude-code@2.1.206
 
+# Declares this image honors the Conductor runner contract (conductor-claude-entrypoint's
+# log/exit-code/callback protocol — see docs/workflows.md#runner-image). Checked by
+# GcpConnector.verifyImage() via the Docker Registry v2 manifest/config-blob API when a BYO Cloud
+# Run runtime target provisions; bump the value on a breaking contract change. This image never
+# bakes in @cliangdev/conductor (npx fetches it fresh at container start), so it has no matching
+# CONDUCTOR_TOOLS_VERSION/conductor.tools.version marker — only the dedicated claude-runner image does.
+LABEL dev.conductor.runner.protocol="1"
+
 # Create non-root user
 RUN useradd -m -s /bin/bash runner
 
