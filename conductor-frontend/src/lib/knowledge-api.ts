@@ -92,6 +92,26 @@ export function enableKnowledge(projectId: string, token: string): Promise<{ kno
   ) as Promise<{ knowledgeEnabled: boolean }>
 }
 
+/** Admin-only: how long a lane accumulates sources before KnowledgeIngestScheduler dispatches it. */
+export function getKnowledgeIngestIntervalMinutes(projectId: string, token: string): Promise<number> {
+  return apiGet<{ knowledgeIngestIntervalMinutes: number }>(`/api/v1/projects/${projectId}/settings`, token).then(
+    (settings) => settings.knowledgeIngestIntervalMinutes,
+  )
+}
+
+/** Admin-only: sets how long a lane accumulates sources before dispatch (see docs/knowledge.md). */
+export function updateKnowledgeIngestIntervalMinutes(
+  projectId: string,
+  minutes: number,
+  token: string,
+): Promise<{ knowledgeIngestIntervalMinutes: number }> {
+  return apiPatch<{ knowledgeIngestIntervalMinutes: number }>(
+    `/api/v1/projects/${projectId}/settings`,
+    { knowledgeIngestIntervalMinutes: minutes },
+    token,
+  ) as Promise<{ knowledgeIngestIntervalMinutes: number }>
+}
+
 /** ADMIN-only ops recovery: resets every DEAD source in the project back to PENDING for the scheduler
  *  to re-claim. Returns the number of sources reset. */
 export function retryDeadKnowledgeSources(projectId: string, token: string): Promise<{ retried: number }> {

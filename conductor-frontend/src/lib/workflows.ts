@@ -10,7 +10,7 @@
 import pluralize from 'pluralize'
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost, apiPut } from '@/lib/api'
-import { parseWorkflowYaml } from '@/lib/workflowAutomation'
+import { parseWorkflowYaml, isManualTrigger } from '@/lib/workflowAutomation'
 import type {
   WorkflowView,
   WorkflowStatusCategory,
@@ -303,11 +303,7 @@ export function allowsManualDispatch(yaml: string | null | undefined): boolean {
   try {
     const { triggers } = parseWorkflowYaml(yaml)
     const dispatch = triggers.find(t => t.kind === 'workflow_dispatch')
-    if (!dispatch) return false
-    if ('manual' in dispatch.raw) {
-      return dispatch.raw['manual'] !== false
-    }
-    return true
+    return dispatch ? isManualTrigger(dispatch) : false
   } catch {
     return true
   }

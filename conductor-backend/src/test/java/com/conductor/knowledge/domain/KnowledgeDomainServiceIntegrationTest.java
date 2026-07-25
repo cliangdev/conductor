@@ -309,6 +309,7 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         assertThat(agent.getToolIds()).contains("knowledge:list_knowledge_domains")
                 .contains("knowledge:suggest_knowledge_domain");
         assertThat(agent.getConfigJson()).contains("\"maxToolTurns\"").contains("40");
+        assertThat(agent.getConfigJson()).contains("\"runtime\"").contains("claude-code");
         assertThat(agent.getAvatarEmoji()).isNotBlank();
         assertThat(agent.getAvatarColor()).isNotBlank();
         assertThat(DefaultAgentSlugs.isDefault("knowledge-engineering")).isFalse();

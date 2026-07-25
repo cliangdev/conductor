@@ -74,7 +74,15 @@ class KnowledgeIngestSchedulerIntegrationTest extends AbstractNoneWebIntegration
         scheduler.staleProcessingMinutes = originalStaleProcessingMinutes;
     }
 
+    /** Zero-minute ingest interval -- these tests exercise dispatch/sweep logic, not cadence, so a
+     *  source submitted through the real ingestion path (see {@link #submitPending}) must still read as
+     *  immediately due, same as before {@code knowledgeIngestIntervalMinutes} existed. Tests that
+     *  actually exercise cadence use {@link #newProject(boolean, int)} directly. */
     private String newProject(boolean knowledgeEnabled) {
+        return newProject(knowledgeEnabled, 0);
+    }
+
+    private String newProject(boolean knowledgeEnabled, int knowledgeIngestIntervalMinutes) {
         User user = new User();
         user.setFirebaseUid("test-uid-" + UUID.randomUUID());
         user.setEmail("test-" + UUID.randomUUID() + "@example.com");
@@ -89,6 +97,7 @@ class KnowledgeIngestSchedulerIntegrationTest extends AbstractNoneWebIntegration
         ProjectSettings settings = new ProjectSettings();
         settings.setProjectId(projectId);
         settings.setKnowledgeEnabled(knowledgeEnabled);
+        settings.setKnowledgeIngestIntervalMinutes(knowledgeIngestIntervalMinutes);
         projectSettingsRepository.save(settings);
 
         return projectId;
@@ -354,6 +363,31 @@ class KnowledgeIngestSchedulerIntegrationTest extends AbstractNoneWebIntegration
             assertThat(source.getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
             assertThat(source.getAttempts()).isEqualTo(1);
         });
+    }
+
+    @Test
+    void sourceIngestedIntoIdleLane_stampedWithProjectIntervalAndNotDispatchedImmediately() {
+        String projectId = newProject(true, 60);
+        provisioner.provision(projectId);
+
+        String id = submitPending(projectId, "note://hourly");
+
+        scheduler.poll();
+
+        KnowledgeSource source = reload(id);
+        assertThat(source.getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
+        assertThat(source.getNextAttemptAt()).isAfter(OffsetDateTime.now().plusMinutes(30));
+    }
+
+    @Test
+    void sourceIngestedIntoAccumulatingLane_ridesAlongTheEarlierScheduledStamp() {
+        String projectId = newProject(true, 60);
+        provisioner.provision(projectId);
+
+        String id1 = submitPending(projectId, "note://hourly-1");
+        String id2 = submitPending(projectId, "note://hourly-2");
+
+        assertThat(reload(id2).getNextAttemptAt()).isEqualTo(reload(id1).getNextAttemptAt());
     }
 
     private void markProcessing(String sourceId, String runId, int attempts) {

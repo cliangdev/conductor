@@ -72,6 +72,11 @@ default `false`) — nothing is ingested until it's turned on. As of this phase 
 frontend settings page for it; toggle it via `PATCH /api/v1/projects/{projectId}/settings` with
 `{"knowledgeEnabled": true}`.
 
+How long a lane accumulates before it dispatches is `project_settings.knowledge_ingest_interval_minutes`
+(default **60**, i.e. hourly) — same endpoint, `{"knowledgeIngestIntervalMinutes": 15}` (1–1440 minutes).
+Configurable from the frontend at **Manage → Ingest cadence** (`knowledge/manage`, admin-only; see
+[Frontend surfaces](#frontend-surfaces)).
+
 | Producer | `sourceType` | Trigger |
 |---|---|---|
 | REST `POST /knowledge/sources` | caller-supplied | Any authenticated caller (user, project API key, or a run-scoped workflow MCP token) submits directly. |
@@ -110,6 +115,15 @@ for the generalist/unclassified lane; the concurrency unit is `(project, lane)`,
    [`docs/workflows.md`](workflows.md#outputs-and-interpolation) — `event.FIELD` resolves any trigger's
    stored payload). Multiple lanes can dispatch in the same tick — an in-flight engineering-domain batch
    never blocks a product-domain batch.
+
+   The 30s tick is only the scheduler's *poll* granularity, not how soon a lane actually dispatches:
+   `KnowledgeIngestionService` stamps a source's `nextAttemptAt` at ingest time based on the project's
+   `knowledgeIngestIntervalMinutes` (default 60). A source landing in an otherwise-idle lane (no other
+   `PENDING`/`PROCESSING` source there yet) is stamped `now + interval` rather than left immediately due
+   — that's what turns ingestion into "accumulate for up to the interval, then dispatch as one batch"
+   instead of firing on the very next tick. A source arriving in a lane that's already accumulating
+   inherits that same scheduled time instead of getting its own, so it rides along in the same batch. See
+   [Producers](#producers) for how to configure the interval.
 2. **Per-lane busy check, project-wide bootstrap block.** A lane with any `PROCESSING` source is treated
    as busy and skipped this tick without affecting any other lane — best-effort per-lane serialization,
    not a hard guarantee: the busy-check and the claim are separate queries (a TOCTOU race is possible
@@ -417,10 +431,11 @@ Filed / Needs attention* (never "dead"), *filing rules* (schema pages), *Assign 
   need attention), and **Runs** (librarian run history). When sources are stuck, the Inbox shows an
   attention banner pairing the diagnosis with its fixes — **Open AI Providers** and an admin-only
   **Retry n sources** (`POST /sources/retry`).
-- **Manage** (`knowledge/manage`, admin-only). The registry: SUGGESTED areas as approval cards
-  (Approve seeds the skeleton schema, Dismiss declines), then ACTIVE areas with routing patterns,
-  owning agent ("Librarian" fallback), waiting counts, **Assign specialist** where unowned, and a
-  **Filing rules** link to each area's schema page.
+- **Manage** (`knowledge/manage`, admin-only). An **Ingest cadence** setting (15 min / hourly /
+  daily presets, backed by `knowledgeIngestIntervalMinutes`) up top, then the area registry:
+  SUGGESTED areas as approval cards (Approve seeds the skeleton schema, Dismiss declines), then
+  ACTIVE areas with routing patterns, owning agent ("Librarian" fallback), waiting counts,
+  **Assign specialist** where unowned, and a **Filing rules** link to each area's schema page.
 - **Default agent chip.** The Agents list, an agent's detail header, and `AgentResponse.isDefault`
   together surface which agents (e.g. the librarian) are seeded by Conductor rather than user-created.
   Deleting one is allowed — the chip's tooltip says it will be recreated. The librarian's Overview tab

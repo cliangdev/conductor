@@ -8,6 +8,8 @@ import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowJobStatus;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
+import com.conductor.entity.WorkflowStepRun;
+import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.generated.model.UpdateWorkflowRunStatusRequest;
 import com.conductor.repository.ProjectApiKeyRepository;
@@ -344,6 +346,65 @@ class WorkflowControllerTest {
                                 + "its trigger data is supplied by the process that dispatches it."));
 
         verify(workflowTriggerService, org.mockito.Mockito.never()).triggerManual(any(), anyString(), any());
+    }
+
+    @Test
+    void getWorkflowRun_stampsExplanationAndRemediationForFailedStep() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(runRepository.findByIdWithWorkflow("run-1"))
+                .thenReturn(Optional.of(runWithEventPayload("{\"type\":\"workflow_dispatch\"}")));
+
+        WorkflowJobRun jobRun = new WorkflowJobRun();
+        jobRun.setId("job-1");
+        jobRun.setJobId("notify");
+        jobRun.setStatus(WorkflowJobStatus.FAILED);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        WorkflowStepRun failedStep = new WorkflowStepRun();
+        failedStep.setId("step-1");
+        failedStep.setStepId("notify");
+        failedStep.setStepName("notify");
+        failedStep.setStepType("action");
+        failedStep.setStatus(WorkflowStepStatus.FAILED);
+        failedStep.setErrorReason("CLAUDE_TIMEOUT");
+        when(stepRunRepository.findByJobRunId("job-1")).thenReturn(List.of(failedStep));
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs/{r}", PROJECT_ID, "wf-auto", "run-1")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobs[0].steps[0].errorReason").value("CLAUDE_TIMEOUT"))
+                .andExpect(jsonPath("$.jobs[0].steps[0].explanation").value("The step exceeded its timeout_minutes."))
+                .andExpect(jsonPath("$.jobs[0].steps[0].remediation").value(
+                        "Increase timeout_minutes, or reduce the amount of work the step does per run."));
+    }
+
+    @Test
+    void getWorkflowRun_omitsExplanationAndRemediationForNonFailedStep() throws Exception {
+        // Regression: explanation/remediation must only ever be stamped for FAILED steps, per the
+        // OpenAPI spec — a successful step's errorReason is unset, so there'd be nothing to explain.
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(runRepository.findByIdWithWorkflow("run-1"))
+                .thenReturn(Optional.of(runWithEventPayload("{\"type\":\"workflow_dispatch\"}")));
+
+        WorkflowJobRun jobRun = new WorkflowJobRun();
+        jobRun.setId("job-1");
+        jobRun.setJobId("review");
+        jobRun.setStatus(WorkflowJobStatus.SUCCESS);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        WorkflowStepRun succeededStep = new WorkflowStepRun();
+        succeededStep.setId("step-1");
+        succeededStep.setStepId("review");
+        succeededStep.setStepName("review");
+        succeededStep.setStepType("agent");
+        succeededStep.setStatus(WorkflowStepStatus.SUCCESS);
+        when(stepRunRepository.findByJobRunId("job-1")).thenReturn(List.of(succeededStep));
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs/{r}", PROJECT_ID, "wf-auto", "run-1")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobs[0].steps[0].explanation").doesNotExist())
+                .andExpect(jsonPath("$.jobs[0].steps[0].remediation").doesNotExist());
     }
 
     @Test

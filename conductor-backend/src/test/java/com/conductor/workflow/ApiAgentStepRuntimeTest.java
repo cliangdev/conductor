@@ -88,7 +88,7 @@ class ApiAgentStepRuntimeTest {
     }
 
     @Test
-    void agentRunExceptionYieldsFailed() {
+    void agentRunExceptionYieldsFailedWithClassifiedErrorReasonAndRawMessageInLog() {
         when(agentExecutionService.run(eq(PROJECT_ID), eq("ghost"), anyString(), anyMap(), any()))
                 .thenThrow(new EntityNotFoundException("Agent not found: ghost"));
 
@@ -99,7 +99,37 @@ class ApiAgentStepRuntimeTest {
         StepResult result = runtime.run(context(stepDef()), call);
 
         assertThat(result.getStatus().name()).isEqualTo("FAILED");
-        assertThat(result.getErrorReason()).contains("Agent not found: ghost");
+        assertThat(result.getErrorReason()).isEqualTo("AGENT_RUN_ERROR");
+        assertThat(result.getLog()).contains("Agent not found: ghost");
+    }
+
+    @Test
+    void credentialEncryptionExceptionYieldsClaudeCredentialErrorReason() {
+        when(agentExecutionService.run(eq(PROJECT_ID), eq("marketing-agent"), anyString(), anyMap(), any()))
+                .thenThrow(new com.conductor.exception.CredentialEncryptionException(
+                        "Failed to decrypt provider API key", new RuntimeException("cause")));
+
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
+                definition(), "Analyze", Map.of(), null, null, List.of(), Map.of());
+        StepResult result = runtime.run(context(stepDef()), call);
+
+        assertThat(result.getStatus().name()).isEqualTo("FAILED");
+        assertThat(result.getErrorReason()).isEqualTo("CLAUDE_CREDENTIAL_ERROR");
+        assertThat(result.getLog()).contains("Failed to decrypt provider API key");
+    }
+
+    @Test
+    void transactionExceptionYieldsTransientInfraErrorReason() {
+        when(agentExecutionService.run(eq(PROJECT_ID), eq("marketing-agent"), anyString(), anyMap(), any()))
+                .thenThrow(new org.springframework.transaction.TransactionSystemException(
+                        "Unable to commit against JDBC Connection"));
+
+        AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
+                definition(), "Analyze", Map.of(), null, null, List.of(), Map.of());
+        StepResult result = runtime.run(context(stepDef()), call);
+
+        assertThat(result.getStatus().name()).isEqualTo("FAILED");
+        assertThat(result.getErrorReason()).isEqualTo("TRANSIENT_INFRA_ERROR");
     }
 
     @Test

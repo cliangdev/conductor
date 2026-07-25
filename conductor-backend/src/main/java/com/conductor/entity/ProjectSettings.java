@@ -36,6 +36,11 @@ public class ProjectSettings {
     @Column(name = "knowledge_enabled", nullable = false)
     private boolean knowledgeEnabled = false;
 
+    /** Minutes between {@link com.conductor.knowledge.KnowledgeIngestScheduler} dispatch cycles for a
+     *  newly-accumulating lane -- see {@code KnowledgeIngestionService}'s idle-lane stamping. */
+    @Column(name = "knowledge_ingest_interval_minutes", nullable = false)
+    private int knowledgeIngestIntervalMinutes = 60;
+
     /** Which named {@link RuntimeTarget} the {@code "cloud-run"} runs-on value resolves to for this
      *  project, if any — null means fall back to the operator's builtin env-configured target. See
      *  {@code com.conductor.workflow.RuntimeTargetResolver} and
@@ -79,6 +84,9 @@ public class ProjectSettings {
 
     public boolean isKnowledgeEnabled() { return knowledgeEnabled; }
     public void setKnowledgeEnabled(boolean knowledgeEnabled) { this.knowledgeEnabled = knowledgeEnabled; }
+
+    public int getKnowledgeIngestIntervalMinutes() { return knowledgeIngestIntervalMinutes; }
+    public void setKnowledgeIngestIntervalMinutes(int knowledgeIngestIntervalMinutes) { this.knowledgeIngestIntervalMinutes = knowledgeIngestIntervalMinutes; }
 
     public String getClaudeRuntimeTargetId() { return claudeRuntimeTargetId; }
     public void setClaudeRuntimeTargetId(String claudeRuntimeTargetId) { this.claudeRuntimeTargetId = claudeRuntimeTargetId; }

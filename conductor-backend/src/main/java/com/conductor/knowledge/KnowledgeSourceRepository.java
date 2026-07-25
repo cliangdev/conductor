@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -67,6 +68,23 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
     @Query(value = "SELECT EXISTS(SELECT 1 FROM knowledge_sources WHERE project_id = :projectId "
             + "AND status = 'PROCESSING' AND domain IS NOT DISTINCT FROM :domain)", nativeQuery = true)
     boolean existsProcessingInLane(@Param("projectId") String projectId, @Param("domain") String domain);
+
+    /** True if this lane already has a PENDING or PROCESSING source -- {@code KnowledgeIngestionService}'s
+     *  idle-lane check: only a source landing in a truly idle lane gets its dispatch stamped out to the
+     *  project's configured ingest interval; anything ingested while the lane's already accumulating
+     *  rides along instead (see {@link #findEarliestPendingNextAttemptInLane}). */
+    @Query(value = "SELECT EXISTS(SELECT 1 FROM knowledge_sources WHERE project_id = :projectId "
+            + "AND status IN ('PENDING', 'PROCESSING') AND domain IS NOT DISTINCT FROM :domain)", nativeQuery = true)
+    boolean existsPendingOrProcessingInLane(@Param("projectId") String projectId, @Param("domain") String domain);
+
+    /** Earliest scheduled dispatch time among this lane's PENDING sources, if any -- lets a source
+     *  ingested into a lane that's already accumulating (but hasn't dispatched yet) inherit the same
+     *  scheduled time instead of getting its own, so both fire together. {@code Instant}, not
+     *  {@code OffsetDateTime}: a native scalar aggregate over a {@code timestamptz} column maps to
+     *  {@code Instant} here, unlike the entity-mapped {@code OffsetDateTime} field itself. */
+    @Query(value = "SELECT MIN(next_attempt_at) FROM knowledge_sources WHERE project_id = :projectId "
+            + "AND status = 'PENDING' AND domain IS NOT DISTINCT FROM :domain", nativeQuery = true)
+    Instant findEarliestPendingNextAttemptInLane(@Param("projectId") String projectId, @Param("domain") String domain);
 
     /** Per-(domain, status) row counts for a project -- backs the Domains panel's pending/processing/
      *  processed counts per {@code KnowledgeDomain}. Domains (and the status) with zero rows are simply

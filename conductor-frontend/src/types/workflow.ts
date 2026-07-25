@@ -83,6 +83,8 @@ export interface WorkflowStepRunDto {
   log?: string;
   outputJson?: string;
   errorReason?: string;
+  explanation?: string;
+  remediation?: string;
   startedAt?: string;
   completedAt?: string;
 }

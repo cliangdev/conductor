@@ -139,7 +139,15 @@ export function StepDetailPanel({ open, onOpenChange, step, runData, runId, proj
         {runData && step.kind === 'condition' && <ConditionDetail runData={runData} />}
 
         {runData?.errorReason && (
-          <p className="text-xs text-status-failed">{runData.errorReason}</p>
+          <div className="space-y-1">
+            <p className="text-xs text-status-failed">{runData.errorReason}</p>
+            {runData.explanation && (
+              <p className="text-xs text-muted-foreground">{runData.explanation}</p>
+            )}
+            {runData.remediation && (
+              <p className="text-xs text-muted-foreground">→ {runData.remediation}</p>
+            )}
+          </div>
         )}
 
         {isRunningDockerStep && runId ? (

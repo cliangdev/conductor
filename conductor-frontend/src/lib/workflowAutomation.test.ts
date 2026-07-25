@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseWorkflowYaml, resolveStepKind } from '@/lib/workflowAutomation'
+import { parseWorkflowYaml, resolveStepKind, isManualTrigger } from '@/lib/workflowAutomation'
 
 describe('resolveStepKind', () => {
   it('resolves uses: docker://... to docker', () => {
@@ -147,5 +147,30 @@ jobs:
 `
     const { jobs } = parseWorkflowYaml(yaml)
     expect(jobs.find(j => j.jobId === 'c')!.needs).toEqual(['a', 'b'])
+  })
+
+  it('defaults workflow_dispatch.manual to true when omitted', () => {
+    const { triggers } = parseWorkflowYaml('on:\n  workflow_dispatch: {}\njobs: {}\n')
+    expect(triggers[0].manual).toBe(true)
+  })
+
+  it('reads workflow_dispatch.manual: false for system-dispatched workflows', () => {
+    const { triggers } = parseWorkflowYaml('on:\n  workflow_dispatch:\n    manual: false\njobs: {}\n')
+    expect(triggers[0].manual).toBe(false)
+  })
+})
+
+describe('isManualTrigger', () => {
+  it('is true for workflow_dispatch triggers that omit manual or set it true', () => {
+    expect(isManualTrigger({ kind: 'workflow_dispatch', raw: {}, manual: true })).toBe(true)
+    expect(isManualTrigger({ kind: 'workflow_dispatch', raw: {} })).toBe(true)
+  })
+
+  it('is false for workflow_dispatch triggers with manual: false', () => {
+    expect(isManualTrigger({ kind: 'workflow_dispatch', raw: {}, manual: false })).toBe(false)
+  })
+
+  it('is always true for non-workflow_dispatch trigger kinds', () => {
+    expect(isManualTrigger({ kind: 'schedule', raw: {} })).toBe(true)
   })
 })

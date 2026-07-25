@@ -9,6 +9,7 @@ import com.conductor.knowledge.KnowledgeWorkflowProvisioner;
 import com.conductor.knowledge.page.KnowledgePageRepository;
 import com.conductor.knowledge.page.KnowledgePageService;
 import com.conductor.knowledge.page.PageWrite;
+import com.conductor.workflow.AgentRuntimeResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
@@ -236,8 +237,11 @@ public class KnowledgeDomainService {
             agent.setDescription("Files knowledge-inbox sources for the " + domain.getDisplayName() + " domain.");
             agent.setProvider(SPECIALIST_AGENT_PROVIDER);
             agent.setSystemPrompt(readSpecialistSystemPrompt(domain));
-            // No "runtime" key -- resolved at execution time, same as the generalist librarian.
-            agent.setConfigJson(writeJson(Map.of("maxToolTurns", KnowledgeWorkflowProvisioner.LIBRARIAN_MAX_TOOL_TURNS)));
+            // Pinned to claude-code, same as the generalist librarian (see KnowledgeWorkflowProvisioner)
+            // -- a specialist's filing task is the same Claude Code tool-calling loop, just domain-scoped.
+            agent.setConfigJson(writeJson(Map.of(
+                    "maxToolTurns", KnowledgeWorkflowProvisioner.LIBRARIAN_MAX_TOOL_TURNS,
+                    "runtime", AgentRuntimeResolver.RUNTIME_CLAUDE_CODE)));
             agent.setToolIds(writeJson(KnowledgeWorkflowProvisioner.LIBRARIAN_TOOL_IDS));
             agent.setState("ACTIVE");
             agent.setAvatarEmoji(AgentAvatarDefaults.defaultEmoji(agentSlug));

@@ -389,7 +389,7 @@ const TOOLS = [
   },
   {
     name: 'get_workflow_run',
-    description: 'Get status and step details for a workflow run. Returns status (PENDING/RUNNING/SUCCESS/FAILED), per-job and per-step breakdown, and step logs. Call once after dispatch_workflow to verify the test run started or succeeded before reporting to the user. workflowId and runId come from the dispatch_workflow response.',
+    description: 'Get status and step details for a workflow run. Returns status (PENDING/RUNNING/SUCCESS/FAILED), per-job and per-step breakdown, and step logs. A FAILED step also carries errorReason (a stable code) plus, when known, explanation/remediation for it. Call once after dispatch_workflow to verify the test run started or succeeded before reporting to the user. workflowId and runId come from the dispatch_workflow response.',
     inputSchema: {
       type: 'object',
       properties: {

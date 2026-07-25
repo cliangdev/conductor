@@ -5,6 +5,14 @@ vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'proj-1', connectorId: 'gcp' }),
 }))
 
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ accessToken: 'test-token' }),
+}))
+
+vi.mock('@/lib/api', () => ({
+  listIntegrations: () => new Promise(() => {}), // never resolves — tests assert the static fallback label
+}))
+
 vi.mock('@/components/integrations/WorkflowToolsPanel', () => ({
   default: ({ connectorId }: { connectorId: string }) => (
     <div data-testid="tools-panel">tools for {connectorId}</div>

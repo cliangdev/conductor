@@ -486,6 +486,8 @@ An agent's *definition* (system prompt, tools, guardrails) is decoupled from the
 2. Otherwise auto-detected from the project's credentials: a **Claude Code (subscription)** credential (**Settings → AI Providers**) wins over an API key when both are configured, since it gets the full Claude Code tool-calling loop rather than just a single-model ReAct loop.
 3. If neither credential is configured, the step fails with a message naming both options.
 
+The Knowledge Center's librarian and domain-specialist agents (seeded by `KnowledgeWorkflowProvisioner`/`KnowledgeDomainService`) are always seeded with an explicit `claude-code` pin rather than left to auto-detection, so a project with an API key credential but no Claude Code subscription credential never silently runs them on a different runtime than they were built for. Since the pin is unconditional (checked before any credential lookup), a project with no Claude Code subscription credential configured at all will now see the librarian/specialist step fail loudly with `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` (fix under **Settings → AI Providers**) instead of silently degrading to the `api` runtime.
+
 | Runtime | What it is | Guardrails |
 |---|---|---|
 | `api` | The in-process ReAct loop against the agent's model provider (e.g. Anthropic API key under provider `claude`) — same engine `agent: <slug>` always used before runtimes existed. | `maxToolTurns` ↔ the loop's tool-call cap; `maxTokens`/`temperature`/`model` are **api-only** (no Claude Code equivalent). The step's `timeout_minutes` is **not** applied here — the loop is bounded by `maxToolTurns`, not wall-clock. |
@@ -496,6 +498,16 @@ An agent's *definition* (system prompt, tools, guardrails) is decoupled from the
 **`runs-on` interaction.** The `api` runtime ignores `runs-on` entirely (it's an in-process call, not a container). The `claude-code` runtime uses the job's `runs-on` the same way a raw `claude-code` step does — except an agent step's job commonly has no container-capable `runs-on` at all (agent steps predate runtimes and were written assuming Conductor-hosted execution), so if the job's `runs-on` doesn't resolve to a container target, the runtime defaults to the builtin `cloud-run` target rather than requiring every agent-step job to add `runs-on: cloud-run` just to pick this runtime.
 
 **`credentials:`/`env:` (claude-code runtime only).** An `agent` step also accepts the `claude-code` step's [`credentials:`/`env:`](#claude-code--run-claude-code-headlessly) fields — same shape, same resolution — but only the `claude-code` runtime has a container to inject them into. On the `api` runtime, declaring either fails the step immediately with `CREDENTIALS_NOT_AVAILABLE_ON_API_RUNTIME: agent=<ref> declares credentials/env, but the 'api' runtime has no container to inject them into`.
+
+**Failure modes (`api` runtime).** Anything else escaping the in-process ReAct loop is classified into one of these `errorReason` codes rather than surfacing the raw exception message:
+
+| errorReason | Meaning |
+|-------------|---------|
+| `CLAUDE_CREDENTIAL_ERROR` | The agent's provider credential couldn't be decrypted (same code the `claude-code` runtime uses for its own credential failures). |
+| `TRANSIENT_INFRA_ERROR` | A transient database/transaction failure interrupted the run (e.g. a JDBC commit error) — not a problem with the agent or its configuration. Safe to retry. |
+| `AGENT_RUN_ERROR` | Anything else — check the step log for the underlying exception message. |
+
+The `claude-code` runtime's failures are classified under the same codes as a raw `claude-code` step — see below.
 
 #### `claude-code` — Run Claude Code headlessly
 
@@ -588,7 +600,7 @@ The step exposes these outputs:
 
 Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answer the same way as the `http`/`agent` steps.
 
-**Failure modes** — a `claude-code` step fails with one of these `errorReason` values:
+**Failure modes** — a `claude-code` step fails with one of these `errorReason` values. Every code below (plus the `agent` step's `api`-runtime codes above) also has a static explanation/remediation, surfaced read-only as `explanation`/`remediation` on a FAILED step via `get_workflow_run` — derived at read time from the code, never persisted:
 
 | errorReason | Meaning |
 |-------------|---------|
@@ -1246,6 +1258,27 @@ the same toggle a human uses to manually disable/enable) always clears `autoPaus
 `autoPausedRunId` and resets the counter, whether the workflow was auto-paused or manually disabled —
 one action always gives a clean slate to retry. The workflow list and detail pages show a distinct
 "Auto-paused" state (vs. plain "Disabled") with a banner linking to the failing run.
+
+### Future: automated diagnosis
+
+Not implemented yet — noted here as a deliberate extension point so it's designed for, not bolted on
+later. The detection half of "a workflow is in trouble" already exists above (`consecutiveFailures` +
+`autoPausedRunId`); what's missing is turning that into an actual explanation a human doesn't have to
+dig for, building directly on the `errorReason`/`explanation`/`remediation` data every failed step
+already carries (see each step type's failure-modes table):
+
+- **Manual trigger (nearest-term):** a "Diagnose this failure" action on any failed run — in the UI or
+  as a `diagnose_workflow_run(runId)`-style MCP tool — that walks the run's failed step(s), reads their
+  `errorReason`/`explanation`/`remediation` plus surrounding log context, and produces a plain-language
+  root cause and suggested fix. No new backend infrastructure required: it's a read over data that
+  already exists once this is built.
+- **Automatic trigger (further out):** hook the same diagnosis into the circuit breaker's trip point —
+  when `autoPauseReason: CONSECUTIVE_FAILURES` fires, optionally kick off the diagnosis automatically
+  (e.g. as a work item or notification with the suggested fix attached) instead of requiring a human to
+  notice the auto-paused banner and investigate manually.
+- Deliberately undecided: whether the "doctor" is a builtin system agent, a workflow, or a plain
+  synchronous tool call — that's a call for whoever builds this, informed by real explanation/remediation
+  data once Phase 2's taxonomy has seen production use.
 
 ## System-managed workflows
 

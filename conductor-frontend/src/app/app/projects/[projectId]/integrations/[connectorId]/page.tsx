@@ -9,6 +9,7 @@ import RevenueCatConnectorPage from '@/components/integrations/RevenueCatConnect
 import GscConnectorPage from '@/components/integrations/GscConnectorPage';
 import AppleSearchAdsConnectorPage from '@/components/integrations/AppleSearchAdsConnectorPage';
 import GcpConnectorPage from '@/components/integrations/GcpConnectorPage';
+import GenericConnectorPage from '@/components/integrations/GenericConnectorPage';
 
 // The breadcrumb lives in the persistent layout; this page only renders the
 // per-connector body, which is the part that re-renders on connector switch.
@@ -31,12 +32,8 @@ export default function ConnectorPage() {
     case 'gcp':
       return <GcpConnectorPage projectId={projectId} />;
     default:
-      return (
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">Unknown connector: {connectorId}</p>
-          </div>
-        </div>
-      );
+      // Any connector without a bespoke dashboard (e.g. action-only connectors like Discord)
+      // falls through to a generic overview driven by the connector catalog.
+      return <GenericConnectorPage projectId={projectId} connectorId={connectorId} />;
   }
 }

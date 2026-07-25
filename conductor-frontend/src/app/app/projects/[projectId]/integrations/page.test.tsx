@@ -21,16 +21,21 @@ vi.mock('@/components/auth/Can', () => ({
   Can: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
-vi.mock('@/lib/api', () => ({
-  apiGet: vi.fn(),
-  apiPost: vi.fn(),
-  createConnection: vi.fn(),
-  deleteConnection: vi.fn(),
-  apiErrorMessage: (err: unknown, fallback: string) => {
-    const detail = (err as { detail?: unknown })?.detail
-    return typeof detail === 'string' && detail.trim() ? detail : fallback
-  },
-}))
+vi.mock('@/lib/api', () => {
+  const apiGet = vi.fn()
+  return {
+    apiGet,
+    apiPost: vi.fn(),
+    createConnection: vi.fn(),
+    deleteConnection: vi.fn(),
+    listIntegrations: (projectId: string, token: string) =>
+      apiGet(`/api/v1/projects/${projectId}/integrations`, token),
+    apiErrorMessage: (err: unknown, fallback: string) => {
+      const detail = (err as { detail?: unknown })?.detail
+      return typeof detail === 'string' && detail.trim() ? detail : fallback
+    },
+  }
+})
 
 vi.mock('@/components/ui/modal', () => ({
   Modal: ({ open, children, title }: { open: boolean; children: React.ReactNode; title: string }) =>
