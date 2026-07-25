@@ -114,6 +114,28 @@ export function resolveProjectIdByCwd(config: Config, cwd: string = process.cwd(
   return resolveProject(config, cwd).projectId
 }
 
+/**
+ * Fallback used when no on-disk config exists — the case inside an ephemeral
+ * claude-code job container, which never has `~/.conductor/config.json` but
+ * does have CONDUCTOR_API_KEY/CONDUCTOR_API_URL/CONDUCTOR_PROJECT_ID injected
+ * by the backend (Cloud Run) or the self-hosted daemon (see
+ * ClaudeCodeContainerRunner.buildEnv / job-runner.ts buildStepEnv). Only
+ * apiKey/apiUrl/projectId are load-bearing for MCP tool calls (mcp/api.ts) —
+ * projectName/email never reach an HTTP call, so placeholders are fine here.
+ */
+function configFromEnv(): Config | null {
+  const apiKey = process.env['CONDUCTOR_API_KEY']
+  const apiUrl = process.env['CONDUCTOR_API_URL']
+  if (!apiKey || !apiUrl) return null
+  return {
+    apiKey,
+    apiUrl,
+    projectId: process.env['CONDUCTOR_PROJECT_ID'] ?? '',
+    projectName: '',
+    email: '',
+  }
+}
+
 export function getConfig(): Config {
   try {
     const raw = fs.readFileSync(CONFIG_PATH, 'utf8')
@@ -138,6 +160,8 @@ export function getConfig(): Config {
     if (err instanceof Error && err.message.startsWith('Invalid config')) {
       throw err
     }
+    const envConfig = configFromEnv()
+    if (envConfig) return envConfig
     throw new Error('Config not found — run conductor login')
   }
 }

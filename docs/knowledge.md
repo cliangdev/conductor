@@ -215,7 +215,7 @@ idempotent (upsert-if-missing) so any number of callers racing or repeating neve
 | Workflow | Trigger | Purpose |
 |---|---|---|
 | `knowledge-librarian` | `workflow_dispatch`, fired programmatically by `LibrarianDispatchService` — never by a human | A thin `uses: agent` step, `agent: ${{ event.agentSlug }}` resolved per dispatch (see [The pipeline](#the-pipeline)) — the seeded generalist `knowledge-librarian` Agent, or a domain's assigned specialist. Files one batch of claimed sources (one lane's worth) into pages. |
-| `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input (`owner/repo`) | Operator-triggered once, to seed the wiki (`engineering/architecture/*.md`, `product/features/*.md`) from an existing codebase by cloning and reading it. A raw `claude-code` step (no agent involved). |
+| `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input (`owner/repo`) | Operator-triggered once, to seed the wiki (`engineering/architecture/*.md`, `engineering/integrations/*.md`, `product/features/*.md`) from an existing codebase by cloning and reading it. Reads the `engineering`/`product` domain schemas for taxonomy/templates rather than the root schema alone. A raw `claude-code` step (no agent involved). |
 
 Both are **system-owned, canonical content**: `KnowledgeWorkflowProvisioner.provision` refreshes a
 project's stored workflow YAML in place if it's drifted from the current classpath template (unlike the

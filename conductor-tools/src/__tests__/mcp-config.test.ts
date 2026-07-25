@@ -1,6 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest'
-import { resolveProjectIdByCwd, resolveProject } from '../mcp/config.js'
+import { describe, it, expect, afterEach, vi } from 'vitest'
+import * as fs from 'fs'
+import { resolveProjectIdByCwd, resolveProject, getConfig } from '../mcp/config.js'
 import type { Config } from '../mcp/config.js'
+
+vi.mock('fs')
+const mockFs = vi.mocked(fs)
 
 const baseConfig: Config = {
   apiKey: 'key',
@@ -90,5 +94,47 @@ describe('resolveProject (fail-closed resolution)', () => {
   it('never flags a mismatch when there is no projects map (legacy single-project)', () => {
     const r = resolveProject(baseConfig, '/home/user/anywhere', inGit)
     expect(r).toEqual({ projectId: 'proj_global', source: 'fallback', mismatch: false })
+  })
+})
+
+describe('getConfig (env fallback for containerized MCP runs)', () => {
+  afterEach(() => {
+    vi.resetAllMocks()
+    delete process.env['CONDUCTOR_API_KEY']
+    delete process.env['CONDUCTOR_API_URL']
+    delete process.env['CONDUCTOR_PROJECT_ID']
+  })
+
+  it('synthesizes a config from env vars when no file exists', () => {
+    mockFs.readFileSync.mockImplementation(() => {
+      throw new Error('ENOENT: no such file or directory')
+    })
+    process.env['CONDUCTOR_API_KEY'] = 'env-key'
+    process.env['CONDUCTOR_API_URL'] = 'http://backend:8080'
+    process.env['CONDUCTOR_PROJECT_ID'] = 'proj_env'
+
+    expect(getConfig()).toEqual({
+      apiKey: 'env-key',
+      apiUrl: 'http://backend:8080',
+      projectId: 'proj_env',
+      projectName: '',
+      email: '',
+    })
+  })
+
+  it('throws when no file exists and no env vars are set', () => {
+    mockFs.readFileSync.mockImplementation(() => {
+      throw new Error('ENOENT: no such file or directory')
+    })
+
+    expect(() => getConfig()).toThrow('Config not found — run conductor login')
+  })
+
+  it('prefers the on-disk file over env vars when both are present', () => {
+    mockFs.readFileSync.mockReturnValue(JSON.stringify(baseConfig))
+    process.env['CONDUCTOR_API_KEY'] = 'env-key'
+    process.env['CONDUCTOR_API_URL'] = 'http://backend:8080'
+
+    expect(getConfig()).toEqual(baseConfig)
   })
 })
