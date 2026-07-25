@@ -5734,6 +5734,11 @@ components:
         knowledgeEnabled:
           type: boolean
           nullable: true
+        knowledgeIngestIntervalMinutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+          nullable: true
 
     ProjectSettingsResponse:
       type: object
@@ -5750,6 +5755,8 @@ components:
           nullable: true
         knowledgeEnabled:
           type: boolean
+        knowledgeIngestIntervalMinutes:
+          type: integer
 
     DiscordTestResponse:
       type: object

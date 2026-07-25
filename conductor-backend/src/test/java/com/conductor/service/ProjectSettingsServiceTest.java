@@ -67,7 +67,7 @@ class ProjectSettingsServiceTest {
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
         ProjectSettingsResponse response = projectSettingsService.updateSettings(
-                PROJECT_ID, VALID_WEBHOOK, null, null, null, null, adminUser);
+                PROJECT_ID, VALID_WEBHOOK, null, null, null, null, null, adminUser);
 
         ArgumentCaptor<ProjectSettings> captor = ArgumentCaptor.forClass(ProjectSettings.class);
         verify(projectSettingsRepository).save(captor.capture());
@@ -95,7 +95,7 @@ class ProjectSettingsServiceTest {
         when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, "https://example.com/webhook", null, null, null, null, adminUser))
+                PROJECT_ID, "https://example.com/webhook", null, null, null, null, null, adminUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid Discord webhook URL");
     }
@@ -105,7 +105,7 @@ class ProjectSettingsServiceTest {
         when(projectSecurityService.isProjectAdmin(PROJECT_ID, reviewerUser.getId())).thenReturn(false);
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, VALID_WEBHOOK, null, null, null, null, reviewerUser))
+                PROJECT_ID, VALID_WEBHOOK, null, null, null, null, null, reviewerUser))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("Only ADMIN can manage project settings");
     }
@@ -115,12 +115,12 @@ class ProjectSettingsServiceTest {
         when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, null, 0, null, null, null, adminUser))
+                PROJECT_ID, null, 0, null, null, null, null, adminUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("runTokenTtlHours must be between 1 and 168");
 
         assertThatThrownBy(() -> projectSettingsService.updateSettings(
-                PROJECT_ID, null, 169, null, null, null, adminUser))
+                PROJECT_ID, null, 169, null, null, null, null, adminUser))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("runTokenTtlHours must be between 1 and 168");
     }
@@ -131,7 +131,7 @@ class ProjectSettingsServiceTest {
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        projectSettingsService.updateSettings(PROJECT_ID, null, 48, null, null, null, adminUser);
+        projectSettingsService.updateSettings(PROJECT_ID, null, 48, null, null, null, null, adminUser);
 
         ArgumentCaptor<ProjectSettings> captor = ArgumentCaptor.forClass(ProjectSettings.class);
         verify(projectSettingsRepository).save(captor.capture());
@@ -144,7 +144,7 @@ class ProjectSettingsServiceTest {
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        projectSettingsService.updateSettings(PROJECT_ID, null, null, null, null, true, adminUser);
+        projectSettingsService.updateSettings(PROJECT_ID, null, null, null, null, true, null, adminUser);
 
         verify(knowledgeWorkflowProvisioner).provision(PROJECT_ID);
     }
@@ -165,7 +165,7 @@ class ProjectSettingsServiceTest {
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.of(settings));
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        projectSettingsService.updateSettings(PROJECT_ID, null, null, null, null, true, adminUser);
+        projectSettingsService.updateSettings(PROJECT_ID, null, null, null, null, true, null, adminUser);
 
         verify(knowledgeWorkflowProvisioner).provision(PROJECT_ID);
     }
@@ -176,7 +176,7 @@ class ProjectSettingsServiceTest {
         when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
         when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        projectSettingsService.updateSettings(PROJECT_ID, VALID_WEBHOOK, null, null, null, null, adminUser);
+        projectSettingsService.updateSettings(PROJECT_ID, VALID_WEBHOOK, null, null, null, null, null, adminUser);
 
         verify(knowledgeWorkflowProvisioner, never()).provision(any());
     }
@@ -190,6 +190,45 @@ class ProjectSettingsServiceTest {
 
         assertThat(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).isTrue();
         assertThat(projectSettingsService.isKnowledgeEnabled("no-settings-row")).isFalse();
+    }
+
+    @Test
+    void getKnowledgeIngestIntervalMinutesReflectsSettingsRow() {
+        ProjectSettings settings = new ProjectSettings();
+        settings.setProjectId(PROJECT_ID);
+        settings.setKnowledgeIngestIntervalMinutes(15);
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.of(settings));
+
+        assertThat(projectSettingsService.getKnowledgeIngestIntervalMinutes(PROJECT_ID)).isEqualTo(15);
+        assertThat(projectSettingsService.getKnowledgeIngestIntervalMinutes("no-settings-row")).isEqualTo(60);
+    }
+
+    @Test
+    void updateSettingsWithIntervalOutOfRangeThrowsBusinessException() {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
+
+        assertThatThrownBy(() -> projectSettingsService.updateSettings(
+                PROJECT_ID, null, null, null, null, null, 0, adminUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("knowledgeIngestIntervalMinutes must be between 1 and 1440");
+
+        assertThatThrownBy(() -> projectSettingsService.updateSettings(
+                PROJECT_ID, null, null, null, null, null, 1441, adminUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("knowledgeIngestIntervalMinutes must be between 1 and 1440");
+    }
+
+    @Test
+    void updateSettingsPersistsKnowledgeIngestIntervalMinutesWhenValid() {
+        when(projectSecurityService.isProjectAdmin(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSettingsRepository.findByProjectId(PROJECT_ID)).thenReturn(Optional.empty());
+        when(projectSettingsRepository.save(any(ProjectSettings.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        projectSettingsService.updateSettings(PROJECT_ID, null, null, null, null, null, 15, adminUser);
+
+        ArgumentCaptor<ProjectSettings> captor = ArgumentCaptor.forClass(ProjectSettings.class);
+        verify(projectSettingsRepository).save(captor.capture());
+        assertThat(captor.getValue().getKnowledgeIngestIntervalMinutes()).isEqualTo(15);
     }
 
     @Test

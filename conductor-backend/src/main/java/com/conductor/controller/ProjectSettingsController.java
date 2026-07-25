@@ -25,7 +25,8 @@ public class ProjectSettingsController implements SettingsApi {
         User caller = currentUser();
         ProjectSettingsResponse response = projectSettingsService.updateSettings(
                 projectId, request.getDiscordWebhookUrl(), request.getRunTokenTtlHours(),
-                request.getGithubWebhookSecret(), request.getGithubRepoUrl(), request.getKnowledgeEnabled(), caller);
+                request.getGithubWebhookSecret(), request.getGithubRepoUrl(), request.getKnowledgeEnabled(),
+                request.getKnowledgeIngestIntervalMinutes(), caller);
         return ResponseEntity.ok(response);
     }
 

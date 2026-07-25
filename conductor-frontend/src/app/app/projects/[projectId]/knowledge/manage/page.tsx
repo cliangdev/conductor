@@ -9,6 +9,8 @@ import { usePermissions } from '@/contexts/PermissionsContext'
 import { useToast } from '@/components/ui/toast'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Alert } from '@/components/ui/alert'
@@ -17,6 +19,8 @@ import {
   listKnowledgeDomains,
   updateKnowledgeDomain,
   createKnowledgeDomainSpecialist,
+  getKnowledgeIngestIntervalMinutes,
+  updateKnowledgeIngestIntervalMinutes,
   LIBRARIAN_FALLBACK_AVATAR,
   type KnowledgeDomainDto,
 } from '@/lib/knowledge-api'
@@ -24,6 +28,76 @@ import { listAgents, apiErrorMessage, type Agent } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
+
+const INGEST_CADENCE_PRESETS = [
+  { minutes: 15, label: 'Every 15 minutes' },
+  { minutes: 60, label: 'Hourly' },
+  { minutes: 1440, label: 'Daily' },
+] as const
+
+/** How long a lane accumulates sources before KnowledgeIngestScheduler dispatches it to the
+ *  librarian (default hourly — see docs/knowledge.md). */
+function IngestCadenceSetting({ projectId, token }: { projectId: string; token: string }) {
+  const { showToast } = useToast()
+  const [minutes, setMinutes] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    getKnowledgeIngestIntervalMinutes(projectId, token)
+      .then((value) => {
+        if (!cancelled) setMinutes(value)
+      })
+      .catch(() => {
+        // best-effort -- leave the control unrendered rather than surfacing an error for a minor setting
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, token])
+
+  if (minutes === null) return null
+
+  async function handleChange(next: number) {
+    const previous = minutes
+    setMinutes(next)
+    setSaving(true)
+    try {
+      await updateKnowledgeIngestIntervalMinutes(projectId, next, token)
+    } catch (err) {
+      setMinutes(previous)
+      showToast(apiErrorMessage(err, 'Failed to update ingest cadence'), 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card className="p-4 flex items-center justify-between gap-4">
+      <div>
+        <Label htmlFor="knowledge-ingest-cadence" className="text-sm font-medium text-foreground">
+          Ingest cadence
+        </Label>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          How long a batch of new sources waits before the librarian files it.
+        </p>
+      </div>
+      <Select
+        id="knowledge-ingest-cadence"
+        className="w-auto shrink-0"
+        value={String(minutes)}
+        disabled={saving}
+        onChange={(e) => handleChange(Number(e.target.value))}
+      >
+        {INGEST_CADENCE_PRESETS.map((preset) => (
+          <option key={preset.minutes} value={preset.minutes}>
+            {preset.label}
+          </option>
+        ))}
+      </Select>
+    </Card>
+  )
+}
 
 
 /** Admin-only registry surface for the areas the librarian files into: approve/dismiss suggested
@@ -149,6 +223,8 @@ export default function KnowledgeManagePage() {
             Areas, filing rules, and the agents that maintain them
           </p>
         </div>
+
+        {accessToken && <IngestCadenceSetting projectId={projectId} token={accessToken} />}
 
         {error ? (
           <Alert variant="destructive">{error}</Alert>

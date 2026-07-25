@@ -349,16 +349,16 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         agentRepository.delete(librarian);
         assertThat(agentRepository.existsByProjectIdAndSlug(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)).isFalse();
 
-        projectSettingsService.updateSettings(projectId, null, null, null, null, true, adminUser);
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
 
         assertThat(agentRepository.existsByProjectIdAndSlug(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)).isTrue();
     }
 
     @Test
     void repeatedSettingsSavesDoNotDuplicateProvisionedArtifacts() {
-        projectSettingsService.updateSettings(projectId, null, null, null, null, true, adminUser);
-        projectSettingsService.updateSettings(projectId, null, null, null, null, true, adminUser);
-        projectSettingsService.updateSettings(projectId, null, null, null, null, true, adminUser);
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
 
         List<WorkflowDefinition> workflows = workflowRepository.findByProjectId(projectId);
         assertThat(workflows).hasSize(2);

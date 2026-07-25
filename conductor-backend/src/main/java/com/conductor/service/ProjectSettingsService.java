@@ -43,7 +43,8 @@ public class ProjectSettingsService {
 
     @Transactional
     public ProjectSettingsResponse updateSettings(String projectId, String discordWebhookUrl, Integer runTokenTtlHours,
-            String githubWebhookSecret, String githubRepoUrl, Boolean knowledgeEnabled, User caller) {
+            String githubWebhookSecret, String githubRepoUrl, Boolean knowledgeEnabled,
+            Integer knowledgeIngestIntervalMinutes, User caller) {
         verifyAdmin(projectId, caller.getId());
 
         if (discordWebhookUrl != null && !discordWebhookUrl.isBlank()) {
@@ -54,6 +55,11 @@ public class ProjectSettingsService {
 
         if (runTokenTtlHours != null && (runTokenTtlHours < 1 || runTokenTtlHours > 168)) {
             throw new BusinessException("runTokenTtlHours must be between 1 and 168");
+        }
+
+        if (knowledgeIngestIntervalMinutes != null
+                && (knowledgeIngestIntervalMinutes < 1 || knowledgeIngestIntervalMinutes > 1440)) {
+            throw new BusinessException("knowledgeIngestIntervalMinutes must be between 1 and 1440");
         }
 
         ProjectSettings settings = projectSettingsRepository.findByProjectId(projectId)
@@ -75,6 +81,9 @@ public class ProjectSettingsService {
         }
         if (knowledgeEnabled != null) {
             settings.setKnowledgeEnabled(knowledgeEnabled);
+        }
+        if (knowledgeIngestIntervalMinutes != null) {
+            settings.setKnowledgeIngestIntervalMinutes(knowledgeIngestIntervalMinutes);
         }
         projectSettingsRepository.save(settings);
 
@@ -98,6 +107,16 @@ public class ProjectSettingsService {
         return projectSettingsRepository.findByProjectId(projectId)
                 .map(ProjectSettings::isKnowledgeEnabled)
                 .orElse(false);
+    }
+
+    /** Cheap read for {@code KnowledgeIngestionService}'s idle-lane stamping -- same no-admin-check,
+     *  internal-capability-check shape as {@link #isKnowledgeEnabled}. Falls back to the entity's
+     *  own default (60) when a project has no settings row yet. */
+    @Transactional(readOnly = true)
+    public int getKnowledgeIngestIntervalMinutes(String projectId) {
+        return projectSettingsRepository.findByProjectId(projectId)
+                .map(ProjectSettings::getKnowledgeIngestIntervalMinutes)
+                .orElseGet(() -> new ProjectSettings().getKnowledgeIngestIntervalMinutes());
     }
 
     @Transactional(readOnly = true)
@@ -157,6 +176,7 @@ public class ProjectSettingsService {
         response.setGithubWebhookConfigured(settings.getGithubWebhookSecret() != null && !settings.getGithubWebhookSecret().isBlank());
         response.setGithubRepoUrl(settings.getGithubRepoUrl());
         response.setKnowledgeEnabled(settings.isKnowledgeEnabled());
+        response.setKnowledgeIngestIntervalMinutes(settings.getKnowledgeIngestIntervalMinutes());
         return response;
     }
 

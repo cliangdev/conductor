@@ -2,6 +2,7 @@ package com.conductor.knowledge;
 
 import com.conductor.exception.BusinessException;
 import com.conductor.knowledge.domain.KnowledgeDomainResolver;
+import com.conductor.service.ProjectSettingsService;
 import com.conductor.service.StorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +13,9 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
@@ -39,6 +43,7 @@ public class KnowledgeIngestionService {
     private final StorageService storageService;
     private final KnowledgeDomainResolver domainResolver;
     private final ObjectMapper objectMapper;
+    private final ProjectSettingsService projectSettingsService;
 
     /**
      * Self-reference so the {@code REQUIRES_NEW} claim insert runs through the Spring proxy -- mirrors
@@ -49,11 +54,13 @@ public class KnowledgeIngestionService {
     KnowledgeIngestionService self;
 
     public KnowledgeIngestionService(KnowledgeSourceRepository repository, StorageService storageService,
-                                     KnowledgeDomainResolver domainResolver, ObjectMapper objectMapper) {
+                                     KnowledgeDomainResolver domainResolver, ObjectMapper objectMapper,
+                                     ProjectSettingsService projectSettingsService) {
         this.repository = repository;
         this.storageService = storageService;
         this.domainResolver = domainResolver;
         this.objectMapper = objectMapper;
+        this.projectSettingsService = projectSettingsService;
     }
 
     /**
@@ -108,7 +115,27 @@ public class KnowledgeIngestionService {
         source.setDedupKey(dedupKey);
         source.setStatus(KnowledgeSourceStatus.PENDING);
         source.setDomain(domain);
+        source.setNextAttemptAt(computeInitialNextAttemptAt(submission.projectId(), domain));
         return repository.save(source);
+    }
+
+    /**
+     * A source landing in an otherwise-idle lane (no other PENDING/PROCESSING source there yet) gets its
+     * dispatch stamped out to the project's configured {@code knowledgeIngestIntervalMinutes} -- this is
+     * what turns "ingest" into "accumulate for up to an hour, then dispatch" instead of the scheduler
+     * picking it up on the very next 30s tick. A source landing in a lane that's already accumulating
+     * (a PENDING source there hasn't dispatched yet) inherits that source's scheduled time instead, so
+     * both ride along in the same batch rather than the newcomer firing off on its own. If the lane is
+     * only non-idle because of an in-flight PROCESSING batch (no PENDING anchor to inherit), this leaves
+     * {@code nextAttemptAt} null -- the scheduler's existing busy-lane skip already defers it correctly.
+     */
+    private OffsetDateTime computeInitialNextAttemptAt(String projectId, String domain) {
+        if (!repository.existsPendingOrProcessingInLane(projectId, domain)) {
+            int intervalMinutes = projectSettingsService.getKnowledgeIngestIntervalMinutes(projectId);
+            return OffsetDateTime.now().plusMinutes(intervalMinutes);
+        }
+        Instant earliest = repository.findEarliestPendingNextAttemptInLane(projectId, domain);
+        return earliest != null ? earliest.atOffset(ZoneOffset.UTC) : null;
     }
 
     /** Multi-get by id, resolving offloaded payloads back from storage -- the librarian read path. */
