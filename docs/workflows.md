@@ -1233,6 +1233,27 @@ the same toggle a human uses to manually disable/enable) always clears `autoPaus
 one action always gives a clean slate to retry. The workflow list and detail pages show a distinct
 "Auto-paused" state (vs. plain "Disabled") with a banner linking to the failing run.
 
+### Future: automated diagnosis
+
+Not implemented yet — noted here as a deliberate extension point so it's designed for, not bolted on
+later. The detection half of "a workflow is in trouble" already exists above (`consecutiveFailures` +
+`autoPausedRunId`); what's missing is turning that into an actual explanation a human doesn't have to
+dig for, building directly on the `errorReason`/`explanation`/`remediation` data every failed step
+already carries (see each step type's failure-modes table):
+
+- **Manual trigger (nearest-term):** a "Diagnose this failure" action on any failed run — in the UI or
+  as a `diagnose_workflow_run(runId)`-style MCP tool — that walks the run's failed step(s), reads their
+  `errorReason`/`explanation`/`remediation` plus surrounding log context, and produces a plain-language
+  root cause and suggested fix. No new backend infrastructure required: it's a read over data that
+  already exists once this is built.
+- **Automatic trigger (further out):** hook the same diagnosis into the circuit breaker's trip point —
+  when `autoPauseReason: CONSECUTIVE_FAILURES` fires, optionally kick off the diagnosis automatically
+  (e.g. as a work item or notification with the suggested fix attached) instead of requiring a human to
+  notice the auto-paused banner and investigate manually.
+- Deliberately undecided: whether the "doctor" is a builtin system agent, a workflow, or a plain
+  synchronous tool call — that's a call for whoever builds this, informed by real explanation/remediation
+  data once Phase 2's taxonomy has seen production use.
+
 ## System-managed workflows
 
 Some automation workflows are provisioned automatically by a Conductor feature rather than authored by a
