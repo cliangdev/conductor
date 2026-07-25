@@ -5,9 +5,13 @@ export interface KnowledgeLogEntry {
   /** Bundle-relative path, no leading slash — matches KnowledgeIndexPage#path. */
   path: string
   action: KnowledgeLogAction
-  /** ISO date (YYYY-MM-DD) from the entry's day-group heading. buildVirtualLog only groups by
-   *  `LocalDate`, not a per-revision timestamp, so this is the finest granularity available. */
+  /** ISO date (YYYY-MM-DD) from the entry's day-group heading — coarse, for grouping only. Use
+   *  `timestamp` for anything time-relative ("X ago"): a bare date parses as UTC midnight, so
+   *  diffing against `day` reads every same-day write as however many hours it's been since
+   *  midnight UTC, not since the write actually happened. */
   day: string
+  /** ISO instant (the revision's real `createdAt`) — see the note on `day` above. */
+  timestamp: string
   sourceRefs?: string[]
 }
 
@@ -15,10 +19,11 @@ export interface KnowledgeLogEntry {
 // come back newest-first; entries within a day inherit that same order from the DB).
 const DAY_HEADING_RE = /^##\s+(\d{4}-\d{2}-\d{2})\s*$/
 
-// "* **Create**: notes/a.md ← slack://C123/p456, github://org/repo/pull/7" — mirrors
-// buildVirtualLog's `"* **" + changeLabel(changeKind) + "**: " + path + (refs.isEmpty() ? "" : " ← " + join(", ", refs))`.
-// The label is the revision's real changeKind (Create/Update/Delete), title-cased.
-const ENTRY_RE = /^\*\s\*\*(\w+)\*\*:\s(\S+)(?:\s←\s(.+))?$/
+// "* **Create** (2026-07-19T14:23:05.123Z): notes/a.md ← slack://C123/p456, github://org/repo/pull/7"
+// — mirrors buildVirtualLog's `"* **" + changeLabel(changeKind) + "** (" + createdAt.toInstant() +
+// "): " + path + (refs.isEmpty() ? "" : " ← " + join(", ", refs))`. The label is the revision's real
+// changeKind (Create/Update/Delete), title-cased.
+const ENTRY_RE = /^\*\s\*\*(\w+)\*\*\s\(([^)]+)\):\s(\S+)(?:\s←\s(.+))?$/
 
 function toAction(label: string): KnowledgeLogAction {
   const upper = label.toUpperCase()
@@ -40,11 +45,12 @@ export function parseKnowledgeLog(content: string): KnowledgeLogEntry[] {
     }
     const entryMatch = ENTRY_RE.exec(line)
     if (!entryMatch || !currentDay) continue
-    const [, label, path, refs] = entryMatch
+    const [, label, timestamp, path, refs] = entryMatch
     entries.push({
       path,
       action: toAction(label),
       day: currentDay,
+      timestamp,
       sourceRefs: refs ? refs.split(', ') : undefined,
     })
   }

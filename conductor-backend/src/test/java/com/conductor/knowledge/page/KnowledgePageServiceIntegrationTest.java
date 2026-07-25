@@ -188,7 +188,8 @@ class KnowledgePageServiceIntegrationTest extends AbstractNoneWebIntegrationTest
 
         PageView log = views.stream().filter(v -> v.path().equals("log.md")).findFirst().orElseThrow();
         // First revision on a brand-new page is a CREATE, not an UPDATE -- buildVirtualLog now emits
-        // the real changeKind label instead of hardcoding "Update" for every revision.
-        assertThat(log.content()).contains("**Create**: notes/a.md");
+        // the real changeKind label instead of hardcoding "Update" for every revision. The parenthesized
+        // instant is the revision's real createdAt, not just the day heading -- see buildVirtualLog.
+        assertThat(log.content()).containsPattern("\\*\\*Create\\*\\* \\([^)]+\\): notes/a\\.md");
     }
 }
