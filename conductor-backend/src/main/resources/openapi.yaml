@@ -2907,6 +2907,48 @@ paths:
               schema:
                 $ref: "#/components/schemas/WorkflowRunDetailDto"
 
+  /projects/{projectId}/workflows/{workflowId}/runs/{runId}/cancel:
+    post:
+      tags: [workflows]
+      summary: Cancel a workflow run
+      description: >
+        Requests cancellation of a pending or running workflow run. Returns 202 once the run has been
+        marked CANCELLING and no further jobs will be dispatched; in-flight steps are cancelled
+        best-effort and the run settles to CANCELLED once nothing is left running. Idempotent if the
+        run is already CANCELLING. Returns 409 if the run has already reached a terminal status
+        (SUCCESS, FAILED, or CANCELLED).
+      operationId: cancelWorkflowRun
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: runId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Cancellation requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowRunDto"
+        "404":
+          description: Run not found
+        "409":
+          description: Run has already finished
+
   /projects/{projectId}/daemon/events:
     get:
       tags:

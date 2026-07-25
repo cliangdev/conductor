@@ -5,5 +5,10 @@ public enum WorkflowStepStatus {
     RUNNING,
     SUCCESS,
     FAILED,
-    SKIPPED
+    SKIPPED,
+    CANCELLED;
+
+    public boolean isTerminal() {
+        return this == SUCCESS || this == FAILED || this == SKIPPED || this == CANCELLED;
+    }
 }

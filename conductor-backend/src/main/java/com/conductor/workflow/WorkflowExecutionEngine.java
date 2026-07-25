@@ -250,6 +250,10 @@ public class WorkflowExecutionEngine {
 
     @Transactional
     public void checkRunCompletion(WorkflowRun run) {
+        // A straggling job completing after the run already settled (notably after a cancellation
+        // terminalized everything) must not recompute and clobber the terminal status.
+        if (run.getStatus().isTerminal()) return;
+
         List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(run.getId());
         log.info("checkRunCompletion: runId={}, jobRuns={}", run.getId(), jobRuns.stream().map(j -> j.getJobId() + "=" + j.getStatus()).toList());
         WorkflowDefinition workflow = run.getWorkflow();
@@ -269,26 +273,28 @@ public class WorkflowExecutionEngine {
         }
 
         int terminalJobs = (int) latestByJobId.values().stream()
-                .filter(j -> isTerminal(j.getStatus()))
+                .filter(j -> j.getStatus().isTerminal())
                 .count();
 
-        if (terminalJobs < totalJobs) return;
-
-        boolean anyFailed = latestByJobId.values().stream()
-                .anyMatch(j -> j.getStatus() == WorkflowJobStatus.FAILED
-                        || j.getStatus() == WorkflowJobStatus.LOOP_EXHAUSTED);
-        run.setStatus(anyFailed ? WorkflowRunStatus.FAILED : WorkflowRunStatus.SUCCESS);
+        if (run.getStatus() == WorkflowRunStatus.CANCELLING) {
+            // A cancelling run only waits on the jobs that actually started: the ones with no row yet
+            // never will get one, since planJobExecution no-ops for a cancelling run. Demanding full
+            // job coverage like the normal path below would strand the run in CANCELLING forever.
+            // It also settles as CANCELLED regardless of how its jobs landed — a job that failed
+            // *because* it was torn down isn't evidence the workflow is broken.
+            if (terminalJobs < latestByJobId.size()) return;
+            run.setStatus(WorkflowRunStatus.CANCELLED);
+        } else {
+            if (terminalJobs < totalJobs) return;
+            boolean anyFailed = latestByJobId.values().stream()
+                    .anyMatch(j -> j.getStatus() == WorkflowJobStatus.FAILED
+                            || j.getStatus() == WorkflowJobStatus.LOOP_EXHAUSTED);
+            run.setStatus(anyFailed ? WorkflowRunStatus.FAILED : WorkflowRunStatus.SUCCESS);
+        }
         run.setCompletedAt(OffsetDateTime.now());
         runRepository.save(run);
         log.info("Run {} completed with status {}", run.getId(), run.getStatus());
         circuitBreaker.recordOutcome(run);
-    }
-
-    private boolean isTerminal(WorkflowJobStatus status) {
-        return status == WorkflowJobStatus.SUCCESS
-                || status == WorkflowJobStatus.FAILED
-                || status == WorkflowJobStatus.SKIPPED
-                || status == WorkflowJobStatus.LOOP_EXHAUSTED;
     }
 
     private WorkflowSpec parseYaml(String yaml) {

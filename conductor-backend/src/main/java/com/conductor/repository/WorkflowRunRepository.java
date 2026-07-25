@@ -40,4 +40,11 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from WorkflowRun r where r.id = :id")
     Optional<WorkflowRun> findByIdForUpdate(@Param("id") String id);
+
+    /**
+     * Status-only projection, polled between steps by the non-transactional job loop so a cancellation
+     * lands mid-job without loading (and holding) the whole run entity.
+     */
+    @Query("SELECT r.status FROM WorkflowRun r WHERE r.id = :id")
+    Optional<WorkflowRunStatus> findStatusById(@Param("id") String id);
 }

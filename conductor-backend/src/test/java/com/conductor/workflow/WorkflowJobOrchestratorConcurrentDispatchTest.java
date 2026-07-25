@@ -129,6 +129,7 @@ class WorkflowJobOrchestratorConcurrentDispatchTest {
 
         WorkflowRun run = new WorkflowRun();
         run.setId(RUN_ID);
+        run.setStatus(WorkflowRunStatus.PENDING);
         run.setWorkflow(def);
         return run;
     }

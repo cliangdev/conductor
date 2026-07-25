@@ -32,6 +32,10 @@ public class StepResult {
         return new StepResult(WorkflowStepStatus.SKIPPED, null, Map.of(), null, null);
     }
 
+    public static StepResult cancelled(String log) {
+        return new StepResult(WorkflowStepStatus.CANCELLED, log, Map.of(), null, null);
+    }
+
     /**
      * Tags this result with the workerJobId of a pre-created {@code WorkflowStepRun} (e.g. the Cloud
      * Run executor's UUID row) so the orchestrator updates that row in place instead of inserting a

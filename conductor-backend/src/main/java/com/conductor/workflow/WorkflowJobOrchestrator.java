@@ -96,9 +96,7 @@ public class WorkflowJobOrchestrator {
         JobExecutionPlan plan = self.planJobExecution(runId, jobId);
         if (plan == null || plan.done) return;
 
-        boolean jobFailed = runSteps(plan);
-
-        self.finalizeJob(plan, jobFailed);
+        self.finalizeJob(plan, runSteps(plan));
     }
 
     /**
@@ -115,6 +113,15 @@ public class WorkflowJobOrchestrator {
         if (run == null) {
             log.warn("Run {} not found, skipping job {}", runId, jobId);
             return null;
+        }
+
+        // Closes the race where pollQueueOnce claims a queue row concurrently with the cancellation
+        // service purging that same queue. Deliberately checks the two cancellation statuses rather
+        // than isTerminal(): the legacy PATCH shim marks a run SUCCESS *before* propagating to
+        // dependents, and those dependents must still dispatch.
+        if (run.getStatus() == WorkflowRunStatus.CANCELLING || run.getStatus() == WorkflowRunStatus.CANCELLED) {
+            log.info("planJobExecution: run {} is {}, not dispatching job {}", runId, run.getStatus(), jobId);
+            return JobExecutionPlan.complete();
         }
 
         WorkflowDefinition workflow = run.getWorkflow();
@@ -216,21 +223,29 @@ public class WorkflowJobOrchestrator {
      * external I/O unencumbered; the per-step DB write happens in its own short transaction
      * via {@link #persistStepResult}.
      */
-    private boolean runSteps(JobExecutionPlan plan) {
-        boolean jobFailed = false;
+    private JobOutcome runSteps(JobExecutionPlan plan) {
         String runsOn = plan.jobDef.runsOn();
         for (StepSpec stepDef : plan.executableSteps) {
-            if (jobFailed) break;
+            if (runRepository.findStatusById(plan.runId).orElse(null) == WorkflowRunStatus.CANCELLING) {
+                log.info("runSteps: run {} is cancelling, stopping job {} before step {}",
+                        plan.runId, plan.jobId, stepDef.id());
+                return JobOutcome.CANCELLED;
+            }
             RuntimeContext ctx = self.buildStepContext(plan.runId, plan.jobRunId,
                     plan.secrets, plan.upstreamOutputs, plan.jobDef.needs(), plan.loopIteration);
             StepResult result = runStep(plan.runId, plan.jobRunId, stepDef, ctx, plan.projectId, runsOn,
                     plan.jobDef.consumes(), plan.statusContext);
             self.persistStepResult(plan.jobRunId, stepDef, result, plan.projectId);
+            // A step that reports CANCELLED was torn down by a cancellation mid-flight — the job stops
+            // here too, and `continueOnError` doesn't apply (it's not a failure to tolerate).
+            if (result.getStatus() == WorkflowStepStatus.CANCELLED) {
+                return JobOutcome.CANCELLED;
+            }
             if (result.getStatus() == WorkflowStepStatus.FAILED && !stepDef.continueOnError()) {
-                jobFailed = true;
+                return JobOutcome.FAILED;
             }
         }
-        return jobFailed;
+        return JobOutcome.COMPLETED;
     }
 
     /**
@@ -303,16 +318,18 @@ public class WorkflowJobOrchestrator {
      * handle loop/condition tail. Runs after all step I/O has completed.
      */
     @Transactional
-    public void finalizeJob(JobExecutionPlan plan, boolean jobFailed) {
+    public void finalizeJob(JobExecutionPlan plan, JobOutcome outcome) {
         WorkflowRun run = runRepository.findById(plan.runId).orElseThrow();
         WorkflowJobRun jobRun = jobRunRepository.findById(plan.jobRunId).orElseThrow();
 
-        if (jobFailed) {
-            jobRun.setStatus(WorkflowJobStatus.FAILED);
+        if (outcome != JobOutcome.COMPLETED) {
+            jobRun.setStatus(outcome == JobOutcome.CANCELLED
+                    ? WorkflowJobStatus.CANCELLED : WorkflowJobStatus.FAILED);
             jobRun.setCompletedAt(OffsetDateTime.now());
             jobRunRepository.save(jobRun);
-            // FAILED is terminal like any other outcome now — dependents become ready and decide
-            // for themselves (via if: failure()/always()/success()) whether to run or skip.
+            // FAILED and CANCELLED are terminal like any other outcome — dependents become ready and
+            // decide for themselves (via if: failure()/always()/success()) whether to run or skip.
+            // For a cancelled run none of them actually dispatch: planJobExecution no-ops.
             enqueueReadyDependents(run, plan.jobId, plan.jobs);
             return;
         }
@@ -356,7 +373,7 @@ public class WorkflowJobOrchestrator {
             return;
         }
         WorkflowJobRun jobRun = existing.get(0);
-        if (isTerminalJobStatus(jobRun.getStatus())) {
+        if (jobRun.getStatus().isTerminal()) {
             log.info("completeRemoteJob: jobRun {} already terminal ({}), ignoring", jobRun.getId(), jobRun.getStatus());
             return;
         }
@@ -389,11 +406,6 @@ public class WorkflowJobOrchestrator {
                     + "not propagated; run will rely on the cleanup sweep", runId, jobId);
         }
         engine.checkRunCompletion(run);
-    }
-
-    private boolean isTerminalJobStatus(WorkflowJobStatus status) {
-        return status == WorkflowJobStatus.SUCCESS || status == WorkflowJobStatus.FAILED
-                || status == WorkflowJobStatus.SKIPPED || status == WorkflowJobStatus.LOOP_EXHAUSTED;
     }
 
     private WorkflowJobRun findOrCreateLatestJobRun(WorkflowRun run, String jobId) {
@@ -593,7 +605,7 @@ public class WorkflowJobOrchestrator {
         List<WorkflowJobRun> existingJobRuns = jobRunRepository.findByRunId(run.getId());
         Set<String> terminalJobIds = new HashSet<>();
         for (WorkflowJobRun jr : existingJobRuns) {
-            if (isTerminalJobStatus(jr.getStatus())) {
+            if (jr.getStatus().isTerminal()) {
                 terminalJobIds.add(jr.getJobId());
             }
         }
@@ -637,6 +649,16 @@ public class WorkflowJobOrchestrator {
             log.error("Failed to parse YAML: {}", e.getMessage());
             return null;
         }
+    }
+
+    /** How a job's step loop ended, as decided by {@link #runSteps} and applied by {@link #finalizeJob}. */
+    public enum JobOutcome {
+        /** Every step ran; the job's terminal status is still subject to its loop/condition tail. */
+        COMPLETED,
+        /** A step failed and didn't declare {@code continue-on-error}. */
+        FAILED,
+        /** The run was cancelled mid-job, so the remaining steps were never attempted. */
+        CANCELLED
     }
 
     /**
