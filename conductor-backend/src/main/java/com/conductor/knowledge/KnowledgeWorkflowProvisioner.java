@@ -14,6 +14,7 @@ import com.conductor.knowledge.page.KnowledgePageService;
 import com.conductor.knowledge.page.PageWrite;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.workflow.AgentRuntimeResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
@@ -165,6 +166,7 @@ public class KnowledgeWorkflowProvisioner {
         if (existing.isPresent()) {
             backfillAvatarIfMissing(existing.get());
             backfillToolIdsIfMissing(existing.get());
+            backfillRuntimePinIfMissing(existing.get());
             return;
         }
         Agent agent = new Agent();
@@ -174,9 +176,13 @@ public class KnowledgeWorkflowProvisioner {
         agent.setDescription("Files knowledge-inbox sources into the wiki.");
         agent.setProvider(LIBRARIAN_AGENT_PROVIDER);
         agent.setSystemPrompt(readResource(LIBRARIAN_SYSTEM_PROMPT_RESOURCE));
-        // No "runtime" key -- resolved at execution time (AgentRuntimeResolver auto-detects from
-        // project credentials) rather than pinned by the seed.
-        agent.setConfigJson(writeJson(Map.of("maxToolTurns", LIBRARIAN_MAX_TOOL_TURNS)));
+        // Pinned rather than left to AgentRuntimeResolver auto-detection: the librarian's multi-step
+        // filing task (read schema, search, batch-write with conflict retry) is written against the
+        // Claude Code tool-calling loop, so which runtime it lands on must not silently flip with a
+        // project's credential mix (e.g. an Anthropic API key present but no Claude Code subscription).
+        agent.setConfigJson(writeJson(Map.of(
+                "maxToolTurns", LIBRARIAN_MAX_TOOL_TURNS,
+                "runtime", AgentRuntimeResolver.RUNTIME_CLAUDE_CODE)));
         agent.setToolIds(writeJson(LIBRARIAN_TOOL_IDS));
         agent.setState("ACTIVE");
         agent.setAvatarEmoji(LIBRARIAN_AVATAR_EMOJI);
@@ -214,6 +220,25 @@ public class KnowledgeWorkflowProvisioner {
         agent.setToolIds(writeJson(new ArrayList<>(merged)));
         agentRepository.save(agent);
         log.info("Backfilled tool ids for '{}' agent in project {}", LIBRARIAN_AGENT_SLUG, agent.getProjectId());
+    }
+
+    /** Backfills the {@code claude-code} runtime pin onto a pre-existing librarian agent seeded before
+     *  the pin existed -- leaves any other explicit pin an operator may have set untouched. */
+    private void backfillRuntimePinIfMissing(Agent agent) {
+        Map<String, Object> config;
+        try {
+            config = objectMapper.readValue(agent.getConfigJson(), new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+        } catch (Exception e) {
+            config = new java.util.LinkedHashMap<>();
+        }
+        if (config.containsKey("runtime")) {
+            return;
+        }
+        Map<String, Object> updated = new java.util.LinkedHashMap<>(config);
+        updated.put("runtime", AgentRuntimeResolver.RUNTIME_CLAUDE_CODE);
+        agent.setConfigJson(writeJson(updated));
+        agentRepository.save(agent);
+        log.info("Backfilled runtime pin for '{}' agent in project {}", LIBRARIAN_AGENT_SLUG, agent.getProjectId());
     }
 
     private String writeJson(Object value) {

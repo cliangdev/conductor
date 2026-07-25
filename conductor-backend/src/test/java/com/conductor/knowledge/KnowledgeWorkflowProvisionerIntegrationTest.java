@@ -206,8 +206,8 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
                 .contains("knowledge:list_knowledge_domains")
                 .contains("knowledge:suggest_knowledge_domain");
         assertThat(librarian.getConfigJson()).contains("\"maxToolTurns\"").contains("40");
-        // No runtime key -- resolved at execution time (auto-detect), never pinned by the seed.
-        assertThat(librarian.getConfigJson()).doesNotContain("runtime");
+        // Pinned to claude-code at seed time -- never left to runtime auto-detection.
+        assertThat(librarian.getConfigJson()).contains("\"runtime\"").contains("claude-code");
         assertThat(librarian.getAvatarEmoji()).isEqualTo("📚");
         assertThat(librarian.getAvatarColor()).isEqualTo("violet");
     }
@@ -251,6 +251,42 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         assertThat(backfilled.getToolIds()).contains("knowledge:list_knowledge_domains")
                 .contains("knowledge:suggest_knowledge_domain")
                 .contains("custom:my_tool"); // the operator's custom addition survives the backfill
+    }
+
+    @Test
+    void provisionBackfillsMissingRuntimePinOnPreExistingLibrarianAgent() {
+        provisioner.provision(projectId);
+        Agent librarian = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        // Simulate a librarian seeded before the runtime pin existed.
+        librarian.setConfigJson("{\"maxToolTurns\":40}");
+        agentRepository.save(librarian);
+
+        provisioner.provision(projectId);
+
+        Agent backfilled = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        assertThat(backfilled.getConfigJson()).contains("\"runtime\"").contains("claude-code")
+                .contains("\"maxToolTurns\"").contains("40");
+    }
+
+    @Test
+    void provisionLeavesACustomizedLibrarianRuntimePinAlone() {
+        provisioner.provision(projectId);
+        Agent librarian = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        librarian.setConfigJson("{\"maxToolTurns\":40,\"runtime\":\"api\"}");
+        agentRepository.save(librarian);
+
+        provisioner.provision(projectId);
+
+        Agent unchanged = agentRepository.findByProjectIdAndSlug(
+                        projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+        assertThat(unchanged.getConfigJson()).contains("\"runtime\"").contains("\"api\"");
     }
 
     @Test

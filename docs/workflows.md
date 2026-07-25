@@ -486,6 +486,8 @@ An agent's *definition* (system prompt, tools, guardrails) is decoupled from the
 2. Otherwise auto-detected from the project's credentials: a **Claude Code (subscription)** credential (**Settings → AI Providers**) wins over an API key when both are configured, since it gets the full Claude Code tool-calling loop rather than just a single-model ReAct loop.
 3. If neither credential is configured, the step fails with a message naming both options.
 
+The Knowledge Center's librarian and domain-specialist agents (seeded by `KnowledgeWorkflowProvisioner`/`KnowledgeDomainService`) are always seeded with an explicit `claude-code` pin rather than left to auto-detection, so a project with an API key credential but no Claude Code subscription credential never silently runs them on a different runtime than they were built for. Since the pin is unconditional (checked before any credential lookup), a project with no Claude Code subscription credential configured at all will now see the librarian/specialist step fail loudly with `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` (fix under **Settings → AI Providers**) instead of silently degrading to the `api` runtime.
+
 | Runtime | What it is | Guardrails |
 |---|---|---|
 | `api` | The in-process ReAct loop against the agent's model provider (e.g. Anthropic API key under provider `claude`) — same engine `agent: <slug>` always used before runtimes existed. | `maxToolTurns` ↔ the loop's tool-call cap; `maxTokens`/`temperature`/`model` are **api-only** (no Claude Code equivalent). The step's `timeout_minutes` is **not** applied here — the loop is bounded by `maxToolTurns`, not wall-clock. |
