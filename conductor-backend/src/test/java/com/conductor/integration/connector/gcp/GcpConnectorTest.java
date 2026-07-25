@@ -108,6 +108,102 @@ class GcpConnectorTest {
                 .hasMessageContaining("artifactregistry.reader");
     }
 
+    @Test
+    void verifyImage_protocolLabelPresent_returnsExistsTrueAndLabelPresentTrue() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        ArDockerImage image = new ArDockerImage(
+                "projects/my-project/locations/us-central1/repositories/conductor-runners/dockerImages/conductor-runner@sha256:abc123",
+                "us-central1-docker.pkg.dev/my-project/conductor-runners/conductor-runner@sha256:abc123",
+                List.of("3", "latest"));
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.GET), any(), eq(ArListDockerImagesResponse.class)))
+                .thenReturn(ResponseEntity.ok(new ArListDockerImagesResponse(List.of(image), null)));
+        // Single-platform manifest (no manifest-list indirection).
+        stubRegistryJson(restTemplate, "/manifests/sha256:abc123",
+                "{\"mediaType\":\"application/vnd.docker.distribution.manifest.v2+json\","
+                        + "\"config\":{\"digest\":\"sha256:configdigest\"}}");
+        stubRegistryJson(restTemplate, "/blobs/sha256:configdigest",
+                "{\"config\":{\"Labels\":{\"dev.conductor.runner.protocol\":\"1\"}}}");
+
+        GcpConnector connector = connectorWithFakeToken(restTemplate);
+        GcpConnector.VerifyImageResult result = connector.verifyImage(ctx("{}"), IMAGE_REF);
+
+        assertThat(result.exists()).isTrue();
+        assertThat(result.protocolLabelPresent()).isTrue();
+        assertThat(result.message()).contains("verified").contains("protocol 1");
+    }
+
+    @Test
+    void verifyImage_manifestList_followsLinuxAmd64PlatformEntry() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        ArDockerImage image = new ArDockerImage(
+                "projects/my-project/locations/us-central1/repositories/conductor-runners/dockerImages/conductor-runner@sha256:abc123",
+                "us-central1-docker.pkg.dev/my-project/conductor-runners/conductor-runner@sha256:abc123",
+                List.of("3", "latest"));
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.GET), any(), eq(ArListDockerImagesResponse.class)))
+                .thenReturn(ResponseEntity.ok(new ArListDockerImagesResponse(List.of(image), null)));
+        stubRegistryJson(restTemplate, "/manifests/sha256:abc123",
+                "{\"mediaType\":\"application/vnd.docker.distribution.manifest.list.v2+json\",\"manifests\":["
+                        + "{\"digest\":\"sha256:armentry\",\"platform\":{\"architecture\":\"arm64\",\"os\":\"linux\"}},"
+                        + "{\"digest\":\"sha256:amd64entry\",\"platform\":{\"architecture\":\"amd64\",\"os\":\"linux\"}}"
+                        + "]}");
+        stubRegistryJson(restTemplate, "/manifests/sha256:amd64entry",
+                "{\"config\":{\"digest\":\"sha256:configdigest\"}}");
+        stubRegistryJson(restTemplate, "/blobs/sha256:configdigest",
+                "{\"config\":{\"Labels\":{\"dev.conductor.runner.protocol\":\"1\"}}}");
+
+        GcpConnector connector = connectorWithFakeToken(restTemplate);
+        GcpConnector.VerifyImageResult result = connector.verifyImage(ctx("{}"), IMAGE_REF);
+
+        assertThat(result.protocolLabelPresent()).isTrue();
+    }
+
+    @Test
+    void verifyImage_manifestFetchThrows_degradesToWarningRatherThanFailing() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        ArDockerImage image = new ArDockerImage(
+                "projects/my-project/locations/us-central1/repositories/conductor-runners/dockerImages/conductor-runner@sha256:abc123",
+                "us-central1-docker.pkg.dev/my-project/conductor-runners/conductor-runner@sha256:abc123",
+                List.of("3", "latest"));
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.GET), any(), eq(ArListDockerImagesResponse.class)))
+                .thenReturn(ResponseEntity.ok(new ArListDockerImagesResponse(List.of(image), null)));
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null));
+
+        GcpConnector connector = connectorWithFakeToken(restTemplate);
+        GcpConnector.VerifyImageResult result = connector.verifyImage(ctx("{}"), IMAGE_REF);
+
+        assertThat(result.exists()).isTrue();
+        assertThat(result.protocolLabelPresent()).isFalse();
+        assertThat(result.message()).contains("dev.conductor.runner.protocol");
+    }
+
+    @Test
+    void verifyImage_labelMissingFromConfig_returnsLabelPresentFalse() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        ArDockerImage image = new ArDockerImage(
+                "projects/my-project/locations/us-central1/repositories/conductor-runners/dockerImages/conductor-runner@sha256:abc123",
+                "us-central1-docker.pkg.dev/my-project/conductor-runners/conductor-runner@sha256:abc123",
+                List.of("3", "latest"));
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.GET), any(), eq(ArListDockerImagesResponse.class)))
+                .thenReturn(ResponseEntity.ok(new ArListDockerImagesResponse(List.of(image), null)));
+        stubRegistryJson(restTemplate, "/manifests/sha256:abc123", "{\"config\":{\"digest\":\"sha256:configdigest\"}}");
+        stubRegistryJson(restTemplate, "/blobs/sha256:configdigest", "{\"config\":{\"Labels\":{}}}");
+
+        GcpConnector connector = connectorWithFakeToken(restTemplate);
+        GcpConnector.VerifyImageResult result = connector.verifyImage(ctx("{}"), IMAGE_REF);
+
+        assertThat(result.exists()).isTrue();
+        assertThat(result.protocolLabelPresent()).isFalse();
+    }
+
+    /** Stubs a Docker Registry v2 GET (manifest or blob) whose URI ends with {@code pathSuffix}. */
+    private static void stubRegistryJson(RestTemplate restTemplate, String pathSuffix, String json) {
+        when(restTemplate.exchange(
+                        org.mockito.ArgumentMatchers.argThat(uri -> uri != null && uri.toString().endsWith(pathSuffix)),
+                        eq(HttpMethod.GET), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok(json));
+    }
+
     // ---- listRepositories ----
 
     @Test

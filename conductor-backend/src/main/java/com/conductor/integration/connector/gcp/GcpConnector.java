@@ -8,6 +8,7 @@ import com.conductor.integration.connector.gcp.model.ArListDockerImagesResponse;
 import com.conductor.integration.connector.gcp.model.ArListRepositoriesResponse;
 import com.conductor.integration.connector.gcp.model.ArRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.api.gax.core.FixedCredentialsProvider;
 import com.google.api.gax.rpc.NotFoundException;
@@ -28,6 +29,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
@@ -169,11 +171,20 @@ public class GcpConnector implements FetchConnector {
 
     public record VerifyImageResult(boolean exists, boolean protocolLabelPresent, String message) {}
 
+    private static final String RUNNER_PROTOCOL_LABEL = "dev.conductor.runner.protocol";
+    private static final List<MediaType> MANIFEST_ACCEPT_TYPES = List.of(
+            MediaType.parseMediaType("application/vnd.docker.distribution.manifest.v2+json"),
+            MediaType.parseMediaType("application/vnd.docker.distribution.manifest.list.v2+json"),
+            MediaType.parseMediaType("application/vnd.oci.image.manifest.v1+json"),
+            MediaType.parseMediaType("application/vnd.oci.image.index.v1+json"));
+
     /**
      * Checks whether {@code imageRef} (e.g. {@code us-central1-docker.pkg.dev/PROJECT/REPO/IMAGE:TAG})
-     * exists in Artifact Registry. Image-existence only — this PR excludes runner-image work, so the
-     * {@code dev.conductor.runner.protocol} OCI label is never checked: {@code protocolLabelPresent} is
-     * always {@code false} with a warning-only message, and never turns an existing image into a failure.
+     * exists in Artifact Registry, and — best-effort — whether it carries the {@code
+     * dev.conductor.runner.protocol} OCI label (see {@link #fetchRunnerProtocolLabel}). Label
+     * verification failing for any reason (network, auth, unexpected manifest shape) degrades to the
+     * same warning-only message this always returned before label verification existed; it never turns
+     * an existing image into a failure.
      */
     public VerifyImageResult verifyImage(ConnectionContext ctx, String imageRef) {
         GcpImageRef ref = parseImageRef(imageRef);
@@ -184,24 +195,31 @@ public class GcpConnector implements FetchConnector {
                 + "/dockerImages?pageSize=1000";
         try {
             String namePrefix = "/dockerImages/" + ref.imagePath() + "@";
-            boolean found = false;
+            ArDockerImage matched = null;
             String pageToken = null;
             do {
                 URI uri = URI.create(pageToken == null ? baseUrl : baseUrl + "&pageToken=" + pageToken);
                 ArListDockerImagesResponse body = getForObject(uri, token, ArListDockerImagesResponse.class);
                 List<ArDockerImage> images = body != null && body.dockerImages() != null
                         ? body.dockerImages() : List.of();
-                found = images.stream()
+                matched = images.stream()
                         .filter(img -> img.name() != null && img.name().contains(namePrefix))
-                        .anyMatch(img -> ref.digest() != null
+                        .filter(img -> ref.digest() != null
                                 ? img.name().endsWith("@" + ref.digest())
-                                : img.tags() != null && img.tags().contains(ref.tag()));
+                                : img.tags() != null && img.tags().contains(ref.tag()))
+                        .findFirst().orElse(null);
                 pageToken = body != null && body.nextPageToken() != null && !body.nextPageToken().isBlank()
                         ? body.nextPageToken() : null;
-            } while (!found && pageToken != null);
-            if (!found) {
+            } while (matched == null && pageToken != null);
+            if (matched == null) {
                 return new VerifyImageResult(false, false,
                         "Image " + imageRef + " not found in Artifact Registry repository " + ref.repository());
+            }
+            String digest = digestOf(matched);
+            String protocol = digest != null ? fetchRunnerProtocolLabel(ref, digest, token) : null;
+            if (protocol != null) {
+                return new VerifyImageResult(true, true,
+                        "Image found and verified — honors the runner contract (protocol " + protocol + ").");
             }
             return new VerifyImageResult(true, false,
                     "Image found. Could not verify the dev.conductor.runner.protocol OCI label — "
@@ -213,6 +231,79 @@ public class GcpConnector implements FetchConnector {
         } catch (HttpClientErrorException.Forbidden e) {
             throw new ForbiddenException("Missing permission to read Artifact Registry in project "
                     + ref.project() + " — grant roles/artifactregistry.reader to the service account");
+        }
+    }
+
+    /** {@code image.name()} is {@code .../dockerImages/IMAGE_PATH@sha256:DIGEST} — the part after
+     * {@code @} is the digest, authoritative regardless of whether {@code ref} was tag- or digest-based. */
+    private static String digestOf(ArDockerImage image) {
+        String name = image.name();
+        int at = name == null ? -1 : name.indexOf('@');
+        return at >= 0 ? name.substring(at + 1) : null;
+    }
+
+    /**
+     * Reads the {@code dev.conductor.runner.protocol} OCI label off {@code digest} via the Docker
+     * Registry v2 API — Artifact Registry serves this at the same host used for {@code docker
+     * pull}/{@code push}, and it's the only way to read image config labels: the management API
+     * ({@code dockerImages.list}, used by {@link #verifyImage}) exposes no labels field. Fetches the
+     * manifest, follows a manifest-list/OCI-index down to the {@code linux/amd64} entry if present,
+     * then fetches the config blob it references. Returns {@code null} on ANY failure (network, auth,
+     * unexpected shape, missing label) rather than throwing — this is advisory, never a source of truth
+     * for whether the image itself exists.
+     */
+    private String fetchRunnerProtocolLabel(GcpImageRef ref, String digest, String token) {
+        try {
+            JsonNode manifest = fetchRegistryJson(registryUri(ref, "manifests/" + digest), token);
+            if (isManifestList(manifest)) {
+                JsonNode child = selectPlatformManifest(manifest.path("manifests"));
+                if (child == null) return null;
+                manifest = fetchRegistryJson(registryUri(ref, "manifests/" + child.path("digest").asText()), token);
+            }
+            String configDigest = manifest.path("config").path("digest").asText(null);
+            if (configDigest == null || configDigest.isBlank()) return null;
+            JsonNode config = fetchRegistryJson(registryUri(ref, "blobs/" + configDigest), token);
+            String label = config.path("config").path("Labels").path(RUNNER_PROTOCOL_LABEL).asText(null);
+            return label != null && !label.isBlank() ? label : null;
+        } catch (Exception e) {
+            log.warn("Could not verify {} for {}: {}", RUNNER_PROTOCOL_LABEL, ref.imagePath(), e.getMessage());
+            return null;
+        }
+    }
+
+    private static URI registryUri(GcpImageRef ref, String suffix) {
+        return URI.create("https://" + ref.location() + "-docker.pkg.dev/v2/" + ref.project() + "/"
+                + ref.repository() + "/" + ref.imagePath() + "/" + suffix);
+    }
+
+    private static boolean isManifestList(JsonNode manifest) {
+        String mediaType = manifest.path("mediaType").asText("");
+        return manifest.has("manifests") || mediaType.contains("manifest.list") || mediaType.contains("image.index");
+    }
+
+    /** Prefers the linux/amd64 entry (the only platform Conductor's runner images are built for);
+     * falls back to the first entry if no platform metadata matches, rather than giving up. */
+    private static JsonNode selectPlatformManifest(JsonNode entries) {
+        JsonNode fallback = null;
+        for (JsonNode entry : entries) {
+            if (fallback == null) fallback = entry;
+            JsonNode platform = entry.path("platform");
+            if ("amd64".equals(platform.path("architecture").asText()) && "linux".equals(platform.path("os").asText())) {
+                return entry;
+            }
+        }
+        return fallback;
+    }
+
+    private JsonNode fetchRegistryJson(URI uri, String token) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setAccept(MANIFEST_ACCEPT_TYPES);
+        ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        try {
+            return JSON.readTree(response.getBody());
+        } catch (IOException e) {
+            throw new IllegalStateException("Invalid JSON from " + uri, e);
         }
     }
 

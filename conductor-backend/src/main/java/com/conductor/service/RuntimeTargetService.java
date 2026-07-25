@@ -258,10 +258,10 @@ public class RuntimeTargetService {
             } else {
                 GcpConnector.EnsureJobResult ensured =
                         ensureJob(ctx, new GcpConnector.EnsureJobSpec(gcpProjectId, region, jobName, image, null));
-                // The missing-protocol-label message is a non-fatal, stored warning (runner-image work
-                // is out of scope for this PR — see GcpConnector.verifyImage javadoc); it never blocks
-                // ACTIVE. Explicitly cleared when not applicable so a resolved warning doesn't linger
-                // from a prior provision now that config is always persisted below.
+                // The missing-protocol-label message is a non-fatal, stored warning — it never blocks
+                // ACTIVE (see GcpConnector.verifyImage javadoc). Explicitly cleared when the label did
+                // verify, so a resolved warning doesn't linger from a prior provision now that config is
+                // always persisted below.
                 config.put("warnings", verify.message() != null && !verify.protocolLabelPresent()
                         ? List.of(verify.message()) : List.of());
                 // Ground truth for "what's actually running" — see EnsureJobResult's javadoc. Stored
