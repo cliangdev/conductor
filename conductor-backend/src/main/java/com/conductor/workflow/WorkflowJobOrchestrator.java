@@ -148,6 +148,14 @@ public class WorkflowJobOrchestrator {
             }
         }
 
+        // The run itself never otherwise leaves PENDING until it completes — flip it here, at the
+        // first job actually dispatching, so run-level status (list/overview views) doesn't lag
+        // behind the job/step-level status shown on the run detail page.
+        if (run.getStatus() == WorkflowRunStatus.PENDING) {
+            run.setStatus(WorkflowRunStatus.RUNNING);
+            runRepository.save(run);
+        }
+
         WorkflowJobRun jobRun = findOrCreateLatestJobRun(run, jobId);
 
         jobRun.setStatus(WorkflowJobStatus.RUNNING);

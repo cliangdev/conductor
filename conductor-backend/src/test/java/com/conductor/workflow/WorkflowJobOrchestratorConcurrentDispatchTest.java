@@ -5,6 +5,7 @@ import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowJobStatus;
 import com.conductor.entity.WorkflowRun;
+import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
@@ -192,6 +193,50 @@ class WorkflowJobOrchestratorConcurrentDispatchTest {
 
         assertThat(plan.done).isTrue(); // dispatched again via selfHostedJobDispatcher, then AWAITING_PICKUP
         verify(selfHostedJobDispatcher).dispatch(eq(run), eq("daemon_job"), any(), any());
+    }
+
+    @Test
+    void runStatusFlipsToRunning_onFirstJobDispatch() {
+        // Regression: the run row itself never left PENDING until completion, so the run-level status
+        // shown on the list/overview pages lagged behind the job/step-level status on the run detail
+        // page (which reads WorkflowJobRun/WorkflowStepRun directly) — a run mid-execution showed
+        // "Pending" everywhere except its own step rows.
+        WorkflowRun run = makeRun("""
+                on:
+                  push: {}
+                jobs:
+                  review_backend:
+                    runs-on: cloud-run
+                    steps: []
+                """);
+        run.setStatus(WorkflowRunStatus.PENDING);
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdForUpdate(RUN_ID)).thenReturn(Optional.of(run));
+
+        orchestrator.planJobExecution(RUN_ID, JOB_ID);
+
+        assertThat(run.getStatus()).isEqualTo(WorkflowRunStatus.RUNNING);
+        verify(runRepository).save(run);
+    }
+
+    @Test
+    void runStatusUntouched_whenAlreadyRunning() {
+        WorkflowRun run = makeRun("""
+                on:
+                  push: {}
+                jobs:
+                  review_backend:
+                    runs-on: cloud-run
+                    steps: []
+                """);
+        run.setStatus(WorkflowRunStatus.RUNNING);
+        when(runRepository.findById(RUN_ID)).thenReturn(Optional.of(run));
+        when(runRepository.findByIdForUpdate(RUN_ID)).thenReturn(Optional.of(run));
+
+        orchestrator.planJobExecution(RUN_ID, JOB_ID);
+
+        assertThat(run.getStatus()).isEqualTo(WorkflowRunStatus.RUNNING);
+        verify(runRepository, never()).save(run);
     }
 
     @Test
