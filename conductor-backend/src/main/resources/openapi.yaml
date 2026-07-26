@@ -1012,6 +1012,86 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/docs/{docId}/tasks/{lineNumber}:
+    patch:
+      tags:
+        - project-docs
+      summary: Check or uncheck a single task list item
+      description: >-
+        Flips one GFM task list item (`- [ ]` / `- [x]`) on the given 1-based source line, without
+        rewriting the rest of the doc. Unlike a full content update this does not create a new
+        version and does not mark line comments stale — checking a box never changes the line count,
+        so existing comment anchors stay valid. Requires ADMIN or CREATOR. Idempotent: setting a box
+        to the state it already has succeeds and is a no-op.
+      operationId: setDocTaskState
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: lineNumber
+          in: path
+          required: true
+          description: >-
+            1-based line number within the doc's raw content. Range is validated in the service so an
+            out-of-range value returns a 400 with a useful message; a `minimum` here would instead
+            raise an unmapped ConstraintViolationException and surface as a 500.
+          schema:
+            type: integer
+            format: int32
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetDocTaskStateRequest"
+      responses:
+        "200":
+          description: Task item updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDocResponse"
+        "400":
+          description: Line number out of range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: That line is no longer a task list item — the doc changed underneath
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/docs/{docId}/versions:
     get:
       tags:
@@ -6852,6 +6932,15 @@ components:
       properties:
         content:
           type: string
+
+    SetDocTaskStateRequest:
+      type: object
+      required:
+        - checked
+      properties:
+        checked:
+          type: boolean
+          description: Desired state of the checkbox on the addressed line.
 
     RenameDocRequest:
       type: object

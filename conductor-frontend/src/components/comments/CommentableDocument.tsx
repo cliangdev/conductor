@@ -1,12 +1,19 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { apiPost } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { Badge } from '@/components/ui/badge'
 import { CommentThread } from './CommentThread'
 import { NewCommentForm } from './NewCommentForm'
 import type { Comment, PendingCommentDraft } from './types'
+import {
+  fallbackBox,
+  snapToRendered,
+  useSourceLineOffsets,
+  type LineBox,
+} from './useSourceLineOffsets'
 import { MessageSquarePlus, PencilIcon, TrashIcon, XIcon } from 'lucide-react'
 
 interface Props {
@@ -32,6 +39,12 @@ interface Props {
   onAddPendingComment?: (lineNumber: number, content: string) => void
   onEditPendingComment?: (localId: string, content: string) => void
   onRemovePendingComment?: (localId: string) => void
+  /**
+   * Opt in to interactive GFM checkboxes (see `MarkdownRenderer`). The gutter needs no adjustment:
+   * `[ ]` and `[x]` are the same width, so toggling never moves a line and comment anchors hold.
+   */
+  onToggleTask?: (lineNumber: number, checked: boolean) => void
+  tasksReadOnly?: boolean
 }
 
 interface PopoverState {
@@ -40,11 +53,6 @@ interface PopoverState {
   /** Decided once at open time (near the viewport bottom) — the popover then stays put as the page scrolls. */
   flip: boolean
 }
-
-// Must stay equal to each gutter row's `style={{ height }}` below — the popover's top/bottom offset is
-// derived purely from the line number times this constant (no DOM measurement), so it can't desync
-// from the content on scroll the way a viewport-fixed, getBoundingClientRect-anchored popover did.
-const LINE_HEIGHT_PX = 1.625 * 16 // 26px
 
 export function CommentableDocument({
   content,
@@ -62,22 +70,57 @@ export function CommentableDocument({
   onAddPendingComment,
   onEditPendingComment,
   onRemovePendingComment,
+  onToggleTask,
+  tasksReadOnly,
 }: Props) {
   const basePath =
     commentApiBasePath ?? `/api/v2/projects/${projectId}/work-items/${issueId}/comments`
   const [popover, setPopover] = useState<PopoverState | null>(null)
   const [editingPendingId, setEditingPendingId] = useState<string | null>(null)
 
+  const contentRef = useRef<HTMLDivElement>(null)
+  const measured = useSourceLineOffsets(contentRef, content)
+
   const lines = content.split('\n')
   const docPending = pendingComments.filter((p) => p.documentId === documentId)
 
-  function commentsForLine(lineNum: number): Comment[] {
-    return comments.filter((c) => Number(c.lineNumber) === lineNum)
-  }
+  /** Measured position of a source line, or the old uniform-height guess before measurement lands. */
+  const boxFor = useCallback(
+    (lineNum: number): LineBox => measured?.get(lineNum) ?? fallbackBox(lineNum),
+    [measured]
+  )
 
-  function pendingForLine(lineNum: number): PendingCommentDraft[] {
-    return docPending.filter((p) => p.lineNumber === lineNum)
-  }
+  /**
+   * A comment's own line may not render anything of its own — it can sit on a blank separator, or
+   * inside a block whose narrowest anchor starts earlier. Snapping to the nearest line that *did*
+   * render keeps such a comment reachable instead of stranding it at a position nothing occupies.
+   * Identity when unmeasured, so the pre-measurement pass behaves exactly as before.
+   */
+  const resolveLine = useCallback(
+    (lineNum: number): number => (measured ? snapToRendered(lineNum, measured) : lineNum),
+    [measured]
+  )
+
+  /**
+   * Which lines get a gutter row. Once measured, only lines that actually render something do — blank
+   * separators and frontmatter stop claiming rows they never lined up with anyway.
+   */
+  const gutterLines = useMemo(() => {
+    if (!measured) return lines.map((_, idx) => idx + 1)
+    return [...measured.keys()].sort((a, b) => a - b)
+  }, [measured, lines])
+
+  const commentsForLine = useCallback(
+    (lineNum: number): Comment[] =>
+      comments.filter((c) => c.lineNumber != null && resolveLine(Number(c.lineNumber)) === lineNum),
+    [comments, resolveLine]
+  )
+
+  const pendingForLine = useCallback(
+    (lineNum: number): PendingCommentDraft[] =>
+      docPending.filter((p) => resolveLine(p.lineNumber) === lineNum),
+    [docPending, resolveLine]
+  )
 
   const openPopover = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>, lineNum: number, mode: 'compose' | 'thread') => {
@@ -130,12 +173,15 @@ export function CommentableDocument({
               popover.flip
                 ? {
                     // Anchored to the gutter row's own top offset, then shifted up by the popover's
-                    // own rendered height — not the container's total height (which is the rendered
-                    // markdown, not lines.length * LINE_HEIGHT_PX, and would misplace this otherwise).
-                    top: `${(popover.lineNumber - 1) * LINE_HEIGHT_PX - 6}px`,
+                    // own rendered height — not the container's total height, which would misplace it.
+                    top: `${boxFor(popover.lineNumber).top - 6}px`,
                     transform: 'translateY(-100%)',
                   }
-                : { top: `${popover.lineNumber * LINE_HEIGHT_PX + 6}px` }
+                : {
+                    top: `${
+                      boxFor(popover.lineNumber).top + boxFor(popover.lineNumber).height + 6
+                    }px`,
+                  }
             }
             onClick={(e) => e.stopPropagation()}
           >
@@ -174,44 +220,73 @@ export function CommentableDocument({
           </div>
         )}
 
-        {/* Gutter — desktop only */}
+        {/* Gutter — desktop only. Rows are absolutely positioned at each line's *measured* offset
+            rather than stacked at a uniform height, so a marker stays beside its line no matter what
+            the document contains. `relative` + a min-height keeps the column sized while the rows
+            themselves are taken out of flow. */}
         <div
-          className="hidden md:flex md:flex-col w-8 shrink-0 select-none"
+          className="relative hidden md:block w-8 shrink-0 select-none"
           aria-label="comment gutter"
         >
-          {lines.map((_, idx) => {
-            const lineNum = idx + 1
+          {gutterLines.map((lineNum) => {
+            const box = boxFor(lineNum)
             const lineComments = commentsForLine(lineNum)
             const linePending = pendingForLine(lineNum)
             const totalCount = lineComments.length + linePending.length
             const hasComments = totalCount > 0
             const isActive = popover?.lineNumber === lineNum
+            // Nothing posted yet — this line only holds the reviewer's own unsubmitted drafts.
+            const pendingOnly = hasComments && lineComments.length === 0
+            const label = `${totalCount} ${pendingOnly ? 'pending ' : ''}comment${
+              totalCount !== 1 ? 's' : ''
+            } on line ${lineNum}`
 
             return (
               <div
                 key={lineNum}
-                className="group/gutterrow relative flex items-center justify-center"
-                style={{ height: `${LINE_HEIGHT_PX}px` }}
+                data-line={lineNum}
+                // items-start, not items-center: a tall block (an image, a long code fence) gets one
+                // tall row, and centring inside it would float the marker into the middle of the
+                // block instead of beside the line it belongs to.
+                className={cn(
+                  'group/gutterrow flex items-start justify-center',
+                  measured ? 'absolute inset-x-0' : 'relative'
+                )}
+                style={
+                  measured
+                    ? { top: `${box.top}px`, height: `${box.height}px` }
+                    : { height: `${box.height}px` }
+                }
               >
                 {hasComments ? (
                   <button
                     onClick={(e) => openPopover(e, lineNum, 'thread')}
-                    className={`leading-none rounded-full min-w-[1.1rem] h-[1.1rem] px-1 text-[10px] font-medium flex items-center justify-center transition-colors bg-accent-soft text-accent hover:bg-accent/20 ${
-                      isActive ? 'bg-accent/20' : ''
-                    }`}
-                    title={`${totalCount} comment${totalCount !== 1 ? 's' : ''} on line ${lineNum} — click to view`}
-                    aria-label={`${totalCount} comment${totalCount !== 1 ? 's' : ''} on line ${lineNum}`}
+                    className={cn(
+                      // mt centres the 20px marker within a normal 26px line box.
+                      'mt-[3px] flex h-5 min-w-5 items-center justify-center rounded-full px-1',
+                      'text-[11px] font-medium leading-none ring-1 transition-colors',
+                      // `text-accent` used to paint this: in this codebase --accent is the legacy
+                      // shadcn neutral (near-black in dark mode), not the teal accent. --primary is.
+                      isActive
+                        ? 'bg-primary text-primary-foreground ring-primary'
+                        : 'bg-accent-soft text-primary ring-primary/40 hover:bg-primary/20',
+                      // Drafts read as provisional until the review is submitted.
+                      pendingOnly && !isActive && 'border border-dashed border-primary/60 ring-0'
+                    )}
+                    title={`${label} — click to view`}
+                    aria-label={label}
                   >
                     {totalCount}
                   </button>
                 ) : (
                   <button
                     onClick={(e) => openPopover(e, lineNum, 'compose')}
-                    className={`leading-none rounded p-0.5 transition-opacity duration-150 hover:bg-muted ${
+                    className={cn(
+                      'mt-[2px] rounded p-0.5 leading-none transition-opacity duration-150 hover:bg-muted',
                       isActive
-                        ? 'opacity-100 text-primary bg-muted'
-                        : 'opacity-0 group-hover/gutterrow:opacity-60 hover:!opacity-100 text-muted-foreground hover:text-primary'
-                    }`}
+                        ? 'bg-muted text-primary opacity-100'
+                        : 'text-muted-foreground opacity-0 group-hover/gutterrow:opacity-100 hover:text-primary'
+                    )}
                     title="Add comment on this line"
                   >
                     <MessageSquarePlus className="h-4 w-4" />
@@ -223,8 +298,14 @@ export function CommentableDocument({
         </div>
 
         {/* Document content */}
-        <div className="flex-1 min-w-0">
-          <MarkdownRenderer content={content} onDocumentNavigate={onDocumentNavigate} />
+        <div ref={contentRef} className="flex-1 min-w-0">
+          <MarkdownRenderer
+            content={content}
+            onDocumentNavigate={onDocumentNavigate}
+            onToggleTask={onToggleTask}
+            tasksReadOnly={tasksReadOnly}
+            annotateSourceLines
+          />
         </div>
 
         {/* All line comments — mobile accordion (pending drafts aren't editable here; review mode is desktop-only, matching the gutter itself) */}

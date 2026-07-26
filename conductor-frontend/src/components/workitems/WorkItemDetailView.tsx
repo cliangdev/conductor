@@ -19,7 +19,7 @@ import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSke
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
 import { toastError, toastSuccess } from '@/components/ui/toast'
-import { ExternalLink, FileText, FileX2 } from 'lucide-react'
+import { ExternalLink, FileText, FileX2, MessageSquare } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { ReviewBar } from '@/components/reviews/ReviewBar'
 import { StatusBadge } from '@/components/ui/status-badge'
@@ -143,6 +143,37 @@ function nextPendingId(): string {
 
 const TAB_CLASSES =
   'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap'
+
+/**
+ * Unresolved comment count on a tab. Without it there is no way to tell which of an item's documents
+ * someone commented on short of opening each one and scanning its gutter. Same idiom as the list row's
+ * count (`WorkItemRow`), and the number is repeated in the tab's accessible name so it isn't carried
+ * by colour alone.
+ */
+function unresolvedCountForDocument(comments: Comment[], documentId: string): number {
+  return comments.filter((c) => c.documentId === documentId && !c.resolvedAt).length
+}
+
+/** Comments on the item itself rather than a line of one of its documents — these live in Activity. */
+function unresolvedItemLevelCount(comments: Comment[]): number {
+  return comments.filter((c) => c.lineNumber == null && !c.resolvedAt).length
+}
+
+function TabCommentCount({ count, active }: { count: number; active: boolean }) {
+  if (count === 0) return null
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        'inline-flex items-center gap-0.5 text-[11px] font-medium leading-none',
+        active ? 'text-primary' : 'text-muted-foreground'
+      )}
+    >
+      <MessageSquare className="h-3 w-3" />
+      {count}
+    </span>
+  )
+}
 
 // ARIA tabs pattern ids — the same tab id (a document id, 'activity', or 'details') derives both the
 // tab button's id and the panel it controls, so the two stay in sync without a second id map.
@@ -640,6 +671,7 @@ export function WorkItemDetailView({
   // a mobile-only alias that reveals the properties panel rather than changing the main content, so
   // the main content panel's aria-labelledby tracks the last content-bearing tab instead of it.
   const tabIds = [...documents.map((d) => d.id), 'activity', 'details']
+  const itemLevelCommentCount = unresolvedItemLevelCount(comments)
   const contentTabId = activeTab === 'details' || activeTab === '' ? (selectedDocId ?? 'activity') : activeTab
 
   const headerActions = reviewActive && isAssignedReviewer && (
@@ -675,6 +707,10 @@ export function WorkItemDetailView({
         {documents.map((doc) => {
           const binary = !isMarkdown(doc) && !isHtml(doc)
           const active = activeTab === doc.id
+          const commentCount = unresolvedCountForDocument(comments, doc.id)
+          const countSuffix = commentCount > 0
+            ? `, ${commentCount} unresolved comment${commentCount !== 1 ? 's' : ''}`
+            : ''
           return (
             <button
               key={doc.id}
@@ -690,11 +726,13 @@ export function WorkItemDetailView({
               onClick={() => selectDocument(doc)}
               onKeyDown={(e) => handleTabKeyDown(e, tabIds, doc.id)}
               className={cn(TAB_CLASSES, active ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
-              title={doc.filename}
+              title={`${doc.filename}${countSuffix}`}
+              aria-label={`${doc.filename}${countSuffix}`}
             >
               <FileText className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate max-w-[10rem]">{doc.filename}</span>
               {binary && <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />}
+              <TabCommentCount count={commentCount} active={active} />
             </button>
           )
         })}
@@ -711,8 +749,11 @@ export function WorkItemDetailView({
           onClick={() => setActiveTab('activity')}
           onKeyDown={(e) => handleTabKeyDown(e, tabIds, 'activity')}
           className={cn(TAB_CLASSES, activeTab === 'activity' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
+          title={itemLevelCommentCount > 0 ? `Activity, ${itemLevelCommentCount} unresolved comment${itemLevelCommentCount !== 1 ? 's' : ''}` : undefined}
+          aria-label={itemLevelCommentCount > 0 ? `Activity, ${itemLevelCommentCount} unresolved comment${itemLevelCommentCount !== 1 ? 's' : ''}` : undefined}
         >
           Activity
+          <TabCommentCount count={itemLevelCommentCount} active={activeTab === 'activity'} />
         </button>
         <button
           id={tabButtonId('details')}

@@ -3,7 +3,26 @@ import { render, screen, fireEvent } from '@testing-library/react'
 
 vi.mock('@/lib/api', () => ({ apiPost: vi.fn() }))
 vi.mock('@/components/markdown/MarkdownRenderer', () => ({
-  MarkdownRenderer: ({ content }: { content: string }) => <div data-testid="markdown">{content}</div>,
+  MarkdownRenderer: ({
+    content,
+    onToggleTask,
+    tasksReadOnly,
+  }: {
+    content: string
+    onToggleTask?: (line: number, checked: boolean) => void
+    tasksReadOnly?: boolean
+  }) => (
+    <div
+      data-testid="markdown"
+      data-has-toggle={onToggleTask ? 'yes' : 'no'}
+      data-tasks-read-only={tasksReadOnly ? 'yes' : 'no'}
+    >
+      <button data-testid="toggle-task" onClick={() => onToggleTask?.(2, true)}>
+        toggle
+      </button>
+      {content}
+    </div>
+  ),
 }))
 vi.mock('./CommentThread', () => ({
   CommentThread: () => <div data-testid="comment-thread" />,
@@ -105,5 +124,51 @@ describe('CommentableDocument', () => {
   it('does not render selection form', () => {
     render(<CommentableDocument {...baseProps} />)
     expect(screen.queryByText('+ Comment')).not.toBeInTheDocument()
+  })
+
+  it('forwards task-toggle props to the renderer', () => {
+    const onToggleTask = vi.fn()
+    render(<CommentableDocument {...baseProps} onToggleTask={onToggleTask} tasksReadOnly />)
+
+    const markdown = screen.getByTestId('markdown')
+    expect(markdown).toHaveAttribute('data-has-toggle', 'yes')
+    expect(markdown).toHaveAttribute('data-tasks-read-only', 'yes')
+
+    fireEvent.click(screen.getByTestId('toggle-task'))
+    expect(onToggleTask).toHaveBeenCalledWith(2, true)
+  })
+
+  it('omits the toggle handler when the caller does not supply one', () => {
+    render(<CommentableDocument {...baseProps} />)
+    expect(screen.getByTestId('markdown')).toHaveAttribute('data-has-toggle', 'no')
+  })
+
+  it('marks a line whose comments are all unsubmitted drafts as pending', () => {
+    const posted: Comment = {
+      id: 'c1',
+      documentId: 'doc-1',
+      authorId: 'user-1',
+      authorName: 'Alice',
+      content: 'nice',
+      lineNumber: 1,
+      createdAt: '2024-01-01T00:00:00Z',
+      replies: [],
+    }
+    render(
+      <CommentableDocument
+        {...baseProps}
+        comments={[posted]}
+        reviewMode
+        pendingComments={[
+          { localId: 'p1', documentId: 'doc-1', lineNumber: 2, content: 'draft' },
+        ]}
+      />
+    )
+
+    const buttons = screen.getByLabelText('comment gutter').querySelectorAll('button')
+    // Line 1 has a posted comment; line 2 only holds the reviewer's own draft.
+    expect(buttons[0]).toHaveAttribute('aria-label', expect.not.stringContaining('pending'))
+    expect(buttons[1]).toHaveAttribute('aria-label', expect.stringContaining('pending'))
+    expect(buttons[1].className).toContain('border-dashed')
   })
 })
