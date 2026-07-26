@@ -241,6 +241,9 @@ describe('RunListPage', () => {
   it('does not refetch the stats-strip history sample on the 5s poll (only table + queued count)', async () => {
     render(<RunListPage />)
     await screen.findByText('PEND0001')
+    // The mount effect fires 3 calls (table, queued probe, history) — pin the snapshot to after all
+    // 3 have landed, not just after the text appears, so this can't race the last of the three.
+    await waitFor(() => expect(mocks.listRunsCalls.length).toBeGreaterThanOrEqual(3))
 
     const callsAfterMount = mocks.listRunsCalls.length
     // The queued run keeps polling active; wait past one 5s tick (real timers — the interval is a
