@@ -23,6 +23,9 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String
 
     Page<WorkflowRun> findByWorkflowId(String workflowId, Pageable pageable);
 
+    Page<WorkflowRun> findByWorkflowIdAndStatusIn(String workflowId, Collection<WorkflowRunStatus> statuses,
+                                                   Pageable pageable);
+
     List<WorkflowRun> findByStatusIn(Collection<WorkflowRunStatus> statuses);
 
     List<WorkflowRun> findByWorkflowIdAndStatusIn(String workflowId, Collection<WorkflowRunStatus> statuses);

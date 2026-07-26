@@ -2830,6 +2830,19 @@ paths:
           schema:
             type: integer
             default: 50
+        - name: status
+          in: query
+          required: false
+          explode: true
+          style: form
+          description: >-
+            Filter to runs in any of the given statuses (repeat the param, e.g.
+            `?status=PENDING&status=RUNNING`). Omit to return runs in all statuses. An unrecognized
+            status value is rejected with 400.
+          schema:
+            type: array
+            items:
+              type: string
       responses:
         "200":
           description: List of runs
@@ -2839,6 +2852,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/WorkflowRunDto"
+        "400":
+          description: Unrecognized status value
 
   /projects/{projectId}/workflows/{workflowId}/schedule-skips:
     get:
@@ -2948,6 +2963,39 @@ paths:
           description: Run not found
         "409":
           description: Run has already finished
+
+  /projects/{projectId}/workflows/{workflowId}/runs/cancel-queued:
+    post:
+      tags: [workflows]
+      summary: Cancel all queued (PENDING) runs for a workflow
+      description: >
+        Drains the queued backlog without touching in-flight work: cancels every run currently in
+        PENDING status via the same path as a single-run cancel, and leaves RUNNING (and any other
+        non-PENDING) runs untouched. A no-op returning cancelledCount 0 if nothing is queued.
+      operationId: cancelQueuedWorkflowRuns
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Queued runs cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelQueuedRunsResponse"
+        "404":
+          description: Workflow not found
 
   /projects/{projectId}/daemon/events:
     get:
@@ -6363,6 +6411,22 @@ components:
           type: object
           readOnly: true
           description: The run's trigger payload (event fields, and `inputs` for a manual dispatch).
+        waitReason:
+          type: string
+          readOnly: true
+          nullable: true
+          description: >-
+            Why this run isn't executing yet — a free-form code (only "AWAITING_RUNNER" today) rather
+            than an enum, so a future wait condition doesn't need an API change. "AWAITING_RUNNER" means
+            the run has at least one job in AWAITING_PICKUP, waiting for a self-hosted daemon to claim
+            it. Null for a run with no wait condition, including every terminal run.
+
+    CancelQueuedRunsResponse:
+      type: object
+      properties:
+        cancelledCount:
+          type: integer
+          description: Number of PENDING runs that were cancelled.
 
     WorkflowRunDetailDto:
       type: object

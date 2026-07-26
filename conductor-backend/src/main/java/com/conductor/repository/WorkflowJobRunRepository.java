@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -19,6 +20,16 @@ public interface WorkflowJobRunRepository extends JpaRepository<WorkflowJobRun, 
     Optional<WorkflowJobRun> findByRunIdAndJobId(String runId, String jobId);
 
     List<WorkflowJobRun> findByStatus(WorkflowJobStatus status);
+
+    /**
+     * Batched lookup for deriving {@code WorkflowRunDto.waitReason}: one query for a whole page of runs
+     * instead of one per run. Callers should already have narrowed {@code runIds} to non-terminal runs.
+     * Returns the distinct run ids that have at least one job in {@code status}, not the job rows
+     * themselves — the caller only needs set membership.
+     */
+    @Query("SELECT DISTINCT jr.run.id FROM WorkflowJobRun jr WHERE jr.run.id IN :runIds AND jr.status = :status")
+    List<String> findDistinctRunIdsByRunIdInAndStatus(@Param("runIds") Collection<String> runIds,
+                                                        @Param("status") WorkflowJobStatus status);
 
     @Query(value = "SELECT * FROM workflow_job_runs WHERE status = :status AND started_at < :cutoff",
            nativeQuery = true)

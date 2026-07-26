@@ -37,6 +37,7 @@ import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.model.WorkflowYamlParser;
 import com.conductor.workflow.schema.StepSchemaRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,6 +45,9 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -51,12 +55,15 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -484,5 +491,124 @@ class WorkflowControllerTest {
         controller.updateWorkflowRunStatus("run-1", request);
 
         verify(circuitBreaker, org.mockito.Mockito.never()).recordOutcome(any());
+    }
+
+    private WorkflowRun runWithStatus(String id, WorkflowRunStatus status) {
+        WorkflowRun run = new WorkflowRun();
+        run.setId(id);
+        run.setWorkflow(automationWorkflow());
+        run.setTriggerType("workflow_dispatch");
+        run.setStatus(status);
+        run.setStartedAt(OffsetDateTime.now());
+        return run;
+    }
+
+    @Test
+    void listWorkflowRuns_filtersByStatus_whenStatusParamGiven() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        WorkflowRun pending = runWithStatus("run-1", WorkflowRunStatus.PENDING);
+        Page<WorkflowRun> page = new PageImpl<>(List.of(pending));
+        when(runRepository.findByWorkflowIdAndStatusIn(eq("wf-auto"), eq(Set.of(WorkflowRunStatus.PENDING)),
+                any(Pageable.class))).thenReturn(page);
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs", PROJECT_ID, "wf-auto")
+                        .param("status", "PENDING")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].status").value("PENDING"));
+
+        verify(runRepository, never()).findByWorkflowId(anyString(), any(Pageable.class));
+    }
+
+    @Test
+    void listWorkflowRuns_returnsRunsInEveryStatus_whenStatusParamOmitted() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        Page<WorkflowRun> page = new PageImpl<>(List.of(
+                runWithStatus("run-1", WorkflowRunStatus.PENDING),
+                runWithStatus("run-2", WorkflowRunStatus.SUCCESS)));
+        when(runRepository.findByWorkflowId(eq("wf-auto"), any(Pageable.class))).thenReturn(page);
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+
+        verify(runRepository, never()).findByWorkflowIdAndStatusIn(anyString(), any(), any(Pageable.class));
+    }
+
+    @Test
+    void listWorkflowRuns_rejectsAnUnrecognizedStatusValueWith400() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs", PROJECT_ID, "wf-auto")
+                        .param("status", "NOT_A_REAL_STATUS")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void listWorkflowRuns_setsWaitReason_onlyForRunsWithAnAwaitingPickupJob_inOneBatchedQuery() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        WorkflowRun awaitingRunner = runWithStatus("run-1", WorkflowRunStatus.RUNNING);
+        WorkflowRun runningNoWait = runWithStatus("run-2", WorkflowRunStatus.PENDING);
+        WorkflowRun finished = runWithStatus("run-3", WorkflowRunStatus.SUCCESS);
+        Page<WorkflowRun> page = new PageImpl<>(List.of(awaitingRunner, runningNoWait, finished));
+        when(runRepository.findByWorkflowId(eq("wf-auto"), any(Pageable.class))).thenReturn(page);
+        // Only the two non-terminal runs should ever be looked up — the finished run is excluded before
+        // the query even runs.
+        when(jobRunRepository.findDistinctRunIdsByRunIdInAndStatus(
+                eq(List.of("run-1", "run-2")), eq(WorkflowJobStatus.AWAITING_PICKUP)))
+                .thenReturn(List.of("run-1"));
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].waitReason").value("AWAITING_RUNNER"))
+                .andExpect(jsonPath("$[1].waitReason").doesNotExist())
+                .andExpect(jsonPath("$[2].waitReason").doesNotExist());
+
+        // One call for the whole page, not one per run -- proves this isn't N+1.
+        verify(jobRunRepository, times(1))
+                .findDistinctRunIdsByRunIdInAndStatus(any(), eq(WorkflowJobStatus.AWAITING_PICKUP));
+    }
+
+    @Test
+    void cancelQueuedWorkflowRuns_returnsTheCancelledCount() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(automationWorkflow());
+        when(runCancellationService.cancelQueuedRuns("wf-auto")).thenReturn(3);
+
+        mockMvc.perform(post("/api/v1/projects/{p}/workflows/{w}/runs/cancel-queued", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cancelledCount").value(3));
+
+        verify(runCancellationService).cancelQueuedRuns("wf-auto");
+    }
+
+    @Test
+    void cancelQueuedWorkflowRuns_isANoOp_returningZero_whenNothingIsQueued() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(automationWorkflow());
+        when(runCancellationService.cancelQueuedRuns("wf-auto")).thenReturn(0);
+
+        mockMvc.perform(post("/api/v1/projects/{p}/workflows/{w}/runs/cancel-queued", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cancelledCount").value(0));
+    }
+
+    @Test
+    void cancelQueuedWorkflowRuns_returns404_whenWorkflowBelongsToAnotherProject() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto"))
+                .thenThrow(new EntityNotFoundException("Workflow not found: wf-auto"));
+
+        mockMvc.perform(post("/api/v1/projects/{p}/workflows/{w}/runs/cancel-queued", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNotFound());
+
+        verify(runCancellationService, never()).cancelQueuedRuns(anyString());
     }
 }
