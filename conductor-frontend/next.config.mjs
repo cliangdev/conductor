@@ -18,11 +18,16 @@ const nextConfig = {
     return [
       { source: `${base}/settings/workflows`, destination: `${base}/workflows`, permanent: true },
       { source: `${base}/settings/workflows/new`, destination: `${base}/workflows/new`, permanent: true },
-      { source: `${base}/settings/workflows/:workflowId/edit`, destination: `${base}/workflows/:workflowId/settings`, permanent: true },
+      { source: `${base}/settings/workflows/:workflowId/edit`, destination: `${base}/workflows/:workflowId/definition`, permanent: true },
       { source: `${base}/settings/integrations`, destination: `${base}/integrations`, permanent: true },
       { source: `${base}/settings/agents`, destination: `${base}/agents`, permanent: true },
       { source: `${base}/settings/agents/new`, destination: `${base}/agents/new`, permanent: true },
       { source: `${base}/settings/agents/:agentId/edit`, destination: `${base}/agents/:agentId/settings`, permanent: true },
+      // The automation workflow detail's Overview + Settings tabs were merged into Runs (now the
+      // default landing tab) and Definition (settings' real content — the YAML/diagram editor —
+      // absorbed here; enable/disable/delete moved to the page header's overflow menu).
+      { source: `${base}/workflows/:workflowId/overview`, destination: `${base}/workflows/:workflowId/runs`, permanent: true },
+      { source: `${base}/workflows/:workflowId/settings`, destination: `${base}/workflows/:workflowId/definition`, permanent: true },
     ]
   },
   async rewrites() {

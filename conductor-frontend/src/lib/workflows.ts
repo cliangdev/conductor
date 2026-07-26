@@ -261,6 +261,22 @@ const WELL_KNOWN_HUES: Record<string, StatusHue> = {
   failed: 'red',
   error: 'red',
   loopexhausted: 'amber',
+  // Self-hosted-runner job/run states (WorkflowJobStatus.AWAITING_PICKUP / WorkflowRunStatus.LOCAL_PICKUP_TIMEOUT).
+  // Amber (not blue/"running") because the job hasn't started — it's queued, waiting on a daemon to
+  // claim it, the same "not yet active" meaning amber carries for in-progress/attention states.
+  awaitingpickup: 'amber',
+  // Red (not slate/"skipped") — WorkflowRunStatus.java's own javadoc calls a LOCAL_PICKUP_TIMEOUT
+  // run "effectively dead" (the self-hosted daemon never claimed it); it never produced a result,
+  // so it reads as a failure, not a benign skip.
+  localpickuptimeout: 'red',
+}
+
+// Human labels for status ids whose raw form reads as schema jargon rather than something a user
+// would say out loud — the design system's "translate at the UI boundary" rule. Everything else
+// falls back to humanizeId, which is legible enough on its own (e.g. "Loop Exhausted").
+const WELL_KNOWN_LABELS: Record<string, string> = {
+  awaitingpickup: 'Waiting for runner',
+  localpickuptimeout: 'Never picked up',
 }
 
 // Fallback when the status id itself isn't recognized — keyed by workflow/lifecycle category.
@@ -285,6 +301,12 @@ export function statusHue(status: string, category?: string): StatusHue {
 export function categoryHue(category?: string): StatusHue {
   const fromCategory = category ? CATEGORY_HUES[normalizeStatusId(category)] : undefined
   return fromCategory ?? 'gray'
+}
+
+/** Human label for a status id — the default `StatusBadge` label when no explicit `label` prop is
+ *  given. Looks up {@link WELL_KNOWN_LABELS} first, then falls back to {@link humanizeId}. */
+export function statusLabel(status: string): string {
+  return WELL_KNOWN_LABELS[normalizeStatusId(status)] ?? humanizeId(status)
 }
 
 /** Pluralize a Workflow noun for page titles and nav labels, e.g. "Issue" → "Issues", "Story" → "Stories". */

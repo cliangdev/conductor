@@ -158,7 +158,7 @@ export function StepDetailPanel({ open, onOpenChange, step, runData, runId, proj
               {isTruncated && (
                 <p className="mb-1 text-xs text-status-progress">[truncated — showing last 10,000 characters]</p>
               )}
-              <pre className="max-h-96 overflow-x-auto overflow-y-auto whitespace-pre-wrap rounded bg-black/90 p-3 text-xs text-green-300">
+              <pre className="max-h-96 overflow-x-auto overflow-y-auto whitespace-pre-wrap rounded bg-muted/60 p-3 text-xs font-mono text-foreground">
                 {displayLog}
               </pre>
             </div>
