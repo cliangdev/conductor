@@ -19,10 +19,11 @@ import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSke
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
 import { toastError, toastSuccess } from '@/components/ui/toast'
-import { ExternalLink, FileText, FileX2, MessageSquare } from 'lucide-react'
+import { ExternalLink, FileText, FileX2 } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { ReviewBar } from '@/components/reviews/ReviewBar'
 import { StatusBadge } from '@/components/ui/status-badge'
+import { CommentCount } from '@/components/ui/comment-count'
 import { HtmlViewer } from '@/components/markdown/HtmlViewer'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
@@ -144,12 +145,6 @@ function nextPendingId(): string {
 const TAB_CLASSES =
   'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap'
 
-/**
- * Unresolved comment count on a tab. Without it there is no way to tell which of an item's documents
- * someone commented on short of opening each one and scanning its gutter. Same idiom as the list row's
- * count (`WorkItemRow`), and the number is repeated in the tab's accessible name so it isn't carried
- * by colour alone.
- */
 function unresolvedCountForDocument(comments: Comment[], documentId: string): number {
   return comments.filter((c) => c.documentId === documentId && !c.resolvedAt).length
 }
@@ -159,18 +154,15 @@ function unresolvedItemLevelCount(comments: Comment[]): number {
   return comments.filter((c) => c.lineNumber == null && !c.resolvedAt).length
 }
 
-function TabCommentCount({ count, active }: { count: number; active: boolean }) {
-  if (count === 0) return null
+/**
+ * Unresolved comment count on a document tab — without it there's no way to tell which of an item's
+ * documents someone commented on short of opening each and scanning its gutter. The count is repeated
+ * in the tab's accessible name, so this copy is `aria-hidden` and never the sole carrier.
+ */
+function tabCommentCount(count: number, active: boolean) {
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        'inline-flex items-center gap-0.5 text-[11px] font-medium leading-none',
-        active ? 'text-primary' : 'text-muted-foreground'
-      )}
-    >
-      <MessageSquare className="h-3 w-3" />
-      {count}
+    <span aria-hidden="true">
+      <CommentCount count={count} className={active ? 'text-primary' : 'text-muted-foreground'} />
     </span>
   )
 }
@@ -732,7 +724,7 @@ export function WorkItemDetailView({
               <FileText className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate max-w-[10rem]">{doc.filename}</span>
               {binary && <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />}
-              <TabCommentCount count={commentCount} active={active} />
+              {tabCommentCount(commentCount, active)}
             </button>
           )
         })}
@@ -753,7 +745,7 @@ export function WorkItemDetailView({
           aria-label={itemLevelCommentCount > 0 ? `Activity, ${itemLevelCommentCount} unresolved comment${itemLevelCommentCount !== 1 ? 's' : ''}` : undefined}
         >
           Activity
-          <TabCommentCount count={itemLevelCommentCount} active={activeTab === 'activity'} />
+          {tabCommentCount(itemLevelCommentCount, activeTab === 'activity')}
         </button>
         <button
           id={tabButtonId('details')}

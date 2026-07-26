@@ -11,11 +11,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, MessageSquare, SearchX } from 'lucide-react'
+import { CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, SearchX } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { CommentCount } from '@/components/ui/comment-count'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { toastError } from '@/components/ui/toast'
@@ -465,12 +466,10 @@ export function WorkItemListView({
                         <VerdictIcon verdict={r.reviewVerdict} className="h-3 w-3" />
                       </span>
                     ))}
-                    {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 && (
-                      <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
-                        <MessageSquare className="h-3 w-3" />
-                        {issue.unresolvedCommentCount}
-                      </span>
-                    )}
+                    <CommentCount
+                      count={issue.unresolvedCommentCount}
+                      className="text-muted-foreground"
+                    />
                   </div>
                   <span className="text-foreground-subtle text-xs shrink-0">{timeAgo(issue.updatedAt)}</span>
                 </div>

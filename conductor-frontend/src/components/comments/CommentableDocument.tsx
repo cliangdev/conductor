@@ -15,6 +15,7 @@ import {
   type LineBox,
 } from './useSourceLineOffsets'
 import { MessageSquarePlus, PencilIcon, TrashIcon, XIcon } from 'lucide-react'
+import { CommentCount } from '@/components/ui/comment-count'
 
 interface Props {
   content: string
@@ -168,7 +169,7 @@ export function CommentableDocument({
         {popover && (
           <div
             data-testid="comment-popover"
-            className="absolute left-8 z-50 w-96 max-w-[min(24rem,calc(100%-2rem))] bg-card border border-border rounded-lg shadow-xl p-4"
+            className="absolute left-11 z-50 w-96 max-w-[min(24rem,calc(100%-2.75rem))] bg-card border border-border rounded-lg shadow-xl p-4"
             style={
               popover.flip
                 ? {
@@ -225,7 +226,8 @@ export function CommentableDocument({
             the document contains. `relative` + a min-height keeps the column sized while the rows
             themselves are taken out of flow. */}
         <div
-          className="relative hidden md:block w-8 shrink-0 select-none"
+          // w-11 rather than w-8: the marker is an icon + count, not a bare number.
+          className="relative hidden md:block w-11 shrink-0 select-none"
           aria-label="comment gutter"
         >
           {gutterLines.map((lineNum) => {
@@ -263,8 +265,8 @@ export function CommentableDocument({
                     onClick={(e) => openPopover(e, lineNum, 'thread')}
                     className={cn(
                       // mt centres the 20px marker within a normal 26px line box.
-                      'mt-[3px] flex h-5 min-w-5 items-center justify-center rounded-full px-1',
-                      'text-[11px] font-medium leading-none ring-1 transition-colors',
+                      'mt-[3px] flex h-5 items-center justify-center rounded-full px-1.5',
+                      'ring-1 transition-colors',
                       // `text-accent` used to paint this: in this codebase --accent is the legacy
                       // shadcn neutral (near-black in dark mode), not the teal accent. --primary is.
                       isActive
@@ -276,7 +278,9 @@ export function CommentableDocument({
                     title={`${label} — click to view`}
                     aria-label={label}
                   >
-                    {totalCount}
+                    {/* Icon + count, not a bare number: a lone "1" in a circle reads as a step or a
+                        list index. Shared with the list rows, board cards, and document tabs. */}
+                    <CommentCount count={totalCount} />
                   </button>
                 ) : (
                   <button
