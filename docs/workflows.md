@@ -1295,8 +1295,9 @@ that instead: `queued` matches `PENDING`/`PENDING_LOCAL_PICKUP` **or** any run w
 exhaustive over every non-terminal run — `LOCAL_PICKUP_TIMEOUT` is non-terminal and matches neither;
 use `status` or the unfiltered list to see it. `state` and `status` are mutually exclusive; supplying
 both 400s. The workflow's **Runs** tab uses `state`
-to offer its Queued / Running / All filters, and the `list_workflow_runs` MCP tool takes the same `status`
-parameter as the raw escape hatch.
+to offer its Queued / Running / All filters, and the `list_workflow_runs` MCP tool takes the same `state`
+parameter — callers should prefer it over `status=PENDING` for exactly the reason above — plus `status` as
+the raw escape hatch.
 
 ---
 

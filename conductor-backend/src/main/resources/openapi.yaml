@@ -2988,8 +2988,10 @@ paths:
       description: >
         Drains the queued backlog without touching in-flight work: cancels every run that's either
         PENDING, or blocked on a self-hosted job no daemon has claimed yet (with no other job on it
-        that's RUNNING or already claimed) — the same set the UI counts as "Queued" — via the same
-        path as a single-run cancel. A run with any genuinely in-flight job (RUNNING, or a claimed
+        that's RUNNING or already claimed) — via the same path as a single-run cancel. This set is a
+        strict subset of what the UI counts as "Queued": the UI's queued view also includes a run
+        blocked on an unclaimed job even when another job on that same run is genuinely in flight, but
+        this endpoint excludes it. A run with any genuinely in-flight job (RUNNING, or a claimed
         AWAITING_PICKUP) is left untouched even if it also happens to have an unclaimed job elsewhere.
         A no-op returning cancelledCount 0 if nothing qualifies.
       operationId: cancelQueuedWorkflowRuns

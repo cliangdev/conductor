@@ -199,7 +199,19 @@ function RunListContent() {
     setBulkCancelling(true);
     try {
       const { cancelledCount } = await cancelQueuedWorkflowRuns(projectId, workflowId, accessToken);
-      showToast(`Cancelled ${cancelledCount} queued run${cancelledCount === 1 ? '' : 's'}.`, 'success');
+      if (cancelledCount === 0) {
+        // The button is only shown when queuedCount > 0, so landing here means every queued run
+        // has since started executing on a runner (or otherwise stopped qualifying) between the
+        // last poll and this click — cancellation deliberately never touches in-flight work, so
+        // there's nothing left to cancel. Reporting this as a plain "success" would tell the user
+        // their click worked when nothing actually changed.
+        showToast(
+          "No queued runs were cancelled — they've likely already started executing on a runner, which can't be cancelled this way.",
+          'error',
+        );
+      } else {
+        showToast(`Cancelled ${cancelledCount} queued run${cancelledCount === 1 ? '' : 's'}.`, 'success');
+      }
       setBulkCancelOpen(false);
       await Promise.all([fetchTableAndQueued(), fetchHistory()]);
     } catch (e) {

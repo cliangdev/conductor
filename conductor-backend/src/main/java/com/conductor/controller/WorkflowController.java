@@ -456,7 +456,8 @@ public class WorkflowController implements WorkflowsApi {
         if (state != null) {
             runs = switch (state) {
                 case "queued" -> runRepository.findQueuedByWorkflowId(workflowId, QUEUED_STATE_STATUSES,
-                        WorkflowJobStatus.AWAITING_PICKUP, pageable).getContent();
+                        WorkflowJobStatus.AWAITING_PICKUP, WorkflowRunStatus.TERMINAL_STATUSES, pageable)
+                        .getContent();
                 case "running" -> runRepository.findRunningByWorkflowId(workflowId, RUNNING_STATE_STATUSES,
                         WorkflowJobStatus.AWAITING_PICKUP, pageable).getContent();
                 default -> throw new BusinessException("Unrecognized state: " + state);

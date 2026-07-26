@@ -174,7 +174,8 @@ class WorkflowRunCancellationServiceTest {
         WorkflowRun pendingA = runWithStatus("run-a", WorkflowRunStatus.PENDING);
         WorkflowRun pendingB = runWithStatus("run-b", WorkflowRunStatus.PENDING);
         when(runRepository.findQueuedForCancellationByWorkflowId("wf-1",
-                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING))
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING,
+                WorkflowRunStatus.TERMINAL_STATUSES))
                 .thenReturn(List.of(pendingA, pendingB));
         when(jobRunRepository.findByRunId("run-a")).thenReturn(List.of());
         when(jobRunRepository.findByRunId("run-b")).thenReturn(List.of());
@@ -191,7 +192,8 @@ class WorkflowRunCancellationServiceTest {
     @Test
     void cancelQueuedRuns_isANoOp_returningZero_whenNothingIsQueued() {
         when(runRepository.findQueuedForCancellationByWorkflowId("wf-1",
-                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING))
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING,
+                WorkflowRunStatus.TERMINAL_STATUSES))
                 .thenReturn(List.of());
 
         int cancelledCount = service.cancelQueuedRuns("wf-1");
@@ -208,7 +210,8 @@ class WorkflowRunCancellationServiceTest {
         WorkflowRun raced = runWithStatus("run-a", WorkflowRunStatus.SUCCESS);
         WorkflowRun stillPending = runWithStatus("run-b", WorkflowRunStatus.PENDING);
         when(runRepository.findQueuedForCancellationByWorkflowId("wf-1",
-                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING))
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING,
+                WorkflowRunStatus.TERMINAL_STATUSES))
                 .thenReturn(List.of(raced, stillPending));
         when(jobRunRepository.findByRunId("run-b")).thenReturn(List.of());
 
@@ -229,7 +232,8 @@ class WorkflowRunCancellationServiceTest {
         // this test only has to prove the service passes it through to the normal cancelRun path.
         WorkflowRun blocked = runWithStatus("run-a", WorkflowRunStatus.RUNNING);
         when(runRepository.findQueuedForCancellationByWorkflowId("wf-1",
-                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING))
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING,
+                WorkflowRunStatus.TERMINAL_STATUSES))
                 .thenReturn(List.of(blocked));
         when(jobRunRepository.findByRunId("run-a")).thenReturn(List.of());
 
@@ -246,7 +250,8 @@ class WorkflowRunCancellationServiceTest {
         // AWAITING_PICKUP job (it's actively running on a daemon) by simply never returning it --
         // proving the service itself applies no separate filter that could let it through another way.
         when(runRepository.findQueuedForCancellationByWorkflowId("wf-1",
-                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING))
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING,
+                WorkflowRunStatus.TERMINAL_STATUSES))
                 .thenReturn(List.of());
 
         int cancelledCount = service.cancelQueuedRuns("wf-1");

@@ -84,8 +84,10 @@ export interface WorkflowRunDto {
   completedAt?: string;
   /**
    * Why this run isn't executing yet — a free-form code (only "AWAITING_RUNNER" today), meaning the
-   * run has ≥1 job in AWAITING_PICKUP waiting for a self-hosted daemon to claim it. Null for a run
-   * with no wait condition, including every terminal run. Only populated by listWorkflowRuns.
+   * run has ≥1 job in AWAITING_PICKUP with no daemon having claimed it yet (`claimedAt` still null).
+   * A self-hosted job stays `AWAITING_PICKUP` for its entire execution, so the unclaimed distinction
+   * is what actually separates "waiting for a runner" from "running on one". Null for a run with no
+   * wait condition, including every terminal run. Only populated by listWorkflowRuns.
    */
   waitReason?: string | null;
 }

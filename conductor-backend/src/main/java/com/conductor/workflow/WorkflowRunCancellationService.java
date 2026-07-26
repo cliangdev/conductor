@@ -97,7 +97,8 @@ public class WorkflowRunCancellationService {
      */
     public int cancelQueuedRuns(String workflowId) {
         List<WorkflowRun> queued = runRepository.findQueuedForCancellationByWorkflowId(workflowId,
-                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING);
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING,
+                WorkflowRunStatus.TERMINAL_STATUSES);
         int cancelledCount = 0;
         for (WorkflowRun run : queued) {
             try {

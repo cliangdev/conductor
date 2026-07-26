@@ -598,7 +598,7 @@ class WorkflowControllerTest {
         Page<WorkflowRun> page = new PageImpl<>(List.of(blockedRun));
         when(runRepository.findQueuedByWorkflowId(eq("wf-auto"),
                 eq(Set.of(WorkflowRunStatus.PENDING, WorkflowRunStatus.PENDING_LOCAL_PICKUP)),
-                eq(WorkflowJobStatus.AWAITING_PICKUP), any(Pageable.class)))
+                eq(WorkflowJobStatus.AWAITING_PICKUP), eq(WorkflowRunStatus.TERMINAL_STATUSES), any(Pageable.class)))
                 .thenReturn(page);
         when(jobRunRepository.findDistinctRunIdsByRunIdInAndStatusAndClaimedAtIsNull(any(), any()))
                 .thenReturn(List.of("run-1"));
@@ -632,7 +632,7 @@ class WorkflowControllerTest {
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].id").value("run-2"));
 
-        verify(runRepository, never()).findQueuedByWorkflowId(anyString(), any(), any(), any(Pageable.class));
+        verify(runRepository, never()).findQueuedByWorkflowId(anyString(), any(), any(), any(), any(Pageable.class));
     }
 
     @Test
@@ -655,7 +655,7 @@ class WorkflowControllerTest {
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isBadRequest());
 
-        verify(runRepository, never()).findQueuedByWorkflowId(anyString(), any(), any(), any(Pageable.class));
+        verify(runRepository, never()).findQueuedByWorkflowId(anyString(), any(), any(), any(), any(Pageable.class));
     }
 
     @Test

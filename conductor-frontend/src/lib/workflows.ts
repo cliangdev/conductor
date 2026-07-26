@@ -66,7 +66,12 @@ export interface CancelQueuedRunsResponse {
   cancelledCount: number
 }
 
-/** Cancels every PENDING run for the workflow in one call; never touches RUNNING. */
+/**
+ * Cancels every PENDING run for the workflow, plus any run that reads RUNNING but is only blocked on
+ * a self-hosted job no daemon has claimed yet. Never touches a run with genuinely in-flight work
+ * (a RUNNING job, or an already-claimed AWAITING_PICKUP job) — a subset of what the UI displays as
+ * "Queued", not the full displayed set.
+ */
 export function cancelQueuedWorkflowRuns(
   projectId: string,
   workflowId: string,
