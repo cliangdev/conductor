@@ -39,7 +39,7 @@ export default function NewWorkflowPage() {
         { name, yaml },
         accessToken
       );
-      router.push(`/app/projects/${projectId}/workflows/${created.id}/overview`);
+      router.push(`/app/projects/${projectId}/workflows/${created.id}/runs`);
     } catch (e: unknown) {
       setError(apiErrorMessage(e, 'Failed to save workflow'));
     } finally {

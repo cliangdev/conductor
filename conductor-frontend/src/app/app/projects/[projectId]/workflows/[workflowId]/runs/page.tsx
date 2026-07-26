@@ -12,8 +12,6 @@ import {
   cancelQueuedWorkflowRuns,
   listScheduleSkips,
   humanizeTriggerType,
-  QUEUED_RUN_STATUSES,
-  RUNNING_RUN_STATUSES,
 } from '@/lib/workflows';
 import { WorkflowStatsStrip } from '@/components/workflow/WorkflowStatsStrip';
 import { Button } from '@/components/ui/button';
@@ -49,10 +47,12 @@ type RunFilter = 'all' | 'queued' | 'running';
 const NONTERMINAL_STATUSES = new Set(['PENDING', 'PENDING_LOCAL_PICKUP', 'RUNNING', 'CANCELLING']);
 const CANCELABLE_STATUSES = new Set(['PENDING', 'PENDING_LOCAL_PICKUP', 'RUNNING']);
 
-function statusesForFilter(filter: RunFilter): readonly string[] {
-  if (filter === 'queued') return QUEUED_RUN_STATUSES;
-  if (filter === 'running') return RUNNING_RUN_STATUSES;
-  return [];
+/** Maps the tab to the backend's derived `?state=` value — the raw `status` list is no longer used
+ *  for filtering here (see the module comment on `listWorkflowRuns` for why the two are exclusive). */
+function stateForFilter(filter: RunFilter): 'queued' | 'running' | undefined {
+  if (filter === 'queued') return 'queued';
+  if (filter === 'running') return 'running';
+  return undefined;
 }
 
 function RunListContent() {
@@ -64,14 +64,18 @@ function RunListContent() {
   const searchParams = useSearchParams();
   const { showToast } = useToast();
 
-  const rawFilter = searchParams.get('status');
+  // The URL param is named `state` (not `status`) to match what it actually sends the API — see
+  // stateForFilter/listWorkflowRuns. Renamed from the original `?status=queued` shipped in the prior
+  // phase; nothing outside this branch has linked to it yet, so there's no back-compat cost, and
+  // keeping the two names in sync avoids a param that means one thing in the URL and another on the wire.
+  const rawFilter = searchParams.get('state');
   const filter: RunFilter = rawFilter === 'queued' || rawFilter === 'running' ? rawFilter : 'all';
 
   function setFilter(next: string) {
     if (next === filter) return;
     const sp = new URLSearchParams(searchParams.toString());
-    if (next === 'all') sp.delete('status');
-    else sp.set('status', next);
+    if (next === 'all') sp.delete('state');
+    else sp.set('state', next);
     const qs = sp.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname);
     setPage(0);
@@ -91,6 +95,9 @@ function RunListContent() {
   const [skipsAtLeast, setSkipsAtLeast] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // Set whenever the table/queued probe or the history sample fails, so a failed poll reads as an
+  // honest error rather than silently rendering "No runs yet" as if the workflow had no runs.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [bulkCancelOpen, setBulkCancelOpen] = useState(false);
   const [bulkCancelling, setBulkCancelling] = useState(false);
@@ -102,14 +109,20 @@ function RunListContent() {
   const fetchTableAndQueued = useCallback(() => {
     if (!accessToken) return Promise.resolve();
     return Promise.all([
-      listWorkflowRuns(projectId, workflowId, accessToken, { page, size: PAGE_SIZE, status: statusesForFilter(filter) }),
-      listWorkflowRuns(projectId, workflowId, accessToken, { page: 0, size: PAGE_SIZE, status: QUEUED_RUN_STATUSES }),
+      listWorkflowRuns(projectId, workflowId, accessToken, { page, size: PAGE_SIZE, state: stateForFilter(filter) }),
+      listWorkflowRuns(projectId, workflowId, accessToken, { page: 0, size: PAGE_SIZE, state: 'queued' }),
     ]).then(([table, queued]) => {
       setTableRuns(table);
       setQueuedCount(queued.length);
       // The list endpoint has no total count — if the queued probe came back full, the real number
       // could be higher. Say "50+" rather than inventing a total the API can't give us.
       setQueuedAtLeast(queued.length === PAGE_SIZE);
+      setLoadError(null);
+    }).catch((e) => {
+      // This also runs every 5s from the poll below — without a catch here, a transient failure
+      // becomes an unhandled rejection and the table silently keeps showing whatever it last had
+      // (or nothing, on first load) as if that were the truth. Say so instead.
+      setLoadError(apiErrorMessage(e, "Couldn't load runs — try again."));
     });
   }, [projectId, workflowId, accessToken, page, filter]);
 
@@ -117,7 +130,11 @@ function RunListContent() {
   // need 5s freshness, so it's fetched once per mount/filter/page change rather than on every poll tick.
   const fetchHistory = useCallback(() => {
     if (!accessToken) return Promise.resolve();
-    return listWorkflowRuns(projectId, workflowId, accessToken, { page: 0, size: HISTORY_SAMPLE_SIZE }).then(setHistoryRuns);
+    return listWorkflowRuns(projectId, workflowId, accessToken, { page: 0, size: HISTORY_SAMPLE_SIZE })
+      .then(setHistoryRuns)
+      .catch((e) => {
+        setLoadError((prev) => prev ?? apiErrorMessage(e, "Couldn't load run history — try again."));
+      });
   }, [projectId, workflowId, accessToken]);
 
   useEffect(() => {
@@ -225,7 +242,9 @@ function RunListContent() {
         </Alert>
       )}
 
-      <WorkflowStatsStrip runs={historyRuns} />
+      {/* WorkflowStatsStrip renders its own "No runs yet." for an empty sample — suppress it here
+          so a brand-new workflow doesn't show that sentence twice (the EmptyState below says it too). */}
+      {historyRuns.length > 0 && <WorkflowStatsStrip runs={historyRuns} />}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Tabs items={tabItems} value={filter} onValueChange={setFilter} ariaLabel="Filter runs by status" />
@@ -242,8 +261,17 @@ function RunListContent() {
         <Alert variant="warning">
           <p>
             New runs will keep joining this queue until <strong>{workflow?.name ?? 'this workflow'}</strong>{' '}
-            is disabled — use the workflow menu above to pause intake.
+            is disabled.{' '}
+            {/* The workflow menu (Disable) lives behind workflow.manage (see layout.tsx) — don't point a
+                workflow.run-only user at a control they can't see. */}
+            <Can do="workflow.manage">Use the workflow menu above to pause intake.</Can>
           </p>
+        </Alert>
+      )}
+
+      {loadError && (
+        <Alert variant="destructive">
+          <p>{loadError}</p>
         </Alert>
       )}
 
@@ -252,7 +280,11 @@ function RunListContent() {
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
         </div>
       ) : tableRuns.length === 0 ? (
-        <EmptyState icon={emptyCopy.icon} title={emptyCopy.title} description={emptyCopy.description} />
+        // Don't claim "No runs yet" when the fetch actually failed — the error alert above already
+        // says what happened; rendering both would contradict each other.
+        loadError ? null : (
+          <EmptyState icon={emptyCopy.icon} title={emptyCopy.title} description={emptyCopy.description} />
+        )
       ) : (
         <Card className="overflow-x-auto">
           <table className="w-full min-w-[720px]">
@@ -268,7 +300,12 @@ function RunListContent() {
             </thead>
             <tbody className="divide-y divide-border">
               {tableRuns.map((run) => {
-                const queued = run.status === 'PENDING' || run.status === 'PENDING_LOCAL_PICKUP';
+                // A run reads as "Queued" when it hasn't started (PENDING/PENDING_LOCAL_PICKUP) OR it's
+                // blocked on an unclaimed self-hosted job — which the run-level status reports as RUNNING
+                // (see WorkflowJobOrchestrator.planJobExecution). waitReason is the signal for that second
+                // case; checking status alone would render a runner-blocked run as "Running · waiting for
+                // runner", contradicting both the Queued tab it's filtered into and the qualifier next to it.
+                const queued = run.status === 'PENDING' || run.status === 'PENDING_LOCAL_PICKUP' || !!run.waitReason;
                 const cancelable = CANCELABLE_STATUSES.has(run.status);
                 return (
                   <tr

@@ -65,8 +65,11 @@ function makeRun(overrides: Partial<WorkflowRunDto> = {}): WorkflowRunDto {
   }
 }
 
+// A run blocked on an unclaimed self-hosted job reads RUNNING at the run level (see
+// WorkflowJobOrchestrator.planJobExecution) — status PENDING + waitReason set can't actually occur.
+// Mirrors the fixture WorkflowControllerTest builds for the same case.
 function pending(): WorkflowRunDto {
-  return makeRun({ id: 'PEND0001', status: 'PENDING', completedAt: undefined, waitReason: 'AWAITING_RUNNER' })
+  return makeRun({ id: 'PEND0001', status: 'RUNNING', completedAt: undefined, waitReason: 'AWAITING_RUNNER' })
 }
 function running(): WorkflowRunDto {
   return makeRun({ id: 'RUNN0002', status: 'RUNNING', completedAt: undefined })
@@ -83,8 +86,10 @@ function success(): WorkflowRunDto {
 // implementation returns a rejected promise gets flagged as an unhandled rejection by this repo's
 // vitest setup even when the caller awaits/catches it (see reference_vitest_rejected_promise_mock).
 const mocks = vi.hoisted(() => ({
-  listRunsBehavior: (opts?: { status?: readonly string[]; size?: number }): WorkflowRunDto[] => (opts ? [] : []),
-  listRunsCalls: [] as Array<{ status?: readonly string[]; size?: number } | undefined>,
+  listRunsBehavior: (
+    opts?: { state?: 'queued' | 'running'; size?: number },
+  ): WorkflowRunDto[] | Promise<WorkflowRunDto[]> => (opts ? [] : []),
+  listRunsCalls: [] as Array<{ status?: readonly string[]; state?: 'queued' | 'running'; size?: number } | undefined>,
   cancelRunBehavior: (runId: string): Promise<WorkflowRunDto> => Promise.resolve({ id: runId } as WorkflowRunDto),
   cancelQueuedMock: vi.fn(),
   listSkipsMock: vi.fn(),
@@ -98,7 +103,7 @@ vi.mock('@/lib/workflows', async () => {
       _projectId: string,
       _workflowId: string,
       _token: string,
-      opts?: { status?: readonly string[]; size?: number },
+      opts?: { status?: readonly string[]; state?: 'queued' | 'running'; size?: number },
     ) => {
       mocks.listRunsCalls.push(opts)
       return Promise.resolve(mocks.listRunsBehavior(opts))
@@ -118,9 +123,8 @@ describe('RunListPage', () => {
     replace.mockClear()
     searchParams = new URLSearchParams()
     mocks.listRunsBehavior = (opts) => {
-      const status = opts?.status ?? []
-      if (status.includes('PENDING')) return [pending()]
-      if (status.includes('RUNNING')) return [running()]
+      if (opts?.state === 'queued') return [pending()]
+      if (opts?.state === 'running') return [running()]
       return [pending(), running(), success()]
     }
     mocks.cancelRunBehavior = (runId) => Promise.resolve(makeRun({ id: runId }))
@@ -146,26 +150,39 @@ describe('RunListPage', () => {
     expect(screen.getByRole('button', { name: /cancel queued runs \(1\)/i })).toBeInTheDocument()
   })
 
-  it('switches to the Queued filter via the ?status= URL param on click', async () => {
+  it('switches to the Queued filter via the ?state= URL param on click', async () => {
     render(<RunListPage />)
     await screen.findByText('PEND0001')
 
     fireEvent.click(screen.getByRole('tab', { name: /queued/i }))
 
     await waitFor(() =>
-      expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/workflows/wf-1/runs?status=queued'),
+      expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/workflows/wf-1/runs?state=queued'),
     )
   })
 
-  it('maps the Queued filter to PENDING statuses and renders the wait qualifier', async () => {
-    searchParams = new URLSearchParams({ status: 'queued' })
+  it('requests state=queued (the derived filter), not a raw status list, for the Queued segment', async () => {
+    searchParams = new URLSearchParams({ state: 'queued' })
+    render(<RunListPage />)
+    await screen.findByText('PEND0001')
+
+    await waitFor(() => expect(mocks.listRunsCalls.length).toBeGreaterThan(0))
+    // Every call this mount makes — the filtered table query and the always-on queued-count probe —
+    // goes through `state`, never the old raw `status` array.
+    expect(mocks.listRunsCalls.some((o) => o?.state === 'queued')).toBe(true)
+    expect(mocks.listRunsCalls.every((o) => o?.status === undefined)).toBe(true)
+  })
+
+  it('maps the Queued filter to state=queued and renders a RUNNING-but-blocked run as Queued', async () => {
+    searchParams = new URLSearchParams({ state: 'queued' })
     render(<RunListPage />)
 
     expect(await screen.findByText('PEND0001')).toBeInTheDocument()
     expect(screen.queryByText('RUNN0002')).not.toBeInTheDocument()
     expect(screen.queryByText('SUCC0003')).not.toBeInTheDocument()
 
-    // PENDING + waitReason AWAITING_RUNNER reads as "Queued · waiting for runner", not a raw "Pending".
+    // status RUNNING + waitReason AWAITING_RUNNER (the only combination that can actually occur) still
+    // reads as "Queued · waiting for runner", not "Running" — see the row's `queued` derivation.
     const pendingRow = screen.getByText('PEND0001').closest('tr')!
     expect(within(pendingRow).getByText('Queued')).toBeInTheDocument()
     expect(within(pendingRow).getByText(/waiting for runner/i)).toBeInTheDocument()
@@ -173,9 +190,8 @@ describe('RunListPage', () => {
 
   it('hides the bulk cancel button when nothing is queued', async () => {
     mocks.listRunsBehavior = (opts) => {
-      const status = opts?.status ?? []
-      if (status.includes('PENDING')) return []
-      if (status.includes('RUNNING')) return [running()]
+      if (opts?.state === 'queued') return []
+      if (opts?.state === 'running') return [running()]
       return [running(), success()]
     }
     render(<RunListPage />)
@@ -209,6 +225,26 @@ describe('RunListPage', () => {
 
     await waitFor(() => expect(showToast).toHaveBeenCalledWith('That run already finished.', 'success'))
     expect(showToast).not.toHaveBeenCalledWith(expect.stringContaining('Server error'), 'error')
+  })
+
+  it('does not say "No runs yet" twice when a workflow has no run history', async () => {
+    mocks.listRunsBehavior = () => []
+    render(<RunListPage />)
+
+    await waitFor(() => expect(mocks.listRunsCalls.length).toBeGreaterThan(0))
+    // WorkflowStatsStrip has its own "No runs yet." fallback; it must be suppressed here so the
+    // EmptyState below it is the only place that says it.
+    expect(await screen.findAllByText(/no runs yet/i)).toHaveLength(1)
+  })
+
+  it('surfaces a failed runs fetch as an error instead of silently rendering "No runs yet"', async () => {
+    // A plain function (not vi.fn()) returning a rejected promise — see the file-header comment on
+    // why a vi.fn() here would be flagged as an unhandled rejection even though the page catches it.
+    mocks.listRunsBehavior = () => Promise.reject(Object.assign(new Error('Server error (500)'), { status: 500 }))
+    render(<RunListPage />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't load runs/i)
+    expect(screen.queryByText(/no runs yet/i)).not.toBeInTheDocument()
   })
 
   function skip(hoursAgo: number, overrides: Partial<WorkflowScheduleSkipDto> = {}): WorkflowScheduleSkipDto {

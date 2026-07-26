@@ -93,26 +93,24 @@ export function listScheduleSkips(
   )
 }
 
-/** Run statuses the backend counts as "queued" — see WorkflowRunStatus.ACTIVE_RUN_STATUSES minus the
- *  in-flight ones. PENDING_LOCAL_PICKUP is included for correctness even though nothing assigns it
- *  today, so the filter stays right if it's ever used. */
-export const QUEUED_RUN_STATUSES = ['PENDING', 'PENDING_LOCAL_PICKUP'] as const
-
-/** Run statuses that read as "in progress" — RUNNING plus the teardown-in-progress CANCELLING. */
-export const RUNNING_RUN_STATUSES = ['RUNNING', 'CANCELLING'] as const
-
-/** Runs for one Workflow, newest first. `status` repeats the query param (backend OR's them); omit
- *  for all statuses. */
+/** Runs for one Workflow, newest first. `status` repeats the raw-status query param (backend OR's
+ *  them); `state` is the derived UI-facing alternative ("queued"/"running" — see the backend's
+ *  `?state=` contract in openapi.yaml). The two are mutually exclusive server-side (400 if both are
+ *  sent), so this throws client-side rather than letting a caller trip that 400 at request time. */
 export function listWorkflowRuns(
   projectId: string,
   workflowId: string,
   token: string,
-  opts?: { page?: number; size?: number; status?: readonly string[] },
+  opts?: { page?: number; size?: number; status?: readonly string[]; state?: 'queued' | 'running' },
 ): Promise<WorkflowRunDto[]> {
+  if (opts?.state && opts.status?.length) {
+    throw new Error('listWorkflowRuns: `state` and `status` are mutually exclusive')
+  }
   const page = opts?.page ?? 0
   const size = opts?.size ?? 20
   const params = new URLSearchParams({ page: String(page), size: String(size) })
   for (const status of opts?.status ?? []) params.append('status', status)
+  if (opts?.state) params.set('state', opts.state)
   return apiGet<WorkflowRunDto[]>(
     `/api/v1/projects/${projectId}/workflows/${workflowId}/runs?${params.toString()}`,
     token,
