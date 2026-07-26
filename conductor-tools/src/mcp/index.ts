@@ -43,6 +43,20 @@ import {
   suggestKnowledgeDomain,
   type KnowledgePageWrite,
 } from './tools/knowledge.js'
+import {
+  listProjectDocs,
+  readProjectDoc,
+  writeProjectDoc,
+  moveProjectDoc,
+  deleteProjectDoc,
+  setProjectDocTask,
+  listProjectDocComments,
+  commentOnProjectDoc,
+  respondToProjectDocComment,
+  listProjectDocVersions,
+  restoreProjectDocVersion,
+  uploadProjectDocImage,
+} from './tools/project-docs.js'
 
 const TOOLS = [
   // --- Canonical Work Item tools (v2 /work-items surface) ---
@@ -563,6 +577,165 @@ const TOOLS = [
       required: ['slug', 'displayName', 'reason'],
     },
   },
+
+  // --- Project Docs (the project's own document tree, not Work Item documents) ---
+  {
+    name: 'list_project_docs',
+    description: "Map the project's Docs section: folder paths plus every document as a \"Folder/Title\" path with its docId. Pass query to full-text search instead. Call this first to orient before reading or writing project docs.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        folder: { type: 'string', description: 'Limit to one folder path, e.g. "Plans/Q3" (omit for the whole tree)' },
+        query: { type: 'string', description: 'Full-text search over titles and content; returns matches with snippets instead of the tree' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'read_project_doc',
+    description: 'Read one project document by path ("Plans/Q3 Roadmap") or docId. Returns full Markdown content plus taskLines — every checkbox with its 1-based line number and state, which is what set_project_doc_task takes. Pass versionNumber (from list_project_doc_versions) to read an earlier version instead of the current one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Document path, e.g. "Plans/Q3 Roadmap"' },
+        docId: { type: 'string', description: 'Document ID — use instead of path when the title contains "/"' },
+        versionNumber: { type: 'number', description: 'Read this historical version instead of current content' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'write_project_doc',
+    description: 'Create or replace a project document at a path, creating any missing folders (upsert). Replaces the whole document, records a version, and marks unresolved line comments stale — to tick a checkbox use set_project_doc_task instead, which does none of that. Verify with read_project_doc.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Destination path, e.g. "Plans/Q3 Roadmap" — folder segments are created if missing' },
+        content: { type: 'string', description: 'Full Markdown content' },
+      },
+      required: ['path', 'content'],
+    },
+  },
+  {
+    name: 'move_project_doc',
+    description: 'Rename a project document and/or move it to another folder, creating missing folders in the destination path. Verify with list_project_docs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Current document path' },
+        docId: { type: 'string', description: 'Document ID — use instead of path' },
+        newPath: { type: 'string', description: 'New path, e.g. "Archive/Q2 Roadmap"' },
+      },
+      required: ['newPath'],
+    },
+  },
+  {
+    name: 'delete_project_doc',
+    description: 'Delete a project document. Irreversible — its version history and comments go with it. Verify with list_project_docs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Document path' },
+        docId: { type: 'string', description: 'Document ID — use instead of path' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'set_project_doc_task',
+    description: 'Check or uncheck one Markdown checkbox in a project document. lineNumber is 1-based against raw content including frontmatter — take it from read_project_doc\'s taskLines. Unlike write_project_doc this records no version and leaves comment anchors valid. Idempotent; returns conflict: true if that line is no longer a task item.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Document path' },
+        docId: { type: 'string', description: 'Document ID — use instead of path' },
+        lineNumber: { type: 'number', description: '1-based line number of the task item (from read_project_doc taskLines)' },
+        checked: { type: 'boolean', description: 'true to check the box, false to uncheck' },
+      },
+      required: ['lineNumber', 'checked'],
+    },
+  },
+  {
+    name: 'list_project_doc_comments',
+    description: 'Read the comments humans left on a project document — each with its anchored lineNumber, quotedText, lineStale flag and replies. Unresolved only by default. Answer them with respond_to_project_doc_comment.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Document path' },
+        docId: { type: 'string', description: 'Document ID — use instead of path' },
+        includeResolved: { type: 'boolean', description: 'Include already-resolved threads (default false)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'comment_on_project_doc',
+    description: 'Leave a comment anchored to one line of a project document. lineNumber is 1-based against raw content including frontmatter. Verify with list_project_doc_comments.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Document path' },
+        docId: { type: 'string', description: 'Document ID — use instead of path' },
+        lineNumber: { type: 'number', description: '1-based line number to anchor the comment to' },
+        content: { type: 'string', description: 'Comment text' },
+        quotedText: { type: 'string', description: 'Optional snippet of the line being commented on, shown as context' },
+      },
+      required: ['lineNumber', 'content'],
+    },
+  },
+  {
+    name: 'respond_to_project_doc_comment',
+    description: 'Answer a comment thread on a project document: post a reply, mark it resolved, or both. Verify with list_project_doc_comments.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Document path' },
+        docId: { type: 'string', description: 'Document ID — use instead of path' },
+        commentId: { type: 'string', description: 'ID of the comment thread (from list_project_doc_comments)' },
+        reply: { type: 'string', description: 'Reply text to post on the thread' },
+        resolve: { type: 'boolean', description: 'true to mark the thread resolved' },
+      },
+      required: ['commentId'],
+    },
+  },
+  {
+    name: 'list_project_doc_versions',
+    description: 'List a project document\'s edit history — versionNumber, who wrote it and when, newest first. Every full-content write adds one; ticking a checkbox does not. Read one with read_project_doc versionNumber, or roll back with restore_project_doc_version.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Document path' },
+        docId: { type: 'string', description: 'Document ID — use instead of path' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'restore_project_doc_version',
+    description: 'Roll a project document back to an earlier version (from list_project_doc_versions). Appends the old content as a new version rather than rewinding, so the restore is itself undoable. Verify with read_project_doc.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Document path' },
+        docId: { type: 'string', description: 'Document ID — use instead of path' },
+        versionNumber: { type: 'number', description: 'Version to restore, from list_project_doc_versions' },
+      },
+      required: ['versionNumber'],
+    },
+  },
+  {
+    name: 'upload_project_doc_image',
+    description: 'Upload a local image file (png, jpeg, gif, webp) to a project document and get the Markdown snippet to embed. Include that snippet in the content you pass to write_project_doc — the link is stored as a stable reference and re-signed on every read, so it will not expire.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Document path the image belongs to' },
+        docId: { type: 'string', description: 'Document ID — use instead of path' },
+        filePath: { type: 'string', description: 'Path to the image file on this machine' },
+      },
+      required: ['filePath'],
+    },
+  },
 ]
 
 function authErrorResponse() {
@@ -1039,6 +1212,141 @@ export async function runMcpServer(): Promise<void> {
               reason: params['reason'] as string,
               description: params['description'] as string | undefined,
               sourceTypePatterns: params['sourceTypePatterns'] as string[] | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+
+        // --- Project Docs ---
+        case 'list_project_docs': {
+          const result = await listProjectDocs(
+            {
+              folder: params['folder'] as string | undefined,
+              query: params['query'] as string | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'read_project_doc': {
+          const result = await readProjectDoc(
+            {
+              path: params['path'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+              versionNumber: params['versionNumber'] as number | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'write_project_doc': {
+          const result = await writeProjectDoc(
+            {
+              path: params['path'] as string,
+              content: params['content'] as string,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'move_project_doc': {
+          const result = await moveProjectDoc(
+            {
+              path: params['path'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+              newPath: params['newPath'] as string,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'delete_project_doc': {
+          const result = await deleteProjectDoc(
+            {
+              path: params['path'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'set_project_doc_task': {
+          const result = await setProjectDocTask(
+            {
+              path: params['path'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+              lineNumber: params['lineNumber'] as number,
+              checked: params['checked'] as boolean,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'list_project_doc_comments': {
+          const result = await listProjectDocComments(
+            {
+              path: params['path'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+              includeResolved: params['includeResolved'] as boolean | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'comment_on_project_doc': {
+          const result = await commentOnProjectDoc(
+            {
+              path: params['path'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+              lineNumber: params['lineNumber'] as number,
+              content: params['content'] as string,
+              quotedText: params['quotedText'] as string | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'respond_to_project_doc_comment': {
+          const result = await respondToProjectDocComment(
+            {
+              path: params['path'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+              commentId: params['commentId'] as string,
+              reply: params['reply'] as string | undefined,
+              resolve: params['resolve'] as boolean | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'list_project_doc_versions': {
+          const result = await listProjectDocVersions(
+            {
+              path: params['path'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'restore_project_doc_version': {
+          const result = await restoreProjectDocVersion(
+            {
+              path: params['path'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+              versionNumber: params['versionNumber'] as number,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'upload_project_doc_image': {
+          const result = await uploadProjectDocImage(
+            {
+              path: params['path'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+              filePath: params['filePath'] as string,
             },
             config
           )
