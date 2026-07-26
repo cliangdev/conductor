@@ -8,13 +8,17 @@ import { WorkflowDefinitionDto } from '@/types/workflow';
 import { useWorkflow } from '@/contexts/WorkflowContext';
 import { useCan } from '@/contexts/PermissionsContext';
 import WorkflowEditorLayout from '@/components/workflow/WorkflowEditorLayout';
+import { WorkflowWebhookInfo } from '@/components/workflow/WorkflowWebhookInfo';
+import { WorkflowDangerZone } from '@/components/workflow/WorkflowDangerZone';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
+import { Can } from '@/components/auth/Can';
 
 /**
- * The canonical view of *what this workflow is* — YAML + live diagram. Editable for
+ * The canonical view of *what this workflow is* — YAML + live diagram, plus the workflow's
+ * webhook URL (when it has a webhook trigger) and its Danger zone (delete). Editable for
  * `workflow.manage`; read-only (but still fully visible — diagram included) for everyone else.
- * Lifecycle actions (enable/disable/delete) live in the page header's overflow menu, not here.
+ * Enable/Disable lives in the page header (see layout.tsx's WorkflowEnabledToggle), not here.
  */
 export default function WorkflowDefinitionPage() {
   const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>();
@@ -52,15 +56,23 @@ export default function WorkflowDefinitionPage() {
   };
 
   return (
-    <WorkflowEditorLayout
-      embedded
-      readOnly={!canManage}
-      initialYaml={workflow.yaml ?? ''}
-      initialName={workflow.name}
-      onSave={handleSave}
-      onDiscard={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs`)}
-      saving={saving}
-      error={error}
-    />
+    <div className="space-y-6">
+      <WorkflowEditorLayout
+        embedded
+        readOnly={!canManage}
+        initialYaml={workflow.yaml ?? ''}
+        initialName={workflow.name}
+        onSave={handleSave}
+        onDiscard={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs`)}
+        saving={saving}
+        error={error}
+      />
+
+      <WorkflowWebhookInfo workflow={workflow} />
+
+      <Can do="workflow.manage">
+        <WorkflowDangerZone workflow={workflow} />
+      </Can>
+    </div>
   );
 }
