@@ -202,12 +202,16 @@ export async function getWorkflowRun(
 }
 
 export async function listWorkflowRuns(
-  params: { workflowId: string; page?: number; size?: number; status?: string | string[] },
+  params: { workflowId: string; page?: number; size?: number; status?: string | string[]; state?: string },
   config: Config
 ): Promise<unknown[]> {
   const query = new URLSearchParams()
   if (params.page !== undefined) query.set('page', String(params.page))
   if (params.size !== undefined) query.set('size', String(params.size))
+  // `state` is the correct way to ask "what's queued": a run blocked on an unclaimed self-hosted job
+  // is RUNNING at the run level, so `status=PENDING` silently misses exactly the backlog a caller is
+  // usually looking for. The backend rejects both params together with a 400.
+  if (params.state !== undefined) query.set('state', params.state)
   if (params.status !== undefined) {
     for (const s of Array.isArray(params.status) ? params.status : [params.status]) {
       query.append('status', s)

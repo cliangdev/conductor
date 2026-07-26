@@ -29,6 +29,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -84,7 +85,13 @@ public class JobDispatchPayloadService {
         this.artifactService = artifactService;
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * Not read-only: the first successful fetch stamps {@link WorkflowJobRun#getClaimedAt()} as a
+     * side effect — the true "a daemon picked this up" signal, since job status alone stays
+     * {@code AWAITING_PICKUP} for the job's entire self-hosted execution (see {@link
+     * WorkflowJobOrchestrator#planJobExecution}).
+     */
+    @Transactional
     public JobDispatchPayloadDto buildPayload(String runId, String jobId) {
         WorkflowRun run = runRepository.findByIdWithWorkflow(runId)
                 .orElseThrow(() -> new EntityNotFoundException("Run not found: " + runId));
@@ -96,6 +103,16 @@ public class JobDispatchPayloadService {
         WorkflowJobRun jobRun = jobRuns.get(0);
         if (jobRun.getStatus() != WorkflowJobStatus.AWAITING_PICKUP) {
             throw new ConflictException("Job " + jobId + " is not awaiting pickup (status=" + jobRun.getStatus() + ")");
+        }
+
+        // Idempotent: only the first fetch stamps claimedAt, so a daemon retrying/restarting and
+        // re-fetching the same payload doesn't move the claim moment. Status deliberately stays
+        // AWAITING_PICKUP -- that guard above, the duplicate-dispatch check in
+        // WorkflowJobOrchestrator, cleanupStuckRuns, cancellation, and the legacy whole-run PATCH
+        // shim all key off it.
+        if (jobRun.getClaimedAt() == null) {
+            jobRun.setClaimedAt(OffsetDateTime.now());
+            jobRunRepository.save(jobRun);
         }
 
         WorkflowDefinition workflow = run.getWorkflow();

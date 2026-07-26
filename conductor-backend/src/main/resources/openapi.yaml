@@ -2838,11 +2838,28 @@ paths:
           description: >-
             Filter to runs in any of the given statuses (repeat the param, e.g.
             `?status=PENDING&status=RUNNING`). Omit to return runs in all statuses. An unrecognized
-            status value is rejected with 400.
+            status value is rejected with 400. Mutually exclusive with `state` — supplying both is
+            rejected with 400.
           schema:
             type: array
             items:
               type: string
+        - name: state
+          in: query
+          required: false
+          description: >-
+            Derived, UI-facing alternative to `status`: "queued" matches a run that hasn't started
+            (PENDING/PENDING_LOCAL_PICKUP) OR is RUNNING at the run level purely because it's blocked
+            on a self-hosted job no daemon has claimed yet; "running" matches a run that's actually
+            executing (RUNNING/CANCELLING) with no such unclaimed job. The two are mutually exclusive,
+            but not exhaustive over every non-terminal run: LOCAL_PICKUP_TIMEOUT is non-terminal and
+            matches neither (a timed-out run has no unclaimed AWAITING_PICKUP job and isn't
+            PENDING/PENDING_LOCAL_PICKUP or RUNNING/CANCELLING) — use `status` or the unfiltered list to
+            see it. An unrecognized value is rejected with 400; supplying both `state` and `status` is
+            rejected with 400.
+          schema:
+            type: string
+            enum: [queued, running]
       responses:
         "200":
           description: List of runs
@@ -2853,7 +2870,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/WorkflowRunDto"
         "400":
-          description: Unrecognized status value
+          description: Unrecognized status/state value, or both status and state given
 
   /projects/{projectId}/workflows/{workflowId}/schedule-skips:
     get:
@@ -2967,11 +2984,14 @@ paths:
   /projects/{projectId}/workflows/{workflowId}/runs/cancel-queued:
     post:
       tags: [workflows]
-      summary: Cancel all queued (PENDING) runs for a workflow
+      summary: Cancel all queued runs for a workflow
       description: >
-        Drains the queued backlog without touching in-flight work: cancels every run currently in
-        PENDING status via the same path as a single-run cancel, and leaves RUNNING (and any other
-        non-PENDING) runs untouched. A no-op returning cancelledCount 0 if nothing is queued.
+        Drains the queued backlog without touching in-flight work: cancels every run that's either
+        PENDING, or blocked on a self-hosted job no daemon has claimed yet (with no other job on it
+        that's RUNNING or already claimed) — the same set the UI counts as "Queued" — via the same
+        path as a single-run cancel. A run with any genuinely in-flight job (RUNNING, or a claimed
+        AWAITING_PICKUP) is left untouched even if it also happens to have an unclaimed job elsewhere.
+        A no-op returning cancelledCount 0 if nothing qualifies.
       operationId: cancelQueuedWorkflowRuns
       security:
         - bearerAuth: []
@@ -6416,10 +6436,14 @@ components:
           readOnly: true
           nullable: true
           description: >-
-            Why this run isn't executing yet — a free-form code (only "AWAITING_RUNNER" today) rather
-            than an enum, so a future wait condition doesn't need an API change. "AWAITING_RUNNER" means
-            the run has at least one job in AWAITING_PICKUP, waiting for a self-hosted daemon to claim
-            it. Null for a run with no wait condition, including every terminal run.
+            Why this run isn't making progress yet — a free-form code (only "AWAITING_RUNNER" today)
+            rather than an enum, so a future wait condition doesn't need an API change.
+            "AWAITING_RUNNER" means the run has at least one job in AWAITING_PICKUP that no self-hosted
+            daemon has claimed yet — not merely dispatched: a self-hosted job stays AWAITING_PICKUP for
+            its entire execution once claimed, so an unclaimed check is what actually distinguishes
+            "waiting for a runner" from "running on one". Null once every AWAITING_PICKUP job on the
+            run has been claimed, and for a run with no wait condition at all, including every terminal
+            run.
 
     CancelQueuedRunsResponse:
       type: object

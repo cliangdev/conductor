@@ -22,7 +22,6 @@ import org.mockito.quality.Strictness;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -170,11 +169,12 @@ class WorkflowRunCancellationServiceTest {
 
     @Test
     void cancelQueuedRuns_cancelsOnlyThePendingBacklog_andReturnsTheCount() {
-        // The query itself is scoped to PENDING — this also proves a RUNNING run is never touched,
-        // since it's never even fetched for cancellation.
+        // The query itself is scoped to the queued predicate — this also proves a genuinely RUNNING
+        // run is never touched, since it's never even fetched for cancellation.
         WorkflowRun pendingA = runWithStatus("run-a", WorkflowRunStatus.PENDING);
         WorkflowRun pendingB = runWithStatus("run-b", WorkflowRunStatus.PENDING);
-        when(runRepository.findByWorkflowIdAndStatusIn("wf-1", Set.of(WorkflowRunStatus.PENDING)))
+        when(runRepository.findQueuedForCancellationByWorkflowId("wf-1",
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING))
                 .thenReturn(List.of(pendingA, pendingB));
         when(jobRunRepository.findByRunId("run-a")).thenReturn(List.of());
         when(jobRunRepository.findByRunId("run-b")).thenReturn(List.of());
@@ -190,7 +190,8 @@ class WorkflowRunCancellationServiceTest {
 
     @Test
     void cancelQueuedRuns_isANoOp_returningZero_whenNothingIsQueued() {
-        when(runRepository.findByWorkflowIdAndStatusIn("wf-1", Set.of(WorkflowRunStatus.PENDING)))
+        when(runRepository.findQueuedForCancellationByWorkflowId("wf-1",
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING))
                 .thenReturn(List.of());
 
         int cancelledCount = service.cancelQueuedRuns("wf-1");
@@ -206,7 +207,8 @@ class WorkflowRunCancellationServiceTest {
         // returned count must reflect only what actually got cancelled.
         WorkflowRun raced = runWithStatus("run-a", WorkflowRunStatus.SUCCESS);
         WorkflowRun stillPending = runWithStatus("run-b", WorkflowRunStatus.PENDING);
-        when(runRepository.findByWorkflowIdAndStatusIn("wf-1", Set.of(WorkflowRunStatus.PENDING)))
+        when(runRepository.findQueuedForCancellationByWorkflowId("wf-1",
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING))
                 .thenReturn(List.of(raced, stillPending));
         when(jobRunRepository.findByRunId("run-b")).thenReturn(List.of());
 
@@ -217,5 +219,39 @@ class WorkflowRunCancellationServiceTest {
         assertThat(stillPending.getStatus()).isEqualTo(WorkflowRunStatus.CANCELLING);
         verify(queueRepository, never()).deleteUnclaimedByRunId("run-a");
         verify(queueRepository).deleteUnclaimedByRunId("run-b");
+    }
+
+    @Test
+    void cancelQueuedRuns_includesARunBlockedOnAnUnclaimedAwaitingPickupJob() {
+        // The run itself is RUNNING (planJobExecution flips it before the job ever reaches
+        // AWAITING_PICKUP), so a plain PENDING filter would never find it -- the whole point of this
+        // fix. findQueuedForCancellationByWorkflowId is the collaborator responsible for surfacing it;
+        // this test only has to prove the service passes it through to the normal cancelRun path.
+        WorkflowRun blocked = runWithStatus("run-a", WorkflowRunStatus.RUNNING);
+        when(runRepository.findQueuedForCancellationByWorkflowId("wf-1",
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING))
+                .thenReturn(List.of(blocked));
+        when(jobRunRepository.findByRunId("run-a")).thenReturn(List.of());
+
+        int cancelledCount = service.cancelQueuedRuns("wf-1");
+
+        assertThat(cancelledCount).isEqualTo(1);
+        assertThat(blocked.getStatus()).isEqualTo(WorkflowRunStatus.CANCELLING);
+        verify(queueRepository).deleteUnclaimedByRunId("run-a");
+    }
+
+    @Test
+    void cancelQueuedRuns_skipsARunWhoseAwaitingPickupJobIsAlreadyClaimed() {
+        // findQueuedForCancellationByWorkflowId's own predicate excludes a run with a claimed
+        // AWAITING_PICKUP job (it's actively running on a daemon) by simply never returning it --
+        // proving the service itself applies no separate filter that could let it through another way.
+        when(runRepository.findQueuedForCancellationByWorkflowId("wf-1",
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING))
+                .thenReturn(List.of());
+
+        int cancelledCount = service.cancelQueuedRuns("wf-1");
+
+        assertThat(cancelledCount).isZero();
+        verify(runRepository, never()).findByIdForUpdate(anyString());
     }
 }

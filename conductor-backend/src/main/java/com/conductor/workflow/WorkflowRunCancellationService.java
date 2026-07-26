@@ -21,7 +21,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Stops a workflow run on request. Cancellation is a two-stage affair: this service performs the
@@ -85,15 +84,20 @@ public class WorkflowRunCancellationService {
     }
 
     /**
-     * Drains a workflow's queued backlog: cancels every PENDING run, one {@link #cancelRun(String)}
-     * call per run — reusing the same path a single-run cancel takes (row lock, queue-row deletion,
-     * job/step terminalization, completion settle) rather than a second cancellation code path.
-     * RUNNING runs are never touched. Each run's own transaction is independent, so one run racing to
-     * a terminal status and throwing doesn't abort the rest of the sweep — it's logged and skipped.
+     * Drains a workflow's queued backlog: cancels every run that qualifies as queued, one {@link
+     * #cancelRun(String)} call per run — reusing the same path a single-run cancel takes (row lock,
+     * queue-row deletion, job/step terminalization, completion settle) rather than a second
+     * cancellation code path. A run qualifies when it's PENDING, or blocked on a self-hosted job no
+     * daemon has claimed yet with nothing else on it genuinely in flight (see {@link
+     * WorkflowRunRepository#findQueuedForCancellationByWorkflowId} for the exact predicate) — this is
+     * deliberately narrower than the display-only "Queued" segment the UI shows, precisely so this
+     * bulk action never kills work that's actually executing. Each run's own transaction is
+     * independent, so one run racing to a terminal status and throwing doesn't abort the rest of the
+     * sweep — it's logged and skipped.
      */
     public int cancelQueuedRuns(String workflowId) {
-        List<WorkflowRun> queued = runRepository.findByWorkflowIdAndStatusIn(workflowId,
-                Set.of(WorkflowRunStatus.PENDING));
+        List<WorkflowRun> queued = runRepository.findQueuedForCancellationByWorkflowId(workflowId,
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING);
         int cancelledCount = 0;
         for (WorkflowRun run : queued) {
             try {

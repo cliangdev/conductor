@@ -151,6 +151,14 @@ describe('workflow-aware MCP tools', () => {
     )
   })
 
+  // `state` is how a caller should ask "what's waiting" — a run blocked on an unclaimed self-hosted
+  // runner is RUNNING at the run level, so status=PENDING would miss exactly that backlog.
+  it('list_workflow_runs forwards state as a query param', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    await listWorkflowRuns({ workflowId: 'wf-1', state: 'queued' }, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/runs?state=queued', config)
+  })
+
   it('list_workflow_runs passes waitReason through untouched (no field shaping)', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: 'run-1', status: 'PENDING', waitReason: 'AWAITING_RUNNER' },

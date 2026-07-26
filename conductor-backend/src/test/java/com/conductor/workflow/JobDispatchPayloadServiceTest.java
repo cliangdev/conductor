@@ -23,6 +23,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -167,5 +168,44 @@ class JobDispatchPayloadServiceTest {
         JobDispatchPayloadDto dto = service.buildPayload("run-1", "analyze");
 
         assertThat(dto.getImage()).isNull();
+    }
+
+    private String simpleHttpYaml() {
+        return """
+                jobs:
+                  analyze:
+                    steps:
+                      - id: notify
+                        type: http
+                """;
+    }
+
+    @Test
+    void buildPayload_stampsClaimedAt_onTheFirstFetch() {
+        WorkflowRun run = runWithYaml(simpleHttpYaml());
+        WorkflowJobRun jobRun = awaitingPickupJobRun("analyze");
+        assertThat(jobRun.getClaimedAt()).isNull();
+        stubCommonCollaborators(run, jobRun, "analyze");
+
+        service.buildPayload("run-1", "analyze");
+
+        assertThat(jobRun.getClaimedAt()).isNotNull();
+        verify(jobRunRepository).save(jobRun);
+    }
+
+    @Test
+    void buildPayload_doesNotMoveClaimedAt_onASecondFetch() {
+        // A daemon retrying/restarting and re-fetching the same dispatch payload must not reset the
+        // claim moment -- that's the regression this idempotency guards against.
+        WorkflowRun run = runWithYaml(simpleHttpYaml());
+        WorkflowJobRun jobRun = awaitingPickupJobRun("analyze");
+        java.time.OffsetDateTime firstClaim = java.time.OffsetDateTime.now().minusMinutes(5);
+        jobRun.setClaimedAt(firstClaim);
+        stubCommonCollaborators(run, jobRun, "analyze");
+
+        service.buildPayload("run-1", "analyze");
+
+        assertThat(jobRun.getClaimedAt()).isEqualTo(firstClaim);
+        verify(jobRunRepository, org.mockito.Mockito.never()).save(any());
     }
 }

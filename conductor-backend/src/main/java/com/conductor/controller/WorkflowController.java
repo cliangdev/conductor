@@ -427,19 +427,41 @@ public class WorkflowController implements WorkflowsApi {
         return ResponseEntity.ok(dtos);
     }
 
+    /** Run-level statuses {@code ?state=queued} matches outright (plus any run blocked on an unclaimed
+     *  self-hosted job regardless of its own run-level status — see {@link
+     *  WorkflowRunRepository#findQueuedByWorkflowId}). */
+    private static final Set<WorkflowRunStatus> QUEUED_STATE_STATUSES =
+            Set.of(WorkflowRunStatus.PENDING, WorkflowRunStatus.PENDING_LOCAL_PICKUP);
+
+    /** Run-level statuses {@code ?state=running} matches, minus any run blocked on an unclaimed
+     *  self-hosted job — see {@link WorkflowRunRepository#findRunningByWorkflowId}. */
+    private static final Set<WorkflowRunStatus> RUNNING_STATE_STATUSES =
+            Set.of(WorkflowRunStatus.RUNNING, WorkflowRunStatus.CANCELLING);
+
     @Override
     public ResponseEntity<List<WorkflowRunDto>> listWorkflowRuns(String projectId, String workflowId,
                                                                   Integer page, Integer size,
-                                                                  List<String> status) {
+                                                                  List<String> status, String state) {
         String userId = currentUserId();
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new EntityNotFoundException("Project not found");
+        }
+        if (state != null && status != null && !status.isEmpty()) {
+            throw new BusinessException("state and status cannot both be specified");
         }
         int pageNum = page != null ? page : 0;
         int pageSize = size != null ? size : 50;
         PageRequest pageable = PageRequest.of(pageNum, pageSize, Sort.by(Sort.Direction.DESC, "startedAt"));
         List<WorkflowRun> runs;
-        if (status != null && !status.isEmpty()) {
+        if (state != null) {
+            runs = switch (state) {
+                case "queued" -> runRepository.findQueuedByWorkflowId(workflowId, QUEUED_STATE_STATUSES,
+                        WorkflowJobStatus.AWAITING_PICKUP, pageable).getContent();
+                case "running" -> runRepository.findRunningByWorkflowId(workflowId, RUNNING_STATE_STATUSES,
+                        WorkflowJobStatus.AWAITING_PICKUP, pageable).getContent();
+                default -> throw new BusinessException("Unrecognized state: " + state);
+            };
+        } else if (status != null && !status.isEmpty()) {
             Set<WorkflowRunStatus> statuses = parseRunStatuses(status);
             runs = runRepository.findByWorkflowIdAndStatusIn(workflowId, statuses, pageable).getContent();
         } else {
@@ -469,7 +491,10 @@ public class WorkflowController implements WorkflowsApi {
     /**
      * Batched — one query for the whole page rather than one per run — derivation of
      * {@code WorkflowRunDto.waitReason}. Only non-terminal runs can have a wait reason, so terminal
-     * runs are excluded from the lookup entirely.
+     * runs are excluded from the lookup entirely. A job in AWAITING_PICKUP that's already been claimed
+     * by a self-hosted daemon is actively running, not waiting — {@code claimedAt IS NULL} in the
+     * repository query is what actually distinguishes the two, since status alone doesn't change for
+     * the rest of that job's execution.
      */
     private Map<String, String> deriveWaitReasons(List<WorkflowRun> runs) {
         List<String> nonTerminalRunIds = runs.stream()
@@ -479,7 +504,7 @@ public class WorkflowController implements WorkflowsApi {
         if (nonTerminalRunIds.isEmpty()) {
             return Map.of();
         }
-        List<String> awaitingRunnerRunIds = jobRunRepository.findDistinctRunIdsByRunIdInAndStatus(
+        List<String> awaitingRunnerRunIds = jobRunRepository.findDistinctRunIdsByRunIdInAndStatusAndClaimedAtIsNull(
                 nonTerminalRunIds, WorkflowJobStatus.AWAITING_PICKUP);
         return awaitingRunnerRunIds.stream()
                 .collect(Collectors.toMap(runId -> runId, runId -> "AWAITING_RUNNER"));

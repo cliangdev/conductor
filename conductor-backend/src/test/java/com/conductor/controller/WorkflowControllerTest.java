@@ -548,7 +548,7 @@ class WorkflowControllerTest {
     }
 
     @Test
-    void listWorkflowRuns_setsWaitReason_onlyForRunsWithAnAwaitingPickupJob_inOneBatchedQuery() throws Exception {
+    void listWorkflowRuns_setsWaitReason_onlyForRunsWithAnUnclaimedAwaitingPickupJob_inOneBatchedQuery() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         WorkflowRun awaitingRunner = runWithStatus("run-1", WorkflowRunStatus.RUNNING);
         WorkflowRun runningNoWait = runWithStatus("run-2", WorkflowRunStatus.PENDING);
@@ -557,7 +557,7 @@ class WorkflowControllerTest {
         when(runRepository.findByWorkflowId(eq("wf-auto"), any(Pageable.class))).thenReturn(page);
         // Only the two non-terminal runs should ever be looked up — the finished run is excluded before
         // the query even runs.
-        when(jobRunRepository.findDistinctRunIdsByRunIdInAndStatus(
+        when(jobRunRepository.findDistinctRunIdsByRunIdInAndStatusAndClaimedAtIsNull(
                 eq(List.of("run-1", "run-2")), eq(WorkflowJobStatus.AWAITING_PICKUP)))
                 .thenReturn(List.of("run-1"));
 
@@ -570,7 +570,92 @@ class WorkflowControllerTest {
 
         // One call for the whole page, not one per run -- proves this isn't N+1.
         verify(jobRunRepository, times(1))
-                .findDistinctRunIdsByRunIdInAndStatus(any(), eq(WorkflowJobStatus.AWAITING_PICKUP));
+                .findDistinctRunIdsByRunIdInAndStatusAndClaimedAtIsNull(any(), eq(WorkflowJobStatus.AWAITING_PICKUP));
+    }
+
+    @Test
+    void listWorkflowRuns_setsWaitReason_null_onceTheAwaitingPickupJobIsClaimed() throws Exception {
+        // The regression this whole fix targets: a claimed AWAITING_PICKUP job is actively running on
+        // a self-hosted daemon, not waiting for one -- the batched lookup must exclude it.
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        WorkflowRun claimedRunner = runWithStatus("run-1", WorkflowRunStatus.RUNNING);
+        Page<WorkflowRun> page = new PageImpl<>(List.of(claimedRunner));
+        when(runRepository.findByWorkflowId(eq("wf-auto"), any(Pageable.class))).thenReturn(page);
+        when(jobRunRepository.findDistinctRunIdsByRunIdInAndStatusAndClaimedAtIsNull(
+                eq(List.of("run-1")), eq(WorkflowJobStatus.AWAITING_PICKUP)))
+                .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].waitReason").doesNotExist());
+    }
+
+    @Test
+    void listWorkflowRuns_stateQueued_matchesARunThatsRunningButBlockedOnAnUnclaimedJob() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        WorkflowRun blockedRun = runWithStatus("run-1", WorkflowRunStatus.RUNNING);
+        Page<WorkflowRun> page = new PageImpl<>(List.of(blockedRun));
+        when(runRepository.findQueuedByWorkflowId(eq("wf-auto"),
+                eq(Set.of(WorkflowRunStatus.PENDING, WorkflowRunStatus.PENDING_LOCAL_PICKUP)),
+                eq(WorkflowJobStatus.AWAITING_PICKUP), any(Pageable.class)))
+                .thenReturn(page);
+        when(jobRunRepository.findDistinctRunIdsByRunIdInAndStatusAndClaimedAtIsNull(any(), any()))
+                .thenReturn(List.of("run-1"));
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs", PROJECT_ID, "wf-auto")
+                        .param("state", "queued")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value("run-1"))
+                .andExpect(jsonPath("$[0].waitReason").value("AWAITING_RUNNER"));
+
+        verify(runRepository, never()).findByWorkflowId(anyString(), any(Pageable.class));
+        verify(runRepository, never()).findRunningByWorkflowId(anyString(), any(), any(), any(Pageable.class));
+    }
+
+    @Test
+    void listWorkflowRuns_stateRunning_excludesThatSameRun_andIncludesANormallyRunningOne() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        WorkflowRun normallyRunning = runWithStatus("run-2", WorkflowRunStatus.RUNNING);
+        Page<WorkflowRun> page = new PageImpl<>(List.of(normallyRunning));
+        when(runRepository.findRunningByWorkflowId(eq("wf-auto"),
+                eq(Set.of(WorkflowRunStatus.RUNNING, WorkflowRunStatus.CANCELLING)),
+                eq(WorkflowJobStatus.AWAITING_PICKUP), any(Pageable.class)))
+                .thenReturn(page);
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs", PROJECT_ID, "wf-auto")
+                        .param("state", "running")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value("run-2"));
+
+        verify(runRepository, never()).findQueuedByWorkflowId(anyString(), any(), any(), any(Pageable.class));
+    }
+
+    @Test
+    void listWorkflowRuns_rejectsAnUnrecognizedStateValueWith400() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs", PROJECT_ID, "wf-auto")
+                        .param("state", "not-a-real-state")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void listWorkflowRuns_rejectsBothStateAndStatusGivenTogetherWith400() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs", PROJECT_ID, "wf-auto")
+                        .param("state", "queued")
+                        .param("status", "PENDING")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest());
+
+        verify(runRepository, never()).findQueuedByWorkflowId(anyString(), any(), any(), any(Pageable.class));
     }
 
     @Test

@@ -24,12 +24,16 @@ public interface WorkflowJobRunRepository extends JpaRepository<WorkflowJobRun, 
     /**
      * Batched lookup for deriving {@code WorkflowRunDto.waitReason}: one query for a whole page of runs
      * instead of one per run. Callers should already have narrowed {@code runIds} to non-terminal runs.
-     * Returns the distinct run ids that have at least one job in {@code status}, not the job rows
-     * themselves — the caller only needs set membership.
+     * Returns the distinct run ids that have at least one job in {@code status} with no {@code
+     * claimedAt} yet, not the job rows themselves — the caller only needs set membership. The {@code
+     * claimedAt IS NULL} condition is load-bearing: a claimed {@code AWAITING_PICKUP} job is actively
+     * running on a self-hosted daemon (status alone doesn't change for the rest of its execution), so
+     * without it every self-hosted job would show as "waiting for a runner" for its entire run.
      */
-    @Query("SELECT DISTINCT jr.run.id FROM WorkflowJobRun jr WHERE jr.run.id IN :runIds AND jr.status = :status")
-    List<String> findDistinctRunIdsByRunIdInAndStatus(@Param("runIds") Collection<String> runIds,
-                                                        @Param("status") WorkflowJobStatus status);
+    @Query("SELECT DISTINCT jr.run.id FROM WorkflowJobRun jr "
+            + "WHERE jr.run.id IN :runIds AND jr.status = :status AND jr.claimedAt IS NULL")
+    List<String> findDistinctRunIdsByRunIdInAndStatusAndClaimedAtIsNull(@Param("runIds") Collection<String> runIds,
+                                                                          @Param("status") WorkflowJobStatus status);
 
     @Query(value = "SELECT * FROM workflow_job_runs WHERE status = :status AND started_at < :cutoff",
            nativeQuery = true)
