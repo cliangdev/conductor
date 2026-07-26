@@ -6,12 +6,15 @@ export interface KnowledgeIndexPage {
   type: string
 }
 
-/** A rail section: either a top-level path segment ("architecture") or the flat "Pages" bucket for
- *  pages with no directory. `id` is stable for persisted collapse state; `label` is what's shown. */
+/** A rail section: a directory at some depth ("architecture", then "architecture/frontend", ...)
+ *  or the flat "Pages" bucket (id "") for root pages with no directory. `id` is the full directory
+ *  path and is stable for persisted collapse state; `label` is what's shown. `pages` are the pages
+ *  filed directly in this directory; `children` are its subdirectories. */
 export interface KnowledgeTreeSection {
   id: string
   label: string
   pages: KnowledgeIndexPage[]
+  children: KnowledgeTreeSection[]
 }
 
 // Title group is greedy (`.+`) rather than `[^\]]*` so that a title containing an unescaped `]`
@@ -51,31 +54,66 @@ export function filterContentPages(pages: KnowledgeIndexPage[]): KnowledgeIndexP
   return pages.filter((page) => page.type !== 'schema')
 }
 
-/** Groups pages by their top-level path segment ("architecture/foo.md" → section "architecture").
- *  Pages with no "/" (flat, e.g. "_schema.md") land in one "Pages" section — the tree degrades to a
- *  flat list when every page is flat. Named/directory sections sort alphabetically by label first;
- *  the flat "Pages" bucket always sorts last, regardless of where it first appears in `pages`
- *  (the generator emits flat entries before directory entries, so without this the catch-all would
- *  otherwise land first). */
-export function groupKnowledgePages(pages: KnowledgeIndexPage[]): KnowledgeTreeSection[] {
-  const sections: KnowledgeTreeSection[] = []
-  const byId = new Map<string, KnowledgeTreeSection>()
+/** Internal trie node used to build the nested tree before it's flattened into `KnowledgeTreeSection`s. */
+interface DirNode {
+  id: string
+  label: string
+  pages: KnowledgeIndexPage[]
+  children: Map<string, DirNode>
+}
 
-  for (const page of pages) {
-    const slash = page.path.indexOf('/')
-    const id = slash < 0 ? '' : page.path.slice(0, slash)
-    let section = byId.get(id)
-    if (!section) {
-      section = { id, label: id === '' ? 'Pages' : humanizeSegment(id), pages: [] }
-      byId.set(id, section)
-      sections.push(section)
+function dirOf(path: string): string {
+  const slash = path.lastIndexOf('/')
+  return slash < 0 ? '' : path.slice(0, slash)
+}
+
+/** Walks/creates every directory node along `dirPath` (e.g. "engineering/architecture" creates/reuses
+ *  "engineering" then "engineering/architecture"), returning the deepest node. */
+function ensureNode(root: DirNode, dirPath: string): DirNode {
+  if (dirPath === '') return root
+  let node = root
+  let acc = ''
+  for (const segment of dirPath.split('/')) {
+    acc = acc ? `${acc}/${segment}` : segment
+    let child = node.children.get(segment)
+    if (!child) {
+      child = { id: acc, label: humanizeSegment(segment), pages: [], children: new Map() }
+      node.children.set(segment, child)
     }
-    section.pages.push(page)
+    node = child
+  }
+  return node
+}
+
+/** Converts a node's children into sorted `KnowledgeTreeSection`s (alphabetical by label). Does not
+ *  include the node's own `pages`/flat bucket — callers attach those separately. */
+function finalizeChildren(node: DirNode): KnowledgeTreeSection[] {
+  return [...node.children.values()]
+    .map((child) => ({
+      id: child.id,
+      label: child.label,
+      pages: child.pages,
+      children: finalizeChildren(child),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+}
+
+/** Groups pages into a full nested tree by directory path ("engineering/architecture/foo.md" →
+ *  section "engineering" containing child section "architecture"), not just the first segment.
+ *  Pages with no "/" (flat, e.g. "_schema.md") land in one root "Pages" section — the tree degrades
+ *  to a flat list when every page is flat. Named/directory sections sort alphabetically by label
+ *  first (at every depth); the flat "Pages" bucket always sorts last at the root, regardless of
+ *  where it first appears in `pages` (the generator emits flat entries before directory entries, so
+ *  without this the catch-all would otherwise land first). */
+export function groupKnowledgePages(pages: KnowledgeIndexPage[]): KnowledgeTreeSection[] {
+  const root: DirNode = { id: '', label: '', pages: [], children: new Map() }
+  for (const page of pages) {
+    ensureNode(root, dirOf(page.path)).pages.push(page)
   }
 
-  const named = sections.filter((s) => s.id !== '').sort((a, b) => a.label.localeCompare(b.label))
-  const flat = sections.find((s) => s.id === '')
-  return flat ? [...named, flat] : named
+  const named = finalizeChildren(root)
+  if (root.pages.length === 0) return named
+  return [...named, { id: '', label: 'Pages', pages: root.pages, children: [] }]
 }
 
 function humanizeSegment(segment: string): string {

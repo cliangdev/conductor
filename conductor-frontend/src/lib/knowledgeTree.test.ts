@@ -92,19 +92,19 @@ describe('groupKnowledgePages', () => {
   it('groups nested pages by their top-level path segment', () => {
     const sections = groupKnowledgePages(parseKnowledgeIndexPages(INDEX_CONTENT))
     expect(sections).toHaveLength(2)
-    expect(sections[0]).toMatchObject({ id: 'architecture', label: 'Architecture' })
+    expect(sections[0]).toMatchObject({ id: 'architecture', label: 'Architecture', children: [] })
     expect(sections[0].pages.map((p) => p.path)).toEqual([
       'architecture/workflow-engine.md',
       'architecture/data-model.md',
     ])
-    expect(sections[1]).toMatchObject({ id: '', label: 'Pages' })
+    expect(sections[1]).toMatchObject({ id: '', label: 'Pages', children: [] })
     expect(sections[1].pages.map((p) => p.path)).toEqual(['_schema.md'])
   })
 
   it('degrades to a single flat "Pages" section when no page has a directory', () => {
     const flat = parseKnowledgeIndexPages(`# Index\n\n## /\n\n* [Readme](/readme.md) (type: project)\n`)
     const sections = groupKnowledgePages(flat)
-    expect(sections).toEqual([{ id: '', label: 'Pages', pages: flat }])
+    expect(sections).toEqual([{ id: '', label: 'Pages', pages: flat, children: [] }])
   })
 
   it(
@@ -128,4 +128,50 @@ describe('groupKnowledgePages', () => {
       expect(sections.map((s) => s.label)).toEqual(['Apple', 'Zebra', 'Pages'])
     }
   )
+
+  it('nests pages by their full directory path, not just the first segment', () => {
+    const pages = [
+      { path: 'engineering/architecture/agents.md', title: 'Agents', type: 'architecture' },
+      { path: 'engineering/decisions/adr-1.md', title: 'ADR 1', type: 'adr' },
+      { path: 'engineering/integrations/gcp.md', title: 'GCP', type: 'integration' },
+    ]
+
+    const sections = groupKnowledgePages(pages)
+
+    expect(sections).toHaveLength(1)
+    expect(sections[0]).toMatchObject({ id: 'engineering', label: 'Engineering' })
+    expect(sections[0].pages).toEqual([])
+    expect(sections[0].children.map((c) => c.id)).toEqual([
+      'engineering/architecture',
+      'engineering/decisions',
+      'engineering/integrations',
+    ])
+    expect(sections[0].children.map((c) => c.label)).toEqual(['Architecture', 'Decisions', 'Integrations'])
+    expect(sections[0].children[0].pages.map((p) => p.path)).toEqual(['engineering/architecture/agents.md'])
+  })
+
+  it('supports a directory that has both direct pages and subdirectories', () => {
+    const pages = [
+      { path: 'engineering/overview.md', title: 'Overview', type: 'project' },
+      { path: 'engineering/architecture/agents.md', title: 'Agents', type: 'architecture' },
+    ]
+
+    const sections = groupKnowledgePages(pages)
+
+    expect(sections).toHaveLength(1)
+    expect(sections[0].pages.map((p) => p.path)).toEqual(['engineering/overview.md'])
+    expect(sections[0].children).toHaveLength(1)
+    expect(sections[0].children[0]).toMatchObject({ id: 'engineering/architecture', label: 'Architecture' })
+  })
+
+  it('nests three levels deep', () => {
+    const pages = [{ path: 'a/b/c/deep.md', title: 'Deep', type: 'component' }]
+
+    const sections = groupKnowledgePages(pages)
+
+    expect(sections[0].id).toBe('a')
+    expect(sections[0].children[0].id).toBe('a/b')
+    expect(sections[0].children[0].children[0].id).toBe('a/b/c')
+    expect(sections[0].children[0].children[0].pages.map((p) => p.path)).toEqual(['a/b/c/deep.md'])
+  })
 })
