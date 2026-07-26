@@ -22,6 +22,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -214,12 +215,14 @@ public class ClaudeCodeContainerRunner {
         if (priorRow.isPresent() && priorRow.get().getExecutionName() != null) {
             WorkflowStepRun inFlightRow = priorRow.get();
             String executionName = inFlightRow.getExecutionName();
-            log.info("claude-code step {} resuming poll on prior Cloud Run execution {} (workerJobId={}), "
-                    + "skipping relaunch", stepId, executionName, workerJobId);
+            int remainingMinutes = remainingTimeoutMinutes(inFlightRow, timeoutMinutes);
+            log.info("claude-code step {} resuming poll on prior Cloud Run execution {} (workerJobId={}, "
+                    + "{}m remaining of {}m budget), skipping relaunch",
+                    stepId, executionName, workerJobId, remainingMinutes, timeoutMinutes);
             appendLauncherLine(inFlightRow, projectId, logBuilder,
                     "→ Resuming poll on prior Cloud Run execution: " + executionName);
             return pollUntilTerminal(target, executionName, null, runId, jobRun.getId(), workerJobId, stepDef,
-                    timeoutMinutes, logBuilder, inFlightRow, projectId);
+                    remainingMinutes, logBuilder, inFlightRow, projectId);
         }
 
         // The launch was previously accepted by Cloud Run (operationName persisted) but never resolved
@@ -229,12 +232,14 @@ public class ClaudeCodeContainerRunner {
         if (priorRow.isPresent() && priorRow.get().getOperationName() != null) {
             WorkflowStepRun inFlightRow = priorRow.get();
             String operationName = inFlightRow.getOperationName();
-            log.info("claude-code step {} resuming unconfirmed Cloud Run launch (operation {}, workerJobId={}), "
-                    + "skipping relaunch", stepId, operationName, workerJobId);
+            int remainingMinutes = remainingTimeoutMinutes(inFlightRow, timeoutMinutes);
+            log.info("claude-code step {} resuming unconfirmed Cloud Run launch (operation {}, workerJobId={}, "
+                    + "{}m remaining of {}m budget), skipping relaunch",
+                    stepId, operationName, workerJobId, remainingMinutes, timeoutMinutes);
             appendLauncherLine(inFlightRow, projectId, logBuilder,
                     "→ Resuming check on unconfirmed Cloud Run launch: " + operationName);
             return pollUntilTerminal(target, null, operationName, runId, jobRun.getId(), workerJobId, stepDef,
-                    timeoutMinutes, logBuilder, inFlightRow, projectId);
+                    remainingMinutes, logBuilder, inFlightRow, projectId);
         }
 
         Map<String, String> env;
@@ -472,7 +477,11 @@ public class ClaudeCodeContainerRunner {
                                           String runId, String jobRunId, String workerJobId,
                                           Map<String, Object> stepDef, int timeoutMinutes, StringBuilder logBuilder,
                                           WorkflowStepRun stepRun, String projectId) {
-        int maxIterations = Math.max(1, (timeoutMinutes * 60) / POLL_INTERVAL_SECONDS);
+        // timeoutMinutes may already be <= 0 here (a resumed step whose budget elapsed while the
+        // backend was down) -- 0 iterations falls straight through to the timeout tail below rather
+        // than looping at least once, so a step that resumes past its deadline fails immediately
+        // instead of getting a bonus poll.
+        int maxIterations = timeoutMinutes <= 0 ? 0 : Math.max(1, (timeoutMinutes * 60) / POLL_INTERVAL_SECONDS);
         for (int i = 0; i < maxIterations; i++) {
             sleepSeconds(POLL_INTERVAL_SECONDS);
 
@@ -599,6 +608,25 @@ public class ClaudeCodeContainerRunner {
         return projectSettingsRepository.findByProjectId(projectId)
                 .map(ProjectSettings::getRunTokenTtlHours)
                 .orElse(24);
+    }
+
+    /**
+     * Minutes left in {@code fullTimeoutMinutes}' budget, measured from {@code stepRun.getStartedAt()}
+     * (set once, at first launch, and never touched again by {@link #resolveOrCreateStepRun} on
+     * resume) rather than from now. Without this, a step resumed after a backend restart --
+     * {@link #run}'s two resume branches, which skip relaunching and poll the existing execution --
+     * would hand {@link #pollUntilTerminal} a fresh full budget every time, so a step that resumes
+     * repeatedly (e.g. across several redeploys) could run for a multiple of its declared timeout
+     * before ever actually being cancelled. A missing {@code startedAt} (shouldn't happen in
+     * production -- every row is created through {@link #resolveOrCreateStepRun} -- but keeps this
+     * defensive rather than crashing) falls back to the full budget.
+     */
+    private int remainingTimeoutMinutes(WorkflowStepRun stepRun, int fullTimeoutMinutes) {
+        if (stepRun.getStartedAt() == null) {
+            return fullTimeoutMinutes;
+        }
+        long elapsedMinutes = Duration.between(stepRun.getStartedAt(), OffsetDateTime.now()).toMinutes();
+        return (int) Math.max(0, fullTimeoutMinutes - elapsedMinutes);
     }
 
     private int resolveTimeoutMinutes(Integer requested) {

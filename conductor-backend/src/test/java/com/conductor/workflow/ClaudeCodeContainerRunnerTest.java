@@ -5,6 +5,7 @@ import com.conductor.entity.Connection;
 import com.conductor.entity.WorkflowJobRun;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
+import com.conductor.entity.WorkflowStepRun;
 import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.CredentialConnector;
@@ -24,6 +25,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -248,6 +250,33 @@ class ClaudeCodeContainerRunnerTest {
         assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
         assertThat(result.getErrorReason()).contains("reserved env key");
         verifyNoInteractions(launcher);
+    }
+
+    @Test
+    void resumedStepPastItsTimeoutBudget_failsImmediatelyAndCancelsExecution() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+
+        WorkflowStepRun priorRow = new WorkflowStepRun();
+        priorRow.setStepId("review");
+        priorRow.setWorkerJobId("worker-1");
+        priorRow.setStatus(WorkflowStepStatus.RUNNING);
+        priorRow.setExecutionName("exec-1");
+        // Started well past the 30-minute budget below -- simulates a step resumed (e.g. after a
+        // backend restart) whose elapsed wall-clock time already exceeds its declared timeout.
+        priorRow.setStartedAt(OffsetDateTime.now().minusMinutes(45));
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), eq("review"))).thenReturn(Optional.of(priorRow));
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), eq("worker-1"))).thenReturn(Optional.of(priorRow));
+
+        ClaudeCodeContainerRunner.ClaudeCodeInvocation inv = new ClaudeCodeContainerRunner.ClaudeCodeInvocation(
+                "Review this PR", null, null, 30, false, null, "claude-code", List.of(), Map.of());
+
+        StepResult result = runner.run(context(Map.of()), inv);
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).isEqualTo("CLAUDE_TIMEOUT");
+        verify(launcher).cancelExecution(any(CloudRunTarget.class), eq("exec-1"));
+        verify(launcher, never()).pollExecution(any(CloudRunTarget.class), anyString());
     }
 
     @Test
