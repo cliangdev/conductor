@@ -11,17 +11,19 @@ import java.util.List;
 @Repository
 public interface ProjectDocRepository extends JpaRepository<ProjectDoc, String> {
 
-    @Query("SELECT DISTINCT d FROM ProjectDoc d JOIN FETCH d.createdBy JOIN FETCH d.updatedBy WHERE d.project.id = :projectId AND d.folder IS NULL")
+    // LEFT JOIN FETCH, not JOIN FETCH: an agent-authored doc has no createdBy/updatedBy user, and an
+    // inner join would silently drop it from every listing.
+    @Query("SELECT DISTINCT d FROM ProjectDoc d LEFT JOIN FETCH d.createdBy LEFT JOIN FETCH d.updatedBy WHERE d.project.id = :projectId AND d.folder IS NULL")
     List<ProjectDoc> findByProjectIdAndFolderIsNull(@Param("projectId") String projectId);
 
-    @Query("SELECT DISTINCT d FROM ProjectDoc d JOIN FETCH d.createdBy JOIN FETCH d.updatedBy WHERE d.project.id = :projectId AND d.folder.id = :folderId")
+    @Query("SELECT DISTINCT d FROM ProjectDoc d LEFT JOIN FETCH d.createdBy LEFT JOIN FETCH d.updatedBy WHERE d.project.id = :projectId AND d.folder.id = :folderId")
     List<ProjectDoc> findByProjectIdAndFolderId(@Param("projectId") String projectId, @Param("folderId") String folderId);
 
     boolean existsByProjectIdAndFolderIsNullAndTitle(String projectId, String title);
 
     boolean existsByProjectIdAndFolderIdAndTitle(String projectId, String folderId, String title);
 
-    @Query("SELECT d FROM ProjectDoc d JOIN FETCH d.createdBy JOIN FETCH d.updatedBy WHERE d.id = :docId")
+    @Query("SELECT d FROM ProjectDoc d LEFT JOIN FETCH d.createdBy LEFT JOIN FETCH d.updatedBy WHERE d.id = :docId")
     java.util.Optional<ProjectDoc> findByIdWithUsers(@Param("docId") String docId);
 
     @Query("SELECT d FROM ProjectDoc d WHERE d.project.id = :projectId AND (LOWER(d.title) LIKE LOWER(CONCAT('%', :query, '%')) OR LOWER(d.content) LIKE LOWER(CONCAT('%', :query, '%')))")

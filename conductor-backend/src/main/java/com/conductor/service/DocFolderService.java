@@ -28,14 +28,15 @@ public class DocFolderService {
         this.projectRepository = projectRepository;
     }
 
+    /**
+     * Every folder in the project as a flat list — clients nest it themselves via {@code parentId}.
+     * Returning only root folders (as this once did) made sub-folders uncreatable-but-invisible: the
+     * tree UI already recurses over the full list, and path-addressed API clients need the whole tree
+     * in one call.
+     */
     @Transactional(readOnly = true)
-    public List<DocFolder> getRootFolders(String projectId) {
-        return docFolderRepository.findByProjectIdAndParentIsNull(projectId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<DocFolder> getChildFolders(String projectId, String parentId) {
-        return docFolderRepository.findByProjectIdAndParentId(projectId, parentId);
+    public List<DocFolder> getFolders(String projectId) {
+        return docFolderRepository.findByProjectIdOrderByNameAsc(projectId);
     }
 
     @Transactional
@@ -48,7 +49,7 @@ public class DocFolderService {
         if (parentId == null) {
             nameConflict = docFolderRepository.existsByProjectIdAndParentIsNullAndName(projectId, name);
         } else {
-            parent = getFolder(parentId);
+            parent = getFolder(projectId, parentId);
             nameConflict = docFolderRepository.existsByProjectIdAndParentIdAndName(projectId, parentId, name);
         }
 
@@ -65,10 +66,9 @@ public class DocFolderService {
     }
 
     @Transactional
-    public DocFolder renameFolder(String folderId, String newName) {
-        DocFolder folder = getFolder(folderId);
+    public DocFolder renameFolder(String projectId, String folderId, String newName) {
+        DocFolder folder = getFolder(projectId, folderId);
 
-        String projectId = folder.getProject().getId();
         DocFolder parentFolder = folder.getParent();
 
         boolean nameConflict;
@@ -87,14 +87,22 @@ public class DocFolderService {
     }
 
     @Transactional
-    public void deleteFolder(String folderId) {
-        DocFolder folder = getFolder(folderId);
+    public void deleteFolder(String projectId, String folderId) {
+        DocFolder folder = getFolder(projectId, folderId);
         docFolderRepository.delete(folder);
     }
 
+    /**
+     * Loads a folder, asserting it belongs to {@code projectId} — see
+     * {@link ProjectDocService#getDoc} for why a mismatch reads as "not found" rather than 403.
+     */
     @Transactional(readOnly = true)
-    public DocFolder getFolder(String folderId) {
-        return docFolderRepository.findById(folderId)
+    public DocFolder getFolder(String projectId, String folderId) {
+        DocFolder folder = docFolderRepository.findById(folderId)
                 .orElseThrow(() -> new EntityNotFoundException("Folder not found: " + folderId));
+        if (!folder.getProject().getId().equals(projectId)) {
+            throw new EntityNotFoundException("Folder not found: " + folderId);
+        }
+        return folder;
     }
 }

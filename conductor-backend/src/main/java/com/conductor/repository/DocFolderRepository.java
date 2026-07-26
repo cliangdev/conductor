@@ -9,9 +9,7 @@ import java.util.List;
 @Repository
 public interface DocFolderRepository extends JpaRepository<DocFolder, String> {
 
-    List<DocFolder> findByProjectIdAndParentIsNull(String projectId);
-
-    List<DocFolder> findByProjectIdAndParentId(String projectId, String parentId);
+    List<DocFolder> findByProjectIdOrderByNameAsc(String projectId);
 
     boolean existsByProjectIdAndParentIsNullAndName(String projectId, String name);
 

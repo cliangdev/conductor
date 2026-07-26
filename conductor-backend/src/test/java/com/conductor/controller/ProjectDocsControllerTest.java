@@ -12,6 +12,7 @@ import com.conductor.repository.DocCommentReplyRepository;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.service.DocActor;
 import com.conductor.service.DocCommentService;
 import com.conductor.service.DocFolderService;
 import com.conductor.service.DocVersionService;
@@ -22,6 +23,7 @@ import com.conductor.service.StorageService;
 import com.conductor.workflow.RunTokenService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -32,12 +34,16 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -118,7 +124,8 @@ class ProjectDocsControllerTest {
     @Test
     void creatorTogglesACheckbox_returns200WithUpdatedContent() throws Exception {
         when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(true);
-        when(projectDocService.setTaskState(DOC_ID, 1, true, "user-1")).thenReturn(storedDoc());
+        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(1), eq(true), any(DocActor.class)))
+                .thenReturn(storedDoc());
 
         mockMvc.perform(patch(PATH + "1")
                         .header("Authorization", "Bearer member-token")
@@ -139,22 +146,84 @@ class ProjectDocsControllerTest {
                         .content("{\"checked\":true}"))
                 .andExpect(status().isForbidden());
 
-        verify(projectDocService, never()).setTaskState(anyString(), anyInt(), anyBoolean(), anyString());
+        verify(projectDocService, never())
+                .setTaskState(anyString(), anyString(), anyInt(), anyBoolean(), any());
     }
 
+    /**
+     * A project-scoped credential is how a headless agent ticks off work it has finished. It has no
+     * user behind it, so the doc is attributed to a label instead — see {@code DocActor}.
+     */
     @Test
-    void projectApiKeyCannotToggle_returnsClean403NotServerError() throws Exception {
+    void projectApiKeyMayToggle_andIsAttributedToALabel() throws Exception {
+        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(1), eq(true), any(DocActor.class)))
+                .thenReturn(storedDoc());
+
         mockMvc.perform(patch(PATH + "1")
                         .header("Authorization", "Bearer project-api-key")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"checked\":true}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<DocActor> actor = ArgumentCaptor.forClass(DocActor.class);
+        verify(projectDocService).setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(1), eq(true), actor.capture());
+        assertThat(actor.getValue().user()).isNull();
+        assertThat(actor.getValue().label()).isEqualTo("Agent");
+    }
+
+    @Test
+    void projectApiKeyForAnotherProject_returns403() throws Exception {
+        Project other = new Project();
+        other.setId("proj-2");
+        ProjectApiKey otherKey = new ProjectApiKey();
+        otherKey.setId("key-2");
+        otherKey.setProject(other);
+        otherKey.setName("other-key");
+        otherKey.setKeyValue("other-project-key");
+        when(projectApiKeyRepository.findByKeyValueWithProject("other-project-key"))
+                .thenReturn(Optional.of(otherKey));
+
+        mockMvc.perform(patch(PATH + "1")
+                        .header("Authorization", "Bearer other-project-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"checked\":true}"))
                 .andExpect(status().isForbidden());
+
+        verify(projectDocService, never())
+                .setTaskState(anyString(), anyString(), anyInt(), anyBoolean(), any());
+    }
+
+    @Test
+    void nonMemberCannotReadDocs_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/docs")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+
+        verify(projectDocService, never()).getDocs(anyString(), anyString());
+    }
+
+    @Test
+    void agentAuthoredDocStillRendersAByline() throws Exception {
+        ProjectDoc doc = storedDoc();
+        doc.setCreatedBy(null);
+        doc.setCreatedByLabel("Agent (run abc12345)");
+        doc.setUpdatedBy(null);
+        doc.setUpdatedByLabel("Agent (run abc12345)");
+        when(projectDocService.getDoc(PROJECT_ID, DOC_ID)).thenReturn(doc);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/docs/" + DOC_ID)
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.createdByName").value("Agent (run abc12345)"))
+                .andExpect(jsonPath("$.updatedByName").value("Agent (run abc12345)"));
     }
 
     @Test
     void staleLine_surfacesAs409() throws Exception {
         when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(true);
-        when(projectDocService.setTaskState(DOC_ID, 4, true, "user-1"))
+        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(4), eq(true), any(DocActor.class)))
                 .thenThrow(new ConflictException("Line 4 is no longer a task list item"));
 
         mockMvc.perform(patch(PATH + "4")
@@ -172,7 +241,7 @@ class ProjectDocsControllerTest {
     @Test
     void outOfRangeLineNumber_returns400NotServerError() throws Exception {
         when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(true);
-        when(projectDocService.setTaskState(DOC_ID, 0, true, "user-1"))
+        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(0), eq(true), any(DocActor.class)))
                 .thenThrow(new BusinessException("Line 0 is out of range for this document"));
 
         mockMvc.perform(patch(PATH + "0")

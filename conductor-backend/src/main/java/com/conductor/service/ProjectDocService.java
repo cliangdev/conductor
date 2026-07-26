@@ -4,14 +4,11 @@ import com.conductor.entity.DocFolder;
 import com.conductor.entity.DocVersion;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectDoc;
-import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
-import com.conductor.repository.DocFolderRepository;
 import com.conductor.repository.DocVersionRepository;
 import com.conductor.repository.ProjectDocRepository;
 import com.conductor.repository.ProjectRepository;
-import com.conductor.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -36,8 +33,7 @@ public class ProjectDocService {
 
     private final ProjectDocRepository projectDocRepository;
     private final DocVersionRepository docVersionRepository;
-    private final DocFolderRepository docFolderRepository;
-    private final UserRepository userRepository;
+    private final DocFolderService docFolderService;
     private final ProjectRepository projectRepository;
 
     @Lazy
@@ -47,13 +43,11 @@ public class ProjectDocService {
     public ProjectDocService(
             ProjectDocRepository projectDocRepository,
             DocVersionRepository docVersionRepository,
-            DocFolderRepository docFolderRepository,
-            UserRepository userRepository,
+            DocFolderService docFolderService,
             ProjectRepository projectRepository) {
         this.projectDocRepository = projectDocRepository;
         this.docVersionRepository = docVersionRepository;
-        this.docFolderRepository = docFolderRepository;
-        this.userRepository = userRepository;
+        this.docFolderService = docFolderService;
         this.projectRepository = projectRepository;
     }
 
@@ -62,24 +56,23 @@ public class ProjectDocService {
         if (folderId == null) {
             return projectDocRepository.findByProjectIdAndFolderIsNull(projectId);
         }
+        // Resolve the folder first so one from another project reads as "not found" rather than
+        // silently returning an empty list.
+        docFolderService.getFolder(projectId, folderId);
         return projectDocRepository.findByProjectIdAndFolderId(projectId, folderId);
     }
 
     @Transactional
-    public ProjectDoc createDoc(String projectId, String folderId, String title, String content, String userId) {
+    public ProjectDoc createDoc(String projectId, String folderId, String title, String content, DocActor actor) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
-
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new EntityNotFoundException("User not found"));
 
         DocFolder folder = null;
         boolean titleConflict;
         if (folderId == null) {
             titleConflict = projectDocRepository.existsByProjectIdAndFolderIsNullAndTitle(projectId, title);
         } else {
-            folder = docFolderRepository.findById(folderId)
-                    .orElseThrow(() -> new EntityNotFoundException("Folder not found"));
+            folder = docFolderService.getFolder(projectId, folderId);
             titleConflict = projectDocRepository.existsByProjectIdAndFolderIdAndTitle(projectId, folderId, title);
         }
 
@@ -87,41 +80,56 @@ public class ProjectDocService {
             throw new ConflictException("A document titled '" + title + "' already exists in this location");
         }
 
+        String stored = DocImageMarkers.normalize(content);
+
         ProjectDoc doc = new ProjectDoc();
         doc.setProject(project);
         doc.setFolder(folder);
         doc.setTitle(title);
-        doc.setContent(content);
-        doc.setCreatedBy(user);
-        doc.setUpdatedBy(user);
+        doc.setContent(stored);
+        doc.setCreatedBy(actor.user());
+        doc.setCreatedByLabel(actor.label());
+        applyEditor(doc, actor);
 
         projectDocRepository.save(doc);
 
         DocVersion version = new DocVersion();
         version.setDoc(doc);
         version.setVersionNumber(1);
-        version.setContent(content);
-        version.setAuthor(user);
+        version.setContent(stored);
+        version.setAuthor(actor.user());
+        version.setAuthorLabel(actor.label());
         docVersionRepository.save(version);
 
         return doc;
     }
 
+    /**
+     * Loads a doc, asserting it belongs to {@code projectId}. Every path that reaches a doc by id goes
+     * through here: without the project assertion a credential scoped to one project could reach
+     * another project's docs simply by putting its own project id in the URL. A mismatch reads as 404
+     * rather than 403 so ids can't be enumerated.
+     */
     @Transactional(readOnly = true)
-    public ProjectDoc getDoc(String docId) {
-        return projectDocRepository.findByIdWithUsers(docId)
+    public ProjectDoc getDoc(String projectId, String docId) {
+        ProjectDoc doc = projectDocRepository.findByIdWithUsers(docId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found: " + docId));
+        if (!doc.getProject().getId().equals(projectId)) {
+            throw new EntityNotFoundException("Document not found: " + docId);
+        }
+        return doc;
     }
 
     @Transactional
-    public ProjectDoc updateDoc(String docId, String content, String userId) {
-        ProjectDoc doc = getDoc(docId);
+    public ProjectDoc updateDoc(String projectId, String docId, String content, DocActor actor) {
+        ProjectDoc doc = getDoc(projectId, docId);
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new EntityNotFoundException("User not found"));
+        // Signed image URLs never reach the database: a client that read this doc got freshly signed
+        // URLs back, and writing those through verbatim would store links that expire in minutes.
+        String stored = DocImageMarkers.normalize(content);
 
-        doc.setContent(content);
-        doc.setUpdatedBy(user);
+        doc.setContent(stored);
+        applyEditor(doc, actor);
         projectDocRepository.save(doc);
 
         int nextVersion = docVersionRepository.findTopByDocIdOrderByVersionNumberDesc(docId)
@@ -131,8 +139,9 @@ public class ProjectDocService {
         DocVersion version = new DocVersion();
         version.setDoc(doc);
         version.setVersionNumber(nextVersion);
-        version.setContent(content);
-        version.setAuthor(user);
+        version.setContent(stored);
+        version.setAuthor(actor.user());
+        version.setAuthorLabel(actor.label());
         docVersionRepository.save(version);
 
         docCommentService.markCommentsStale(docId);
@@ -153,11 +162,8 @@ public class ProjectDocService {
      * full-content PUT has: two people ticking different boxes no longer clobber each other.
      */
     @Transactional
-    public ProjectDoc setTaskState(String docId, int lineNumber, boolean checked, String userId) {
-        ProjectDoc doc = getDoc(docId);
-
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new EntityNotFoundException("User not found"));
+    public ProjectDoc setTaskState(String projectId, String docId, int lineNumber, boolean checked, DocActor actor) {
+        ProjectDoc doc = getDoc(projectId, docId);
 
         String content = doc.getContent() == null ? "" : doc.getContent();
         // Two-arg split: the 1-arg form drops trailing empty strings, which would silently eat the
@@ -180,17 +186,16 @@ public class ProjectDocService {
         lines[lineNumber - 1] =
                 matcher.group(1) + (checked ? "x" : " ") + line.substring(matcher.end(1) + 1);
         doc.setContent(String.join("\n", lines));
-        doc.setUpdatedBy(user);
+        applyEditor(doc, actor);
         projectDocRepository.save(doc);
 
         return doc;
     }
 
     @Transactional
-    public ProjectDoc renameDoc(String docId, String title) {
-        ProjectDoc doc = getDoc(docId);
+    public ProjectDoc renameDoc(String projectId, String docId, String title) {
+        ProjectDoc doc = getDoc(projectId, docId);
 
-        String projectId = doc.getProject().getId();
         DocFolder folder = doc.getFolder();
 
         boolean titleConflict;
@@ -209,18 +214,15 @@ public class ProjectDocService {
     }
 
     @Transactional
-    public ProjectDoc moveDoc(String docId, String targetFolderId) {
-        ProjectDoc doc = getDoc(docId);
-
-        String projectId = doc.getProject().getId();
+    public ProjectDoc moveDoc(String projectId, String docId, String targetFolderId) {
+        ProjectDoc doc = getDoc(projectId, docId);
 
         DocFolder targetFolder = null;
         boolean titleConflict;
         if (targetFolderId == null) {
             titleConflict = projectDocRepository.existsByProjectIdAndFolderIsNullAndTitle(projectId, doc.getTitle());
         } else {
-            targetFolder = docFolderRepository.findById(targetFolderId)
-                    .orElseThrow(() -> new EntityNotFoundException("Target folder not found"));
+            targetFolder = docFolderService.getFolder(projectId, targetFolderId);
             titleConflict = projectDocRepository.existsByProjectIdAndFolderIdAndTitle(projectId, targetFolderId, doc.getTitle());
         }
 
@@ -233,13 +235,19 @@ public class ProjectDocService {
     }
 
     @Transactional
-    public void deleteDoc(String docId) {
-        ProjectDoc doc = getDoc(docId);
+    public void deleteDoc(String projectId, String docId) {
+        ProjectDoc doc = getDoc(projectId, docId);
         projectDocRepository.delete(doc);
     }
 
     @Transactional(readOnly = true)
     public List<ProjectDoc> searchDocs(String projectId, String query) {
         return projectDocRepository.searchByProjectIdAndQuery(projectId, query);
+    }
+
+    /** Records who last touched the doc — a user, or a machine actor's label. */
+    private void applyEditor(ProjectDoc doc, DocActor actor) {
+        doc.setUpdatedBy(actor.user());
+        doc.setUpdatedByLabel(actor.label());
     }
 }
