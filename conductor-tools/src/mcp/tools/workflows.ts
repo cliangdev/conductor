@@ -202,12 +202,17 @@ export async function getWorkflowRun(
 }
 
 export async function listWorkflowRuns(
-  params: { workflowId: string; page?: number; size?: number },
+  params: { workflowId: string; page?: number; size?: number; status?: string | string[] },
   config: Config
 ): Promise<unknown[]> {
   const query = new URLSearchParams()
   if (params.page !== undefined) query.set('page', String(params.page))
   if (params.size !== undefined) query.set('size', String(params.size))
+  if (params.status !== undefined) {
+    for (const s of Array.isArray(params.status) ? params.status : [params.status]) {
+      query.append('status', s)
+    }
+  }
   const qs = query.toString()
   const raw = await apiGet<unknown[]>(
     `/api/v1/projects/${config.projectId}/workflows/${params.workflowId}/runs${qs ? `?${qs}` : ''}`,

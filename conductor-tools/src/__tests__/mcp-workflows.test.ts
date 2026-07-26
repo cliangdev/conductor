@@ -136,6 +136,33 @@ describe('workflow-aware MCP tools', () => {
     expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/runs?page=2&size=10', config)
   })
 
+  it('list_workflow_runs forwards a single status as one repeated query param', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    await listWorkflowRuns({ workflowId: 'wf-1', status: 'PENDING' }, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/runs?status=PENDING', config)
+  })
+
+  it('list_workflow_runs forwards multiple statuses as repeated query params', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    await listWorkflowRuns({ workflowId: 'wf-1', status: ['PENDING', 'RUNNING'] }, config)
+    expect(apiGet).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/workflows/wf-1/runs?status=PENDING&status=RUNNING',
+      config
+    )
+  })
+
+  it('list_workflow_runs passes waitReason through untouched (no field shaping)', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'run-1', status: 'PENDING', waitReason: 'AWAITING_RUNNER' },
+      { id: 'run-2', status: 'SUCCESS', waitReason: null },
+    ])
+    const result = await listWorkflowRuns({ workflowId: 'wf-1' }, config)
+    expect(result).toEqual([
+      { id: 'run-1', status: 'PENDING', waitReason: 'AWAITING_RUNNER' },
+      { id: 'run-2', status: 'SUCCESS', waitReason: null },
+    ])
+  })
+
   it('cancel_workflow_run POSTs an empty body to the run cancel resource', async () => {
     ;(apiPost as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'run-1', status: 'CANCELLING' })
     const result = await cancelWorkflowRun({ workflowId: 'wf-1', runId: 'run-1' }, config)

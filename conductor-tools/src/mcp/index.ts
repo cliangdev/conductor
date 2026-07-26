@@ -414,13 +414,18 @@ const TOOLS = [
   },
   {
     name: 'list_workflow_runs',
-    description: 'List recent runs for a workflow (newest first): runId, status, triggerType, timings. Entry point for checking scheduled/event runs — get runId here, then get_workflow_run for step detail.',
+    description: 'List recent runs for a workflow (newest first): runId, status, triggerType, timings. Entry point for checking scheduled/event runs — get runId here, then get_workflow_run for step detail. Optionally filter by status (e.g. PENDING to see queued runs).',
     inputSchema: {
       type: 'object',
       properties: {
         workflowId: { type: 'string', description: 'Workflow definition ID' },
         page: { type: 'number', description: 'Page number, 0-based (optional, default 0)' },
         size: { type: 'number', description: 'Page size (optional, default 50)' },
+        status: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter to one or more run statuses (optional; omit for all)',
+        },
       },
       required: ['workflowId'],
     },
@@ -830,6 +835,7 @@ export async function runMcpServer(): Promise<void> {
                 workflowId: params['workflowId'] as string,
                 page: params['page'] as number | undefined,
                 size: params['size'] as number | undefined,
+                status: params['status'] as string | string[] | undefined,
               },
               config
             )
