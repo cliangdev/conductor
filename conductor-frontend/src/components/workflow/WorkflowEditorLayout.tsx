@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { ResizableSplit } from '@/components/ui/ResizableSplit';
 
 const MonacoYamlEditor = dynamic(() => import('./MonacoYamlEditor'), { ssr: false });
@@ -106,7 +107,9 @@ export default function WorkflowEditorLayout({
           `!initialName` instead of on edit permission). Hidden entirely in read-only mode. */}
       {!readOnly && (
         <div className="px-4 py-2 border-b">
+          <Label htmlFor="workflow-name" className="mb-1">Name</Label>
           <Input
+            id="workflow-name"
             placeholder="Workflow name (or set in YAML)"
             value={name}
             onChange={e => setName(e.target.value)}

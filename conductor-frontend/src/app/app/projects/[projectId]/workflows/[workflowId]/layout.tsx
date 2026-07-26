@@ -3,16 +3,18 @@
 import { useState } from 'react'
 import { useParams, usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiPost, apiPatch, apiDelete, apiErrorMessage } from '@/lib/api'
+import { apiPost, apiPatch, apiErrorMessage } from '@/lib/api'
 import { WorkflowDefinitionDto, WorkflowRunDto } from '@/types/workflow'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Alert } from '@/components/ui/alert'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { CopyableId } from '@/components/ui/copyable-id'
-import { MoreHorizontalIcon, PlayIcon, BanIcon, CheckCircleIcon, Trash2Icon } from 'lucide-react'
+import { PlayIcon } from 'lucide-react'
 import { Can } from '@/components/auth/Can'
 import { WorkflowStatusBadge } from '@/components/workflow/WorkflowStatusBadge'
 import { TriggerBadges } from '@/components/workflow/TriggerBadges'
@@ -21,31 +23,22 @@ import { useCan } from '@/contexts/PermissionsContext'
 import { allowsManualDispatch } from '@/lib/workflows'
 import { useToast } from '@/components/ui/toast'
 import { timeAgo } from '@/lib/format'
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from '@/components/ui/dropdown-menu'
 
-/** The single overflow ("…") menu holding the two lifecycle actions that used to live in the
- *  deleted Settings tab. Enable is instant (non-destructive, reversible in one click, and this
- *  keeps it consistent with the workflows list page's own instant enable and the auto-pause
- *  banner's instant "Re-enable") — Disable and Delete confirm through the shared `ConfirmModal`,
- *  never a hand-rolled modal or native `confirm()`. */
-function WorkflowOverflowMenu() {
+/** Visible Enable/Disable control for the header — a `Switch`, not a menu item, so the most
+ *  frequent lifecycle action doesn't require opening anything. Enable is instant (non-destructive,
+ *  reversible in one click, consistent with the workflows list page's own instant enable and the
+ *  auto-pause banner's instant "Re-enable"); Disable confirms through the shared `ConfirmModal`,
+ *  never a hand-rolled modal or native `confirm()`. Delete moved to the Definition tab's Danger
+ *  zone — see `definition/page.tsx` — since it's rare/destructive/config, not a daily control. */
+function WorkflowEnabledToggle() {
   const { projectId, workflowId } = useParams<{ projectId: string; workflowId: string }>()
   const { accessToken } = useAuth()
-  const router = useRouter()
   const { showToast } = useToast()
   const { workflow, setWorkflow } = useWorkflow()
   const [confirmDisable, setConfirmDisable] = useState(false)
   const [toggling, setToggling] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
-  const [deleting, setDeleting] = useState(false)
 
   if (!workflow) return null
-  const willEnable = !workflow.enabled
 
   const setEnabled = async (enabled: boolean) => {
     if (!accessToken) return
@@ -66,48 +59,18 @@ function WorkflowOverflowMenu() {
     }
   }
 
-  const handleDelete = async () => {
-    if (!accessToken) return
-    setDeleting(true)
-    try {
-      await apiDelete(`/api/v1/projects/${projectId}/workflows/${workflowId}`, accessToken)
-      router.push(`/app/projects/${projectId}/workflows`)
-    } catch (e) {
-      showToast(apiErrorMessage(e, 'Failed to delete workflow.'), 'error')
-      setDeleting(false)
-    }
-  }
-
   return (
-    <Can do="workflow.manage">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label="More actions"
-            className="rounded p-2 text-muted-foreground hover:bg-muted/50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <MoreHorizontalIcon className="h-4 w-4" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem
-            onSelect={() => (willEnable ? setEnabled(true) : setConfirmDisable(true))}
-            disabled={toggling}
-            className="gap-2"
-          >
-            {willEnable ? <CheckCircleIcon className="h-4 w-4" /> : <BanIcon className="h-4 w-4" />}
-            {willEnable ? 'Enable workflow' : 'Disable workflow'}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onSelect={() => setConfirmDelete(true)}
-            className="gap-2 text-destructive focus:text-destructive"
-          >
-            <Trash2Icon className="h-4 w-4" />
-            Delete workflow
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+    <Can do="workflow.manage" fallback={<WorkflowStatusBadge workflow={workflow} />}>
+      <div className="flex items-center gap-1.5">
+        <Switch
+          checked={workflow.enabled}
+          onCheckedChange={(next) => (next ? setEnabled(true) : setConfirmDisable(true))}
+          disabled={toggling}
+          aria-label={workflow.enabled ? 'Disable workflow' : 'Enable workflow'}
+        />
+        <span className="text-sm text-muted-foreground">{workflow.enabled ? 'Enabled' : 'Disabled'}</span>
+        {workflow.autoPausedAt && <Badge variant="status-failed">Auto-paused</Badge>}
+      </div>
 
       <ConfirmModal
         open={confirmDisable}
@@ -121,20 +84,6 @@ function WorkflowOverflowMenu() {
       >
         <p className="text-sm text-foreground">
           No new runs will start until <strong>{workflow.name}</strong> is re-enabled. Runs already in progress won&apos;t be affected.
-        </p>
-      </ConfirmModal>
-
-      <ConfirmModal
-        open={confirmDelete}
-        title="Delete workflow"
-        confirmLabel="Delete workflow"
-        busyLabel="Deleting…"
-        busy={deleting}
-        onConfirm={handleDelete}
-        onCancel={() => setConfirmDelete(false)}
-      >
-        <p className="text-sm text-foreground">
-          Permanently delete <strong>{workflow.name}</strong>? Its run history will be removed and this cannot be undone.
         </p>
       </ConfirmModal>
     </Can>
@@ -192,21 +141,18 @@ function WorkflowDetailHeader() {
       title={workflow.name}
       status={
         <>
-          <WorkflowStatusBadge workflow={workflow} />
+          <WorkflowEnabledToggle />
           <TriggerBadges yaml={workflow.yaml ?? ''} />
         </>
       }
       actions={
-        <>
-          {canDispatch && (
-            <Can do="workflow.run">
-              <Button onClick={handleRun} disabled={!workflow.enabled || dispatching} className="gap-1.5">
-                {dispatching ? 'Starting…' : (<><PlayIcon className="h-3.5 w-3.5" /> Run</>)}
-              </Button>
-            </Can>
-          )}
-          <WorkflowOverflowMenu />
-        </>
+        canDispatch && (
+          <Can do="workflow.run">
+            <Button onClick={handleRun} disabled={!workflow.enabled || dispatching} className="gap-1.5">
+              {dispatching ? 'Starting…' : (<><PlayIcon className="h-3.5 w-3.5" /> Run</>)}
+            </Button>
+          </Can>
+        )
       }
     />
   )

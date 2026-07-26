@@ -11,6 +11,7 @@
 
 import { WorkflowRunDto } from '@/types/workflow';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { Card } from '@/components/ui/card';
 import { timeAgo, formatDuration } from '@/lib/format';
 
 export interface WorkflowStats {
@@ -60,7 +61,7 @@ export function WorkflowStatsStrip({ runs }: { runs: WorkflowRunDto[] }) {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-6">
+    <Card className="flex flex-wrap items-center gap-6 p-4">
       <div>
         <p className="text-xs text-muted-foreground mb-1">Last run</p>
         <div className="flex items-center gap-1.5">
@@ -71,7 +72,7 @@ export function WorkflowStatsStrip({ runs }: { runs: WorkflowRunDto[] }) {
 
       <div>
         <p className="text-xs text-muted-foreground mb-0.5">Last {stats.sampleSize} runs</p>
-        <p className="text-lg font-semibold">{stats.successRate}% success rate</p>
+        <p className="text-sm font-semibold">{stats.successRate}% success rate</p>
       </div>
 
       {stats.avgDuration && (
@@ -80,6 +81,6 @@ export function WorkflowStatsStrip({ runs }: { runs: WorkflowRunDto[] }) {
           <p className="text-sm font-medium">{stats.avgDuration}</p>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
