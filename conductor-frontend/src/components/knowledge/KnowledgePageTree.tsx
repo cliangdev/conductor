@@ -16,14 +16,17 @@ function TreeSection({
   section,
   activePath,
   onNavigate,
+  depth = 0,
 }: {
   projectId: string
   section: KnowledgeTreeSection
   activePath: string
   onNavigate: (path: string) => void
+  depth?: number
 }) {
   const key = collapseKey(projectId, section.id)
   const [collapsed, setCollapsed] = useState(() => readPersistedFlag(key))
+  const indent = depth * 12
 
   function toggle() {
     const next = !collapsed
@@ -36,7 +39,8 @@ function TreeSection({
     <li>
       <button
         onClick={toggle}
-        className="w-full flex items-center gap-1 px-2 py-1.5 rounded-md text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-sidebar-hover transition-colors"
+        style={{ paddingLeft: 8 + indent }}
+        className="w-full flex items-center gap-1 pr-2 py-1.5 rounded-md text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:bg-sidebar-hover transition-colors"
         aria-expanded={!collapsed}
       >
         {collapsed ? (
@@ -56,8 +60,9 @@ function TreeSection({
                   onClick={() => onNavigate(page.path)}
                   title={page.title}
                   aria-current={active ? 'page' : undefined}
+                  style={{ paddingLeft: 24 + indent }}
                   className={cn(
-                    'w-full flex items-center gap-2 pl-6 pr-2 py-1.5 rounded-md text-sm text-left transition-colors',
+                    'w-full flex items-center gap-2 pr-2 py-1.5 rounded-md text-sm text-left transition-colors',
                     active
                       ? 'bg-sidebar-active text-sidebar-active-text font-medium'
                       : 'text-foreground hover:bg-sidebar-hover'
@@ -69,6 +74,16 @@ function TreeSection({
               </li>
             )
           })}
+          {section.children.map((child) => (
+            <TreeSection
+              key={child.id}
+              projectId={projectId}
+              section={child}
+              activePath={activePath}
+              onNavigate={onNavigate}
+              depth={depth + 1}
+            />
+          ))}
         </ul>
       )}
     </li>

@@ -12,11 +12,20 @@ const SECTIONS: KnowledgeTreeSection[] = [
       { path: 'architecture/workflow-engine.md', title: 'Workflow Engine', type: 'architecture' },
       { path: 'architecture/data-model.md', title: 'Data Model', type: 'architecture' },
     ],
+    children: [
+      {
+        id: 'architecture/frontend',
+        label: 'Frontend',
+        pages: [{ path: 'architecture/frontend/routing.md', title: 'Routing', type: 'component' }],
+        children: [],
+      },
+    ],
   },
   {
     id: '',
     label: 'Pages',
     pages: [{ path: '_schema.md', title: 'Schema Guide', type: 'project' }],
+    children: [],
   },
 ]
 
@@ -79,5 +88,24 @@ describe('KnowledgePageTree', () => {
 
     render(<KnowledgePageTree projectId="proj-1" sections={SECTIONS} activePath="" onNavigate={vi.fn()} />)
     expect(screen.queryByText('Workflow Engine')).not.toBeInTheDocument()
+  })
+
+  it('renders a nested child section under its parent, expanded by default', () => {
+    render(
+      <KnowledgePageTree projectId="proj-1" sections={SECTIONS} activePath="" onNavigate={vi.fn()} />
+    )
+
+    expect(screen.getByText('Frontend')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Routing' })).toBeInTheDocument()
+  })
+
+  it('collapsing a parent section also hides its nested child section', () => {
+    render(
+      <KnowledgePageTree projectId="proj-1" sections={SECTIONS} activePath="" onNavigate={vi.fn()} />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Architecture' }))
+    expect(screen.queryByText('Frontend')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Routing' })).not.toBeInTheDocument()
   })
 })
