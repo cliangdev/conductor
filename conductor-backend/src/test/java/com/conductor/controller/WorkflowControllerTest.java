@@ -33,6 +33,7 @@ import com.conductor.workflow.WorkflowExecutionBackend;
 import com.conductor.workflow.WorkflowFailureCircuitBreaker;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowRunCancellationService;
+import com.conductor.workflow.WorkflowRunQueryService;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.model.WorkflowYamlParser;
 import com.conductor.workflow.schema.StepSchemaRegistry;
@@ -78,7 +79,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * list filters, and {@code PATCH .../sidebar}.
  */
 @WebMvcTest(WorkflowController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, WorkflowRunQueryService.class})
 class WorkflowControllerTest {
 
     @TestConfiguration
@@ -656,6 +657,35 @@ class WorkflowControllerTest {
                 .andExpect(status().isBadRequest());
 
         verify(runRepository, never()).findQueuedByWorkflowId(anyString(), any(), any(), any(), any(Pageable.class));
+    }
+
+    @Test
+    void listWorkflowRuns_returns404_whenWorkflowBelongsToAnotherProject() throws Exception {
+        // Without this scoping check, any project member could list another project's runs -- and now
+        // its queue/wait-reason state -- by guessing a workflowId, the same class of gap
+        // cancelWorkflowRun/cancelQueuedWorkflowRuns already guard against.
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto"))
+                .thenThrow(new EntityNotFoundException("Workflow not found: wf-auto"));
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/runs", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNotFound());
+
+        verify(runRepository, never()).findByWorkflowId(anyString(), any(Pageable.class));
+    }
+
+    @Test
+    void listScheduleSkips_returns404_whenWorkflowBelongsToAnotherProject() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(workflowService.getWorkflow(PROJECT_ID, "wf-auto"))
+                .thenThrow(new EntityNotFoundException("Workflow not found: wf-auto"));
+
+        mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}/schedule-skips", PROJECT_ID, "wf-auto")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNotFound());
+
+        verify(scheduleRepository, never()).findByWorkflowId(anyString());
     }
 
     @Test

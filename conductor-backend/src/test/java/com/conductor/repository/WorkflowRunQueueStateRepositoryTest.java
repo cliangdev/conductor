@@ -107,7 +107,7 @@ class WorkflowRunQueueStateRepositoryTest extends AbstractNoneWebIntegrationTest
     private List<WorkflowRun> findQueuedForCancellation() {
         return runRepository.findQueuedForCancellationByWorkflowId(workflow.getId(),
                 WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING,
-                WorkflowRunStatus.TERMINAL_STATUSES);
+                WorkflowRunStatus.TERMINAL_STATUSES, PAGEABLE).getContent();
     }
 
     @Test

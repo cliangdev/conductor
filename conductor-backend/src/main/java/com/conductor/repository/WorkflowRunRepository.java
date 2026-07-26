@@ -102,6 +102,10 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String
      * the same reason: a run that finished out from under a still-unclaimed job row shouldn't be
      * handed to {@code WorkflowRunCancellationService#cancelRun}, even though that call is itself
      * guarded and would just no-op with a logged skip.
+     * <p>Takes a {@code Pageable} so the caller can cap how many runs one drain call processes — each
+     * match is cancelled with its own synchronous {@code cancelRun} round trip on the request thread,
+     * so an uncapped backlog risks a slow/timed-out request. {@code startedAt} ascending is the natural
+     * order for a cap: the oldest queued runs are drained first.
      */
     @Query("SELECT r FROM WorkflowRun r WHERE r.workflow.id = :workflowId AND r.status NOT IN :terminalStatuses "
             + "AND (r.status = :pendingStatus "
@@ -109,9 +113,10 @@ public interface WorkflowRunRepository extends JpaRepository<WorkflowRun, String
             + "AND j.claimedAt IS NULL) "
             + "AND NOT EXISTS (SELECT 1 FROM WorkflowJobRun j2 WHERE j2.run = r AND (j2.status = :runningJobStatus "
             + "OR (j2.status = :awaitingPickup AND j2.claimedAt IS NOT NULL)))))")
-    List<WorkflowRun> findQueuedForCancellationByWorkflowId(@Param("workflowId") String workflowId,
+    Page<WorkflowRun> findQueuedForCancellationByWorkflowId(@Param("workflowId") String workflowId,
                                                              @Param("pendingStatus") WorkflowRunStatus pendingStatus,
                                                              @Param("awaitingPickup") WorkflowJobStatus awaitingPickup,
                                                              @Param("runningJobStatus") WorkflowJobStatus runningJobStatus,
-                                                             @Param("terminalStatuses") Collection<WorkflowRunStatus> terminalStatuses);
+                                                             @Param("terminalStatuses") Collection<WorkflowRunStatus> terminalStatuses,
+                                                             Pageable pageable);
 }

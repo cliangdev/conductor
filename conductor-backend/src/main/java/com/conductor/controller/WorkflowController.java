@@ -52,6 +52,7 @@ import com.conductor.workflow.StepFailureExplanations;
 import com.conductor.workflow.WorkflowFailureCircuitBreaker;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowRunCancellationService;
+import com.conductor.workflow.WorkflowRunQueryService;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.conductor.workflow.lifecycle.Statechart;
@@ -78,11 +79,9 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestController
@@ -107,6 +106,7 @@ public class WorkflowController implements WorkflowsApi {
     private final WorkflowFailureCircuitBreaker circuitBreaker;
     private final StepSchemaRegistry stepSchemaRegistry;
     private final WorkflowRunCancellationService runCancellationService;
+    private final WorkflowRunQueryService runQueryService;
 
     public WorkflowController(WorkflowService workflowService,
                                WorkflowTriggerService workflowTriggerService,
@@ -124,8 +124,10 @@ public class WorkflowController implements WorkflowsApi {
                                WorkflowYamlParser yamlParser,
                                WorkflowFailureCircuitBreaker circuitBreaker,
                                StepSchemaRegistry stepSchemaRegistry,
-                               WorkflowRunCancellationService runCancellationService) {
+                               WorkflowRunCancellationService runCancellationService,
+                               WorkflowRunQueryService runQueryService) {
         this.runCancellationService = runCancellationService;
+        this.runQueryService = runQueryService;
         this.workflowService = workflowService;
         this.workflowTriggerService = workflowTriggerService;
         this.workflowJobOrchestrator = workflowJobOrchestrator;
@@ -416,6 +418,9 @@ public class WorkflowController implements WorkflowsApi {
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new EntityNotFoundException("Project not found");
         }
+        // Same ownership gap as listWorkflowRuns above — scope workflowId to this project before
+        // reading its schedule skips.
+        workflowService.getWorkflow(projectId, workflowId);
         int maxResults = limit != null ? limit : 20;
         List<WorkflowSchedule> schedules = scheduleRepository.findByWorkflowId(workflowId);
         List<WorkflowScheduleSkipDto> dtos = schedules.stream()
@@ -427,17 +432,6 @@ public class WorkflowController implements WorkflowsApi {
         return ResponseEntity.ok(dtos);
     }
 
-    /** Run-level statuses {@code ?state=queued} matches outright (plus any run blocked on an unclaimed
-     *  self-hosted job regardless of its own run-level status — see {@link
-     *  WorkflowRunRepository#findQueuedByWorkflowId}). */
-    private static final Set<WorkflowRunStatus> QUEUED_STATE_STATUSES =
-            Set.of(WorkflowRunStatus.PENDING, WorkflowRunStatus.PENDING_LOCAL_PICKUP);
-
-    /** Run-level statuses {@code ?state=running} matches, minus any run blocked on an unclaimed
-     *  self-hosted job — see {@link WorkflowRunRepository#findRunningByWorkflowId}. */
-    private static final Set<WorkflowRunStatus> RUNNING_STATE_STATUSES =
-            Set.of(WorkflowRunStatus.RUNNING, WorkflowRunStatus.CANCELLING);
-
     @Override
     public ResponseEntity<List<WorkflowRunDto>> listWorkflowRuns(String projectId, String workflowId,
                                                                   Integer page, Integer size,
@@ -446,69 +440,20 @@ public class WorkflowController implements WorkflowsApi {
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new EntityNotFoundException("Project not found");
         }
-        if (state != null && status != null && !status.isEmpty()) {
-            throw new BusinessException("state and status cannot both be specified");
-        }
+        // Scope workflowId to this project before reading its runs — without this, any member of any
+        // project could list another project's runs (and now its queue/wait-reason state) by guessing
+        // a workflowId, the same class of gap the mutating endpoints below already guard against.
+        workflowService.getWorkflow(projectId, workflowId);
         int pageNum = page != null ? page : 0;
         int pageSize = size != null ? size : 50;
         PageRequest pageable = PageRequest.of(pageNum, pageSize, Sort.by(Sort.Direction.DESC, "startedAt"));
-        List<WorkflowRun> runs;
-        if (state != null) {
-            runs = switch (state) {
-                case "queued" -> runRepository.findQueuedByWorkflowId(workflowId, QUEUED_STATE_STATUSES,
-                        WorkflowJobStatus.AWAITING_PICKUP, WorkflowRunStatus.TERMINAL_STATUSES, pageable)
-                        .getContent();
-                case "running" -> runRepository.findRunningByWorkflowId(workflowId, RUNNING_STATE_STATUSES,
-                        WorkflowJobStatus.AWAITING_PICKUP, pageable).getContent();
-                default -> throw new BusinessException("Unrecognized state: " + state);
-            };
-        } else if (status != null && !status.isEmpty()) {
-            Set<WorkflowRunStatus> statuses = parseRunStatuses(status);
-            runs = runRepository.findByWorkflowIdAndStatusIn(workflowId, statuses, pageable).getContent();
-        } else {
-            runs = runRepository.findByWorkflowId(workflowId, pageable).getContent();
-        }
-        Map<String, String> waitReasonsByRunId = deriveWaitReasons(runs);
+        // Filtering is domain/query logic and lives in the service; the controller stays a thin adapter.
+        List<WorkflowRun> runs = runQueryService.findRuns(workflowId, status, state, pageable);
+        Map<String, String> waitReasonsByRunId = runQueryService.deriveWaitReasons(runs);
         List<WorkflowRunDto> dtos = runs.stream()
                 .map(run -> toRunDto(run, waitReasonsByRunId.get(run.getId())))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(dtos);
-    }
-
-    /** Rejects an unrecognized status value with 400 (via {@link BusinessException}) instead of letting
-     *  a typo silently fall through to an empty/misleading result set. */
-    private Set<WorkflowRunStatus> parseRunStatuses(List<String> status) {
-        Set<WorkflowRunStatus> statuses = new HashSet<>();
-        for (String value : status) {
-            try {
-                statuses.add(WorkflowRunStatus.valueOf(value));
-            } catch (IllegalArgumentException e) {
-                throw new BusinessException("Unrecognized run status: " + value);
-            }
-        }
-        return statuses;
-    }
-
-    /**
-     * Batched — one query for the whole page rather than one per run — derivation of
-     * {@code WorkflowRunDto.waitReason}. Only non-terminal runs can have a wait reason, so terminal
-     * runs are excluded from the lookup entirely. A job in AWAITING_PICKUP that's already been claimed
-     * by a self-hosted daemon is actively running, not waiting — {@code claimedAt IS NULL} in the
-     * repository query is what actually distinguishes the two, since status alone doesn't change for
-     * the rest of that job's execution.
-     */
-    private Map<String, String> deriveWaitReasons(List<WorkflowRun> runs) {
-        List<String> nonTerminalRunIds = runs.stream()
-                .filter(run -> !run.getStatus().isTerminal())
-                .map(WorkflowRun::getId)
-                .toList();
-        if (nonTerminalRunIds.isEmpty()) {
-            return Map.of();
-        }
-        List<String> awaitingRunnerRunIds = jobRunRepository.findDistinctRunIdsByRunIdInAndStatusAndClaimedAtIsNull(
-                nonTerminalRunIds, WorkflowJobStatus.AWAITING_PICKUP);
-        return awaitingRunnerRunIds.stream()
-                .collect(Collectors.toMap(runId -> runId, runId -> "AWAITING_RUNNER"));
     }
 
     @Override

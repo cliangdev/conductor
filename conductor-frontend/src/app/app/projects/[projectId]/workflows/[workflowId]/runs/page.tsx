@@ -319,6 +319,12 @@ function RunListContent() {
                 // runner", contradicting both the Queued tab it's filtered into and the qualifier next to it.
                 const queued = run.status === 'PENDING' || run.status === 'PENDING_LOCAL_PICKUP' || !!run.waitReason;
                 const cancelable = CANCELABLE_STATUSES.has(run.status);
+                // StatusBadge derives both its dot color and its default label from `status` — swapping
+                // only `label` above left a runner-blocked run (status RUNNING) reading "Queued" text
+                // with the same blue dot as an actually-running row. Pass PENDING's status when queued so
+                // the color matches the label; every row in the Queued tab then reads visually
+                // consistent, with the muted qualifier below carrying the "why".
+                const badgeStatus = queued ? 'PENDING' : run.status;
                 return (
                   <tr
                     key={run.id}
@@ -327,7 +333,7 @@ function RunListContent() {
                   >
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1.5">
-                        <StatusBadge status={run.status} label={queued ? 'Queued' : undefined} />
+                        <StatusBadge status={badgeStatus} label={queued ? 'Queued' : undefined} />
                         {run.waitReason === 'AWAITING_RUNNER' && (
                           <span className="text-xs text-muted-foreground">· waiting for runner</span>
                         )}

@@ -414,7 +414,7 @@ const TOOLS = [
   },
   {
     name: 'list_workflow_runs',
-    description: 'List recent runs for a workflow (newest first): runId, status, triggerType, timings. Entry point for checking scheduled/event runs — get runId here, then get_workflow_run for step detail. Use state=queued to see waiting work; status= filters raw statuses.',
+    description: 'List recent runs for a workflow (newest first): runId, status, triggerType, timings, and waitReason (set to AWAITING_RUNNER when a run is blocked on an unclaimed self-hosted job). Entry point for checking scheduled/event runs — get runId here, then get_workflow_run for step detail. Use state=queued to see waiting work; status= filters raw statuses.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -424,7 +424,7 @@ const TOOLS = [
         state: {
           type: 'string',
           enum: ['queued', 'running'],
-          description: 'Derived filter (optional). "queued" is the reliable way to find waiting work — a run blocked on an unclaimed self-hosted runner is RUNNING at the run level, so status=PENDING misses it. Cannot be combined with status.',
+          description: 'Derived filter (optional). "queued" is the reliable way to find waiting work — a run blocked on an unclaimed self-hosted runner is RUNNING at the run level, so status=PENDING misses it. "running" is the complement: actually executing, with no such unclaimed job. Cannot be combined with status.',
         },
         status: {
           type: 'array',

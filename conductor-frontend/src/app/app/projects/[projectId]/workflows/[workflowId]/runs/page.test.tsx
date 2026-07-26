@@ -215,6 +215,24 @@ describe('RunListPage', () => {
     await waitFor(() => expect(showToast).toHaveBeenCalledWith('Cancelled 1 queued run.', 'success'))
   })
 
+  it('reports a mismatch honestly instead of a false success when nothing was actually cancelled', async () => {
+    // The button is only rendered when queuedCount > 0, so cancelledCount === 0 always means every
+    // queued run started executing on a runner between the last poll and this click -- cancellation
+    // deliberately never touches in-flight work, so there is nothing left to cancel.
+    mocks.cancelQueuedMock.mockResolvedValue({ cancelledCount: 0 })
+    render(<RunListPage />)
+    await screen.findByText('PEND0001')
+
+    fireEvent.click(screen.getByRole('button', { name: /cancel queued runs \(1\)/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel queued runs' }))
+
+    await waitFor(() => expect(mocks.cancelQueuedMock).toHaveBeenCalled())
+    expect(showToast).not.toHaveBeenCalledWith(expect.stringContaining('Cancelled 0'), 'success')
+    await waitFor(() =>
+      expect(showToast).toHaveBeenCalledWith(expect.stringMatching(/no queued runs were cancelled/i), 'error')
+    )
+  })
+
   it('handles a 409 on row cancel gracefully instead of showing a raw error', async () => {
     mocks.cancelRunBehavior = () => Promise.reject(Object.assign(new Error('Server error (409)'), { status: 409 }))
     render(<RunListPage />)

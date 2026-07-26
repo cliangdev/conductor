@@ -43,7 +43,9 @@ export default function WorkflowDefinitionPage() {
       if (updated) setWorkflow(updated);
       showToast('Workflow saved.', 'success');
     } catch (e: unknown) {
-      setError(apiErrorMessage(e, 'Failed to save workflow'));
+      const message = apiErrorMessage(e, 'Failed to save workflow');
+      setError(message);
+      showToast(message, 'error');
     } finally {
       setSaving(false);
     }
