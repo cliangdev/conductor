@@ -7,6 +7,7 @@ import com.conductor.entity.DocVersion;
 import com.conductor.entity.ProjectDoc;
 import com.conductor.entity.User;
 import com.conductor.generated.api.ProjectDocsApi;
+import com.conductor.exception.ForbiddenException;
 import com.conductor.exception.StorageUploadException;
 import com.conductor.generated.model.CreateDocCommentReplyRequest;
 import com.conductor.generated.model.CreateDocCommentRequest;
@@ -23,12 +24,14 @@ import com.conductor.generated.model.ProjectDocSearchResult;
 import com.conductor.generated.model.ProjectDocSummaryResponse;
 import com.conductor.generated.model.RenameDocRequest;
 import com.conductor.generated.model.RenameFolderRequest;
+import com.conductor.generated.model.SetDocTaskStateRequest;
 import com.conductor.generated.model.UpdateDocRequest;
 import com.conductor.repository.DocCommentReplyRepository;
 import com.conductor.service.DocCommentService;
 import com.conductor.service.DocFolderService;
 import com.conductor.service.DocVersionService;
 import com.conductor.service.ProjectDocService;
+import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.StorageService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -60,6 +63,7 @@ public class ProjectDocsController implements ProjectDocsApi {
     private final DocCommentService docCommentService;
     private final DocCommentReplyRepository docCommentReplyRepository;
     private final StorageService storageService;
+    private final ProjectSecurityService projectSecurityService;
     private final int signedUrlExpiryMinutes;
 
     public ProjectDocsController(
@@ -69,6 +73,7 @@ public class ProjectDocsController implements ProjectDocsApi {
             DocCommentService docCommentService,
             DocCommentReplyRepository docCommentReplyRepository,
             StorageService storageService,
+            ProjectSecurityService projectSecurityService,
             @Value("${gcp.signed-url.expiry-minutes:15}") int signedUrlExpiryMinutes) {
         this.docFolderService = docFolderService;
         this.projectDocService = projectDocService;
@@ -76,6 +81,7 @@ public class ProjectDocsController implements ProjectDocsApi {
         this.docCommentService = docCommentService;
         this.docCommentReplyRepository = docCommentReplyRepository;
         this.storageService = storageService;
+        this.projectSecurityService = projectSecurityService;
         this.signedUrlExpiryMinutes = signedUrlExpiryMinutes;
     }
 
@@ -144,6 +150,15 @@ public class ProjectDocsController implements ProjectDocsApi {
     public ResponseEntity<ProjectDocResponse> updateProjectDoc(String projectId, String docId, UpdateDocRequest updateDocRequest) {
         User caller = currentUser();
         ProjectDoc doc = projectDocService.updateDoc(docId, updateDocRequest.getContent(), caller.getId());
+        return ResponseEntity.ok(toDocResponse(doc));
+    }
+
+    @Override
+    public ResponseEntity<ProjectDocResponse> setDocTaskState(
+            String projectId, String docId, Integer lineNumber, SetDocTaskStateRequest setDocTaskStateRequest) {
+        User caller = requireAdminOrCreator(projectId);
+        ProjectDoc doc = projectDocService.setTaskState(
+                docId, lineNumber, Boolean.TRUE.equals(setDocTaskStateRequest.getChecked()), caller.getId());
         return ResponseEntity.ok(toDocResponse(doc));
     }
 
@@ -283,6 +298,19 @@ public class ProjectDocsController implements ProjectDocsApi {
 
     private User currentUser() {
         return (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    }
+
+    /**
+     * Editing gate for docs: only a real {@link User} principal can hold a project role, so a
+     * project-scoped machine principal (API key) is rejected with a clean 403 rather than a cast
+     * failure. Mirrors {@code RuntimeTargetController#requireAdminOrCreator}.
+     */
+    private User requireAdminOrCreator(String projectId) {
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        if (!(principal instanceof User user) || !projectSecurityService.isAdminOrCreator(projectId, user.getId())) {
+            throw new ForbiddenException("Requires ADMIN or CREATOR role");
+        }
+        return user;
     }
 
     private DocFolderResponse toFolderResponse(DocFolder folder) {

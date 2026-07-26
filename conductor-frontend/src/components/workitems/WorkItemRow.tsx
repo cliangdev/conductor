@@ -1,8 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { MessageSquare } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { CommentCount } from '@/components/ui/comment-count'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import { AssigneeCell } from '@/components/workitems/AssigneeCell'
 import { ReviewerCell } from '@/components/workitems/ReviewerCell'
@@ -111,12 +111,7 @@ export function WorkItemRow({
       </Badge>
 
       <div className="flex items-center gap-3 ml-auto shrink-0">
-        {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 && (
-          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-            <MessageSquare className="h-3 w-3" />
-            {issue.unresolvedCommentCount}
-          </span>
-        )}
+        <CommentCount count={issue.unresolvedCommentCount} className="text-muted-foreground" />
 
         {accessToken && (
           <ReviewerCell

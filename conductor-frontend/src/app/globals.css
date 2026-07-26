@@ -162,6 +162,26 @@
   --tw-prose-td-borders: hsl(var(--border));
 }
 
+/*
+ * GFM task lists. remark-gfm marks these up (`ul.contains-task-list` > `li.task-list-item`) but ships
+ * no styling, so without this every item renders a bullet *and* a checkbox. The checkbox is the
+ * marker; drop the bullet and reclaim its indent.
+ */
+.prose .contains-task-list {
+  list-style: none;
+  /* Logical, matching the `padding-inline-start` the typography plugin sets on ul/ol. */
+  padding-inline-start: 0;
+}
+
+.prose .task-list-item::marker {
+  content: '';
+}
+
+/* Nested task lists keep an indent so the hierarchy still reads. */
+.prose .task-list-item > .contains-task-list {
+  padding-inline-start: 1.5rem;
+}
+
 /* Highlight.js dark mode overrides (github-dark token colors) */
 .dark .hljs {
   background: hsl(var(--surface-raised));

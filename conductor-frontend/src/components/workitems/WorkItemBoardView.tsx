@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { MessageSquare } from 'lucide-react'
+import { CommentCount } from '@/components/ui/comment-count'
 import { Badge } from '@/components/ui/badge'
 import { statusHueClasses } from '@/components/ui/status-badge'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
@@ -126,12 +126,10 @@ export function WorkItemBoardView({
                           {issue.assignee && (
                             <UserAvatar name={issue.assignee.name} avatarUrl={issue.assignee.avatarUrl} size={5} />
                           )}
-                          {issue.unresolvedCommentCount != null && issue.unresolvedCommentCount > 0 && (
-                            <span className="inline-flex items-center gap-0.5 text-xs text-muted-foreground">
-                              <MessageSquare className="h-3 w-3" />
-                              {issue.unresolvedCommentCount}
-                            </span>
-                          )}
+                          <CommentCount
+                            count={issue.unresolvedCommentCount}
+                            className="text-muted-foreground"
+                          />
                           <StatusDropdown
                             projectId={projectId}
                             issueId={issue.id}

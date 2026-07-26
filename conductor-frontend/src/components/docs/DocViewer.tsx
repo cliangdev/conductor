@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { getDocComments } from '@/lib/docs-api'
+import { apiErrorMessage } from '@/lib/api'
+import { toastError } from '@/components/ui/toast'
 import type { ProjectDoc, DocComment, DocCommentReply } from '@/lib/docs-api'
 import type { Comment, CommentReply } from '@/components/comments/types'
 
@@ -11,6 +13,9 @@ export interface DocViewerProps {
   projectId: string
   token: string
   currentUserId: string
+  /** Checkbox toggling. The owning page holds the handler, since it owns `doc`. */
+  onToggleTask?: (lineNumber: number, checked: boolean) => void
+  tasksReadOnly?: boolean
 }
 
 function mapReply(reply: DocCommentReply): CommentReply {
@@ -39,15 +44,26 @@ function mapComment(docComment: DocComment, docId: string): Comment {
   }
 }
 
-export function DocViewer({ doc, projectId, token, currentUserId }: DocViewerProps) {
+export function DocViewer({
+  doc,
+  projectId,
+  token,
+  currentUserId,
+  onToggleTask,
+  tasksReadOnly,
+}: DocViewerProps) {
   const [comments, setComments] = useState<Comment[]>([])
 
   const fetchComments = useCallback(async () => {
     try {
       const raw = await getDocComments(projectId, doc.id, token)
       setComments(raw.map((c) => mapComment(c, doc.id)))
-    } catch {
-      // Non-fatal — comments unavailable should not block doc viewing
+    } catch (err) {
+      // Still non-fatal — an unreachable comments API shouldn't stop you reading the doc. But it is no
+      // longer *silent*: swallowing this hid a server-side 500 that made comments invisible on every
+      // doc, with nothing on screen to suggest anything was missing.
+      console.error('Failed to load doc comments', err)
+      toastError(apiErrorMessage(err, 'Comments could not be loaded'))
     }
   }, [projectId, doc.id, token])
 
@@ -68,6 +84,8 @@ export function DocViewer({ doc, projectId, token, currentUserId }: DocViewerPro
       token={token}
       currentUserId={currentUserId}
       commentApiBasePath={commentApiBasePath}
+      onToggleTask={onToggleTask}
+      tasksReadOnly={tasksReadOnly}
     />
   )
 }

@@ -1,17 +1,25 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
-import { getDoc } from '@/lib/docs-api'
+import { getDoc, setDocTaskState } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
-import { apiErrorMessage } from '@/lib/api'
+import { apiErrorMessage, apiGet } from '@/lib/api'
 import { DocViewer } from '@/components/docs/DocViewer'
 import { DocHistoryPanel } from '@/components/docs/DocHistoryPanel'
 import { Button, buttonVariants } from '@/components/ui/button'
+import { toastError } from '@/components/ui/toast'
+import { toggleTaskLine } from '@/lib/task-list'
 import { cn } from '@/lib/utils'
+import type { MemberRole } from '@/types'
 import { ChevronLeft, History, Pencil } from 'lucide-react'
+
+interface Member {
+  userId: string
+  role: MemberRole
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -20,6 +28,7 @@ export default function DocDetailPage() {
   const { accessToken, user } = useAuth()
 
   const [doc, setDoc] = useState<ProjectDoc | null>(null)
+  const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
@@ -32,6 +41,49 @@ export default function DocDetailPage() {
       .catch((err) => setError(apiErrorMessage(err, 'Failed to load doc')))
       .finally(() => setLoading(false))
   }, [accessToken, projectId, docId])
+
+  // Separate from the doc fetch so a members failure never blocks reading: it only decides whether
+  // checkboxes are interactive, and the default (REVIEWER) is the safe, read-only answer.
+  useEffect(() => {
+    if (!accessToken || !user) return
+
+    apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken)
+      .then((members) => {
+        const me = members.find((m) => m.userId === user.id)
+        if (me) setUserRole(me.role)
+      })
+      .catch(() => {})
+  }, [accessToken, user, projectId])
+
+  const canEditDoc = userRole === 'ADMIN' || userRole === 'CREATOR'
+
+  const handleToggleTask = useCallback(
+    async (lineNumber: number, checked: boolean) => {
+      if (!accessToken) return
+
+      // Applied inside the updater so it always reads the latest content: clicking two boxes in quick
+      // succession must not have the second click compute from a snapshot taken before the first.
+      const flip = (state: boolean) => (current: ProjectDoc | null) => {
+        if (!current?.content) return current
+        const next = toggleTaskLine(current.content, lineNumber, state)
+        return next === null ? current : { ...current, content: next }
+      }
+
+      setDoc(flip(checked))
+
+      try {
+        await setDocTaskState(projectId, docId, lineNumber, checked, accessToken)
+        // Deliberately not adopting the response body: two quick toggles on different lines race, and
+        // the first reply predates the second flip, so applying it would undo a box just ticked.
+      } catch (err) {
+        // Revert by flipping this one line back rather than restoring a whole-content snapshot — the
+        // inverse only touches the failed line, leaving any toggle that landed meanwhile intact.
+        setDoc(flip(!checked))
+        toastError(apiErrorMessage(err, 'Failed to update the checklist item'))
+      }
+    },
+    [accessToken, projectId, docId]
+  )
 
   if (loading) {
     return (
@@ -92,6 +144,8 @@ export default function DocDetailPage() {
                 projectId={projectId}
                 token={accessToken!}
                 currentUserId={user?.id ?? ''}
+                onToggleTask={handleToggleTask}
+                tasksReadOnly={!canEditDoc}
               />
             ) : (
               <p className="text-muted-foreground text-sm">No content yet.</p>
