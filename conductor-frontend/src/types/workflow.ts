@@ -117,7 +117,20 @@ export interface WorkflowStepRunDto {
 export interface WorkflowJobRunDto {
   id: string;
   jobId: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'LOOP_EXHAUSTED' | 'CANCELLED';
+  /**
+   * `AWAITING_PICKUP` is a self-hosted job handed to the daemon. Note it stays `AWAITING_PICKUP` for
+   * the job's whole execution — nothing flips it to `RUNNING` — so it means "on a runner", not
+   * necessarily "waiting for one"; `WorkflowRunDto.waitReason` is what distinguishes those.
+   */
+  status:
+    | 'PENDING'
+    | 'RUNNING'
+    | 'AWAITING_PICKUP'
+    | 'SUCCESS'
+    | 'FAILED'
+    | 'SKIPPED'
+    | 'LOOP_EXHAUSTED'
+    | 'CANCELLED';
   iteration?: number;
   startedAt?: string;
   completedAt?: string;
@@ -129,7 +142,7 @@ export interface WorkflowRunDetailDto {
   workflowId: string;
   workflowYaml: string;
   triggerType: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLING' | 'CANCELLED';
+  status: WorkflowRunStatus;
   startedAt: string;
   completedAt?: string;
   jobs: WorkflowJobRunDto[];

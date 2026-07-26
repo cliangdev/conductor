@@ -159,14 +159,17 @@ describe('workflow-aware MCP tools', () => {
     expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/runs?state=queued', config)
   })
 
+  // The run carrying waitReason is RUNNING, not PENDING: a run blocked on an unclaimed self-hosted
+  // job has already flipped to RUNNING at the run level. An earlier fixture here paired PENDING with
+  // waitReason, which the backend cannot produce.
   it('list_workflow_runs passes waitReason through untouched (no field shaping)', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { id: 'run-1', status: 'PENDING', waitReason: 'AWAITING_RUNNER' },
+      { id: 'run-1', status: 'RUNNING', waitReason: 'AWAITING_RUNNER' },
       { id: 'run-2', status: 'SUCCESS', waitReason: null },
     ])
     const result = await listWorkflowRuns({ workflowId: 'wf-1' }, config)
     expect(result).toEqual([
-      { id: 'run-1', status: 'PENDING', waitReason: 'AWAITING_RUNNER' },
+      { id: 'run-1', status: 'RUNNING', waitReason: 'AWAITING_RUNNER' },
       { id: 'run-2', status: 'SUCCESS', waitReason: null },
     ])
   })
