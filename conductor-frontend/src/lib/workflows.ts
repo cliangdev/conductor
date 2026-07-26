@@ -10,7 +10,8 @@
 import pluralize from 'pluralize'
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost, apiPut } from '@/lib/api'
-import { parseWorkflowYaml, isManualTrigger } from '@/lib/workflowAutomation'
+import { parseWorkflowYaml, isManualTrigger, type TriggerKind } from '@/lib/workflowAutomation'
+import { triggerLabel } from '@/components/workflow/TriggerBadges'
 import type {
   WorkflowView,
   WorkflowStatusCategory,
@@ -20,6 +21,7 @@ import type {
   WorkflowCreateResponse,
   WorkflowDefinitionDto,
   WorkflowRunDto,
+  WorkflowScheduleSkipDto,
 } from '@/types/workflow'
 import type { StatechartDefinition } from '@/lib/workflowDefinition'
 import type { Member } from '@/types'
@@ -60,19 +62,84 @@ export function cancelWorkflowRun(
   )
 }
 
-/** Runs for one Workflow, newest first. */
+export interface CancelQueuedRunsResponse {
+  cancelledCount: number
+}
+
+/** Cancels every PENDING run for the workflow in one call; never touches RUNNING. */
+export function cancelQueuedWorkflowRuns(
+  projectId: string,
+  workflowId: string,
+  token: string,
+): Promise<CancelQueuedRunsResponse> {
+  return apiPost<CancelQueuedRunsResponse>(
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/runs/cancel-queued`,
+    {},
+    token,
+  )
+}
+
+/** Recent cron ticks dropped because a `concurrency: single` run was already in flight, newest first. */
+export function listScheduleSkips(
+  projectId: string,
+  workflowId: string,
+  token: string,
+  limit?: number,
+): Promise<WorkflowScheduleSkipDto[]> {
+  const qs = limit != null ? `?limit=${limit}` : ''
+  return apiGet<WorkflowScheduleSkipDto[]>(
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/schedule-skips${qs}`,
+    token,
+  )
+}
+
+/** Run statuses the backend counts as "queued" — see WorkflowRunStatus.ACTIVE_RUN_STATUSES minus the
+ *  in-flight ones. PENDING_LOCAL_PICKUP is included for correctness even though nothing assigns it
+ *  today, so the filter stays right if it's ever used. */
+export const QUEUED_RUN_STATUSES = ['PENDING', 'PENDING_LOCAL_PICKUP'] as const
+
+/** Run statuses that read as "in progress" — RUNNING plus the teardown-in-progress CANCELLING. */
+export const RUNNING_RUN_STATUSES = ['RUNNING', 'CANCELLING'] as const
+
+/** Runs for one Workflow, newest first. `status` repeats the query param (backend OR's them); omit
+ *  for all statuses. */
 export function listWorkflowRuns(
   projectId: string,
   workflowId: string,
   token: string,
-  opts?: { page?: number; size?: number },
+  opts?: { page?: number; size?: number; status?: readonly string[] },
 ): Promise<WorkflowRunDto[]> {
   const page = opts?.page ?? 0
   const size = opts?.size ?? 20
+  const params = new URLSearchParams({ page: String(page), size: String(size) })
+  for (const status of opts?.status ?? []) params.append('status', status)
   return apiGet<WorkflowRunDto[]>(
-    `/api/v1/projects/${projectId}/workflows/${workflowId}/runs?page=${page}&size=${size}`,
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/runs?${params.toString()}`,
     token,
   )
+}
+
+// Maps a WorkflowRunDto.triggerType (the raw id WorkflowTriggerService stores on the run) to the same
+// TriggerKind vocabulary parseWorkflowYaml uses for the YAML "on:" block — the "conductor."/"github."
+// prefixed ids below are literally the raw YAML keys it already knows how to read.
+const RUN_TRIGGER_KIND: Record<string, TriggerKind> = {
+  workflow_dispatch: 'workflow_dispatch',
+  webhook: 'webhook',
+  schedule: 'schedule',
+  'conductor.work_item.status_changed': 'work_item_status_changed',
+  'github.pull_request': 'github_pull_request',
+}
+
+/**
+ * Human label for a run's raw `triggerType` (e.g. "conductor.work_item.status_changed" → "work item"),
+ * reusing TriggerBadges' triggerLabel/TRIGGER_LABEL map rather than a second copy. A `workflow_dispatch`
+ * run always reads as "manual" here — a run has no access to the YAML's `manual: false` opt-out, so a
+ * system-triggered dispatch (e.g. the knowledge-librarian) still reads as "manual".
+ */
+export function humanizeTriggerType(triggerType: string): string {
+  const kind = RUN_TRIGGER_KIND[triggerType]
+  if (!kind) return humanizeId(triggerType.replace(/\./g, '_'))
+  return triggerLabel({ kind, raw: {} })
 }
 
 // ── WorkflowView cache ──────────────────────────────────────────────────────
