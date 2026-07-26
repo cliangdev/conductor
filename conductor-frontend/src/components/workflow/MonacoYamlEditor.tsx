@@ -13,9 +13,12 @@ interface MonacoYamlEditorProps {
   value: string;
   onChange: (value: string) => void;
   height?: string;
+  /** Disables editing (still fully readable/selectable/copyable) — used by the Definition tab for
+   *  viewers without workflow.manage. */
+  readOnly?: boolean;
 }
 
-export default function MonacoYamlEditor({ value, onChange, height = '100%' }: MonacoYamlEditorProps) {
+export default function MonacoYamlEditor({ value, onChange, height = '100%', readOnly = false }: MonacoYamlEditorProps) {
   const monacoRef = useRef<unknown>(null);
   const { resolvedTheme } = useTheme();
 
@@ -37,6 +40,7 @@ export default function MonacoYamlEditor({ value, onChange, height = '100%' }: M
         scrollBeyondLastLine: false,
         wordWrap: 'on',
         tabSize: 2,
+        readOnly,
       }}
       // resolvedTheme is undefined pre-mount; default to dark (vs-dark) rather than flashing light.
       theme={resolvedTheme === 'light' ? 'vs' : 'vs-dark'}

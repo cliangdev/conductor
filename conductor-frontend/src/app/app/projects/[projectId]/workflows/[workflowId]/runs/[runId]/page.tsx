@@ -6,11 +6,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { apiGet, apiErrorMessage } from '@/lib/api';
 import { WorkflowRunDetailDto, WorkflowJobRunDto, WorkflowStepRunDto } from '@/types/workflow';
 import dynamic from 'next/dynamic';
-import { PageHeader } from '@/components/layout/PageHeader';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { CopyableId } from '@/components/ui/copyable-id';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Can } from '@/components/auth/Can';
 import { useToast } from '@/components/ui/toast';
@@ -79,7 +79,7 @@ export default function RunDetailPage() {
   if (!run) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Run Detail" />
+        <Skeleton className="h-10 rounded-lg" />
         <Skeleton className="h-64 rounded-lg" />
         <div className="space-y-2">
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 rounded-lg" />)}
@@ -132,31 +132,28 @@ export default function RunDetailPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        className="mb-0"
-        title="Run Detail"
-        status={<StatusBadge status={run.status} />}
-        description={
-          <span className="inline-flex items-center gap-1.5 flex-wrap">
-            <span>Run <CopyableId id={run.id} /></span>
-            <span>· Trigger: {run.triggerType}</span>
-            <span>· Duration: {formatElapsed(run.startedAt, run.completedAt)}</span>
-          </span>
-        }
-        actions={
-          (run.status === 'RUNNING' || run.status === 'PENDING' || run.status === 'CANCELLING') && (
-            <Can do="workflow.run">
-              <Button
-                variant="outline"
-                onClick={handleCancel}
-                disabled={run.status === 'CANCELLING' || cancelling}
-              >
-                {run.status === 'CANCELLING' || cancelling ? 'Cancelling…' : 'Cancel run'}
-              </Button>
-            </Can>
-          )
-        }
-      />
+      {/* Slim run-context bar — the layout's PageHeader above already carries the workflow name +
+          breadcrumb (…/ Runs / Run Detail), so this isn't a second PageHeader (which would duplicate
+          the breadcrumb-plus-H1 stack); it's just this run's identity + its one action. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b">
+        <div className="flex items-center gap-1.5 flex-wrap text-sm text-muted-foreground">
+          <StatusBadge status={run.status} />
+          <span>Run <CopyableId id={run.id} /></span>
+          <span>· Trigger: {run.triggerType}</span>
+          <span>· Duration: {formatElapsed(run.startedAt, run.completedAt)}</span>
+        </div>
+        {(run.status === 'RUNNING' || run.status === 'PENDING' || run.status === 'CANCELLING') && (
+          <Can do="workflow.run">
+            <Button
+              variant="outline"
+              onClick={handleCancel}
+              disabled={run.status === 'CANCELLING' || cancelling}
+            >
+              {run.status === 'CANCELLING' || cancelling ? 'Cancelling…' : 'Cancel run'}
+            </Button>
+          </Can>
+        )}
+      </div>
 
       <div className="border rounded-lg bg-muted/20 h-64">
         <WorkflowDiagram
@@ -200,7 +197,7 @@ function JobSummaryRow({
   const maxIterations = isLoop ? maxIterationsForJob(workflowYaml, jobId) : undefined;
 
   return (
-    <div className="flex items-center gap-3 border rounded-lg p-3">
+    <Card className="flex items-center gap-3 p-3">
       <span className="font-medium flex-1">{jobId}</span>
       {isLoop && (
         <Badge variant="status-progress">
@@ -211,6 +208,6 @@ function JobSummaryRow({
       <span className="text-sm text-muted-foreground">
         {formatElapsed(latest.startedAt, latest.completedAt)}
       </span>
-    </div>
+    </Card>
   );
 }

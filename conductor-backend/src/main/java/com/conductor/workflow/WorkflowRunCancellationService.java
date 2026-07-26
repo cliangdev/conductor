@@ -14,10 +14,16 @@ import com.conductor.repository.WorkflowStepRunRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 
 /**
  * Stops a workflow run on request. Cancellation is a two-stage affair: this service performs the
@@ -37,6 +43,14 @@ public class WorkflowRunCancellationService {
     private final WorkflowStepRunRepository stepRunRepository;
     private final WorkflowJobQueueRepository queueRepository;
     private final WorkflowExecutionEngine engine;
+
+    /** Self-reference so {@link #cancelRun} runs through the Spring proxy (and its own transaction)
+     *  even when called from {@link #cancelQueuedRuns} on this same instance — a plain {@code this}
+     *  call would bypass {@code @Transactional} entirely (no AOP interception on self-invocation),
+     *  and each run needs its own transaction so one throwing doesn't roll back the others. */
+    @Autowired
+    @Lazy
+    WorkflowRunCancellationService self;
 
     public WorkflowRunCancellationService(WorkflowRunRepository runRepository,
                                           WorkflowJobRunRepository jobRunRepository,
@@ -70,6 +84,43 @@ public class WorkflowRunCancellationService {
         // Re-read with the workflow join-fetched: open-in-view is off, so the caller maps this to a
         // DTO after the transaction — and its lazy proxies — are gone.
         return runRepository.findByIdWithWorkflow(runId).orElseThrow();
+    }
+
+    /** Caps how many runs one {@link #cancelQueuedRuns} call processes — each cancellation is its own
+     *  synchronous round trip on the request thread, so an unbounded backlog risks a slow/timed-out
+     *  request. Oldest-first, so a repeated click keeps making progress on a backlog larger than this. */
+    private static final int MAX_RUNS_PER_DRAIN = 200;
+
+    /**
+     * Drains a workflow's queued backlog: cancels every run that qualifies as queued, one {@link
+     * #cancelRun(String)} call per run — reusing the same path a single-run cancel takes (row lock,
+     * queue-row deletion, job/step terminalization, completion settle) rather than a second
+     * cancellation code path. A run qualifies when it's PENDING, or blocked on a self-hosted job no
+     * daemon has claimed yet with nothing else on it genuinely in flight (see {@link
+     * WorkflowRunRepository#findQueuedForCancellationByWorkflowId} for the exact predicate) — this is
+     * deliberately narrower than the display-only "Queued" segment the UI shows, precisely so this
+     * bulk action never kills work that's actually executing. Each run's own transaction is
+     * independent, so one run racing to a terminal status and throwing doesn't abort the rest of the
+     * sweep — it's logged and skipped. Processes at most {@link #MAX_RUNS_PER_DRAIN} runs; a backlog
+     * larger than that drains over repeated calls (the UI's queued count reflects what's left, so the
+     * "Cancel queued runs" button naturally invites another click).
+     */
+    public int cancelQueuedRuns(String workflowId) {
+        Pageable oldestFirst = PageRequest.of(0, MAX_RUNS_PER_DRAIN, Sort.by(Sort.Direction.ASC, "startedAt"));
+        List<WorkflowRun> queued = runRepository.findQueuedForCancellationByWorkflowId(workflowId,
+                WorkflowRunStatus.PENDING, WorkflowJobStatus.AWAITING_PICKUP, WorkflowJobStatus.RUNNING,
+                WorkflowRunStatus.TERMINAL_STATUSES, oldestFirst).getContent();
+        int cancelledCount = 0;
+        for (WorkflowRun run : queued) {
+            try {
+                self.cancelRun(run.getId());
+                cancelledCount++;
+            } catch (RuntimeException e) {
+                log.warn("Skipping run {} while draining queued backlog for workflow {}: {}",
+                        run.getId(), workflowId, e.getMessage());
+            }
+        }
+        return cancelledCount;
     }
 
     private void requestCancellation(WorkflowRun run) {

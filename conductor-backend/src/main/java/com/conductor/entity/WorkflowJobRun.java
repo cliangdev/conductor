@@ -45,6 +45,16 @@ public class WorkflowJobRun {
     @Column(name = "completed_at")
     private OffsetDateTime completedAt;
 
+    /**
+     * Stamped by {@code JobDispatchPayloadService.buildPayload} the first time a self-hosted daemon
+     * fetches this job's dispatch payload — the true pickup moment, distinct from dispatch. Status
+     * stays {@link WorkflowJobStatus#AWAITING_PICKUP} for the job's whole self-hosted execution, so
+     * this is the only signal that distinguishes "not yet claimed" from "claimed, running on the
+     * daemon". Null until claimed; always null for non-self-hosted jobs.
+     */
+    @Column(name = "claimed_at")
+    private OffsetDateTime claimedAt;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -78,4 +88,7 @@ public class WorkflowJobRun {
 
     public OffsetDateTime getCompletedAt() { return completedAt; }
     public void setCompletedAt(OffsetDateTime completedAt) { this.completedAt = completedAt; }
+
+    public OffsetDateTime getClaimedAt() { return claimedAt; }
+    public void setClaimedAt(OffsetDateTime claimedAt) { this.claimedAt = claimedAt; }
 }

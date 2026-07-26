@@ -21,6 +21,7 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Self-hosted](#self-hosted)
   - [Cloud Run](#cloud-run)
   - [Runtime targets (bring your own Cloud Run)](#runtime-targets-bring-your-own-cloud-run)
+- [Queued and waiting work](#queued-and-waiting-work)
 - [Cancelling a run](#cancelling-a-run)
 - [Auto-pause on repeated failures](#auto-pause-on-repeated-failures)
 - [System-managed workflows](#system-managed-workflows)
@@ -83,12 +84,14 @@ concurrency: single
 ```
 
 Enforced for scheduled runs (a due cron tick is skipped, not queued, while a run is already active — see
-[Schedule](#schedule)) and for manual dispatch (`POST .../dispatch` rejects with 409 while a run is already
-active, rather than letting a second run silently race the first). **Not** enforced for a workflow fired
-programmatically via `fireTrigger` outside those two paths — e.g. `knowledge-librarian`'s dispatches from
-`LibrarianDispatchService`, which intentionally run one per domain lane in parallel (see
-[System-managed workflows](#system-managed-workflows)) and serialize within a lane through their own
-mechanism instead of this flag.
+[Cron schedule](#cron-schedule)) and for manual dispatch (`POST .../dispatch` rejects with 409 while a run
+is already active, rather than letting a second run silently race the first). Neither case queues the
+skipped/rejected attempt for later — see [Queued and waiting work](#queued-and-waiting-work) for what
+`concurrency: single` does and doesn't do, and where a skipped schedule tick shows up. **Not** enforced
+for a workflow fired programmatically via `fireTrigger` outside those two paths — e.g.
+`knowledge-librarian`'s dispatches from `LibrarianDispatchService`, which intentionally run one per domain
+lane in parallel (see [System-managed workflows](#system-managed-workflows)) and serialize within a lane
+through their own mechanism instead of this flag.
 
 ---
 
@@ -1245,6 +1248,59 @@ Credential-wise a runtime-target job behaves like `cloud-run`: the project's Cla
 
 ---
 
+## Queued and waiting work
+
+Most of the time, `PENDING` isn't a queue you need to think about. The engine drains its internal job
+queue (`workflow_job_queue`) on a 500ms tick with adaptive backoff (idle ticks back off to as slow as
+5s) — a run normally clears `PENDING` in well under a second. A run stuck in `PENDING` for any real
+length of time is a symptom (engine trouble, a stuck upstream dependency), not a designed backlog.
+
+**Real waiting happens at the self-hosted boundary.** A job with `runs-on: self-hosted` is handed to your
+daemon and sits in `AWAITING_PICKUP` — and, importantly, **stays** `AWAITING_PICKUP` for the job's entire
+execution once claimed; nothing flips it to `RUNNING`. What actually changes at claim time is
+`WorkflowJobRun.claimedAt`, stamped the first time the daemon fetches the job's dispatch payload
+(`GET .../jobs/{jobId}/dispatch-payload`) — idempotently, so a retry/restart re-fetch doesn't move it.
+The daemon runs one job at a time by default (`maxConcurrentRuns`, see
+[Concurrency and capacity](#concurrency-and-capacity)), so a burst of self-hosted dispatches backs up at
+the daemon rather than on the server.
+
+Note also that the *run* itself flips `PENDING` → `RUNNING` the moment its first job dispatches — even a
+self-hosted job that's still sitting unclaimed in `AWAITING_PICKUP`. So a run genuinely waiting on a
+runner is `RUNNING` at the run level, not `PENDING`; a raw `?status=` filter can't tell "waiting for a
+runner" apart from "actually executing."
+
+`GET .../runs` surfaces the unclaimed case on the run as `waitReason: "AWAITING_RUNNER"` (populated by
+the list endpoint only, not by get/dispatch/cancel) — set only while at least one `AWAITING_PICKUP` job
+on the run has no `claimedAt` yet, and cleared the moment it's claimed — and the UI shows it as
+**"Waiting for runner."** If a self-hosted job is never claimed — daemon stopped, never upgraded,
+whatever — the daily `cleanupStuckRuns` sweep fails any job still `AWAITING_PICKUP` after 24h (reason
+`DAEMON_PICKUP_TIMEOUT`), so a dead daemon doesn't leave a run waiting forever. The schema also has a
+`LOCAL_PICKUP_TIMEOUT` run status, shown in the UI as "Never picked up" — an older, run-level timeout for
+a `PENDING_LOCAL_PICKUP` state that no current dispatch path actually enters; if you ever see a run end
+this way, treat it as the same class of problem as `DAEMON_PICKUP_TIMEOUT` above.
+
+**`concurrency: single` does not queue** (see [Workflow file format](#workflow-file-format)) — it's a
+skip/reject gate, not a wait line. A due cron tick while a run is already active is **skipped** and
+recorded in `workflow_schedule_skips` (`GET .../schedule-skips`), visible in the UI. A manual dispatch
+against an active `concurrency: single` workflow is **rejected with 409** instead of being held for
+later — neither case leaves anything queued to run once the active run finishes.
+
+**Checking what's queued.** `GET .../runs` takes a repeated `?status=` filter (e.g.
+`?status=PENDING&status=RUNNING`) for the raw run statuses; omit it to get every status, and an
+unrecognized value 400s. Because a runner-blocked run is `RUNNING` at the run level (see above), `status`
+alone can't express "queued" the way a human means it. A derived `?state=queued|running` filter covers
+that instead: `queued` matches `PENDING`/`PENDING_LOCAL_PICKUP` **or** any run with an unclaimed
+`AWAITING_PICKUP` job (regardless of its own run-level status); `running` matches
+`RUNNING`/`CANCELLING` **minus** that same unclaimed-job case. The two are mutually exclusive but not
+exhaustive over every non-terminal run — `LOCAL_PICKUP_TIMEOUT` is non-terminal and matches neither;
+use `status` or the unfiltered list to see it. `state` and `status` are mutually exclusive; supplying
+both 400s. The workflow's **Runs** tab uses `state`
+to offer its Queued / Running / All filters, and the `list_workflow_runs` MCP tool takes the same `state`
+parameter — callers should prefer it over `status=PENDING` for exactly the reason above — plus `status` as
+the raw escape hatch.
+
+---
+
 ## Cancelling a run
 
 A **Cancel run** button appears on the run detail page for any run that's `PENDING` or `RUNNING` (also available as the `cancel_workflow_run` MCP tool, or `POST .../runs/{runId}/cancel`). Cancellation is a request, not an instant stop: the run immediately flips to **`CANCELLING`** — no further jobs are dispatched, and any job that hadn't started yet is marked `CANCELLED` right away — while whatever step is actually in flight is torn down best-effort by its execution backend. The run settles to the terminal **`CANCELLED`** once nothing is left running, typically within one poll interval (a few seconds). Cancelling an already-`CANCELLING` run is a no-op; cancelling a run that's already finished (`SUCCESS`/`FAILED`/`CANCELLED`) fails with a 409.
@@ -1255,6 +1311,25 @@ What "torn down" means depends on where the in-flight step is running:
 - **Self-hosted worker VM** (`docker://` steps via `conductor-worker`): the container is `docker kill`ed then removed.
 - **Kestra** (`kestra` steps): the Kestra execution is killed via its Executions API.
 - **Self-hosted daemon** (`runs-on: self-hosted`, any step type, picked up by the `conductor` CLI's daemon): **soft-cancel only** — the job/step is marked `CANCELLED` and Conductor stops waiting on it, but the daemon isn't (yet) told to kill an already-running container. If one was in flight, it keeps running to completion in the background and its result is simply discarded. Hard-kill support for this path is a known follow-up.
+
+### Cancelling every queued run
+
+`POST .../runs/cancel-queued` cancels the queued backlog for a workflow in one call, returning
+`{ cancelledCount }`. It's a bulk convenience over the same per-run cancellation path above — same
+teardown semantics per execution backend, including the self-hosted soft-cancel limitation — not a
+different mechanism.
+
+A run qualifies when it's `PENDING`, **or** it has an unclaimed `AWAITING_PICKUP` job and no job that's
+either `RUNNING` or an already-claimed `AWAITING_PICKUP` (a claimed one is actively executing on a
+daemon). That's deliberately narrower than the UI's Queued *display* filter (`state=queued` above): a run
+with a genuinely in-flight job is never bulk-cancelled just because some other job on it also happens to
+be unclaimed — this endpoint only ever touches work that hasn't actually started.
+
+This is a separate verb from pausing intake: disabling a workflow (the `enabled` toggle — see
+[Auto-pause on repeated failures](#auto-pause-on-repeated-failures) for the automatic case) stops new
+runs from being created but does **not** cancel whatever is already queued or running. Use
+`cancel-queued` to drain an existing backlog and the `enabled` toggle to stop building a new one; use
+both together to actually stop a workflow.
 
 ---
 

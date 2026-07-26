@@ -267,7 +267,7 @@ function WorkflowsPageContent() {
                     <tr
                       key={workflow.id}
                       className="h-[38px] hover:bg-muted cursor-pointer transition-colors"
-                      onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/overview`)}
+                      onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/runs`)}
                     >
                       <td className="px-3 py-2 text-sm font-medium text-foreground">{workflow.name}</td>
                       <td className="px-3 py-2">
@@ -310,7 +310,7 @@ function WorkflowsPageContent() {
                           )}
                           <Can do="workflow.manage">
                             <RowActionsMenu
-                              onEdit={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/settings`)}
+                              onEdit={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/definition`)}
                               onDelete={() => setDeleteTarget(workflow)}
                             />
                           </Can>

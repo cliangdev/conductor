@@ -136,6 +136,44 @@ describe('workflow-aware MCP tools', () => {
     expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/runs?page=2&size=10', config)
   })
 
+  it('list_workflow_runs forwards a single status as one repeated query param', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    await listWorkflowRuns({ workflowId: 'wf-1', status: 'PENDING' }, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/runs?status=PENDING', config)
+  })
+
+  it('list_workflow_runs forwards multiple statuses as repeated query params', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    await listWorkflowRuns({ workflowId: 'wf-1', status: ['PENDING', 'RUNNING'] }, config)
+    expect(apiGet).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/workflows/wf-1/runs?status=PENDING&status=RUNNING',
+      config
+    )
+  })
+
+  // `state` is how a caller should ask "what's waiting" — a run blocked on an unclaimed self-hosted
+  // runner is RUNNING at the run level, so status=PENDING would miss exactly that backlog.
+  it('list_workflow_runs forwards state as a query param', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
+    await listWorkflowRuns({ workflowId: 'wf-1', state: 'queued' }, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-1/workflows/wf-1/runs?state=queued', config)
+  })
+
+  // The run carrying waitReason is RUNNING, not PENDING: a run blocked on an unclaimed self-hosted
+  // job has already flipped to RUNNING at the run level. An earlier fixture here paired PENDING with
+  // waitReason, which the backend cannot produce.
+  it('list_workflow_runs passes waitReason through untouched (no field shaping)', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'run-1', status: 'RUNNING', waitReason: 'AWAITING_RUNNER' },
+      { id: 'run-2', status: 'SUCCESS', waitReason: null },
+    ])
+    const result = await listWorkflowRuns({ workflowId: 'wf-1' }, config)
+    expect(result).toEqual([
+      { id: 'run-1', status: 'RUNNING', waitReason: 'AWAITING_RUNNER' },
+      { id: 'run-2', status: 'SUCCESS', waitReason: null },
+    ])
+  })
+
   it('cancel_workflow_run POSTs an empty body to the run cancel resource', async () => {
     ;(apiPost as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'run-1', status: 'CANCELLING' })
     const result = await cancelWorkflowRun({ workflowId: 'wf-1', runId: 'run-1' }, config)
