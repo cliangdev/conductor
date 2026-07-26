@@ -230,6 +230,69 @@ describe('WorkItemDetailView', () => {
     expect(await screen.findByText('design content here')).toBeInTheDocument()
   })
 
+  it('shows unresolved comment counts on the document tabs so you can see which doc was commented on', async () => {
+    DOCS = [
+      { id: 'doc-1', filename: 'prd.md', contentType: 'text/markdown', content: 'line one\nline two' },
+      { id: 'doc-2', filename: 'design.md', contentType: 'text/markdown', content: 'design content' },
+    ]
+    COMMENTS = [
+      {
+        id: 'c1',
+        documentId: 'doc-2',
+        authorId: 'user-2',
+        authorName: 'Rita',
+        content: 'needs work',
+        lineNumber: 1,
+        createdAt: '2026-07-11T00:00:00Z',
+        replies: [],
+      },
+      {
+        id: 'c2',
+        documentId: 'doc-2',
+        authorId: 'user-2',
+        authorName: 'Rita',
+        content: 'and this',
+        lineNumber: 2,
+        createdAt: '2026-07-11T01:00:00Z',
+        replies: [],
+      },
+      {
+        id: 'c3',
+        documentId: 'doc-2',
+        authorId: 'user-2',
+        authorName: 'Rita',
+        content: 'already handled',
+        lineNumber: 2,
+        createdAt: '2026-07-11T02:00:00Z',
+        resolvedAt: '2026-07-12T00:00:00Z',
+        replies: [],
+      },
+    ]
+    await renderView()
+
+    // Resolved comments don't count — only the two open ones.
+    expect(await screen.findByRole('tab', { name: /design\.md, 2 unresolved comments/i })).toBeInTheDocument()
+    // The uncommented tab stays a bare filename.
+    expect(screen.getByRole('tab', { name: /^prd\.md$/i })).toBeInTheDocument()
+  })
+
+  it('counts item-level comments on the Activity tab', async () => {
+    COMMENTS = [
+      {
+        id: 'c1',
+        documentId: 'doc-1',
+        authorId: 'user-2',
+        authorName: 'Rita',
+        content: 'overall thoughts',
+        createdAt: '2026-07-11T00:00:00Z',
+        replies: [],
+      },
+    ]
+    await renderView()
+
+    expect(await screen.findByRole('tab', { name: /activity, 1 unresolved comment/i })).toBeInTheDocument()
+  })
+
   it('shows a single empty state when there are no documents', async () => {
     DOCS = []
     await renderView()
@@ -319,7 +382,8 @@ describe('WorkItemDetailView', () => {
     ]
     await renderView()
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Activity' }))
+    // Prefix match: the tab's accessible name also carries an unresolved comment count when it has one.
+    await userEvent.click(screen.getByRole('tab', { name: /^Activity/ }))
 
     const rows = await screen.findAllByTestId(/^activity-/)
     expect(rows).toHaveLength(2)

@@ -94,7 +94,8 @@ public class DocCommentService {
 
     @Transactional
     public DocComment resolveThread(String commentId) {
-        DocComment comment = docCommentRepository.findById(commentId)
+        // Authors fetch-joined so the caller can map this to a response after the transaction closes.
+        DocComment comment = docCommentRepository.findByIdWithAuthors(commentId)
                 .orElseThrow(() -> new EntityNotFoundException("Comment not found: " + commentId));
 
         comment.setResolvedAt(OffsetDateTime.now());

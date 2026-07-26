@@ -115,6 +115,25 @@ export function updateDoc(
   return apiPut<ProjectDoc>(`/api/v1/projects/${projectId}/docs/${docId}`, { content }, token)
 }
 
+/**
+ * Checks or unchecks one task list item in place. Unlike {@link updateDoc} this does not create a
+ * version and does not mark line comments stale — see the endpoint description in `openapi.yaml`.
+ * `lineNumber` is 1-based against the doc's raw content.
+ */
+export function setDocTaskState(
+  projectId: string,
+  docId: string,
+  lineNumber: number,
+  checked: boolean,
+  token: string,
+): Promise<ProjectDoc | undefined> {
+  return apiPatch<ProjectDoc>(
+    `/api/v1/projects/${projectId}/docs/${docId}/tasks/${lineNumber}`,
+    { checked },
+    token,
+  )
+}
+
 export function deleteDoc(projectId: string, docId: string, token: string): Promise<void> {
   return apiDelete(`/api/v1/projects/${projectId}/docs/${docId}`, token)
 }
