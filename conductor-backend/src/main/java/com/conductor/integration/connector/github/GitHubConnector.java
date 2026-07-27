@@ -192,7 +192,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
             boolean isMergeEvent = "closed".equals(action) && merged;
             if (!isMergeEvent) {
                 if (PR_REVIEW_ACTIONS.contains(action)) {
-                    dispatchPullRequestReviewEvent(ctx, root, action);
+                    dispatchPullRequestReviewEvent(ctx, root, action, event.traceId());
                 } else {
                     log.info("Skipping event {} - action='{}' merged={} is not a merge or reviewable action",
                             event.deliveryId(), action, merged);
@@ -200,7 +200,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
                 return;
             }
 
-            dispatchPullRequestMergedEvent(ctx, root);
+            dispatchPullRequestMergedEvent(ctx, root, event.traceId());
         } catch (Exception e) {
             // Surface to the dispatcher so the event is marked FAILED and retried.
             throw new RuntimeException("Failed to process GitHub event: " + e.getMessage(), e);
@@ -215,7 +215,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
      * "closes conductor/KEY-N" directive and completes the linked Work Item. Neither of those is GitHub
      * -payload knowledge, so neither lives here.
      */
-    private void dispatchPullRequestMergedEvent(ConnectionContext ctx, JsonNode root) {
+    private void dispatchPullRequestMergedEvent(ConnectionContext ctx, JsonNode root, String traceId) {
         JsonNode pr = root.path("pull_request");
         JsonNode repository = root.path("repository");
 
@@ -246,7 +246,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
         putIfPresent(payload, "htmlUrl", nodeText(pr.path("html_url")));
 
         signalBus.publish(Signal.of(SignalTypes.GITHUB_PULL_REQUEST_MERGED, ctx.projectId(), ref, Instant.now(),
-                payload, new SignalOrigin("github_pull_request_merged", ref)));
+                payload, new SignalOrigin("github_pull_request_merged", ref), traceId));
     }
 
     /**
@@ -256,7 +256,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
      * {@code ConnectionRepository} lookup is needed here, unlike the merge-completion path above which
      * needs a different, project-scoped lookup (issue key).
      */
-    private void dispatchPullRequestReviewEvent(ConnectionContext ctx, JsonNode root, String action) {
+    private void dispatchPullRequestReviewEvent(ConnectionContext ctx, JsonNode root, String action, String traceId) {
         JsonNode pr = root.path("pull_request");
         JsonNode repository = root.path("repository");
 
@@ -282,7 +282,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
 
         Map<String, Object> payload = new LinkedHashMap<>(meta);
         signalBus.publish(Signal.of(SignalTypes.GITHUB_PULL_REQUEST, ctx.projectId(), prNumber, Instant.now(),
-                payload, new SignalOrigin("github_pull_request", prNumber)));
+                payload, new SignalOrigin("github_pull_request", prNumber), traceId));
     }
 
     /**

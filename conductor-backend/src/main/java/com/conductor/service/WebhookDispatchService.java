@@ -49,7 +49,7 @@ public class WebhookDispatchService {
             }
             ConnectionContext ctx = connectionService.toContext(connection.get());
             InboundEvent inbound = new InboundEvent(
-                    event.getDeliveryId(), event.getEventType(), event.getPayload(), Map.of());
+                    event.getDeliveryId(), event.getEventType(), event.getPayload(), Map.of(), event.getTraceId());
             connector.get().handleEvent(inbound, ctx);
             event.setStatus(WebhookEventStatus.PROCESSED);
             event.setErrorMessage(null);

@@ -88,6 +88,11 @@ public class KnowledgeSignalSink implements SignalSubscriber {
         String fromStatus = metadata.get("fromStatus");
         String toStatus = metadata.get("toStatus");
 
+        Map<String, Object> submissionMetadata = new LinkedHashMap<>();
+        submissionMetadata.put("fromStatus", String.valueOf(fromStatus));
+        submissionMetadata.put("toStatus", String.valueOf(toStatus));
+        stampTraceId(submissionMetadata, signal);
+
         KnowledgeSubmission submission = new KnowledgeSubmission(
                 projectId,
                 SOURCE_TYPE,
@@ -98,10 +103,22 @@ public class KnowledgeSignalSink implements SignalSubscriber {
                 OffsetDateTime.now(),
                 dedupKey(projectId, workItemRef, fromStatus, toStatus),
                 new KnowledgeSubmission.Origin("EVENT_TAP", workItemRef),
-                Map.of("fromStatus", String.valueOf(fromStatus), "toStatus", String.valueOf(toStatus)),
+                submissionMetadata,
                 null); // domain: no hardcoded area->domain map (see plan) -- registry patterns route, or the null lane
 
         ingestionService.submit(submission);
+    }
+
+    /**
+     * Stamps the signal's trace id into the submission's metadata jsonb, if present, so a
+     * {@code knowledge_sources} row can be joined back to the {@code webhook_event} (or other signal
+     * origin) that produced it -- see issue #342. A no-op when {@code signal.traceId()} is null
+     * (e.g. a test calling {@code onSignal} directly against a hand-built {@link Signal}).
+     */
+    private void stampTraceId(Map<String, Object> metadata, Signal signal) {
+        if (signal.traceId() != null) {
+            metadata.put("traceId", signal.traceId());
+        }
     }
 
     /** Stable across re-dispatches of the identical status transition (e.g. a notification retry). */
@@ -155,11 +172,15 @@ public class KnowledgeSignalSink implements SignalSubscriber {
             jsonPayload.put("changedFilesCount", attrs.get("changedFilesCount"));
         }
 
+        Map<String, Object> submissionMetadata = new LinkedHashMap<>();
+        stampTraceId(submissionMetadata, signal);
+
         KnowledgeSubmission submission = new KnowledgeSubmission(
                 projectId, MERGED_PR_SOURCE_TYPE, sourceRef, title, "application/json",
                 writeJsonPayload(jsonPayload), OffsetDateTime.now(),
                 "github-pr-merged:" + sourceRef, new KnowledgeSubmission.Origin("GITHUB_CONNECTOR", sourceRef),
-                null, null); // domain: null -- the engineering domain's "github.*" pattern routes this
+                submissionMetadata.isEmpty() ? null : submissionMetadata,
+                null); // domain: null -- the engineering domain's "github.*" pattern routes this
 
         ingestionService.submit(submission);
     }

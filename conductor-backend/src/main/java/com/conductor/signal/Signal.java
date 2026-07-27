@@ -25,7 +25,8 @@ public record Signal(
         String ref,
         Instant occurredAt,
         Map<String, Object> payload,
-        SignalOrigin origin) {
+        SignalOrigin origin,
+        String traceId) {
 
     /**
      * Rejects null keys and null values at the TOP level of {@code payload} only -- mirroring
@@ -42,9 +43,25 @@ public record Signal(
         payload = Map.copyOf(payload);
     }
 
+    /**
+     * Convenience for callers with no trace id on hand -- {@link InProcessSignalBus#publish}
+     * assigns a fresh one before dispatch when this is {@code null}, so every signal a subscriber
+     * ever sees carries one, without forcing every publish call site to invent its own.
+     */
     public static Signal of(String type, String projectId, String ref, Instant occurredAt,
                              Map<String, Object> payload, SignalOrigin origin) {
-        return new Signal(type, projectId, ref, occurredAt, payload, origin);
+        return new Signal(type, projectId, ref, occurredAt, payload, origin, null);
+    }
+
+    /** Same as {@link #of}, but for callers that already have a trace id to carry through (e.g. a webhook's). */
+    public static Signal of(String type, String projectId, String ref, Instant occurredAt,
+                             Map<String, Object> payload, SignalOrigin origin, String traceId) {
+        return new Signal(type, projectId, ref, occurredAt, payload, origin, traceId);
+    }
+
+    /** Copy of this signal with {@code traceId} replaced -- used by {@link InProcessSignalBus} to assign one. */
+    public Signal withTraceId(String traceId) {
+        return new Signal(type, projectId, ref, occurredAt, payload, origin, traceId);
     }
 
     /**
