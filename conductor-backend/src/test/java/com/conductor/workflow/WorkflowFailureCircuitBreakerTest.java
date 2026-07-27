@@ -4,9 +4,9 @@ import com.conductor.entity.Project;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalTypes;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,13 +24,13 @@ import static org.mockito.Mockito.verify;
 class WorkflowFailureCircuitBreakerTest {
 
     @Mock com.conductor.repository.WorkflowDefinitionRepository workflowRepository;
-    @Mock NotificationDispatcher notificationDispatcher;
+    @Mock SignalBus signalBus;
 
     WorkflowFailureCircuitBreaker breaker;
 
     @BeforeEach
     void setUp() {
-        breaker = new WorkflowFailureCircuitBreaker(workflowRepository, notificationDispatcher);
+        breaker = new WorkflowFailureCircuitBreaker(workflowRepository, signalBus);
     }
 
     private WorkflowDefinition workflow(int consecutiveFailures) {
@@ -62,7 +62,7 @@ class WorkflowFailureCircuitBreakerTest {
         assertThat(wf.getConsecutiveFailures()).isEqualTo(3);
         assertThat(wf.isEnabled()).isTrue();
         assertThat(wf.getAutoPausedAt()).isNull();
-        verify(notificationDispatcher, never()).dispatch(org.mockito.ArgumentMatchers.any());
+        verify(signalBus, never()).publish(org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -77,10 +77,10 @@ class WorkflowFailureCircuitBreakerTest {
         assertThat(wf.getAutoPauseReason()).isEqualTo(WorkflowFailureCircuitBreaker.REASON_CONSECUTIVE_FAILURES);
         assertThat(wf.getAutoPausedRunId()).isEqualTo("run-tripping");
 
-        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(captor.capture());
-        assertThat(captor.getValue().getEventType()).isEqualTo(EventType.WORKFLOW_AUTO_PAUSED);
-        assertThat(captor.getValue().getMetadata()).containsEntry("runId", "run-tripping");
+        ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(captor.capture());
+        assertThat(captor.getValue().type()).isEqualTo(SignalTypes.CONDUCTOR_WORKFLOW_AUTO_PAUSED);
+        assertThat(captor.getValue().payload()).containsEntry("runId", "run-tripping");
     }
 
     @Test
@@ -97,7 +97,7 @@ class WorkflowFailureCircuitBreakerTest {
 
         assertThat(wf.getAutoPausedAt()).isEqualTo(firstTripTime);
         assertThat(wf.getAutoPausedRunId()).isEqualTo("run-first-trip");
-        verify(notificationDispatcher, never()).dispatch(org.mockito.ArgumentMatchers.any());
+        verify(signalBus, never()).publish(org.mockito.ArgumentMatchers.any());
     }
 
     @Test

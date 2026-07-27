@@ -10,9 +10,6 @@ import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentReplyRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
@@ -20,6 +17,9 @@ import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.service.view.CommentReplyView;
 import com.conductor.service.view.CommentWithRepliesView;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalTypes;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -63,7 +63,7 @@ class CommentServiceTest {
     private StorageService storageService;
 
     @Mock
-    private NotificationDispatcher notificationDispatcher;
+    private SignalBus signalBus;
 
     @Mock
     private com.conductor.repository.ProjectRepository projectRepository;
@@ -494,14 +494,14 @@ class CommentServiceTest {
 
         commentService.createComment("proj-1", "issue-1", "doc-1", longContent, 1, author);
 
-        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(captor.capture());
-        NotificationEvent event = captor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.COMMENT_ADDED);
-        assertThat(event.getMetadata().get("workItemId")).isEqualTo("issue-1");
-        assertThat(event.getMetadata().get("workItemTitle")).isEqualTo("Test Issue");
-        assertThat(event.getMetadata().get("commentAuthor")).isEqualTo("Author Name");
-        assertThat(event.getMetadata().get("excerpt")).isEqualTo("x".repeat(100) + "...");
+        ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(captor.capture());
+        Signal signal = captor.getValue();
+        assertThat(signal.type()).isEqualTo(SignalTypes.CONDUCTOR_WORK_ITEM_COMMENT_ADDED);
+        assertThat(signal.payload().get("workItemId")).isEqualTo("issue-1");
+        assertThat(signal.payload().get("workItemTitle")).isEqualTo("Test Issue");
+        assertThat(signal.payload().get("commentAuthor")).isEqualTo("Author Name");
+        assertThat(signal.payload().get("excerpt")).isEqualTo("x".repeat(100) + "...");
     }
 
     @Test
@@ -518,13 +518,13 @@ class CommentServiceTest {
 
         commentService.addReply("proj-1", "issue-1", "comment-1", shortContent, author);
 
-        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(captor.capture());
-        NotificationEvent event = captor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.COMMENT_REPLY);
-        assertThat(event.getMetadata().get("workItemId")).isEqualTo("issue-1");
-        assertThat(event.getMetadata().get("workItemTitle")).isEqualTo("Test Issue");
-        assertThat(event.getMetadata().get("commentAuthor")).isEqualTo("Author Name");
-        assertThat(event.getMetadata().get("excerpt")).isEqualTo("Short reply");
+        ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(captor.capture());
+        Signal signal = captor.getValue();
+        assertThat(signal.type()).isEqualTo(SignalTypes.CONDUCTOR_WORK_ITEM_COMMENT_REPLIED);
+        assertThat(signal.payload().get("workItemId")).isEqualTo("issue-1");
+        assertThat(signal.payload().get("workItemTitle")).isEqualTo("Test Issue");
+        assertThat(signal.payload().get("commentAuthor")).isEqualTo("Author Name");
+        assertThat(signal.payload().get("excerpt")).isEqualTo("Short reply");
     }
 }

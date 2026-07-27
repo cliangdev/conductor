@@ -1,7 +1,7 @@
 package com.conductor.notification.signal;
 
 import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationEvent;
+import com.conductor.notification.NotificationMessage;
 import com.conductor.signal.Signal;
 import com.conductor.signal.SignalTypes;
 import org.junit.jupiter.api.Test;
@@ -24,10 +24,10 @@ class NotificationSignalMapperTest {
     @ParameterizedTest
     @EnumSource(EventType.class)
     void roundTripsEveryEventTypeIdentically(EventType type) {
-        NotificationEvent event = NotificationEvent.of(type, PROJECT_ID,
+        NotificationMessage event = NotificationMessage.of(type, PROJECT_ID,
                 Map.of("workItemId", "wi-1", "toStatus", "DONE"));
 
-        NotificationEvent roundTripped = mapper.toNotificationEvent(mapper.toSignal(event));
+        NotificationMessage roundTripped = mapper.toNotificationEvent(mapper.toSignal(event));
 
         assertThat(roundTripped.getEventType()).isEqualTo(event.getEventType());
         assertThat(roundTripped.getProjectId()).isEqualTo(event.getProjectId());
@@ -42,7 +42,7 @@ class NotificationSignalMapperTest {
     @ParameterizedTest
     @EnumSource(EventType.class)
     void everyEventTypeMapsToADistinctSignalType(EventType type) {
-        NotificationEvent event = NotificationEvent.of(type, PROJECT_ID, Map.of());
+        NotificationMessage event = NotificationMessage.of(type, PROJECT_ID, Map.of());
         Signal signal = mapper.toSignal(event);
 
         assertThat(signal.type()).isNotBlank();
@@ -50,7 +50,7 @@ class NotificationSignalMapperTest {
 
     @Test
     void toSignalCarriesProjectIdAndOccurredAtFromTheEvent() {
-        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+        NotificationMessage event = NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 Map.of("workItemId", "wi-1"));
 
         Signal signal = mapper.toSignal(event);
@@ -67,7 +67,7 @@ class NotificationSignalMapperTest {
                 "workItemTitle", "Some title",
                 "fromStatus", "OPEN",
                 "toStatus", "DONE");
-        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, metadata);
+        NotificationMessage event = NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, metadata);
 
         Signal signal = mapper.toSignal(event);
 
@@ -76,7 +76,7 @@ class NotificationSignalMapperTest {
 
     @Test
     void toSignalOnEmptyMetadataProducesEmptyFlatAttributes() {
-        NotificationEvent event = NotificationEvent.of(EventType.MEMBER_JOINED, PROJECT_ID, Map.of());
+        NotificationMessage event = NotificationMessage.of(EventType.MEMBER_JOINED, PROJECT_ID, Map.of());
 
         Signal signal = mapper.toSignal(event);
 
@@ -86,7 +86,7 @@ class NotificationSignalMapperTest {
     @Test
     void mappingIsABijectionOverAllTenEventTypesAndSignalTypes() {
         Set<String> mappedSignalTypes = Arrays.stream(EventType.values())
-                .map(type -> mapper.toSignal(NotificationEvent.of(type, PROJECT_ID, Map.of())))
+                .map(type -> mapper.toSignal(NotificationMessage.of(type, PROJECT_ID, Map.of())))
                 .map(Signal::type)
                 .collect(Collectors.toSet());
 

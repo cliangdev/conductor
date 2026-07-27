@@ -1,20 +1,17 @@
 package com.conductor.workflow.signal;
 
-import com.conductor.notification.NotificationEvent;
-import com.conductor.notification.signal.NotificationSignalMapper;
 import com.conductor.service.LifecycleTriggerDispatcher;
 import com.conductor.signal.Signal;
 import com.conductor.signal.SignalDispatchOrder;
 import com.conductor.signal.SignalSubscriber;
+import com.conductor.signal.SignalTypes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Replaces the {@code lifecycleTriggerDispatcher.onConductorEvent} call in today's {@code
- * NotificationDispatcher.dispatch} with a {@link SignalSubscriber} at {@link
- * SignalDispatchOrder#LIFECYCLE}. Translates the {@link Signal} back into a {@link NotificationEvent}
- * and calls the existing, UNMODIFIED {@link LifecycleTriggerDispatcher#onConductorEvent}.
+ * A {@link SignalSubscriber} at {@link SignalDispatchOrder#LIFECYCLE} that calls {@link
+ * LifecycleTriggerDispatcher#onConductorEvent(Signal)} directly.
  *
  * <h2>Deliberately NOT {@code @Transactional}</h2>
  * Exactly like {@link LifecycleTriggerDispatcher} itself (see its javadoc): this subscriber -- and the
@@ -24,7 +21,7 @@ import org.springframework.stereotype.Component;
  * a cascade exception be caught by Spring's transaction interceptor and mark that *shared* transaction
  * rollback-only -- silently failing the user's original status change at commit, even though {@code
  * InProcessSignalBus}'s {@code SWALLOW} handling looks like it isolated the failure. Without a boundary
- * here, that isolation is real, matching today's behaviour exactly. Pinned by {@code
+ * here, that isolation is real. Pinned by {@code
  * LifecycleTriggerDispatcherTest#isDeliberatelyNotTransactional} (asserts this class too).
  */
 @Component
@@ -33,12 +30,9 @@ public class LifecycleSignalSubscriber implements SignalSubscriber {
     private static final Logger log = LoggerFactory.getLogger(LifecycleSignalSubscriber.class);
 
     private final LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
-    private final NotificationSignalMapper mapper;
 
-    public LifecycleSignalSubscriber(LifecycleTriggerDispatcher lifecycleTriggerDispatcher,
-                                      NotificationSignalMapper mapper) {
+    public LifecycleSignalSubscriber(LifecycleTriggerDispatcher lifecycleTriggerDispatcher) {
         this.lifecycleTriggerDispatcher = lifecycleTriggerDispatcher;
-        this.mapper = mapper;
     }
 
     @Override
@@ -48,18 +42,15 @@ public class LifecycleSignalSubscriber implements SignalSubscriber {
 
     @Override
     public boolean interestedIn(String signalType) {
-        // A6 will narrow this: today onConductorEvent is called unconditionally for every event type
-        // and does its own internal EventType check.
-        return true;
+        return SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED.equals(signalType);
     }
 
     @Override
     public void onSignal(Signal signal) {
-        NotificationEvent event = mapper.toNotificationEvent(signal);
         try {
-            lifecycleTriggerDispatcher.onConductorEvent(event);
+            lifecycleTriggerDispatcher.onConductorEvent(signal);
         } catch (Exception e) {
-            log.warn("Lifecycle trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
+            log.warn("Lifecycle trigger evaluation failed for signal {}: {}", signal.type(), e.getMessage());
         }
     }
 

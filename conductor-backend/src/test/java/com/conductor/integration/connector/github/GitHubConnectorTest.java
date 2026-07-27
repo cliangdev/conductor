@@ -11,13 +11,13 @@ import com.conductor.integration.WebhookRouting;
 import com.conductor.integration.WebhookVerification;
 import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSubmission;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
 import com.conductor.service.ProjectSettingsService;
 import com.conductor.service.WorkItemService;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalTypes;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,7 +61,7 @@ class GitHubConnectorTest {
     @Mock private GitHubAppService gitHubAppService;
     @Mock private KnowledgeIngestionService knowledgeIngestionService;
     @Mock private ProjectSettingsService projectSettingsService;
-    @Mock private NotificationDispatcher notificationDispatcher;
+    @Mock private SignalBus signalBus;
 
     private GitHubConnector connector;
 
@@ -71,7 +71,7 @@ class GitHubConnectorTest {
         // they don't need to stub it; the dedicated knowledge tests below override it.
         lenient().when(projectSettingsService.isKnowledgeEnabled(anyString())).thenReturn(false);
         connector = new GitHubConnector(workItemService, connectionRepository, connectionService,
-                gitHubAppService, knowledgeIngestionService, projectSettingsService, notificationDispatcher,
+                gitHubAppService, knowledgeIngestionService, projectSettingsService, signalBus,
                 new ObjectMapper(), APP_SECRET);
     }
 
@@ -110,7 +110,7 @@ class GitHubConnectorTest {
     @Test
     void verify_failsWhenAppSecretNotConfigured() throws Exception {
         GitHubConnector noSecret = new GitHubConnector(workItemService, connectionRepository, connectionService,
-                gitHubAppService, knowledgeIngestionService, projectSettingsService, notificationDispatcher,
+                gitHubAppService, knowledgeIngestionService, projectSettingsService, signalBus,
                 new ObjectMapper(), "");
         byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
         assertThat(noSecret.verify(body, signedHeaders(body), ctx()).valid()).isFalse();
@@ -292,12 +292,12 @@ class GitHubConnectorTest {
 
         connector.handleEvent(new InboundEvent("d8", "pull_request", payload, Map.of()), ctx());
 
-        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(captor.capture());
-        NotificationEvent event = captor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.GITHUB_PULL_REQUEST);
-        assertThat(event.getProjectId()).isEqualTo(PROJECT_ID);
-        assertThat(event.getMetadata())
+        ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(captor.capture());
+        Signal signal = captor.getValue();
+        assertThat(signal.type()).isEqualTo(SignalTypes.GITHUB_PULL_REQUEST);
+        assertThat(signal.projectId()).isEqualTo(PROJECT_ID);
+        assertThat(signal.payload())
                 .containsEntry("repoName", "nexus-backend")
                 .containsEntry("repoFullName", "Rexworks-LLC/nexus-backend")
                 .containsEntry("prNumber", "7")
@@ -315,14 +315,14 @@ class GitHubConnectorTest {
     void handleEvent_prSynchronize_dispatchesGitHubPullRequestEvent() {
         String payload = String.format(PR_ACTION_PAYLOAD_TEMPLATE, "synchronize");
         connector.handleEvent(new InboundEvent("d9", "pull_request", payload, Map.of()), ctx());
-        verify(notificationDispatcher).dispatch(any());
+        verify(signalBus).publish(any());
     }
 
     @Test
     void handleEvent_prReopened_dispatchesGitHubPullRequestEvent() {
         String payload = String.format(PR_ACTION_PAYLOAD_TEMPLATE, "reopened");
         connector.handleEvent(new InboundEvent("d10", "pull_request", payload, Map.of()), ctx());
-        verify(notificationDispatcher).dispatch(any());
+        verify(signalBus).publish(any());
     }
 
     @Test
@@ -332,9 +332,9 @@ class GitHubConnectorTest {
 
         connector.handleEvent(new InboundEvent("d11", "pull_request", payload, Map.of()), ctx());
 
-        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(captor.capture());
-        assertThat(captor.getValue().getMetadata())
+        ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(captor.capture());
+        assertThat(captor.getValue().payload())
                 .containsEntry("action", "labeled")
                 .containsEntry("label", "code_review_ready");
     }
@@ -346,7 +346,7 @@ class GitHubConnectorTest {
 
         connector.handleEvent(new InboundEvent("d12", "pull_request", payload, Map.of()), ctx());
 
-        verify(notificationDispatcher, never()).dispatch(any());
+        verify(signalBus, never()).publish(any());
         verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
     }
 
@@ -356,7 +356,7 @@ class GitHubConnectorTest {
 
         connector.handleEvent(new InboundEvent("d13", "pull_request", payload, Map.of()), ctx());
 
-        verify(notificationDispatcher, never()).dispatch(any());
+        verify(signalBus, never()).publish(any());
         verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
     }
 
@@ -457,8 +457,8 @@ class GitHubConnectorTest {
     }
 
     // --- handleEvent() : characterization of the merge-path ordering, error isolation, and outer
-    //     throw-to-retry contract (see NotificationDispatcher/KnowledgeEventTap characterization tests
-    //     for the sibling event-bus behaviour) ---
+    //     throw-to-retry contract (see the SignalBus/KnowledgeSignalSink subscriber tests for the
+    //     sibling event-bus behaviour) ---
 
     private static final String MERGED_PR_WITH_ISSUE_PAYLOAD =
             "{\"action\":\"closed\",\"repository\":{\"full_name\":\"x/y\"},"
@@ -542,7 +542,7 @@ class GitHubConnectorTest {
 
     @Test
     void reviewActionDispatchThrows_escapesAsRuntimeException() {
-        doThrow(new RuntimeException("dispatch boom")).when(notificationDispatcher).dispatch(any());
+        doThrow(new RuntimeException("dispatch boom")).when(signalBus).publish(any());
         String payload = String.format(PR_ACTION_PAYLOAD_TEMPLATE, "synchronize");
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
@@ -555,7 +555,7 @@ class GitHubConnectorTest {
     void mergedPr_neverDispatchesGitHubPullRequestEvent() {
         connector.handleEvent(new InboundEvent("d22", "pull_request", MERGED_PR_WITH_ISSUE_PAYLOAD, Map.of()), ctx());
 
-        verifyNoInteractions(notificationDispatcher);
+        verifyNoInteractions(signalBus);
     }
 
     @Test
@@ -565,8 +565,8 @@ class GitHubConnectorTest {
 
         connector.handleEvent(new InboundEvent("d23", "pull_request", payload, Map.of()), ctx());
 
-        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(captor.capture());
-        assertThat(captor.getValue().getMetadata()).doesNotContainKey("label");
+        ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(captor.capture());
+        assertThat(captor.getValue().payload()).doesNotContainKey("label");
     }
 }

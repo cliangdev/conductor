@@ -4,13 +4,14 @@ import com.conductor.entity.Connection;
 import com.conductor.integration.*;
 import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSubmission;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
 import com.conductor.service.ProjectSettingsService;
 import com.conductor.service.WorkItemService;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalOrigin;
+import com.conductor.signal.SignalTypes;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -65,7 +66,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
     private static final Pattern CLOSES_PATTERN =
             Pattern.compile("closes\\s+conductor/([A-Z]+-\\d+)", Pattern.CASE_INSENSITIVE);
 
-    /** PR actions that fire {@link EventType#GITHUB_PULL_REQUEST} for review-workflow triggers.
+    /** PR actions that fire {@link SignalTypes#GITHUB_PULL_REQUEST} for review-workflow triggers.
      *  Deliberately excludes {@code closed}-without-merge (an abandoned PR shouldn't be reviewed) —
      *  merges are already handled separately above via the issue-completion path. */
     private static final Set<String> PR_REVIEW_ACTIONS = Set.of("opened", "labeled", "synchronize", "reopened");
@@ -76,7 +77,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
     private final GitHubAppService gitHubAppService;
     private final KnowledgeIngestionService knowledgeIngestionService;
     private final ProjectSettingsService projectSettingsService;
-    private final NotificationDispatcher notificationDispatcher;
+    private final SignalBus signalBus;
     private final ObjectMapper objectMapper;
     /** App-level webhook signing secret (one per GitHub App, not per connection). */
     private final String appWebhookSecret;
@@ -87,7 +88,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
                            GitHubAppService gitHubAppService,
                            KnowledgeIngestionService knowledgeIngestionService,
                            ProjectSettingsService projectSettingsService,
-                           NotificationDispatcher notificationDispatcher,
+                           SignalBus signalBus,
                            ObjectMapper objectMapper,
                            @Value("${GITHUB_APP_WEBHOOK_SECRET:}") String appWebhookSecret) {
         this.workItemService = workItemService;
@@ -96,7 +97,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
         this.gitHubAppService = gitHubAppService;
         this.knowledgeIngestionService = knowledgeIngestionService;
         this.projectSettingsService = projectSettingsService;
-        this.notificationDispatcher = notificationDispatcher;
+        this.signalBus = signalBus;
         this.objectMapper = objectMapper;
         this.appWebhookSecret = appWebhookSecret;
     }
@@ -297,7 +298,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
     }
 
     /**
-     * Fires {@link EventType#GITHUB_PULL_REQUEST} so a {@code github.pull_request} workflow trigger
+     * Fires {@link SignalTypes#GITHUB_PULL_REQUEST} so a {@code github.pull_request} workflow trigger
      * can pick it up. {@code ctx.projectId()} is already the correctly-resolved project id for this
      * connection (resolved upstream by the installation-id fan-out in {@link #route}) — no extra
      * {@code ConnectionRepository} lookup is needed here, unlike the merge-completion path above which
@@ -311,8 +312,10 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
         putIfPresent(meta, "repoName", nodeText(repository.path("name")));
         putIfPresent(meta, "repoFullName", nodeText(repository.path("full_name")));
         JsonNode numberNode = pr.path("number");
+        String prNumber = null;
         if (numberNode.isInt()) {
-            meta.put("prNumber", String.valueOf(numberNode.asInt()));
+            prNumber = String.valueOf(numberNode.asInt());
+            meta.put("prNumber", prNumber);
         }
         putIfPresent(meta, "prTitle", nodeText(pr.path("title")));
         putIfPresent(meta, "author", nodeText(pr.path("user").path("login")));
@@ -325,7 +328,9 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
             putIfPresent(meta, "label", nodeText(root.path("label").path("name")));
         }
 
-        notificationDispatcher.dispatch(NotificationEvent.of(EventType.GITHUB_PULL_REQUEST, ctx.projectId(), meta));
+        Map<String, Object> payload = new LinkedHashMap<>(meta);
+        signalBus.publish(Signal.of(SignalTypes.GITHUB_PULL_REQUEST, ctx.projectId(), prNumber, Instant.now(),
+                payload, new SignalOrigin("github_pull_request", prNumber)));
     }
 
     /**

@@ -33,12 +33,20 @@ public class NotificationSignalSink implements SignalSubscriber {
         return "notification-delivery";
     }
 
+    /**
+     * Only types that map to an {@link com.conductor.notification.EventType}. This is NOT the same
+     * "claim exactly my types" narrowing the other subscribers do -- delivery still handles every event
+     * type it CAN express, filtering further by {@code ChannelGroup} inside {@code deliver}. The gate
+     * is about expressibility, and it is load-bearing rather than defensive:
+     * {@link NotificationSignalMapper#toNotificationEvent} throws for an unmapped type, and because this
+     * subscriber is {@link FailureMode#PROPAGATE}, that throw would abort the ENTIRE fan-out. A
+     * connector-defined signal such as {@code github.pull_request_merged} — which has no notification
+     * counterpart by design — would therefore have silently prevented knowledge ingestion and work-item
+     * completion from ever running, and surfaced only as a webhook retried to DEAD.
+     */
     @Override
     public boolean interestedIn(String signalType) {
-        // A6 will narrow this: today every consumer (including delivery) is called unconditionally
-        // for every event type and does its own internal filtering -- here that's
-        // ChannelGroup.forEventType(...) inside NotificationDeliveryService.deliver.
-        return true;
+        return mapper.isDeliverable(signalType);
     }
 
     @Override

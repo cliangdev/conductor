@@ -4,22 +4,22 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 
-public class NotificationEvent {
+public class NotificationMessage {
 
     private final EventType eventType;
     private final String projectId;
     private final Map<String, String> metadata;
     private final Instant timestamp;
 
-    private NotificationEvent(EventType eventType, String projectId, Map<String, String> metadata, Instant timestamp) {
+    private NotificationMessage(EventType eventType, String projectId, Map<String, String> metadata, Instant timestamp) {
         this.eventType = eventType;
         this.projectId = projectId;
         this.metadata = metadata;
         this.timestamp = timestamp;
     }
 
-    public static NotificationEvent of(EventType eventType, String projectId, Map<String, String> metadata) {
-        return new NotificationEvent(eventType, projectId, Map.copyOf(metadata), Instant.now());
+    public static NotificationMessage of(EventType eventType, String projectId, Map<String, String> metadata) {
+        return new NotificationMessage(eventType, projectId, Map.copyOf(metadata), Instant.now());
     }
 
     /**
@@ -30,9 +30,9 @@ public class NotificationEvent {
      * Nothing reads {@code getTimestamp()} today, which is precisely why such a substitution would go
      * unnoticed until something did.
      */
-    public static NotificationEvent of(EventType eventType, String projectId, Map<String, String> metadata,
+    public static NotificationMessage of(EventType eventType, String projectId, Map<String, String> metadata,
                                        Instant timestamp) {
-        return new NotificationEvent(eventType, projectId, Map.copyOf(metadata), timestamp);
+        return new NotificationMessage(eventType, projectId, Map.copyOf(metadata), timestamp);
     }
 
     public EventType getEventType() {
@@ -56,7 +56,7 @@ public class NotificationEvent {
      * events describing the same occurrence are the same event; the timestamp is incidental metadata
      * about when the envelope was built, not part of its identity.
      *
-     * <p>Added because a {@code NotificationEvent} reconstructed from a {@code Signal} (see {@code
+     * <p>Added because a {@code NotificationMessage} reconstructed from a {@code Signal} (see {@code
      * NotificationSignalMapper}) is necessarily a new instance, and this class previously had only
      * identity equality -- which consumer tests rely on via Mockito's equals-based argument matching.
      * Note the mapper does round-trip {@code timestamp} faithfully, so excluding it here is a
@@ -65,7 +65,7 @@ public class NotificationEvent {
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof NotificationEvent other)) return false;
+        if (!(o instanceof NotificationMessage other)) return false;
         return eventType == other.eventType
                 && Objects.equals(projectId, other.projectId)
                 && Objects.equals(metadata, other.metadata);

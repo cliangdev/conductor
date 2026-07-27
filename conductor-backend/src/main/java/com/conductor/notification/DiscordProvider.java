@@ -54,7 +54,7 @@ public class DiscordProvider implements NotificationProvider {
     }
 
     @Override
-    public String format(NotificationEvent event) {
+    public String format(NotificationMessage event) {
         Map<String, String> meta = event.getMetadata();
         String workItemId = meta.getOrDefault("workItemId", "");
         String workItemTitle = meta.getOrDefault("workItemTitle", workItemId);

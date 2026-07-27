@@ -2,10 +2,11 @@ package com.conductor.notification.signal;
 
 import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDeliveryService;
-import com.conductor.notification.NotificationEvent;
+import com.conductor.notification.NotificationMessage;
 import com.conductor.signal.FailureMode;
 import com.conductor.signal.Signal;
 import com.conductor.signal.SignalDispatchOrder;
+import com.conductor.signal.SignalTypes;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -27,7 +28,7 @@ class NotificationSignalSinkTest {
     private final NotificationSignalMapper mapper = new NotificationSignalMapper();
 
     private Signal signal() {
-        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+        NotificationMessage event = NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 Map.of("workItemId", "wi-1"));
         return mapper.toSignal(event);
     }
@@ -44,11 +45,23 @@ class NotificationSignalSinkTest {
         assertThat(sink.failureMode()).isEqualTo(FailureMode.PROPAGATE);
     }
 
+    /**
+     * Interested in every type it can EXPRESS as a {@code NotificationMessage}, and nothing else.
+     * Because this sink is {@code PROPAGATE}, claiming a type the mapper can't translate would make
+     * {@code toNotificationEvent}'s throw abort the whole fan-out -- so an unmapped connector signal
+     * like {@code github.pull_request_merged} would silently stop knowledge ingestion and work-item
+     * completion from running at all. Pinned end-to-end by
+     * {@code SignalFanOutCharacterizationTest#unclaimedSignalTypesFanOutToNothing}.
+     */
     @Test
-    void interestedInEveryType() {
+    void interestedOnlyInTypesThatMapToAnEventType() {
         NotificationSignalSink sink = new NotificationSignalSink(deliveryService, mapper);
-        assertThat(sink.interestedIn("anything")).isTrue();
-        assertThat(sink.interestedIn("conductor.work_item.status_changed")).isTrue();
+
+        assertThat(sink.interestedIn(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED)).isTrue();
+        assertThat(sink.interestedIn(SignalTypes.GITHUB_PULL_REQUEST)).isTrue();
+
+        assertThat(sink.interestedIn(SignalTypes.GITHUB_PULL_REQUEST_MERGED)).isFalse();
+        assertThat(sink.interestedIn("some.connector.defined.type")).isFalse();
     }
 
     @Test
@@ -58,7 +71,7 @@ class NotificationSignalSinkTest {
 
         sink.onSignal(signal);
 
-        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
+        ArgumentCaptor<NotificationMessage> captor = ArgumentCaptor.forClass(NotificationMessage.class);
         verify(deliveryService).deliver(captor.capture());
         assertThat(captor.getValue().getEventType()).isEqualTo(EventType.WORK_ITEM_STATUS_CHANGED);
         assertThat(captor.getValue().getProjectId()).isEqualTo(PROJECT_ID);

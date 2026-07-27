@@ -2,9 +2,10 @@ package com.conductor.service;
 
 import com.conductor.entity.Project;
 import com.conductor.entity.WorkItem;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalOrigin;
+import com.conductor.signal.SignalTypes;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.conductor.workflow.signal.LifecycleSignalSubscriber;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Method;
 
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Map;
@@ -84,21 +86,25 @@ class LifecycleTriggerDispatcherTest {
                 WorkItemWorkflowService.TRIGGER_STATUS_CHANGED, null);
     }
 
-    private NotificationEvent statusChangedEvent() {
-        return NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+    private Signal signalOf(String type, Map<String, Object> payload) {
+        return Signal.of(type, PROJECT_ID, null, Instant.now(), payload, new SignalOrigin("test", null));
+    }
+
+    private Signal statusChangedEvent() {
+        return signalOf(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED,
                 Map.of("workItemId", WORK_ITEM_ID, "workItemTitle", "T"));
     }
 
     @Test
     void ignoresNonStatusChangedEvents() {
-        dispatcher.onConductorEvent(NotificationEvent.of(EventType.COMMENT_ADDED, PROJECT_ID,
+        dispatcher.onConductorEvent(signalOf(SignalTypes.CONDUCTOR_WORK_ITEM_COMMENT_ADDED,
                 Map.of("workItemId", WORK_ITEM_ID)));
         verify(workItemRepository, never()).findById(any());
     }
 
     @Test
     void noopWhenEventCarriesNoWorkItemId() {
-        dispatcher.onConductorEvent(NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+        dispatcher.onConductorEvent(signalOf(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED,
                 Map.of("workItemTitle", "T")));
         verify(workItemRepository, never()).findById(any());
     }
@@ -165,27 +171,28 @@ class LifecycleTriggerDispatcherTest {
 
     /**
      * {@code LifecycleTriggerDispatcher} is deliberately NOT {@code @Transactional} — it is only ever
-     * invoked from {@code NotificationDispatcher} during a status change, i.e. already inside the
-     * triggering request's own transaction ({@code WorkItemService.patchWorkItem}/{@code
-     * completeFromPullRequest}), whose cascade operations it joins. Were this class or its
-     * {@code onConductorEvent} method annotated {@code @Transactional(REQUIRED)}, a cascade exception
-     * would be caught by Spring's transaction interceptor and mark the shared (outer) transaction
-     * rollback-only — silently failing the user's original status change at commit, even though
-     * {@code NotificationDispatcher}'s own try/catch around this call looks like it isolated the
-     * failure. Without a boundary here, that isolation is real: the try/catch in
-     * {@code NotificationDispatcher.dispatch} genuinely protects the triggering request.
+     * invoked (via {@code LifecycleSignalSubscriber}) from inside {@code InProcessSignalBus.publish}
+     * during a status change, i.e. already inside the triggering request's own transaction ({@code
+     * WorkItemService.patchWorkItem}/{@code completeFromPullRequest}), whose cascade operations it
+     * joins. Were this class or its {@code onConductorEvent} method annotated {@code
+     * @Transactional(REQUIRED)}, a cascade exception would be caught by Spring's transaction
+     * interceptor and mark the shared (outer) transaction rollback-only — silently failing the user's
+     * original status change at commit, even though {@code InProcessSignalBus}'s SWALLOW handling
+     * around this call looks like it isolated the failure. Without a boundary here, that isolation is
+     * real: the try/catch in {@code InProcessSignalBus.publish} genuinely protects the triggering
+     * request.
      *
-     * <p>Also asserts {@link LifecycleSignalSubscriber} (A3's SignalBus wrapper around this class) —
-     * the same rationale applies one layer up: {@code InProcessSignalBus.publish} is invoked from
-     * inside the same caller transaction, so a {@code @Transactional} boundary there would have the
-     * identical rollback-only failure mode.
+     * <p>Also asserts {@link LifecycleSignalSubscriber} (the {@code SignalBus} wrapper around this
+     * class) — the same rationale applies one layer up: {@code InProcessSignalBus.publish} is invoked
+     * from inside the same caller transaction, so a {@code @Transactional} boundary there would have
+     * the identical rollback-only failure mode.
      */
     @Test
     void isDeliberatelyNotTransactional() throws NoSuchMethodException {
         assertThat(LifecycleTriggerDispatcher.class.isAnnotationPresent(Transactional.class)).isFalse();
 
         Method onConductorEvent =
-                LifecycleTriggerDispatcher.class.getDeclaredMethod("onConductorEvent", NotificationEvent.class);
+                LifecycleTriggerDispatcher.class.getDeclaredMethod("onConductorEvent", Signal.class);
         assertThat(onConductorEvent.isAnnotationPresent(Transactional.class)).isFalse();
 
         assertThat(LifecycleSignalSubscriber.class.isAnnotationPresent(Transactional.class)).isFalse();
@@ -205,7 +212,8 @@ class LifecycleTriggerDispatcherTest {
                 .when(workItemService).publishStatusChanged(any(), any(), any(), any(), any());
 
         // The first call throws (propagates out of onConductorEvent — no try/catch inside this class
-        // itself; NotificationDispatcher is what catches it in production).
+        // itself; LifecycleSignalSubscriber.onSignal (and InProcessSignalBus's SWALLOW handling) is
+        // what catches it in production).
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> dispatcher.onConductorEvent(statusChangedEvent()))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("boom mid-cascade");
@@ -227,7 +235,7 @@ class LifecycleTriggerDispatcherTest {
                 })
                 .thenReturn(Optional.empty());
 
-        NotificationEvent otherEvent = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+        Signal otherEvent = signalOf(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED,
                 Map.of("workItemId", "wi-2", "workItemTitle", "Other"));
         dispatcher.onConductorEvent(otherEvent);
 

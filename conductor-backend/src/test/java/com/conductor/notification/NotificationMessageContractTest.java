@@ -9,10 +9,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Pins the construction and mutability contract of {@link NotificationEvent}, and freezes the exact
+ * Pins the construction and mutability contract of {@link NotificationMessage}, and freezes the exact
  * set of {@link EventType} enum names.
  */
-class NotificationEventContractTest {
+class NotificationMessageContractTest {
 
     private static final String PROJECT_ID = "proj-1";
 
@@ -21,7 +21,7 @@ class NotificationEventContractTest {
         Map<String, String> metadata = new HashMap<>();
         metadata.put("workItemId", null);
 
-        assertThatThrownBy(() -> NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, metadata))
+        assertThatThrownBy(() -> NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, metadata))
                 .isInstanceOf(NullPointerException.class);
     }
 
@@ -30,7 +30,7 @@ class NotificationEventContractTest {
         Map<String, String> metadata = new HashMap<>();
         metadata.put(null, "value");
 
-        assertThatThrownBy(() -> NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, metadata))
+        assertThatThrownBy(() -> NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, metadata))
                 .isInstanceOf(NullPointerException.class);
     }
 
@@ -39,7 +39,7 @@ class NotificationEventContractTest {
         Map<String, String> source = new HashMap<>();
         source.put("workItemId", "wi-1");
 
-        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, source);
+        NotificationMessage event = NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, source);
         source.put("workItemId", "mutated-after-the-fact");
         source.put("extraKey", "should-not-appear");
 
@@ -49,7 +49,7 @@ class NotificationEventContractTest {
 
     @Test
     void metadataIsUnmodifiable() {
-        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+        NotificationMessage event = NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 Map.of("workItemId", "wi-1"));
 
         assertThatThrownBy(() -> event.getMetadata().put("x", "y"))
@@ -58,11 +58,11 @@ class NotificationEventContractTest {
 
     @Test
     void equalsAndHashCodeIgnoreTimestampButCompareTheRest() {
-        NotificationEvent first = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+        NotificationMessage first = NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 Map.of("workItemId", "wi-1"));
         // A second, independently-constructed instance -- Instant.now() may or may not differ by the
         // clock's resolution, which is exactly the point: equality must not depend on it either way.
-        NotificationEvent second = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+        NotificationMessage second = NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 Map.of("workItemId", "wi-1"));
 
         assertThat(first).isNotSameAs(second);
@@ -72,15 +72,15 @@ class NotificationEventContractTest {
 
     @Test
     void equalsDistinguishesByEventTypeProjectIdOrMetadata() {
-        NotificationEvent base = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+        NotificationMessage base = NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
                 Map.of("workItemId", "wi-1"));
 
         assertThat(base).isNotEqualTo(
-                NotificationEvent.of(EventType.COMMENT_ADDED, PROJECT_ID, Map.of("workItemId", "wi-1")));
+                NotificationMessage.of(EventType.COMMENT_ADDED, PROJECT_ID, Map.of("workItemId", "wi-1")));
         assertThat(base).isNotEqualTo(
-                NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, "other-project", Map.of("workItemId", "wi-1")));
+                NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, "other-project", Map.of("workItemId", "wi-1")));
         assertThat(base).isNotEqualTo(
-                NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, Map.of("workItemId", "wi-2")));
+                NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, Map.of("workItemId", "wi-2")));
     }
 
     /**

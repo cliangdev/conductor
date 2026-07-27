@@ -7,14 +7,15 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalOrigin;
+import com.conductor.signal.SignalTypes;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import jakarta.persistence.EntityNotFoundException;
@@ -23,6 +24,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -41,7 +43,7 @@ public class WorkItemService {
     private final ProjectRepository projectRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
-    private final NotificationDispatcher notificationDispatcher;
+    private final SignalBus signalBus;
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
     private final WorkItemWorkflowService workItemWorkflowService;
@@ -52,7 +54,7 @@ public class WorkItemService {
             ProjectRepository projectRepository,
             ProjectSecurityService projectSecurityService,
             ProjectMemberRepository projectMemberRepository,
-            NotificationDispatcher notificationDispatcher,
+            SignalBus signalBus,
             CommentRepository commentRepository,
             UserRepository userRepository,
             WorkItemWorkflowService workItemWorkflowService,
@@ -61,7 +63,7 @@ public class WorkItemService {
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
-        this.notificationDispatcher = notificationDispatcher;
+        this.signalBus = signalBus;
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
         this.workItemWorkflowService = workItemWorkflowService;
@@ -278,7 +280,7 @@ public class WorkItemService {
     public void publishStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,
                                      String prUrl) {
         Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
-        Map<String, String> meta = new HashMap<>();
+        Map<String, Object> meta = new HashMap<>();
         meta.put("workItemId", workItem.getId());
         meta.put("workItemTitle", workItem.getTitle());
         meta.put("projectId", projectId);
@@ -301,7 +303,8 @@ public class WorkItemService {
         if (prUrl != null && !prUrl.isBlank()) {
             meta.put("prUrl", prUrl);
         }
-        notificationDispatcher.dispatch(NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, projectId, meta));
+        signalBus.publish(Signal.of(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED, projectId, workItem.getId(),
+                Instant.now(), meta, new SignalOrigin("work_item", workItem.getId())));
     }
 
     @Transactional

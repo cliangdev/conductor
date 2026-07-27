@@ -22,9 +22,11 @@ import static org.mockito.Mockito.when;
 /**
  * Chat-delivery gating for {@link NotificationDeliveryService}. These six cases moved here verbatim
  * from the old {@code NotificationDispatcherTest} when delivery was extracted out of the dispatcher;
- * the one fan-out case that lived alongside them (knowledge tap failures being swallowed) is covered
- * by {@link NotificationDispatcherFanOutCharacterizationTest} instead, which exercises all four
- * consumers rather than just one.
+ * the sibling fan-out/ordering characterization (workflow triggers, lifecycle cascade, knowledge
+ * ingestion all running off the same {@code SignalBus} publish) is covered per-subscriber by {@code
+ * WorkflowAutomationSignalSubscriberTest}, {@code LifecycleSignalSubscriberTest}, {@code
+ * KnowledgeSignalSinkTest}, and {@code NotificationSignalSinkTest}, plus the real end-to-end wiring in
+ * {@code SignalBusWiringContextTest}.
  */
 @ExtendWith(MockitoExtension.class)
 class NotificationDeliveryServiceTest {
@@ -86,7 +88,7 @@ class NotificationDeliveryServiceTest {
         when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
                 .thenReturn(Optional.of(config));
 
-        NotificationEvent event = eventOf(EventType.WORK_ITEM_STATUS_CHANGED);
+        NotificationMessage event = eventOf(EventType.WORK_ITEM_STATUS_CHANGED);
         String formatted = "{\"embeds\":[{\"title\":\"Test\"}]}";
         when(discordProvider.format(event)).thenReturn(formatted);
 
@@ -104,7 +106,7 @@ class NotificationDeliveryServiceTest {
         when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.MEMBERS))
                 .thenReturn(Optional.of(config));
 
-        NotificationEvent event = NotificationEvent.of(EventType.MEMBER_JOINED, PROJECT_ID,
+        NotificationMessage event = NotificationMessage.of(EventType.MEMBER_JOINED, PROJECT_ID,
                 Map.of("memberName", "Alice"));
         when(discordProvider.format(event)).thenReturn("{}");
 
@@ -120,14 +122,14 @@ class NotificationDeliveryServiceTest {
         when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
                 .thenReturn(Optional.of(config));
 
-        NotificationEvent event = eventOf(EventType.REVIEW_SUBMITTED);
+        NotificationMessage event = eventOf(EventType.REVIEW_SUBMITTED);
         when(discordProvider.format(event)).thenThrow(new RuntimeException("format failed"));
 
         assertThatNoException().isThrownBy(() -> deliveryService.deliver(event));
     }
 
-    private NotificationEvent eventOf(EventType type) {
-        return NotificationEvent.of(type, PROJECT_ID, Map.of("workItemId", ISSUE_ID));
+    private NotificationMessage eventOf(EventType type) {
+        return NotificationMessage.of(type, PROJECT_ID, Map.of("workItemId", ISSUE_ID));
     }
 
     private NotificationGroupConfig groupConfig(ChannelGroup group, String webhookUrl,

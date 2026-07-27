@@ -9,25 +9,27 @@ import org.springframework.stereotype.Service;
 import java.util.Optional;
 
 /**
- * Delivers a {@link NotificationEvent} to a project's configured chat channel. This is *only* the
- * outbound-message concern -- extracted verbatim from {@code NotificationDispatcher.sendNotification}
- * so that the dispatcher is left holding nothing but event fan-out, which is what the signal bus is
- * replacing.
+ * Delivers a {@link NotificationMessage} to a project's configured chat channel. This is *only* the
+ * outbound-message concern, called both by {@code NotificationSignalSink} (for real signals flowing
+ * through the {@code SignalBus}) and directly by {@code NotificationChannelService}/{@code
+ * NotificationGroupService} (for their admin "send a test notification" buttons, which deliberately do
+ * NOT touch the bus -- see those classes' javadoc).
  *
  * <h2>The lookup is deliberately unguarded</h2>
  * {@link #deliver} wraps only {@code provider.format}/{@code provider.send} in a try/catch. Everything
  * before that -- the {@link ChannelGroup} resolution and the {@code groupConfigRepository} read -- is
  * bare, so a DB failure there propagates to the caller rather than being swallowed.
  *
- * <p>That is not an oversight, and it must not be "tidied up" into a catch-all: today
- * {@code NotificationDispatcher} calls this first and outside its own try/catch blocks, so a failing
- * config lookup escapes and prevents the downstream consumers (workflow triggers, lifecycle cascade,
- * knowledge ingestion) from running at all. On the GitHub webhook path that escape is what marks the
- * {@code webhook_event} FAILED and gets it retried, so the behaviour is load-bearing rather than
- * incidental. It is pinned by
- * {@code NotificationDispatcherFanOutCharacterizationTest#notificationLookupFailurePropagatesAndShortCircuitsAllConsumers},
- * and it is why the corresponding signal subscriber uses {@code FailureMode.PROPAGATE} while the
- * others swallow.
+ * <p>That is not an oversight, and it must not be "tidied up" into a catch-all: on the {@code
+ * SignalBus} path, {@code NotificationSignalSink} runs first (order {@code NOTIFICATION}) with {@code
+ * FailureMode.PROPAGATE}, so a failing config lookup escapes {@code InProcessSignalBus.publish} entirely
+ * and prevents the downstream subscribers (workflow triggers, lifecycle cascade, knowledge ingestion)
+ * from running at all for that signal. On the GitHub webhook path that escape is what marks the {@code
+ * webhook_event} FAILED and gets it retried, so the behaviour is load-bearing rather than incidental.
+ * It is pinned by {@code InProcessSignalBusTest#propagateFailureRethrowsAndStopsLaterSubscribers} (the
+ * generic PROPAGATE mechanism) together with {@code
+ * NotificationSignalSinkTest#aFailingDeliverEscapesOnSignalUnguarded} (that this class's failure is what
+ * escapes).
  */
 @Service
 public class NotificationDeliveryService {
@@ -49,7 +51,7 @@ public class NotificationDeliveryService {
      * channel group ({@code ASSET_ADDED}, {@code WORKFLOW_AUTO_PAUSED}, {@code GITHUB_PULL_REQUEST}) --
      * those flow through the dispatcher for their side effects only, never as a chat message.
      */
-    public void deliver(NotificationEvent event) {
+    public void deliver(NotificationMessage event) {
         Optional<ChannelGroup> groupOpt = ChannelGroup.forEventType(event.getEventType());
         if (groupOpt.isEmpty()) {
             log.debug("No channel group defined for event type: {}", event.getEventType());

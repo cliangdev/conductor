@@ -1,22 +1,21 @@
 package com.conductor.workflow.signal;
 
-import com.conductor.notification.NotificationEvent;
-import com.conductor.notification.signal.NotificationSignalMapper;
 import com.conductor.signal.Signal;
 import com.conductor.signal.SignalDispatchOrder;
 import com.conductor.signal.SignalSubscriber;
+import com.conductor.signal.SignalTypes;
 import com.conductor.workflow.WorkflowTriggerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * Replaces the two {@code workflowTriggerService.onConductorEvent}/{@code onGitHubPullRequest} calls in
- * today's {@code NotificationDispatcher.dispatch} with a single {@link SignalSubscriber} at {@link
- * SignalDispatchOrder#WORKFLOW_AUTOMATION}. Translates the {@link Signal} back into a {@link
- * NotificationEvent} and calls both existing, UNMODIFIED methods on {@link WorkflowTriggerService} --
- * in the same order, each wrapped in its own try/catch with the same log messages as today, so a
- * failure in one does not prevent the other from running.
+ * A {@link SignalSubscriber} at {@link SignalDispatchOrder#WORKFLOW_AUTOMATION} that calls both {@link
+ * WorkflowTriggerService#onConductorEvent(Signal)} and {@link
+ * WorkflowTriggerService#onGitHubPullRequest(Signal)} -- in that order, each wrapped in its own
+ * try/catch, so a failure in one does not prevent the other from running. Interested in exactly the two
+ * signal types either method acts on; each method also re-checks its own type as defense-in-depth (see
+ * their javadoc).
  */
 @Component
 public class WorkflowAutomationSignalSubscriber implements SignalSubscriber {
@@ -24,12 +23,9 @@ public class WorkflowAutomationSignalSubscriber implements SignalSubscriber {
     private static final Logger log = LoggerFactory.getLogger(WorkflowAutomationSignalSubscriber.class);
 
     private final WorkflowTriggerService workflowTriggerService;
-    private final NotificationSignalMapper mapper;
 
-    public WorkflowAutomationSignalSubscriber(WorkflowTriggerService workflowTriggerService,
-                                               NotificationSignalMapper mapper) {
+    public WorkflowAutomationSignalSubscriber(WorkflowTriggerService workflowTriggerService) {
         this.workflowTriggerService = workflowTriggerService;
-        this.mapper = mapper;
     }
 
     @Override
@@ -39,25 +35,22 @@ public class WorkflowAutomationSignalSubscriber implements SignalSubscriber {
 
     @Override
     public boolean interestedIn(String signalType) {
-        // A6 will narrow this: today both onConductorEvent and onGitHubPullRequest are called
-        // unconditionally for every event type, each doing its own internal EventType check.
-        return true;
+        return SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED.equals(signalType)
+                || SignalTypes.GITHUB_PULL_REQUEST.equals(signalType);
     }
 
     @Override
     public void onSignal(Signal signal) {
-        NotificationEvent event = mapper.toNotificationEvent(signal);
-
         try {
-            workflowTriggerService.onConductorEvent(event);
+            workflowTriggerService.onConductorEvent(signal);
         } catch (Exception e) {
-            log.warn("Workflow trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
+            log.warn("Workflow trigger evaluation failed for signal {}: {}", signal.type(), e.getMessage());
         }
 
         try {
-            workflowTriggerService.onGitHubPullRequest(event);
+            workflowTriggerService.onGitHubPullRequest(signal);
         } catch (Exception e) {
-            log.warn("GitHub PR workflow trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
+            log.warn("GitHub PR workflow trigger evaluation failed for signal {}: {}", signal.type(), e.getMessage());
         }
     }
 
