@@ -1,8 +1,6 @@
 package com.conductor.notification;
 
-import com.conductor.entity.NotificationGroupConfig;
 import com.conductor.knowledge.KnowledgeEventTap;
-import com.conductor.repository.NotificationGroupConfigRepository;
 import com.conductor.service.LifecycleTriggerDispatcher;
 import com.conductor.workflow.WorkflowTriggerService;
 import org.slf4j.Logger;
@@ -11,15 +9,20 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
-import java.util.Optional;
-
+/**
+ * In-process event fan-out. Despite the name this is the event bus, not a notifier -- chat delivery is
+ * one of five things it does, and now lives in {@link NotificationDeliveryService}.
+ *
+ * <p>Note the asymmetry in {@link #dispatch}: delivery runs first and is NOT wrapped in a try/catch,
+ * while the four downstream consumers each are. A failing notification-config lookup therefore escapes
+ * and short-circuits the rest. See {@link NotificationDeliveryService} for why that is load-bearing.
+ */
 @Service
 public class NotificationDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(NotificationDispatcher.class);
 
-    private final NotificationGroupConfigRepository groupConfigRepository;
-    private final DiscordProvider discordProvider;
+    private final NotificationDeliveryService deliveryService;
 
     @Lazy
     @Autowired
@@ -33,14 +36,12 @@ public class NotificationDispatcher {
     @Autowired
     private KnowledgeEventTap knowledgeEventTap;
 
-    public NotificationDispatcher(NotificationGroupConfigRepository groupConfigRepository,
-                                  DiscordProvider discordProvider) {
-        this.groupConfigRepository = groupConfigRepository;
-        this.discordProvider = discordProvider;
+    public NotificationDispatcher(NotificationDeliveryService deliveryService) {
+        this.deliveryService = deliveryService;
     }
 
     public void dispatch(NotificationEvent event) {
-        sendNotification(event);
+        deliveryService.deliver(event);
 
         try {
             workflowTriggerService.onConductorEvent(event);
@@ -65,52 +66,5 @@ public class NotificationDispatcher {
         } catch (Exception e) {
             log.warn("Knowledge ingestion tap failed for event {}: {}", event.getEventType(), e.getMessage());
         }
-    }
-
-    private void sendNotification(NotificationEvent event) {
-        Optional<ChannelGroup> groupOpt = ChannelGroup.forEventType(event.getEventType());
-        if (groupOpt.isEmpty()) {
-            log.debug("No channel group defined for event type: {}", event.getEventType());
-            return;
-        }
-
-        ChannelGroup group = groupOpt.get();
-
-        Optional<NotificationGroupConfig> configOpt =
-                groupConfigRepository.findByProjectIdAndChannelGroup(event.getProjectId(), group);
-        if (configOpt.isEmpty()) {
-            return;
-        }
-
-        NotificationGroupConfig config = configOpt.get();
-
-        if (!config.isEnabled()) {
-            return;
-        }
-
-        if (!config.getEnabledEventTypes().contains(event.getEventType().name())) {
-            return;
-        }
-
-        NotificationProvider provider = resolveProvider(config.getProvider());
-        if (provider == null) {
-            log.warn("No provider implementation for: {}", config.getProvider());
-            return;
-        }
-
-        try {
-            String formatted = provider.format(event);
-            provider.send(config.getWebhookUrl(), formatted);
-        } catch (Exception e) {
-            log.warn("Failed to dispatch {} notification for project {}: {}",
-                    event.getEventType(), event.getProjectId(), e.getMessage());
-        }
-    }
-
-    private NotificationProvider resolveProvider(ProviderType providerType) {
-        if (providerType == ProviderType.DISCORD) {
-            return discordProvider;
-        }
-        return null;
     }
 }

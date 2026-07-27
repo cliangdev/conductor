@@ -55,7 +55,11 @@ class NotificationDispatcherFanOutCharacterizationTest {
 
     @BeforeEach
     void setUp() {
-        dispatcher = new NotificationDispatcher(groupConfigRepository, discordProvider);
+        // A REAL delivery service over the mocked repository/provider, not a mock of it: these tests
+        // assert that a failing config *lookup* escapes dispatch(), which is only meaningful if the
+        // real (unguarded) lookup is in the path.
+        dispatcher = new NotificationDispatcher(
+                new NotificationDeliveryService(groupConfigRepository, discordProvider));
         // workflowTriggerService / lifecycleTriggerDispatcher / knowledgeEventTap are @Lazy @Autowired
         // field injections, not constructor params -- wire them by field name, matching the existing
         // NotificationDispatcherTest precedent.
