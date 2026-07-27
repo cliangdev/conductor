@@ -268,3 +268,56 @@ export function createKnowledgeDomain(
 ): Promise<KnowledgeDomainDto> {
   return apiPost<KnowledgeDomainDto>(`/api/v1/projects/${projectId}/knowledge/domains`, request, token)
 }
+
+// ── Pipeline (issue #342) ────────────────────────────────────────────────────
+// Read-only observability over the source-to-wiki-page pipeline: a live per-stage health snapshot,
+// and a per-item trace walk. See docs/knowledge.md#pipeline--tracing.
+
+export type PipelineStage = 'WEBHOOKS' | 'FEEDS' | 'DIGESTS' | 'INBOX' | 'LIBRARIAN_RUNS' | 'PAGES_WRITTEN'
+
+export interface PipelineStageHealth {
+  stage: PipelineStage
+  label: string
+  /** Status-keyed counts; bucket names vary per stage (e.g. DIGESTS always has a `skipped` key). */
+  counts: Record<string, number>
+}
+
+export interface PipelineHealthDto {
+  stages: PipelineStageHealth[]
+}
+
+export function getPipelineHealth(projectId: string, token: string): Promise<PipelineHealthDto> {
+  return apiGet<PipelineHealthDto>(`/api/v1/projects/${projectId}/knowledge/pipeline/health`, token)
+}
+
+export interface PipelineTraceNode {
+  stage: PipelineStage
+  id: string
+  status?: string | null
+  occurredAt?: string | null
+  label?: string | null
+  /** Frontend-routable path, or null/absent if this node isn't linkable. */
+  link?: string | null
+  /** True when the underlying record no longer exists (purged by retention) — a terminal placeholder. */
+  degraded: boolean
+}
+
+export interface PipelineTraceDto {
+  nodes: PipelineTraceNode[]
+}
+
+/** Exactly one anchor identifies the item to trace. */
+export type PipelineTraceAnchor =
+  | { pageId: string }
+  | { sourceId: string }
+  | { feedId: string }
+  | { webhookEventId: string }
+
+export function getPipelineTrace(
+  projectId: string,
+  anchor: PipelineTraceAnchor,
+  token: string,
+): Promise<PipelineTraceDto> {
+  const params = new URLSearchParams(anchor as Record<string, string>)
+  return apiGet<PipelineTraceDto>(`/api/v1/projects/${projectId}/knowledge/pipeline/trace?${params.toString()}`, token)
+}

@@ -5,7 +5,14 @@ import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigat
 import Link from 'next/link'
 import { HistoryIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getKnowledgePages, getKnowledgeSourceCounts, KNOWLEDGE_LIBRARIAN_SLUG } from '@/lib/knowledge-api'
+import {
+  getKnowledgePages,
+  getKnowledgeSourceCounts,
+  getPipelineHealth,
+  KNOWLEDGE_LIBRARIAN_SLUG,
+  type PipelineStage,
+  type PipelineStageHealth,
+} from '@/lib/knowledge-api'
 import { listWorkflows, listWorkflowRuns } from '@/lib/workflows'
 import type { WorkflowRunDto } from '@/types/workflow'
 import { apiErrorMessage } from '@/lib/api'
@@ -18,6 +25,7 @@ import { StatusBadge } from '@/components/ui/status-badge'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { KnowledgeInbox } from '@/components/knowledge/KnowledgeInbox'
 import { KnowledgeAttentionBanner } from '@/components/knowledge/KnowledgeAttentionBanner'
+import { PipelineFlowDiagram } from '@/components/knowledge/PipelineFlowDiagram'
 import { timeAgo, formatElapsed } from '@/lib/format'
 
 export const dynamic = 'force-dynamic'
@@ -134,6 +142,63 @@ function RunsTab({ projectId, token }: { projectId: string; token: string }) {
   )
 }
 
+/** Maps a clicked stage node to whichever existing tab shows that stage's detail. FEEDS/DIGESTS have
+ *  no Activity-tab home yet (feed health lives on the connector page, digests aren't surfaced here) —
+ *  a no-op click for those, rather than inventing a new destination for this v1 wire-up. */
+function tabForStage(stage: PipelineStage): string | null {
+  switch (stage) {
+    case 'WEBHOOKS':
+    case 'INBOX':
+      return 'inbox'
+    case 'LIBRARIAN_RUNS':
+      return 'runs'
+    case 'PAGES_WRITTEN':
+      return 'changes'
+    case 'FEEDS':
+    case 'DIGESTS':
+      return null
+  }
+}
+
+function PipelineTab({
+  projectId,
+  token,
+  onStageClick,
+}: {
+  projectId: string
+  token: string
+  onStageClick: (stage: PipelineStage) => void
+}) {
+  const [stages, setStages] = useState<PipelineStageHealth[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getPipelineHealth(projectId, token)
+      .then((dto) => {
+        if (!cancelled) setStages(dto.stages)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(apiErrorMessage(err, 'Failed to load pipeline health'))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, token])
+
+  if (error) return <Alert variant="destructive">{error}</Alert>
+  if (!stages) return <Skeleton className="h-[180px] w-full" />
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-foreground-subtle">
+        Click a stage to jump to its detail. A quiet stage (e.g. skipped digests) is working as intended, not broken.
+      </p>
+      <PipelineFlowDiagram stages={stages} onStageClick={onStageClick} />
+    </div>
+  )
+}
+
 function KnowledgeActivityPageContent() {
   const { projectId } = useParams<{ projectId: string }>()
   const { accessToken } = useAuth()
@@ -187,6 +252,7 @@ function KnowledgeActivityPageContent() {
       ),
     },
     { value: 'runs', label: 'Runs' },
+    { value: 'pipeline', label: 'Pipeline' },
   ]
 
   return (
@@ -214,6 +280,16 @@ function KnowledgeActivityPageContent() {
           </div>
         )}
         {accessToken && tab === 'runs' && <RunsTab projectId={projectId} token={accessToken} />}
+        {accessToken && tab === 'pipeline' && (
+          <PipelineTab
+            projectId={projectId}
+            token={accessToken}
+            onStageClick={(stage) => {
+              const next = tabForStage(stage)
+              if (next) setTab(next)
+            }}
+          />
+        )}
       </div>
     </div>
   )

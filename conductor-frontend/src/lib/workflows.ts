@@ -339,6 +339,17 @@ const WELL_KNOWN_HUES: Record<string, StatusHue> = {
   // run "effectively dead" (the self-hosted daemon never claimed it); it never produced a result,
   // so it reads as a failure, not a benign skip.
   localpickuptimeout: 'red',
+  // Pipeline stage statuses (issue #342) — WebhookEventStatus / KnowledgeSourceStatus /
+  // ConnectorFeedStatus / DigestStatus all reuse these same words for analogous meanings, so one
+  // set of entries here covers all four rather than a per-stage color map.
+  processing: 'blue',
+  processed: 'green',
+  dead: 'red',
+  active: 'green',
+  paused: 'gray',
+  setuprequired: 'amber',
+  narrating: 'blue',
+  submitted: 'green',
 }
 
 // Human labels for status ids whose raw form reads as schema jargon rather than something a user
