@@ -23,6 +23,8 @@ import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
@@ -40,9 +42,11 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -288,7 +292,7 @@ class GitHubConnectorTest {
 
         connector.handleEvent(new InboundEvent("d8", "pull_request", payload, Map.of()), ctx());
 
-        org.mockito.ArgumentCaptor<NotificationEvent> captor = org.mockito.ArgumentCaptor.forClass(NotificationEvent.class);
+        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(captor.capture());
         NotificationEvent event = captor.getValue();
         assertThat(event.getEventType()).isEqualTo(EventType.GITHUB_PULL_REQUEST);
@@ -328,7 +332,7 @@ class GitHubConnectorTest {
 
         connector.handleEvent(new InboundEvent("d11", "pull_request", payload, Map.of()), ctx());
 
-        org.mockito.ArgumentCaptor<NotificationEvent> captor = org.mockito.ArgumentCaptor.forClass(NotificationEvent.class);
+        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
         verify(notificationDispatcher).dispatch(captor.capture());
         assertThat(captor.getValue().getMetadata())
                 .containsEntry("action", "labeled")
@@ -450,5 +454,119 @@ class GitHubConnectorTest {
                         () -> connector.issueRuntimeCredential(conn, new CredentialRequest(null)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("conn-pat");
+    }
+
+    // --- handleEvent() : characterization of the merge-path ordering, error isolation, and outer
+    //     throw-to-retry contract (see NotificationDispatcher/KnowledgeEventTap characterization tests
+    //     for the sibling event-bus behaviour) ---
+
+    private static final String MERGED_PR_WITH_ISSUE_PAYLOAD =
+            "{\"action\":\"closed\",\"repository\":{\"full_name\":\"x/y\"},"
+            + "\"pull_request\":{\"number\":3,\"merged\":true,\"title\":\"Add feature\","
+            + "\"body\":\"closes conductor/PROJ-1\","
+            + "\"html_url\":\"https://github.com/x/y/pull/3\"}}";
+
+    @Test
+    void mergedWithIssueRef_submitsKnowledgeBeforeCompletingWorkItem() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        connector.handleEvent(new InboundEvent("d14", "pull_request", MERGED_PR_WITH_ISSUE_PAYLOAD, Map.of()), ctx());
+
+        InOrder inOrder = inOrder(knowledgeIngestionService, workItemService);
+        inOrder.verify(knowledgeIngestionService).submit(any());
+        inOrder.verify(workItemService).completeFromPullRequest(PROJECT_ID, "PROJ", 1,
+                "https://github.com/x/y/pull/3");
+    }
+
+    @Test
+    void mergedWithoutIssueRef_stillSubmitsKnowledge_andNeverCallsWorkItemService() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        connector.handleEvent(new InboundEvent("d15", "pull_request", MERGED_PR_PAYLOAD, Map.of()), ctx());
+
+        verify(knowledgeIngestionService).submit(any());
+        verify(workItemService, never()).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void mergedWithKnowledgeDisabled_stillCompletesWorkItem() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(false);
+
+        connector.handleEvent(new InboundEvent("d16", "pull_request", MERGED_PR_WITH_ISSUE_PAYLOAD, Map.of()), ctx());
+
+        verify(knowledgeIngestionService, never()).submit(any());
+        verify(workItemService).completeFromPullRequest(PROJECT_ID, "PROJ", 1,
+                "https://github.com/x/y/pull/3");
+    }
+
+    @Test
+    void knowledgeSubmitThrows_doesNotBlockWorkItemCompletion_andNothingEscapes() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        doThrow(new RuntimeException("ingestion boom")).when(knowledgeIngestionService).submit(any());
+
+        org.assertj.core.api.Assertions.assertThatNoException().isThrownBy(() ->
+                connector.handleEvent(new InboundEvent("d17", "pull_request", MERGED_PR_WITH_ISSUE_PAYLOAD, Map.of()), ctx()));
+
+        verify(workItemService).completeFromPullRequest(PROJECT_ID, "PROJ", 1,
+                "https://github.com/x/y/pull/3");
+    }
+
+    @Test
+    void workItemServiceThrowsRuntimeException_escapesAsRuntimeException() {
+        doThrow(new RuntimeException("db exploded"))
+                .when(workItemService).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        connector.handleEvent(new InboundEvent("d18", "pull_request", MERGED_PR_WITH_ISSUE_PAYLOAD, Map.of()), ctx()))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Failed to process GitHub event");
+    }
+
+    @Test
+    void workItemServiceThrowsEntityNotFound_isSwallowed() {
+        doThrow(new EntityNotFoundException("no such issue"))
+                .when(workItemService).completeFromPullRequest(anyString(), anyString(), anyInt(), anyString());
+
+        org.assertj.core.api.Assertions.assertThatNoException().isThrownBy(() ->
+                connector.handleEvent(new InboundEvent("d19", "pull_request", MERGED_PR_WITH_ISSUE_PAYLOAD, Map.of()), ctx()));
+    }
+
+    @Test
+    void malformedJsonPayload_escapesAsRuntimeException() {
+        InboundEvent event = new InboundEvent("d20", "pull_request", "not json at all", Map.of());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> connector.handleEvent(event, ctx()))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Failed to process GitHub event");
+    }
+
+    @Test
+    void reviewActionDispatchThrows_escapesAsRuntimeException() {
+        doThrow(new RuntimeException("dispatch boom")).when(notificationDispatcher).dispatch(any());
+        String payload = String.format(PR_ACTION_PAYLOAD_TEMPLATE, "synchronize");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        connector.handleEvent(new InboundEvent("d21", "pull_request", payload, Map.of()), ctx()))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Failed to process GitHub event");
+    }
+
+    @Test
+    void mergedPr_neverDispatchesGitHubPullRequestEvent() {
+        connector.handleEvent(new InboundEvent("d22", "pull_request", MERGED_PR_WITH_ISSUE_PAYLOAD, Map.of()), ctx());
+
+        verifyNoInteractions(notificationDispatcher);
+    }
+
+    @Test
+    void labeledWithoutLabelName_omitsTheLabelKey() {
+        String payload = "{\"action\":\"labeled\",\"pull_request\":{\"number\":7,\"merged\":false},"
+                + "\"label\":{}}";
+
+        connector.handleEvent(new InboundEvent("d23", "pull_request", payload, Map.of()), ctx());
+
+        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
+        verify(notificationDispatcher).dispatch(captor.capture());
+        assertThat(captor.getValue().getMetadata()).doesNotContainKey("label");
     }
 }

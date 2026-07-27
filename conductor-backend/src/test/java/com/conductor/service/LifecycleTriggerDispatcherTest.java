@@ -8,6 +8,9 @@ import com.conductor.repository.WorkItemRepository;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.lang.reflect.Method;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -18,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -156,5 +160,67 @@ class LifecycleTriggerDispatcherTest {
         // The nested (guarded) call must not re-load or re-advance: exactly one outer load.
         verify(workItemRepository, times(1)).findById(WORK_ITEM_ID);
         verify(workItemRepository, times(1)).save(workItem);
+    }
+
+    /**
+     * {@code LifecycleTriggerDispatcher} is deliberately NOT {@code @Transactional} — it is only ever
+     * invoked from {@code NotificationDispatcher} during a status change, i.e. already inside the
+     * triggering request's own transaction ({@code WorkItemService.patchWorkItem}/{@code
+     * completeFromPullRequest}), whose cascade operations it joins. Were this class or its
+     * {@code onConductorEvent} method annotated {@code @Transactional(REQUIRED)}, a cascade exception
+     * would be caught by Spring's transaction interceptor and mark the shared (outer) transaction
+     * rollback-only — silently failing the user's original status change at commit, even though
+     * {@code NotificationDispatcher}'s own try/catch around this call looks like it isolated the
+     * failure. Without a boundary here, that isolation is real: the try/catch in
+     * {@code NotificationDispatcher.dispatch} genuinely protects the triggering request.
+     */
+    @Test
+    void isDeliberatelyNotTransactional() throws NoSuchMethodException {
+        assertThat(LifecycleTriggerDispatcher.class.isAnnotationPresent(Transactional.class)).isFalse();
+
+        Method onConductorEvent =
+                LifecycleTriggerDispatcher.class.getDeclaredMethod("onConductorEvent", NotificationEvent.class);
+        assertThat(onConductorEvent.isAnnotationPresent(Transactional.class)).isFalse();
+    }
+
+    @Test
+    void inCascadeGuardIsClearedWhenACascadeHopThrows() {
+        advanceThrough("B");
+        // First invocation (the primary Work Item's hop) throws; later invocations (the independent
+        // Work Item below) succeed normally — isolates "does the guard get cleared" from "does
+        // publishStatusChanged keep failing".
+        doThrow(new RuntimeException("boom mid-cascade"))
+                .doNothing()
+                .when(workItemService).publishStatusChanged(any(), any(), any(), any(), any());
+
+        // The first call throws (propagates out of onConductorEvent — no try/catch inside this class
+        // itself; NotificationDispatcher is what catches it in production).
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> dispatcher.onConductorEvent(statusChangedEvent()))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("boom mid-cascade");
+
+        // A fresh, independent Work Item's cascade must not be blocked by the guard left over from the
+        // failed one — pins that IN_CASCADE.remove() runs in a finally block.
+        WorkItem otherWorkItem = new WorkItem();
+        otherWorkItem.setId("wi-2");
+        Project otherProject = new Project();
+        otherProject.setId(PROJECT_ID);
+        otherWorkItem.setProject(otherProject);
+        otherWorkItem.setCurrentStatus("X");
+        when(workItemRepository.findById("wi-2")).thenReturn(Optional.of(otherWorkItem));
+        when(workItemWorkflowService.applySystemTransition(eq(PROJECT_ID), eq(otherWorkItem),
+                eq(WorkItemWorkflowService.TRIGGER_STATUS_CHANGED)))
+                .thenAnswer(inv -> {
+                    otherWorkItem.setCurrentStatus("Y");
+                    return Optional.of(transitionTo("Y"));
+                })
+                .thenReturn(Optional.empty());
+
+        NotificationEvent otherEvent = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+                Map.of("workItemId", "wi-2", "workItemTitle", "Other"));
+        dispatcher.onConductorEvent(otherEvent);
+
+        assertThat(otherWorkItem.getCurrentStatus()).isEqualTo("Y");
+        verify(workItemRepository, times(1)).save(otherWorkItem);
     }
 }

@@ -92,4 +92,75 @@ class KnowledgeEventTapTest {
         org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
                 () -> tap.onConductorEvent(statusChangedEvent()));
     }
+
+    @Test
+    void dedupKeyFormatIsStable() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        tap.onConductorEvent(statusChangedEvent());
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        assertThat(captor.getValue().dedupKey())
+                .isEqualTo("work-item-status-changed:proj-1:wi-1:IN_PROGRESS->CODE_REVIEW");
+    }
+
+    @Test
+    void payloadJsonIsSortedAndByteStable() {
+        // Pins the TreeMap-based serialization in KnowledgeEventTap#toJson — key order in the JSON
+        // payload is alphabetical regardless of the metadata Map's insertion/iteration order.
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        tap.onConductorEvent(statusChangedEvent());
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        assertThat(captor.getValue().payload()).isEqualTo(
+                "{\"fromStatus\":\"IN_PROGRESS\",\"toStatus\":\"CODE_REVIEW\","
+                + "\"workItemId\":\"wi-1\",\"workItemTitle\":\"Ship the thing\"}");
+    }
+
+    @Test
+    void originKindIsExactlyEventTap() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        tap.onConductorEvent(statusChangedEvent());
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        assertThat(captor.getValue().origin().kind()).isEqualTo("EVENT_TAP");
+        assertThat(captor.getValue().origin().id()).isEqualTo("wi-1");
+    }
+
+    @Test
+    void sourceTypeIsExactly_conductor_work_item_status_changed() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        tap.onConductorEvent(statusChangedEvent());
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        assertThat(captor.getValue().sourceType()).isEqualTo("conductor.work_item.status_changed");
+    }
+
+    /**
+     * Characterizes a known bug: a test-shaped notification (metadata {@code test=true}, no
+     * {@code workItemId}) still flows through this tap and gets submitted to the knowledge inbox with a
+     * synthetic {@code conductor:unknown} ref, because {@code onConductorEvent} only filters on event
+     * type, not on the "is this a real Work Item event" shape. Will be inverted once the test-notification
+     * path stops reusing the {@code WORK_ITEM_STATUS_CHANGED} bus.
+     */
+    @Test
+    void testShapedEventWithNoWorkItemId_currentlyAlsoSubmitsWithUnknownRef() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, Map.of(
+                "test", "true",
+                "description", "Test notification triggered from settings"));
+
+        tap.onConductorEvent(event);
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        assertThat(captor.getValue().sourceRef()).isEqualTo("conductor:unknown");
+    }
 }
