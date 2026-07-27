@@ -154,7 +154,7 @@ public class PipelineTraceService {
 
     private List<PipelineTraceNodeView> traceFromWebhookEvent(String projectId, String webhookEventId) {
         List<PipelineTraceNodeView> nodes = new ArrayList<>();
-        Optional<WebhookEvent> webhookEvent = webhookEventRepository.findById(webhookEventId);
+        Optional<WebhookEvent> webhookEvent = webhookEventRepository.findByIdAndProjectId(webhookEventId, projectId);
         if (webhookEvent.isEmpty()) {
             nodes.add(PipelineTraceNodeView.degradedPlaceholder("WEBHOOKS", webhookEventId));
             return nodes;
@@ -174,11 +174,12 @@ public class PipelineTraceService {
     // ---- shared edges ----
 
     /** Backward: a source's stamped traceId (see D1-D2) to the webhook event that caused it, if any --
-     *  best-effort, takes the earliest match. */
+     *  best-effort, takes the earliest match. Project-scoped (not the unscoped {@code findByTraceId})
+     *  so a source's traceId can never be used to pull a webhook event from another project. */
     private void appendWebhookBackward(List<PipelineTraceNodeView> nodes, KnowledgeSource source) {
         Object traceId = source.getMetadata() != null ? source.getMetadata().get("traceId") : null;
         if (traceId instanceof String traceIdStr) {
-            webhookEventRepository.findByTraceId(traceIdStr).stream()
+            webhookEventRepository.findByTraceIdAndProjectId(traceIdStr, source.getProjectId()).stream()
                     .min(java.util.Comparator.comparing(WebhookEvent::getReceivedAt))
                     .ifPresent(webhookEvent -> nodes.add(webhookNode(webhookEvent)));
         }

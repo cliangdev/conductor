@@ -80,7 +80,7 @@ class PipelineTraceServiceTest {
         webhookEvent.setId("wh-1");
         webhookEvent.setStatus(WebhookEventStatus.PROCESSED);
         webhookEvent.setReceivedAt(OffsetDateTime.now().minusMinutes(5));
-        when(webhookEventRepository.findByTraceId("trc-abc")).thenReturn(List.of(webhookEvent));
+        when(webhookEventRepository.findByTraceIdAndProjectId("trc-abc", PROJECT_ID)).thenReturn(List.of(webhookEvent));
 
         WorkflowRun run = new WorkflowRun();
         run.setId("run-1");
@@ -133,6 +133,37 @@ class PipelineTraceServiceTest {
         List<PipelineTraceNodeView> nodes = service.trace(PROJECT_ID, null, "src-3", null, null);
 
         assertThat(nodes).extracting(PipelineTraceNodeView::stage).containsExactly("INBOX");
+    }
+
+    @Test
+    void webhookEventAnchorUsesTheProjectScopedLookupNotTheGlobalOne() {
+        WebhookEvent webhookEvent = new WebhookEvent();
+        webhookEvent.setId("wh-1");
+        webhookEvent.setStatus(WebhookEventStatus.PROCESSED);
+        webhookEvent.setReceivedAt(OffsetDateTime.now().minusMinutes(5));
+        when(webhookEventRepository.findByIdAndProjectId("wh-1", PROJECT_ID)).thenReturn(Optional.of(webhookEvent));
+
+        List<PipelineTraceNodeView> nodes = service.trace(PROJECT_ID, null, null, null, "wh-1");
+
+        assertThat(nodes).extracting(PipelineTraceNodeView::stage).containsExactly("WEBHOOKS");
+        assertThat(nodes.get(0).degraded()).isFalse();
+    }
+
+    /**
+     * A caller can't read another project's webhook event by id: {@code findByIdAndProjectId} is
+     * scoped to the calling project, so a webhook event belonging to a different project resolves as
+     * "not found" here (never falls back to an unscoped lookup) and degrades like any other purged
+     * reference -- this is the IDOR this anchor had before the project-scoping fix (issue #342 review).
+     */
+    @Test
+    void webhookEventAnchorDegradesRatherThanLeakingAnotherProjectsEvent() {
+        when(webhookEventRepository.findByIdAndProjectId("wh-other-project", PROJECT_ID)).thenReturn(Optional.empty());
+
+        List<PipelineTraceNodeView> nodes = service.trace(PROJECT_ID, null, null, null, "wh-other-project");
+
+        assertThat(nodes).hasSize(1);
+        assertThat(nodes.get(0).stage()).isEqualTo("WEBHOOKS");
+        assertThat(nodes.get(0).degraded()).isTrue();
     }
 
     private static KnowledgeSource source(String id, Map<String, Object> metadata) {

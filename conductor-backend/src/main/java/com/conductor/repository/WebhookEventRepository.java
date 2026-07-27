@@ -41,10 +41,20 @@ public interface WebhookEventRepository extends JpaRepository<WebhookEvent, Stri
     List<Object[]> countByProjectIdGroupByStatus(@Param("projectId") String projectId);
 
     /**
-     * Webhook events carrying a given trace id -- the backward edge from a {@code knowledge_sources}
-     * row (or a directly-fired {@code workflow_runs} row) back to the webhook that ultimately caused it,
-     * via the traceId threaded through {@code Signal} (see issue #342). More than one row is possible in
-     * principle (a redelivered/duplicate webhook could share a trace id) -- callers take the earliest.
+     * A webhook event scoped to a project, verified via its connection -- {@code PipelineTraceService}'s
+     * {@code webhookEventId} anchor must use this (not the unscoped {@link #findById}) so a caller can't
+     * read another project's webhook event by guessing/supplying its id (see issue #342 review).
      */
-    List<WebhookEvent> findByTraceId(String traceId);
+    @Query("SELECT e FROM WebhookEvent e WHERE e.id = :id AND e.connectionId IN "
+            + "(SELECT c.id FROM Connection c WHERE c.projectId = :projectId)")
+    Optional<WebhookEvent> findByIdAndProjectId(@Param("id") String id, @Param("projectId") String projectId);
+
+    /**
+     * Same project-scoping as {@link #findByIdAndProjectId}, for the backward trace-id lookup
+     * ({@code PipelineTraceService#appendWebhookBackward}) -- defense-in-depth so a source's stamped
+     * traceId can't be used to pull a webhook event belonging to a different project.
+     */
+    @Query("SELECT e FROM WebhookEvent e WHERE e.traceId = :traceId AND e.connectionId IN "
+            + "(SELECT c.id FROM Connection c WHERE c.projectId = :projectId)")
+    List<WebhookEvent> findByTraceIdAndProjectId(@Param("traceId") String traceId, @Param("projectId") String projectId);
 }
