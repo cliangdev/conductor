@@ -67,19 +67,29 @@ public class KnowledgeWorkflowProvisioner {
 
     public static final String LIBRARIAN_WORKFLOW_NAME = "knowledge-librarian";
     public static final String BOOTSTRAP_WORKFLOW_NAME = "knowledge-bootstrap";
+    public static final String NARRATOR_WORKFLOW_NAME = "metrics-narrator";
     /** Alias for {@link DefaultAgentSlugs#KNOWLEDGE_LIBRARIAN} -- kept here too since callers/tests
      *  reference the provisioner for it. */
     public static final String LIBRARIAN_AGENT_SLUG = DefaultAgentSlugs.KNOWLEDGE_LIBRARIAN;
+    /** Alias for {@link DefaultAgentSlugs#METRICS_ANALYST} -- see {@link #LIBRARIAN_AGENT_SLUG}. */
+    public static final String METRICS_ANALYST_AGENT_SLUG = DefaultAgentSlugs.METRICS_ANALYST;
 
     private static final String SCHEMA_PAGE_PATH = "_schema.md";
     private static final String LIBRARIAN_RESOURCE = "/knowledge/knowledge-librarian.yaml";
     private static final String BOOTSTRAP_RESOURCE = "/knowledge/knowledge-bootstrap.yaml";
+    /** Package-visible (not private) so {@link #isSystemWorkflowStale} callers outside this class --
+     *  e.g. {@code MetricsNarratorDispatchService} -- can pass it without this class exposing a getter. */
+    static final String NARRATOR_RESOURCE = "/knowledge/metrics-narrator.yaml";
     private static final String SCHEMA_RESOURCE = "/knowledge/_schema.md";
     private static final String LIBRARIAN_SYSTEM_PROMPT_RESOURCE = "/knowledge/librarian-system-prompt.md";
+    private static final String METRICS_ANALYST_SYSTEM_PROMPT_RESOURCE = "/knowledge/metrics-analyst-system-prompt.md";
     private static final String LIBRARIAN_AGENT_NAME = "Knowledge Librarian";
+    private static final String METRICS_ANALYST_AGENT_NAME = "Metrics Analyst";
     private static final String LIBRARIAN_AGENT_PROVIDER = "claude";
     private static final String LIBRARIAN_AVATAR_EMOJI = "📚";
     private static final String LIBRARIAN_AVATAR_COLOR = "violet";
+    private static final String METRICS_ANALYST_AVATAR_EMOJI = "📈";
+    private static final String METRICS_ANALYST_AVATAR_COLOR = "teal";
     /** Shared by the librarian seed here and by {@code KnowledgeDomainService#createSpecialist} -- a
      *  specialist agent gets the same 6 tools as the generalist librarian. */
     public static final List<String> LIBRARIAN_TOOL_IDS = List.of(
@@ -154,8 +164,10 @@ public class KnowledgeWorkflowProvisioner {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found: " + projectId));
         seedLibrarianAgent(projectId);
+        seedMetricsAnalystAgent(projectId);
         upsertWorkflow(project, LIBRARIAN_WORKFLOW_NAME, LIBRARIAN_RESOURCE);
         upsertWorkflow(project, BOOTSTRAP_WORKFLOW_NAME, BOOTSTRAP_RESOURCE);
+        upsertWorkflow(project, NARRATOR_WORKFLOW_NAME, NARRATOR_RESOURCE);
         seedSchemaPage(projectId);
         seedDomainRegistry(projectId);
         seedDomainSchemaPages(projectId);
@@ -189,6 +201,40 @@ public class KnowledgeWorkflowProvisioner {
         agent.setAvatarColor(LIBRARIAN_AVATAR_COLOR);
         agentRepository.save(agent);
         log.info("Provisioned '{}' agent for project {}", LIBRARIAN_AGENT_SLUG, projectId);
+    }
+
+    /**
+     * Seeds the {@value #METRICS_ANALYST_AGENT_SLUG} {@code Agent} the metrics-narrator workflow's
+     * {@code uses: agent} step resolves at dispatch time -- with {@code toolIds: []}, deliberately.
+     * This is a security-relevant design point, not an oversight: the narrator is a pure text function
+     * from a pre-computed digest JSON payload to prose. With zero tools it physically cannot write wiki
+     * pages, cannot submit knowledge sources, and cannot re-fetch the raw metrics/series the digest
+     * pipeline ({@code MetricsAggregator}/{@code MetricsChangeDetector}/{@code DigestPayloadBuilder})
+     * deliberately stripped out before handing it this task. Filing the resulting narrative into the
+     * Knowledge Center is {@code DigestSubmissionService}'s job, done by the platform reading the run's
+     * structured output -- never the agent itself. No backfill counterpart to
+     * {@link #backfillToolIdsIfMissing} exists here on purpose: unlike the librarian's tool list, which
+     * only ever grows, this agent's tool list must stay empty forever, so there is nothing to backfill.
+     */
+    private void seedMetricsAnalystAgent(String projectId) {
+        if (agentRepository.findByProjectIdAndSlug(projectId, METRICS_ANALYST_AGENT_SLUG).isPresent()) {
+            return;
+        }
+        Agent agent = new Agent();
+        agent.setProjectId(projectId);
+        agent.setName(METRICS_ANALYST_AGENT_NAME);
+        agent.setSlug(METRICS_ANALYST_AGENT_SLUG);
+        agent.setDescription("Narrates connector metric digests into short wiki updates. No tools.");
+        agent.setProvider(LIBRARIAN_AGENT_PROVIDER);
+        agent.setSystemPrompt(readResource(METRICS_ANALYST_SYSTEM_PROMPT_RESOURCE));
+        // Pinned for the same reason as the librarian -- see seedLibrarianAgent's comment.
+        agent.setConfigJson(writeJson(Map.of("runtime", AgentRuntimeResolver.RUNTIME_CLAUDE_CODE)));
+        agent.setToolIds(writeJson(List.of()));
+        agent.setState("ACTIVE");
+        agent.setAvatarEmoji(METRICS_ANALYST_AVATAR_EMOJI);
+        agent.setAvatarColor(METRICS_ANALYST_AVATAR_COLOR);
+        agentRepository.save(agent);
+        log.info("Provisioned '{}' agent for project {}", METRICS_ANALYST_AGENT_SLUG, projectId);
     }
 
     /** Backfills the avatar on a pre-existing librarian seeded before {@code avatarEmoji} existed. */
@@ -294,8 +340,20 @@ public class KnowledgeWorkflowProvisioner {
      * the caller's separate empty-optional check.
      */
     public boolean isLibrarianWorkflowStale(String projectId) {
-        return workflowRepository.findByProjectIdAndName(projectId, LIBRARIAN_WORKFLOW_NAME)
-                .map(w -> !readResource(LIBRARIAN_RESOURCE).equals(w.getYaml()))
+        return isSystemWorkflowStale(projectId, LIBRARIAN_WORKFLOW_NAME, LIBRARIAN_RESOURCE);
+    }
+
+    /**
+     * General form of {@link #isLibrarianWorkflowStale}: true if the project's stored {@code name}
+     * workflow YAML differs from the current classpath {@code resource} -- any system-workflow
+     * dispatch service (e.g. {@code MetricsNarratorDispatchService}) treats drift as "seeding
+     * incomplete" and self-heals via {@link #provision} the same way {@code LibrarianDispatchService}
+     * does. A missing workflow row entirely is not "stale" -- that's the caller's separate
+     * empty-optional check.
+     */
+    public boolean isSystemWorkflowStale(String projectId, String name, String resource) {
+        return workflowRepository.findByProjectIdAndName(projectId, name)
+                .map(w -> !readResource(resource).equals(w.getYaml()))
                 .orElse(false);
     }
 

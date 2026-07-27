@@ -1,5 +1,6 @@
 package com.conductor.signal;
 
+import com.conductor.disposition.DispositionPolicySubscriber;
 import com.conductor.knowledge.signal.KnowledgeSignalSink;
 import com.conductor.notification.signal.NotificationSignalSink;
 import com.conductor.service.signal.PullRequestMergeSubscriber;
@@ -27,7 +28,10 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
  * WorkItemService}, broken by {@code InProcessSignalBus}'s {@code ObjectProvider}-based lazy,
  * post-refresh subscriber resolution. {@code PullRequestMergeSubscriber} (added in A8) closes the same
  * kind of cycle a second way -- {@code GitHubConnector -> SignalBus -> PullRequestMergeSubscriber ->
- * WorkItemService} -- so it belongs in this same proof.
+ * WorkItemService} -- so it belongs in this same proof. {@code DispositionPolicySubscriber} (added in
+ * B6) has no such cycle -- it depends only on {@code DispositionPolicyCache}/{@code
+ * DispositionPolicyRepository} -- but is included here too so this test stays the single source of
+ * truth for "every production subscriber is registered, in order."
  */
 class SignalBusWiringContextTest extends AbstractNoneWebIntegrationTest {
 
@@ -38,7 +42,7 @@ class SignalBusWiringContextTest extends AbstractNoneWebIntegrationTest {
     private List<SignalSubscriber> subscribers;
 
     @Test
-    void allFiveProductionSubscribersAreRegisteredInOrder() {
+    void allSixProductionSubscribersAreRegisteredInOrder() {
         List<SignalSubscriber> sorted = subscribers.stream()
                 .sorted(Comparator.comparingInt(SignalSubscriber::order))
                 .toList();
@@ -48,8 +52,9 @@ class SignalBusWiringContextTest extends AbstractNoneWebIntegrationTest {
                 WorkflowAutomationSignalSubscriber.class,
                 LifecycleSignalSubscriber.class,
                 KnowledgeSignalSink.class,
-                PullRequestMergeSubscriber.class);
-        assertThat(sorted).extracting(SignalSubscriber::order).containsExactly(10, 20, 30, 40, 50);
+                PullRequestMergeSubscriber.class,
+                DispositionPolicySubscriber.class);
+        assertThat(sorted).extracting(SignalSubscriber::order).containsExactly(10, 20, 30, 40, 50, 60);
     }
 
     @Test

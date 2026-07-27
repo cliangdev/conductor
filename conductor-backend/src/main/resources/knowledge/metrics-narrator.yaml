@@ -1,0 +1,88 @@
+name: Metrics Narrator
+
+# System-managed workflow (see KnowledgeWorkflowProvisioner) -- fired programmatically by
+# ConnectorFeedScheduler via MetricsNarratorDispatchService, never by a human. workflow_dispatch is
+# declared only so the run has a recognized trigger kind; the dispatcher passes
+# projectId/digestId/agentSlug/digestJson as top-level event payload fields (${{ event.* }}), not
+# workflow_dispatch inputs -- same precedent as knowledge-librarian.yaml.
+#
+# `manual: false` opts this workflow out of the generic manual-dispatch UI/API/MCP path (see
+# TriggersSpec#allowsManualDispatch): a plain "Run" click can never supply digestJson, so it would
+# always fail the agent step with a cryptic interpolation error. The real pipeline
+# (ConnectorFeedScheduler) already ticks every 60s, so nothing is lost by blocking this.
+#
+# `agent: ${{ event.agentSlug }}` is resolved per dispatch by MetricsNarratorDispatchService: the
+# digest's suggested domain's assigned specialist if one exists, else the generalist metrics-analyst
+# agent (AgentStepExecutor interpolates with.agent same as task/context).
+#
+# `concurrency: single` is NOT what serializes this workflow -- that annotation is only honored by the
+# cron WorkflowScheduler, and this fires via workflow_dispatch. Real serialization is unnecessary here:
+# every dispatch carries a distinct digestId (one period, one feed), so concurrent narrator runs for
+# different digests are expected and harmless. Kept only for shape parity with knowledge-librarian.yaml.
+#
+# The `narrate` step id is load-bearing: DigestSubmissionService reads this run's output via
+# WorkflowStepRunRepository#findByJobRunIdAndStepId(jobRunId, "narrate") -- renaming this id breaks
+# digest submission for every project until the next provisioning self-heal refreshes the stored YAML.
+#
+# The metrics-analyst agent this dispatches to is seeded with ZERO tools (see
+# KnowledgeWorkflowProvisioner#seedMetricsAnalystAgent) -- deliberately, not an oversight. The narrator
+# is a pure text function from digest JSON to prose: with no tools it cannot write wiki pages, cannot
+# submit sources, and cannot re-fetch the raw metrics the digest pipeline stripped out before handing
+# it this payload. DigestSubmissionService, not the agent, is what files the narrative into the
+# Knowledge Center -- "the platform submits, never the agent".
+on:
+  workflow_dispatch:
+    manual: false
+
+concurrency: single
+
+jobs:
+  narrate:
+    steps:
+      - id: narrate
+        uses: agent
+        with:
+          agent: ${{ event.agentSlug }}
+          timeout_minutes: 10
+          task: |
+            Write a short narration of this metrics digest. Your ONLY source of truth is the JSON
+            below -- it already contains every number, comparison, and materiality judgment you need.
+            You have no tools: you cannot look anything else up, so do not speculate beyond what this
+            payload states.
+
+            Digest JSON:
+            ${{ event.digestJson }}
+
+            Writing rules, in priority order:
+            - Lead with what CHANGED. Only entries marked "material": true are headline-worthy; a
+              non-material entry is at most one clause of context, never the lead.
+            - Never state a bare number without its change -- write "clicks rose 18% to 4,980", never
+              "clicks were 4980".
+            - Respect each metric's direction: a metric marked DOWN_IS_GOOD falling is an IMPROVEMENT,
+              not bad news, and vice versa.
+            - Hedge (e.g. "may have", "early signal") on anything flagged "lowConfidence": true --
+              there isn't enough history yet to be sure it's a real move.
+            - The payload's "moversComparedTo" field means the dimension movers (top queries/pages/etc.)
+              were computed over a different lookback window than the scalar metrics above them. If you
+              mention a mover, don't imply it shares the same window as "this period"'s metrics.
+            - You may offer AT MOST ONE plausible cause for the overall change, and only if it's
+              genuinely suggested by the data. Mark it explicitly as a guess (e.g. "possibly related
+              to...") -- you have no access to deploys, campaigns, or anything outside this JSON, so
+              never state a cause as fact.
+            - No tables. No bullet-point lists of raw figures. Write prose.
+            - Keep the whole narrative under 200 words.
+            - End with exactly one line starting "So what: " that states the practical takeaway.
+
+            Return JSON: {"title": <string>, "narrative": <string>, "significance": <optional string,
+            one of "routine"|"notable"|"urgent">}.
+          output_schema:
+            type: object
+            required: [title, narrative]
+            properties:
+              title: { type: string }
+              narrative: { type: string }
+              significance: { type: string, enum: [routine, notable, urgent] }
+        outputs:
+          title: body.title
+          narrative: body.narrative
+          significance: body.significance

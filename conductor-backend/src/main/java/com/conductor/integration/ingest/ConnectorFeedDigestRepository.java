@@ -1,8 +1,11 @@
 package com.conductor.integration.ingest;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -14,4 +17,16 @@ public interface ConnectorFeedDigestRepository extends JpaRepository<ConnectorFe
     List<ConnectorFeedDigest> findByFeedId(String feedId);
 
     List<ConnectorFeedDigest> findByStatus(DigestStatus status);
+
+    /**
+     * Oldest-first batch (up to {@code limit}) of due, PENDING digests, row-locked so two concurrent
+     * scheduler instances can never claim the same digest -- same {@code FOR UPDATE SKIP LOCKED}
+     * shape as {@code ConnectorFeedRepository#claimDue}. Caller must flip {@code status} to NARRATING
+     * in the same transaction that ran this query, before the row locks release.
+     */
+    @Query(value = "SELECT * FROM connector_feed_digest WHERE status = 'PENDING' "
+            + "AND (next_attempt_at IS NULL OR next_attempt_at <= :now) "
+            + "ORDER BY created_at ASC LIMIT :limit FOR UPDATE SKIP LOCKED",
+            nativeQuery = true)
+    List<ConnectorFeedDigest> claimDuePending(@Param("now") OffsetDateTime now, @Param("limit") int limit);
 }

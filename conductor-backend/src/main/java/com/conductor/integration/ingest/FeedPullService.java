@@ -11,6 +11,7 @@ import com.conductor.integration.IngestRequest;
 import com.conductor.integration.IngestSpec;
 import com.conductor.integration.IngestWindow;
 import com.conductor.integration.IngestWindowSpec;
+import com.conductor.integration.ingest.digest.MetricsDigestService;
 import com.conductor.service.ConnectionService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
@@ -48,35 +49,43 @@ public class FeedPullService {
     private final ConnectorRegistry connectorRegistry;
     private final SnapshotIngestAdapter snapshotIngestAdapter;
     private final DigestSink digestSink;
+    private final MetricsDigestService metricsDigestService;
 
     public FeedPullService(ConnectorFeedRepository feedRepository,
                            ConnectionService connectionService,
                            ConnectorRegistry connectorRegistry,
                            SnapshotIngestAdapter snapshotIngestAdapter,
-                           DigestSink digestSink) {
+                           DigestSink digestSink,
+                           MetricsDigestService metricsDigestService) {
         this.feedRepository = feedRepository;
         this.connectionService = connectionService;
         this.connectorRegistry = connectorRegistry;
         this.snapshotIngestAdapter = snapshotIngestAdapter;
         this.digestSink = digestSink;
+        this.metricsDigestService = metricsDigestService;
     }
 
     @Transactional
-    public void pull(String feedId) {
+    public boolean pull(String feedId) {
         ConnectorFeed feed = feedRepository.findById(feedId)
                 .orElseThrow(() -> new EntityNotFoundException("connector_feed not found: " + feedId));
-        pull(feed);
+        return pull(feed);
     }
 
-    /** Overload taking an already-loaded feed — the scheduler's claim query already has the row. */
+    /** Overload taking an already-loaded feed — the scheduler's claim query already has the row.
+     *  Returns {@link IngestBatch#hasMore()} on a successful pull (false on SETUP_REQUIRED/DEGRADED,
+     *  since no progress was made) — the caller uses this to re-due the feed immediately rather than
+     *  waiting a full {@code interval_minutes} to drain a backlog. */
     @Transactional
-    public void pull(ConnectorFeed feed) {
+    public boolean pull(ConnectorFeed feed) {
         Connection conn = connectionService.getById(feed.getConnectionId())
                 .orElseThrow(() -> new EntityNotFoundException("Connection not found: " + feed.getConnectionId()));
         ConnectionContext ctx = connectionService.toContext(conn);
         IngestSpec spec = resolveSpec(feed);
 
-        IngestWindow window = spec.mode() == IngestMode.WINDOW
+        // Computed for WINDOW-mode feeds, and also for a SNAPSHOT+digest feed that declares a window --
+        // that slices an already-fetched series rather than driving a separate pull; see IngestSpec#window.
+        IngestWindow window = (spec.mode() == IngestMode.WINDOW || spec.window() != null)
                 ? computeWindow(spec.window(), Instant.now())
                 : null;
         IngestRequest request = new IngestRequest(feed.getIngestId(), window, feed.getCursorState(), DEFAULT_MAX_ITEMS);
@@ -85,10 +94,10 @@ public class FeedPullService {
                 .map(ingestConnector -> ingestConnector.pull(ctx, request))
                 .orElseGet(() -> snapshotIngestAdapter.pull(ctx, spec, request));
 
-        recordOutcome(feed, batch);
+        return recordOutcome(feed, spec, window, batch);
     }
 
-    private void recordOutcome(ConnectorFeed feed, IngestBatch batch) {
+    private boolean recordOutcome(ConnectorFeed feed, IngestSpec spec, IngestWindow window, IngestBatch batch) {
         OffsetDateTime now = OffsetDateTime.now();
 
         if (batch.health() == ConnectorHealth.SETUP_REQUIRED) {
@@ -96,7 +105,7 @@ public class FeedPullService {
             feed.setLastError(batch.errorMessage());
             feed.setLastRunAt(now);
             feedRepository.save(feed);
-            return;
+            return false;
         }
         if (batch.health() == ConnectorHealth.DEGRADED) {
             // Never advance the cursor on a degraded (possibly stale-cache) pull.
@@ -104,18 +113,26 @@ public class FeedPullService {
             feed.setLastError(batch.errorMessage());
             feed.setLastRunAt(now);
             feedRepository.save(feed);
-            return;
+            return false;
         }
 
         // Sink first -- see class javadoc. Any exception here propagates before any field on `feed`
-        // that affects the cursor or schedule is touched below.
+        // that affects the cursor or schedule is touched below. A metric feed's item is the whole
+        // projected snapshot, never fit for the inbox directly -- it goes through the digest pipeline
+        // (aggregate/detect/build a ConnectorFeedDigest row) instead of the generic DigestSink, which
+        // exists precisely so the raw payload never reaches a wiki page; see MetricsDigestService.
         for (IngestItem item : batch.items()) {
-            digestSink.accept(feed.getProjectId(), item);
+            if (spec.isMetricFeed()) {
+                metricsDigestService.record(feed, spec, item, window);
+            } else {
+                digestSink.accept(feed.getProjectId(), item);
+            }
         }
 
         advanceCursor(feed, batch, now);
         feed.setLastRunAt(now);
         feedRepository.save(feed);
+        return batch.hasMore();
     }
 
     private void advanceCursor(ConnectorFeed feed, IngestBatch batch, OffsetDateTime now) {

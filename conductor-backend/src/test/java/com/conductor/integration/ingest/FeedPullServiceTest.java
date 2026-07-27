@@ -13,6 +13,7 @@ import com.conductor.integration.IngestItem;
 import com.conductor.integration.IngestMode;
 import com.conductor.integration.IngestSpec;
 import com.conductor.integration.IntegrationToolSpec;
+import com.conductor.integration.ingest.digest.MetricsDigestService;
 import com.conductor.service.ConnectionService;
 
 import org.junit.jupiter.api.Test;
@@ -41,9 +42,11 @@ class FeedPullServiceTest {
     private final ConnectorRegistry connectorRegistry = mock(ConnectorRegistry.class);
     private final SnapshotIngestAdapter snapshotIngestAdapter = mock(SnapshotIngestAdapter.class);
     private final DigestSink digestSink = mock(DigestSink.class);
+    private final MetricsDigestService metricsDigestService = mock(MetricsDigestService.class);
 
     private final FeedPullService service = new FeedPullService(
-            feedRepository, connectionService, connectorRegistry, snapshotIngestAdapter, digestSink);
+            feedRepository, connectionService, connectorRegistry, snapshotIngestAdapter, digestSink,
+            metricsDigestService);
 
     private static ConnectorFeed feed() {
         ConnectorFeed feed = new ConnectorFeed();

@@ -1,5 +1,9 @@
 package com.conductor.integration.ingest;
 
+import com.conductor.disposition.Disposition;
+import com.conductor.disposition.DispositionPolicy;
+import com.conductor.disposition.DispositionPolicyCache;
+import com.conductor.disposition.DispositionPolicyRepository;
 import com.conductor.entity.Connection;
 import com.conductor.integration.Connector;
 import com.conductor.integration.ConnectorCategory;
@@ -29,9 +33,11 @@ class ConnectorFeedProvisionerTest {
     private final ConnectorFeedRepository feedRepository = mock(ConnectorFeedRepository.class);
     private final ConnectorRegistry connectorRegistry = mock(ConnectorRegistry.class);
     private final ConnectionRepository connectionRepository = mock(ConnectionRepository.class);
+    private final DispositionPolicyRepository dispositionPolicyRepository = mock(DispositionPolicyRepository.class);
+    private final DispositionPolicyCache dispositionPolicyCache = mock(DispositionPolicyCache.class);
 
-    private final ConnectorFeedProvisioner provisioner =
-            new ConnectorFeedProvisioner(feedRepository, connectorRegistry, connectionRepository);
+    private final ConnectorFeedProvisioner provisioner = new ConnectorFeedProvisioner(
+            feedRepository, connectorRegistry, connectionRepository, dispositionPolicyRepository, dispositionPolicyCache);
 
     /** Real (non-mock) {@link Connector} -- {@code getToolSpec()} is a default interface method, and
      *  Mockito can't stub default methods cleanly (see FeedPullServiceTest for the same workaround). */
@@ -71,6 +77,11 @@ class ConnectorFeedProvisionerTest {
     private static IngestSpec spec(String id) {
         return new IngestSpec(id, "label", "desc", IngestMode.SNAPSHOT, "search_analytics",
                 "metrics.digest.{connector}.{ingest}", 10080, null, null, null, null);
+    }
+
+    private static IngestSpec specWithDisposition(String id, String suggestedDisposition, String suggestedDomain) {
+        return new IngestSpec(id, "label", "desc", IngestMode.SNAPSHOT, "search_analytics",
+                "metrics.digest.{connector}.{ingest}", 10080, null, suggestedDisposition, suggestedDomain, null);
     }
 
     @Test
@@ -133,6 +144,69 @@ class ConnectorFeedProvisionerTest {
         verify(feedRepository).save(argThatFeed("conn-1", "weekly"));
         verify(feedRepository).save(argThatFeed("conn-2", "weekly"));
         verify(feedRepository, times(2)).save(any());
+    }
+
+    // ---- disposition policy seeding ----
+
+    @Test
+    void seedsDispositionPolicyWhenSuggestedDispositionPresent() {
+        Connection connection = connection("conn-1", "gsc");
+        when(connectorRegistry.getById("gsc")).thenReturn(Optional.of(
+                new FakeConnector(List.of(specWithDisposition("weekly", "KNOWLEDGE", "marketing")))));
+        when(feedRepository.findByConnectionIdAndIngestId("conn-1", "weekly")).thenReturn(Optional.empty());
+        when(dispositionPolicyRepository.findByProjectIdAndSignalTypeAndDisposition(
+                "proj-1", "metrics.digest.gsc.weekly", Disposition.KNOWLEDGE)).thenReturn(Optional.empty());
+
+        provisioner.reconcile(connection);
+
+        org.mockito.ArgumentCaptor<DispositionPolicy> captor = org.mockito.ArgumentCaptor.forClass(DispositionPolicy.class);
+        verify(dispositionPolicyRepository).save(captor.capture());
+        DispositionPolicy saved = captor.getValue();
+        assertThat(saved.getProjectId()).isEqualTo("proj-1");
+        assertThat(saved.getSignalType()).isEqualTo("metrics.digest.gsc.weekly");
+        assertThat(saved.getDisposition()).isEqualTo(Disposition.KNOWLEDGE);
+        assertThat(saved.getConfig()).containsEntry("domain", "marketing");
+        verify(dispositionPolicyCache).invalidate("proj-1");
+    }
+
+    @Test
+    void skipsDispositionPolicySeedingWhenSuggestedDispositionAbsent() {
+        Connection connection = connection("conn-1", "gsc");
+        when(connectorRegistry.getById("gsc"))
+                .thenReturn(Optional.of(new FakeConnector(List.of(spec("weekly")))));
+        when(feedRepository.findByConnectionIdAndIngestId("conn-1", "weekly")).thenReturn(Optional.empty());
+
+        provisioner.reconcile(connection);
+
+        verify(dispositionPolicyRepository, never()).save(any());
+        verify(dispositionPolicyCache, never()).invalidate(any());
+    }
+
+    @Test
+    void isIdempotentAndSkipsAnAlreadySeededDispositionPolicy() {
+        Connection connection = connection("conn-1", "gsc");
+        when(connectorRegistry.getById("gsc")).thenReturn(Optional.of(
+                new FakeConnector(List.of(specWithDisposition("weekly", "KNOWLEDGE", "marketing")))));
+        when(feedRepository.findByConnectionIdAndIngestId("conn-1", "weekly")).thenReturn(Optional.empty());
+        when(dispositionPolicyRepository.findByProjectIdAndSignalTypeAndDisposition(
+                "proj-1", "metrics.digest.gsc.weekly", Disposition.KNOWLEDGE))
+                .thenReturn(Optional.of(new DispositionPolicy()));
+
+        provisioner.reconcile(connection);
+
+        verify(dispositionPolicyRepository, never()).save(any());
+    }
+
+    @Test
+    void unknownSuggestedDispositionString_skipsSeedingWithoutThrowing() {
+        Connection connection = connection("conn-1", "gsc");
+        when(connectorRegistry.getById("gsc")).thenReturn(Optional.of(
+                new FakeConnector(List.of(specWithDisposition("weekly", "NOT_A_REAL_DISPOSITION", null)))));
+        when(feedRepository.findByConnectionIdAndIngestId("conn-1", "weekly")).thenReturn(Optional.empty());
+
+        provisioner.reconcile(connection);
+
+        verify(dispositionPolicyRepository, never()).save(any());
     }
 
     private static ConnectorFeed argThatFeed(String connectionId, String ingestId) {
