@@ -113,7 +113,8 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         List<WorkflowDefinition> workflows = workflowRepository.findByProjectId(projectId);
         assertThat(workflows).extracting(WorkflowDefinition::getName)
                 .containsExactlyInAnyOrder(KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME,
-                        KnowledgeWorkflowProvisioner.BOOTSTRAP_WORKFLOW_NAME);
+                        KnowledgeWorkflowProvisioner.BOOTSTRAP_WORKFLOW_NAME,
+                        KnowledgeWorkflowProvisioner.NARRATOR_WORKFLOW_NAME);
         assertThat(workflows).allSatisfy(w -> {
             assertThat(w.isEnabled()).isTrue();
             assertThat(w.getYaml()).isNotBlank();
@@ -314,20 +315,23 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         provisioner.provision(projectId);
 
         List<WorkflowDefinition> workflows = workflowRepository.findByProjectId(projectId);
-        assertThat(workflows).hasSize(2);
+        assertThat(workflows).hasSize(3);
         assertThat(workflows).extracting(WorkflowDefinition::getName)
                 .containsExactlyInAnyOrder(KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME,
-                        KnowledgeWorkflowProvisioner.BOOTSTRAP_WORKFLOW_NAME);
+                        KnowledgeWorkflowProvisioner.BOOTSTRAP_WORKFLOW_NAME,
+                        KnowledgeWorkflowProvisioner.NARRATOR_WORKFLOW_NAME);
 
         // Still exactly one schema page, at version 1 (never rewritten by the second provision() call).
         Optional<KnowledgePage> schemaPage = pageRepository.findByProjectIdAndPath(projectId, "_schema.md");
         assertThat(schemaPage).isPresent();
         assertThat(schemaPage.get().getVersion()).isEqualTo(1);
 
-        // Still exactly one librarian agent -- the second provision() call is a no-op on an existing slug.
+        // Still exactly the librarian + metrics-analyst agents -- the second provision() call is a
+        // no-op on an existing slug.
         List<Agent> agents = agentRepository.findByProjectId(projectId);
         assertThat(agents).extracting(Agent::getSlug)
-                .containsExactly(KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG);
+                .containsExactlyInAnyOrder(KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG,
+                        KnowledgeWorkflowProvisioner.METRICS_ANALYST_AGENT_SLUG);
 
         // Still exactly 5 domain rows and 5 domain schema pages -- the second call double-provisions nothing.
         assertThat(domainRepository.findByProjectIdOrderBySlugAsc(projectId)).hasSize(5);
@@ -336,6 +340,60 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
             assertThat(page).isPresent();
             assertThat(page.get().getVersion()).isEqualTo(1);
         }
+    }
+
+    @Test
+    void provisionSeedsMetricsAnalystAgentWithZeroTools() {
+        provisioner.provision(projectId);
+
+        Optional<Agent> agent = agentRepository.findByProjectIdAndSlug(
+                projectId, KnowledgeWorkflowProvisioner.METRICS_ANALYST_AGENT_SLUG);
+        assertThat(agent).isPresent();
+        Agent metricsAnalyst = agent.get();
+        assertThat(metricsAnalyst.getProvider()).isEqualTo("claude");
+        assertThat(metricsAnalyst.getState()).isEqualTo("ACTIVE");
+        assertThat(metricsAnalyst.getSystemPrompt()).contains("no tools");
+        // The security-relevant part: this agent must never be seeded with any tool ids -- see
+        // KnowledgeWorkflowProvisioner#seedMetricsAnalystAgent's javadoc for why.
+        assertThat(metricsAnalyst.getToolIds()).isEqualTo("[]");
+        assertThat(metricsAnalyst.getConfigJson()).contains("\"runtime\"").contains("claude-code");
+        assertThat(metricsAnalyst.getAvatarEmoji()).isEqualTo("📈");
+    }
+
+    @Test
+    void provisionCreatesTheNarratorWorkflow() {
+        provisioner.provision(projectId);
+
+        WorkflowDefinition narrator = workflowRepository
+                .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.NARRATOR_WORKFLOW_NAME)
+                .orElseThrow();
+        assertThat(narrator.isEnabled()).isTrue();
+        assertThat(narrator.getYaml()).contains("agent: ${{ event.agentSlug }}")
+                .contains("id: narrate")
+                .contains("manual: false");
+    }
+
+    @Test
+    void isSystemWorkflowStaleGeneralizesToTheNarratorWorkflow() {
+        provisioner.provision(projectId);
+        assertThat(provisioner.isSystemWorkflowStale(projectId, KnowledgeWorkflowProvisioner.NARRATOR_WORKFLOW_NAME,
+                KnowledgeWorkflowProvisioner.NARRATOR_RESOURCE)).isFalse();
+
+        WorkflowDefinition narrator = workflowRepository
+                .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.NARRATOR_WORKFLOW_NAME)
+                .orElseThrow();
+        narrator.setYaml("name: Stale Metrics Narrator\non:\n  workflow_dispatch: {}\n");
+        workflowRepository.save(narrator);
+
+        assertThat(provisioner.isSystemWorkflowStale(projectId, KnowledgeWorkflowProvisioner.NARRATOR_WORKFLOW_NAME,
+                KnowledgeWorkflowProvisioner.NARRATOR_RESOURCE)).isTrue();
+
+        provisioner.provision(projectId);
+
+        WorkflowDefinition refreshed = workflowRepository
+                .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.NARRATOR_WORKFLOW_NAME)
+                .orElseThrow();
+        assertThat(refreshed.getYaml()).contains("agent: ${{ event.agentSlug }}");
     }
 
     // ---- self-healing via ProjectSettingsService (a project already enabled before/independent of
@@ -361,11 +419,12 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
 
         List<WorkflowDefinition> workflows = workflowRepository.findByProjectId(projectId);
-        assertThat(workflows).hasSize(2);
+        assertThat(workflows).hasSize(3);
 
         List<Agent> agents = agentRepository.findByProjectId(projectId);
         assertThat(agents).extracting(Agent::getSlug)
-                .containsExactly(KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG);
+                .containsExactlyInAnyOrder(KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG,
+                        KnowledgeWorkflowProvisioner.METRICS_ANALYST_AGENT_SLUG);
 
         Optional<KnowledgePage> schemaPage = pageRepository.findByProjectIdAndPath(projectId, "_schema.md");
         assertThat(schemaPage).isPresent();

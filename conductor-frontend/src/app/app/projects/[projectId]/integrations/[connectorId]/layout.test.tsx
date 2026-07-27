@@ -25,6 +25,17 @@ vi.mock('@/components/integrations/ConnectorDocsPanel', () => ({
   ),
 }))
 
+// Records the props it was mounted with, so the wiring this layout owns (which tab it's mounted
+// under, and with which projectId/connectorId) is covered here -- ConnectorFeedsPanel's own
+// rendering behavior lives in its colocated test.
+vi.mock('@/components/integrations/ConnectorFeedsPanel', () => ({
+  default: ({ projectId, connectorId }: { projectId: string; connectorId: string }) => (
+    <div data-testid="feeds-panel">
+      feeds for {projectId}/{connectorId}
+    </div>
+  ),
+}))
+
 import ConnectorLayout from './layout'
 
 describe('ConnectorLayout', () => {
@@ -53,5 +64,27 @@ describe('ConnectorLayout', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Tools' }))
 
     expect(screen.getByTestId('tools-panel')).toHaveTextContent('tools for gcp')
+  })
+
+  it('mounts ConnectorFeedsPanel under the overview tab with the current projectId/connectorId', () => {
+    render(<ConnectorLayout>{'overview content'}</ConnectorLayout>)
+
+    expect(screen.getByTestId('feeds-panel')).toHaveTextContent('feeds for proj-1/gcp')
+  })
+
+  it('does not mount ConnectorFeedsPanel under the tools tab', () => {
+    render(<ConnectorLayout>{'overview content'}</ConnectorLayout>)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Tools' }))
+
+    expect(screen.queryByTestId('feeds-panel')).not.toBeInTheDocument()
+  })
+
+  it('does not mount ConnectorFeedsPanel under the docs tab', () => {
+    render(<ConnectorLayout>{'overview content'}</ConnectorLayout>)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Documentation' }))
+
+    expect(screen.queryByTestId('feeds-panel')).not.toBeInTheDocument()
   })
 })

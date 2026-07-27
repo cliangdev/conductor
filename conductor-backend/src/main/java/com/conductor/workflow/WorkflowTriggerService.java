@@ -5,11 +5,11 @@ import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.entity.WorkflowSchedule;
 import com.conductor.exception.ConflictException;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowScheduleRepository;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalTypes;
 import com.conductor.workflow.model.ConductorEventTrigger;
 import com.conductor.workflow.model.GitHubPullRequestTrigger;
 import com.conductor.workflow.model.JobSpec;
@@ -61,14 +61,20 @@ public class WorkflowTriggerService {
     }
 
     /**
-     * Called by NotificationDispatcher after a conductor event fires.
-     * Finds all enabled workflows in the project with matching trigger and creates WorkflowRun rows.
+     * Called by {@code WorkflowAutomationSignalSubscriber} when a {@link
+     * SignalTypes#CONDUCTOR_WORK_ITEM_STATUS_CHANGED} signal fires. Finds all enabled workflows in the
+     * project with matching trigger and creates WorkflowRun rows.
+     *
+     * <p>The type guard is defense-in-depth: {@code WorkflowAutomationSignalSubscriber.interestedIn}
+     * already filters to this type (and {@link SignalTypes#GITHUB_PULL_REQUEST}) before {@code onSignal}
+     * ever calls this method, but the guard stays so a direct caller (as several unit tests are) still
+     * gets the same no-op contract.
      */
     @Transactional
-    public void onConductorEvent(NotificationEvent event) {
-        if (event.getEventType() != EventType.WORK_ITEM_STATUS_CHANGED) return;
+    public void onConductorEvent(Signal signal) {
+        if (!SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED.equals(signal.type())) return;
 
-        String projectId = event.getProjectId();
+        String projectId = signal.projectId();
         List<WorkflowDefinition> workflows = workflowRepository.findByProjectId(projectId);
 
         for (WorkflowDefinition workflow : workflows) {
@@ -82,22 +88,24 @@ public class WorkflowTriggerService {
             if (spec == null) continue;
             ConductorEventTrigger trigger = spec.triggers().events().stream().findFirst().orElse(null);
             if (trigger == null) continue;
-            if (!passesStatusFilter(trigger, event)) continue;
+            if (!passesStatusFilter(trigger, signal)) continue;
 
-            createRun(workflow, "conductor.work_item.status_changed", buildEventPayload(event));
+            createRun(workflow, "conductor.work_item.status_changed", buildEventPayload(signal));
         }
     }
 
     /**
-     * Called by NotificationDispatcher after a GitHub pull request event fires.
-     * Finds all enabled workflows in the project with a matching {@code github.pull_request} trigger
-     * and creates WorkflowRun rows.
+     * Called by {@code WorkflowAutomationSignalSubscriber} when a {@link
+     * SignalTypes#GITHUB_PULL_REQUEST} signal fires. Finds all enabled workflows in the project with a
+     * matching {@code github.pull_request} trigger and creates WorkflowRun rows.
+     *
+     * <p>See {@link #onConductorEvent(Signal)} for why the type guard stays as defense-in-depth.
      */
     @Transactional
-    public void onGitHubPullRequest(NotificationEvent event) {
-        if (event.getEventType() != EventType.GITHUB_PULL_REQUEST) return;
+    public void onGitHubPullRequest(Signal signal) {
+        if (!SignalTypes.GITHUB_PULL_REQUEST.equals(signal.type())) return;
 
-        String projectId = event.getProjectId();
+        String projectId = signal.projectId();
         List<WorkflowDefinition> workflows = workflowRepository.findByProjectId(projectId);
 
         for (WorkflowDefinition workflow : workflows) {
@@ -107,9 +115,9 @@ public class WorkflowTriggerService {
             if (spec == null) continue;
             GitHubPullRequestTrigger trigger = spec.triggers().pullRequestEvents().stream().findFirst().orElse(null);
             if (trigger == null) continue;
-            if (!passesPrFilters(trigger, event)) continue;
+            if (!passesPrFilters(trigger, signal)) continue;
 
-            createRun(workflow, "github.pull_request", buildPullRequestEventPayload(event));
+            createRun(workflow, "github.pull_request", buildPullRequestEventPayload(signal));
         }
     }
 
@@ -306,43 +314,51 @@ public class WorkflowTriggerService {
         return targets;
     }
 
-    /** Passes when no status filter is declared, or the event's target status matches any declared entry. */
-    private boolean passesStatusFilter(ConductorEventTrigger trigger, NotificationEvent event) {
+    /** Passes when no status filter is declared, or the signal's target status matches any declared entry. */
+    private boolean passesStatusFilter(ConductorEventTrigger trigger, Signal signal) {
         List<String> statusFilter = trigger.statusFilter();
         if (statusFilter.isEmpty()) return true;
-        String toStatus = event.getMetadata().get("toStatus");
+        String toStatus = signal.flatAttributes().get("toStatus");
         return statusFilter.stream().anyMatch(s -> s.equalsIgnoreCase(toStatus));
     }
 
-    private String buildEventPayload(NotificationEvent event) {
-        Map<String, Object> payload = new HashMap<>(event.getMetadata());
+    /**
+     * Keeps {@code new HashMap<>(signal.flatAttributes())} rather than {@code signal.payload()} directly:
+     * this is persisted verbatim to {@code workflow_runs.event_payload}, which customer YAML reads via
+     * {@code ${{ event.workItemId }}}-style expressions, so it must stay the same flat, stringly-typed
+     * shape the metadata map always was -- not whatever richer typing a future {@code Signal.payload()}
+     * producer might carry.
+     */
+    private String buildEventPayload(Signal signal) {
+        Map<String, Object> payload = new HashMap<>(signal.flatAttributes());
         payload.put("type", "conductor.work_item.status_changed");
         return toJson(payload);
     }
 
     /**
-     * Passes when no action filter is declared, or the event's action matches any declared entry
-     * (case-insensitive); and when no label filter is declared, or the event carries a {@code label}
+     * Passes when no action filter is declared, or the signal's action matches any declared entry
+     * (case-insensitive); and when no label filter is declared, or the signal carries a {@code label}
      * metadata key matching any declared entry. A non-{@code labeled} action has no {@code label} key
      * at all, so a declared {@code labelFilter} correctly excludes it unless the action filter also
      * separately matches.
      */
-    private boolean passesPrFilters(GitHubPullRequestTrigger trigger, NotificationEvent event) {
+    private boolean passesPrFilters(GitHubPullRequestTrigger trigger, Signal signal) {
         List<String> actionFilter = trigger.actionFilter();
         if (!actionFilter.isEmpty()) {
-            String action = event.getMetadata().get("action");
+            String action = signal.flatAttributes().get("action");
             if (actionFilter.stream().noneMatch(a -> a.equalsIgnoreCase(action))) return false;
         }
         List<String> labelFilter = trigger.labelFilter();
         if (!labelFilter.isEmpty()) {
-            String label = event.getMetadata().get("label");
+            String label = signal.flatAttributes().get("label");
             if (label == null || labelFilter.stream().noneMatch(l -> l.equalsIgnoreCase(label))) return false;
         }
         return true;
     }
 
-    private String buildPullRequestEventPayload(NotificationEvent event) {
-        Map<String, Object> payload = new HashMap<>(event.getMetadata());
+    /** See {@link #buildEventPayload(Signal)} for why this reads {@code flatAttributes()} not {@code payload()}. */
+    private String buildPullRequestEventPayload(Signal signal) {
+        Map<String, Object> payload = new HashMap<>(signal.flatAttributes());
         payload.put("type", "github.pull_request");
         return toJson(payload);
     }

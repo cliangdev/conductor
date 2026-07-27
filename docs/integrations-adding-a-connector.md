@@ -68,6 +68,11 @@ capability interfaces it implements: `FetchConnector` (pull), `WebhookConnector`
    if it's missing — no code change needed.
 8. **Tests** — a connector unit test (mock the `RestTemplate`) asserting payload mapping and the
    `setupRequired`/`degraded` paths, matching the existing connector tests.
+9. **Feeds (only if applicable)** — declare `ingest[]` in your tool-spec JSON to get a scheduled
+   Knowledge Center feed provisioned automatically; see
+   [Connector feeds (metrics digests)](#connector-feeds-metrics-digests) below. A `FetchConnector`
+   needs no Java changes for a `SNAPSHOT`-mode feed — only `WINDOW` mode requires implementing
+   `IngestConnector`.
 
 No database migration is needed — the generic `connection` / `connection_data_cache` tables already
 serve every connector. Only add to `openapi.yaml` if your connector needs bespoke endpoints (e.g. a
@@ -105,6 +110,160 @@ connector/<id>/
 - **Content-Type**: set `MediaType.APPLICATION_JSON` on POST request headers explicitly; don't rely on defaults.
 - **Null fields**: use `@JsonInclude(NON_NULL)` on optional request record fields (or at the class level) so absent values are never serialized as `null` in the outbound body.
 - **URL encoding**: when a resource identifier contains special characters (e.g. `sc-domain:example.com`), use `URI.create(...)` with a pre-encoded string rather than a raw `String` URL — Spring's `RestTemplate` double-encodes `%` in String URLs.
+
+## Connector feeds (metrics digests)
+
+A connector can optionally declare `ingest[]` in its tool-spec JSON (`connectors/tool-specs/<id>.json`,
+alongside `operations`/`actions`) to get a scheduled Knowledge Center feed provisioned automatically —
+no migration, no workflow YAML, and (for the common case) no Java at all. This section is the field
+reference and implementation guide; the pipeline mechanics (aggregate → detect → structure → narrate,
+noise gates, the steady-state valve) live in
+[`docs/knowledge.md`](knowledge.md#metrics-digests) — read that first for *why* the shape below is
+what it is.
+
+### `ingest[]` reference
+
+Each entry is an `IngestSpec`:
+
+| Field | Required | Description |
+|---|---|---|
+| `id` | yes | Stable feed id within this connector — the `ingestId` a `connector_feed` row is keyed on (unique per connection). Renaming it orphans any already-provisioned feed rather than updating them in place. |
+| `label` | yes | Human label shown in the Feeds panel and the connector catalog. |
+| `description` | no | One-line description shown alongside the label. |
+| `mode` | no, default `SNAPSHOT` | `SNAPSHOT` bridges the connector's existing `fetchData()` (see [The `SnapshotIngestAdapter` bridge](#the-snapshotingestadapter-bridge)); `WINDOW` asks an `IngestConnector` for a specific time slice each pull — see [When you actually need `IngestConnector`](#when-you-actually-need-ingestconnector). |
+| `projectOperation` | no | A `ToolOperation#id()` from this connector's own `operations[]` (SNAPSHOT mode only) — projects the fetched snapshot down to this feed's series via that operation's `outputKeys`, the same filter `IntegrationStepExecutor` applies for a workflow `integration` step. Omit to feed the whole snapshot through unfiltered. |
+| `sourceType` | no | The `KnowledgeSubmission.sourceType` stamped on filed items/digests. Supports only the platform placeholders `{connector}`, `{ingest}`, `{period}` — any other `{...}` token passes through literally. Typically `metrics.digest.{connector}.{ingest}` for a metric feed. |
+| `defaultIntervalMinutes` | no, default `1440` | Seeds `connector_feed.interval_minutes` at first provisioning only — an operator can change it afterward via the Feeds panel / `PATCH .../feeds/{feedId}`, and that edit is never overwritten by this default again. |
+| `window` | required iff `mode: WINDOW` | See below. Also used by a `SNAPSHOT`+`digest` feed (e.g. GSC) to select which slice of the already-fetched series to aggregate — it does not drive a separate pull in that case. |
+| `suggestedDisposition` / `suggestedDomain` | no | One-time seeds for a `DispositionPolicy` row, read only at first provisioning (see `ConnectorFeedProvisioner`) — never consulted again at pull/digest time, so the platform never has two disagreeing copies of the same routing policy. |
+| `digest` | no | Present **iff** this feed is a metric feed (`IngestSpec#isMetricFeed()`) — a `DigestSpec`, see below. Omit entirely for a feed that files raw items straight into the inbox instead of going through the digest/narration pipeline. |
+
+`window` (`IngestWindowSpec`):
+
+| Field | Description |
+|---|---|
+| `sizeDays` | Width of the slice in days. |
+| `lagDays` | How many days back from "now" the slice ends — data sources are rarely complete for the most recent day(s). |
+| `alignTo` | `DAY` \| `ISO_WEEK` \| `MONTH` — snaps the slice to a calendar boundary (e.g. `ISO_WEEK` always starts the slice on a Monday) regardless of when the pull actually runs. Defaults to `DAY`. |
+
+`digest` (`DigestSpec` — only for a metric feed):
+
+| Field | Description |
+|---|---|
+| `seriesPath` | Dotted path into the pulled/projected payload holding the row series, e.g. `"trend"`. |
+| `dateField` | Per-row ISO-8601 date key, e.g. `"date"`. |
+| `pagePath` | The Knowledge Center page the narrator's output eventually lands on (via the ordinary source → librarian pipeline). |
+| `maxQuietPeriods` | The steady-state valve's threshold — periods of no material change tolerated before one forced emission. Default `13` (a quarter, for a weekly feed). |
+| `metrics[]` | List of `MetricSpec` — see below. |
+| `dimensions[]` | List of `DimensionSpec` — see below. |
+
+`metrics[]` (`MetricSpec`):
+
+| Field | Description |
+|---|---|
+| `key` / `label` / `unit` | Identity and display. |
+| `agg` | `SUM` \| `MEAN` \| `WEIGHTED_MEAN` \| `LAST` \| `RATIO` — how `MetricsAggregator` rolls the window's rows into one value. `RATIO` sums `numerator`/`denominator` separately then divides (never a mean-of-ratios — the classic CTR bug). `WEIGHTED_MEAN` needs `weightField`. |
+| `field` | Row key to read (`SUM`/`MEAN`/`WEIGHTED_MEAN`/`LAST`). |
+| `weightField` | Row key for `WEIGHTED_MEAN`'s weight. |
+| `numerator` / `denominator` | Row keys for `RATIO`. |
+| `direction` | `UP_IS_GOOD` \| `DOWN_IS_GOOD` \| `NEUTRAL` (default) — which way a move reads as good news; the narrator is told this explicitly so a `DOWN_IS_GOOD` metric falling is written up as an improvement, not bad news. |
+| `minAbsolute` / `minRelative` / `zThreshold` | The three noise-gate thresholds — see [`docs/knowledge.md`](knowledge.md#metrics-digests). Defaults `0.0` / `0.15` / `2.0`. |
+
+`dimensions[]` (`DimensionSpec`):
+
+| Field | Description |
+|---|---|
+| `key` / `label` | Identity and display — `key` also names the payload field holding the row list (e.g. `"topQueries"`). |
+| `idField` / `valueField` | Row keys for the entry's identity and ranked value. |
+| `topN` | How many top rows to watch for movers (defaults to all rows). |
+| `baselineN` | How many rows to persist as the next period's baseline — bounds `connector_feed.last_stats` regardless of how wide the source's own top-N list is (defaults to the current row count). |
+| `minAbsolute` / `minRelative` / `minRankMove` | Thresholds for flagging a rank-stable entry as a mover by value change, or a rank shift as material on its own. |
+
+### The `SnapshotIngestAdapter` bridge
+
+A `mode: SNAPSHOT` feed needs **zero Java changes** on a connector that already implements
+`FetchConnector` — `SnapshotIngestAdapter` bridges `fetchData()` into the ingest pipeline automatically
+whenever `ConnectorRegistry#findIngest` comes back empty for that connector id (see `FeedPullService`).
+It re-fetches the connector's one dashboard-shaped snapshot on the feed's cadence (never
+force-refreshing — a stale cache from a recent dashboard load is reused, not churned), optionally
+projects it through `projectOperation`, and — for a metric feed — stamps the `metadata.periodKey`
+`MetricsDigestService` requires (see the next section).
+
+`gsc.json`'s `search_analytics_weekly` entry is the real, shipped example: `GscConnector` implements
+only `FetchConnector`, yet gets a weekly-digest feed with zero connector code, purely from this JSON
+declaration bridging its existing `search_analytics` operation.
+
+### When you actually need `IngestConnector`
+
+Implement `IngestConnector` (`pull(ConnectionContext, IngestRequest): IngestBatch`) only when:
+
+- **`mode: WINDOW` is declared.** This is enforced at load time, not just documented: `Connector
+  .getToolSpec()`'s `withValidIngest` drops a `WINDOW` entry with a WARN log for any connector that
+  doesn't implement `IngestConnector`, rather than silently narrowing it to `SNAPSHOT` (a silently
+  narrowed window would digest the wrong period — worse than no digest at all).
+- **A single re-fetched snapshot genuinely isn't the right shape** — e.g. the source API has real
+  pagination/cursor semantics you want to drive incrementally, rather than "re-pull the whole current
+  dashboard and diff it," which is all `SnapshotIngestAdapter` can do.
+
+**Contract to honor**, same as `FetchConnector#fetchData`: return `IngestBatch.degraded(...)` /
+`.setupRequired(...)` for expected remote failures rather than throwing, and make `pull` idempotent —
+re-pulling the same `IngestRequest#cursor()`/window after a crash or retry must yield the same
+`IngestItem#dedupKey()`s. **For a metric feed specifically**, your `pull` must stamp
+`item.metadata().get("periodKey")` yourself (a non-empty string identifying the period) —
+`MetricsDigestService` throws if it's missing, since `SnapshotIngestAdapter` always stamps it and a
+custom `IngestConnector` skipping it is a contract violation worth failing loudly on rather than
+silently corrupting the digest's period bookkeeping.
+
+### Worked example: Datadog (`IngestConnector` case)
+
+**No `datadog.json` ships in this repo — Datadog is not a connector that exists here.** This is a
+worked illustration of the `IngestConnector` path, not a connector to copy verbatim.
+
+Say a `DatadogConnector` wants a daily digest of a metric query (e.g. active hosts) using Datadog's
+timeseries query API with real cursor/window semantics, rather than bridging a single dashboard
+snapshot. Its tool-spec would declare:
+
+```json
+{
+  "ingest": [
+    {
+      "id": "active_hosts_daily",
+      "label": "Active hosts (daily)",
+      "description": "Daily active-host count digest",
+      "mode": "WINDOW",
+      "sourceType": "metrics.digest.{connector}.{ingest}",
+      "defaultIntervalMinutes": 1440,
+      "window": { "sizeDays": 1, "lagDays": 1, "alignTo": "DAY" },
+      "suggestedDisposition": "KNOWLEDGE",
+      "suggestedDomain": "engineering",
+      "digest": {
+        "seriesPath": "trend",
+        "dateField": "date",
+        "pagePath": "engineering/metrics/infrastructure.md",
+        "metrics": [
+          { "key": "active_hosts", "label": "Active hosts", "agg": "LAST", "field": "count",
+            "minAbsolute": 5, "minRelative": 0.05 }
+        ]
+      }
+    }
+  ]
+}
+```
+
+And `DatadogConnector implements IngestConnector` would, in `pull`:
+
+1. Query Datadog's metrics API for `request.window().start()`–`end()`.
+2. Shape the result into the same `{"trend": [{"date": "...", "count": ...}, ...]}` payload
+   `MetricsAggregator` expects at `seriesPath`/`dateField`.
+3. Build one `IngestItem` whose `metadata` includes `"periodKey"` (e.g. the ISO date of
+   `request.window().start()`) — the self-stamping requirement above.
+4. Return `IngestBatch.of(List.of(item), nextCursor, hasMore)` — or `.degraded(...)`/`.setupRequired(...)`
+   for an expected Datadog API failure, never a thrown exception.
+
+`FeedPullService` and `MetricsDigestService` handle everything downstream identically to the GSC
+`SnapshotIngestAdapter` case — the digest pipeline doesn't know or care which path produced the item.
+
+---
 
 ## Known SPI gaps / follow-ups
 

@@ -8,12 +8,12 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.notification.NotificationDispatcher;
 import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.view.ReviewerView;
+import com.conductor.signal.SignalBus;
 import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -49,7 +49,7 @@ class ReviewerServiceTest {
     private UserRepository userRepository;
 
     @Mock
-    private NotificationDispatcher notificationDispatcher;
+    private SignalBus signalBus;
 
     @Mock
     private ProjectSecurityService projectSecurityService;

@@ -3,14 +3,16 @@ package com.conductor.workflow;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalOrigin;
+import com.conductor.signal.SignalTypes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Map;
 
@@ -45,12 +47,12 @@ public class WorkflowFailureCircuitBreaker {
     public static final String REASON_CONSECUTIVE_FAILURES = "CONSECUTIVE_FAILURES";
 
     private final WorkflowDefinitionRepository workflowRepository;
-    private final NotificationDispatcher notificationDispatcher;
+    private final SignalBus signalBus;
 
     public WorkflowFailureCircuitBreaker(WorkflowDefinitionRepository workflowRepository,
-                                          NotificationDispatcher notificationDispatcher) {
+                                          SignalBus signalBus) {
         this.workflowRepository = workflowRepository;
-        this.notificationDispatcher = notificationDispatcher;
+        this.signalBus = signalBus;
     }
 
     /**
@@ -85,13 +87,14 @@ public class WorkflowFailureCircuitBreaker {
             workflow.setAutoPausedRunId(run.getId());
             log.warn("Auto-pausing workflow {} ('{}') after {} consecutive failed runs -- tripped by run {}",
                     workflow.getId(), workflow.getName(), failures, run.getId());
-            notificationDispatcher.dispatch(NotificationEvent.of(EventType.WORKFLOW_AUTO_PAUSED,
-                    workflow.getProject().getId(),
+            signalBus.publish(Signal.of(SignalTypes.CONDUCTOR_WORKFLOW_AUTO_PAUSED,
+                    workflow.getProject().getId(), workflow.getId(), Instant.now(),
                     Map.of(
                             "workflowId", workflow.getId(),
                             "workflowName", workflow.getName(),
                             "consecutiveFailures", String.valueOf(failures),
-                            "runId", run.getId())));
+                            "runId", run.getId()),
+                    new SignalOrigin("workflow", workflow.getId())));
         }
         workflowRepository.save(workflow);
     }

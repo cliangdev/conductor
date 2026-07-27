@@ -1,0 +1,15 @@
+{
+  "description": "Fixture connector for Connector#getToolSpec() WINDOW-without-IngestConnector validation",
+  "operations": [],
+  "ingest": [
+    {
+      "id": "window_feed",
+      "mode": "WINDOW",
+      "window": { "sizeDays": 7, "lagDays": 3 }
+    },
+    {
+      "id": "snapshot_feed",
+      "mode": "SNAPSHOT"
+    }
+  ]
+}

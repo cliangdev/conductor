@@ -67,6 +67,7 @@ class WorkflowIntegrationToolsTest {
     @MockitoBean private ConnectionDataCacheRepository cacheRepository;
     @MockitoBean private WebhookEventRepository webhookEventRepository;
     @MockitoBean private ProjectSecurityService projectSecurityService;
+    @MockitoBean private com.conductor.integration.ingest.ConnectorFeedRepository connectorFeedRepository;
     @MockitoBean private Optional<GcpBillingConnector> gcpBillingConnector;
     @MockitoBean private Optional<GscConnector> gscConnector;
     @MockitoBean private com.conductor.service.RuntimeTargetService runtimeTargetService;

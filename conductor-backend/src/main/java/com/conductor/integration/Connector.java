@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -23,22 +24,44 @@ public interface Connector {
 
     /**
      * Describes this connector as a workflow tool for agent discovery (operations for
-     * {@link FetchConnector}s, actions for {@link ActionConnector}s — either, both, or neither
-     * populated depending on which capabilities this connector implements).
-     * Loads from {@code /connectors/tool-specs/{connectorId}.json} on the classpath.
+     * {@link FetchConnector}s, actions for {@link ActionConnector}s, ingest feeds for
+     * {@link IngestSpec} — any subset populated depending on which capabilities this connector
+     * implements). Loads from {@code /connectors/tool-specs/{connectorId}.json} on the classpath.
      * Add a new JSON file there to register tool metadata — no Java change needed.
+     *
+     * <p>A declared {@code mode: WINDOW} ingest entry requires this connector to implement
+     * {@link IngestConnector} (only it has window semantics — see {@link IngestMode}). That's a
+     * load-time failure, not a silent degrade to {@code SNAPSHOT}: a silently narrowed window would
+     * produce a digest over the wrong period, which is worse than no digest at all. The offending entry
+     * is dropped and logged at WARN; every other entry (and the rest of the spec) still loads normally.
      */
     default IntegrationToolSpec getToolSpec() {
         String id = getMetadata().id();
         String path = "/connectors/tool-specs/" + id + ".json";
         try (InputStream is = Connector.class.getResourceAsStream(path)) {
             if (is == null) return new IntegrationToolSpec(getMetadata().description(), List.of(), List.of());
-            return TOOL_SPEC_MAPPER.readValue(is, IntegrationToolSpec.class);
+            IntegrationToolSpec spec = TOOL_SPEC_MAPPER.readValue(is, IntegrationToolSpec.class);
+            return withValidIngest(spec, id);
         } catch (Exception e) {
             // Malformed tool-spec JSON silently degrading to empty metadata is easy to miss — name the
             // connector and the parse error so a broken tool-spec.json actually gets noticed.
             TOOL_SPEC_LOG.warn("Failed to load tool-spec JSON for connector '{}' at {}: {}", id, path, e.getMessage());
             return new IntegrationToolSpec(getMetadata().description(), List.of(), List.of());
         }
+    }
+
+    private IntegrationToolSpec withValidIngest(IntegrationToolSpec spec, String connectorId) {
+        if (spec.ingest().isEmpty() || this instanceof IngestConnector) return spec;
+        List<IngestSpec> valid = new ArrayList<>();
+        for (IngestSpec entry : spec.ingest()) {
+            if (entry.mode() == IngestMode.WINDOW) {
+                TOOL_SPEC_LOG.warn("Dropping ingest '{}' for connector '{}': mode WINDOW requires an "
+                        + "IngestConnector, but this connector only implements FetchConnector",
+                        entry.id(), connectorId);
+            } else {
+                valid.add(entry);
+            }
+        }
+        return new IntegrationToolSpec(spec.description(), spec.operations(), spec.actions(), valid);
     }
 }

@@ -61,6 +61,16 @@ public class ConnectorRegistry {
         return as(id, CredentialConnector.class);
     }
 
+    /**
+     * {@code IngestConnector}-typed connectors only — do NOT use this to decide whether a connector
+     * offers Knowledge Center feeds. A {@code SNAPSHOT}-mode feed can be served by bridging a plain
+     * {@link FetchConnector}, so feed availability must be read from {@code getToolSpec().ingest()}
+     * (see {@link IngestSpec}), not from this lookup or from {@link Capability#INGEST}.
+     */
+    public Optional<IngestConnector> findIngest(String id) {
+        return as(id, IngestConnector.class);
+    }
+
     /** Capabilities a connector supports, derived from the interfaces it implements. */
     public List<Capability> capabilitiesOf(Connector c) {
         List<Capability> caps = new ArrayList<>();
@@ -68,6 +78,7 @@ public class ConnectorRegistry {
         if (c instanceof WebhookConnector) caps.add(Capability.WEBHOOK);
         if (c instanceof ActionConnector) caps.add(Capability.ACTION);
         if (c instanceof CredentialConnector) caps.add(Capability.CREDENTIAL);
+        if (c instanceof IngestConnector) caps.add(Capability.INGEST);
         return caps;
     }
 

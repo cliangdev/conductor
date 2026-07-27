@@ -7,14 +7,14 @@ import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalTypes;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -59,7 +59,7 @@ class WorkItemServiceTest {
     private ProjectMemberRepository projectMemberRepository;
 
     @Mock
-    private NotificationDispatcher notificationDispatcher;
+    private SignalBus signalBus;
 
     @Mock
     private CommentRepository commentRepository;
@@ -295,15 +295,15 @@ class WorkItemServiceTest {
 
         workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
-        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(eventCaptor.capture());
+        ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(signalCaptor.capture());
 
-        NotificationEvent event = eventCaptor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.WORK_ITEM_STATUS_CHANGED);
-        assertThat(event.getMetadata()).containsEntry("fromStatus", "IN_PROGRESS");
-        assertThat(event.getMetadata()).containsEntry("toStatus", "CODE_REVIEW");
-        assertThat(event.getMetadata()).containsEntry("toStatusLabel", "Code Review");
-        assertThat(event.getMetadata()).containsEntry("toCategory", "in_progress");
+        Signal signal = signalCaptor.getValue();
+        assertThat(signal.type()).isEqualTo(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED);
+        assertThat(signal.payload()).containsEntry("fromStatus", "IN_PROGRESS");
+        assertThat(signal.payload()).containsEntry("toStatus", "CODE_REVIEW");
+        assertThat(signal.payload()).containsEntry("toStatusLabel", "Code Review");
+        assertThat(signal.payload()).containsEntry("toCategory", "in_progress");
     }
 
     @Test
@@ -318,10 +318,10 @@ class WorkItemServiceTest {
 
         workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
-        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(eventCaptor.capture());
+        ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(signalCaptor.capture());
 
-        assertThat(eventCaptor.getValue().getMetadata()).doesNotContainKey("prUrl");
+        assertThat(signalCaptor.getValue().payload()).doesNotContainKey("prUrl");
     }
 
     @Test
@@ -359,12 +359,12 @@ class WorkItemServiceTest {
 
         workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
-        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(eventCaptor.capture());
+        ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(signalCaptor.capture());
 
-        NotificationEvent event = eventCaptor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.WORK_ITEM_STATUS_CHANGED);
-        assertThat(event.getMetadata()).containsEntry("assigneeName", "Alice Smith");
+        Signal signal = signalCaptor.getValue();
+        assertThat(signal.type()).isEqualTo(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED);
+        assertThat(signal.payload()).containsEntry("assigneeName", "Alice Smith");
     }
 
     @Test
@@ -385,10 +385,10 @@ class WorkItemServiceTest {
 
         workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
-        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(eventCaptor.capture());
+        ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(signalCaptor.capture());
 
-        assertThat(eventCaptor.getValue().getMetadata()).containsEntry("assigneeName", "bob@example.com");
+        assertThat(signalCaptor.getValue().payload()).containsEntry("assigneeName", "bob@example.com");
     }
 
     @Test
@@ -404,10 +404,10 @@ class WorkItemServiceTest {
 
         workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
 
-        ArgumentCaptor<NotificationEvent> eventCaptor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(eventCaptor.capture());
+        ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(signalCaptor.capture());
 
-        assertThat(eventCaptor.getValue().getMetadata()).doesNotContainKey("assigneeName");
+        assertThat(signalCaptor.getValue().payload()).doesNotContainKey("assigneeName");
     }
 
     // --- completeFromPullRequest (system-initiated transition on a merged PR; statechart-driven) ---
@@ -434,12 +434,12 @@ class WorkItemServiceTest {
         verify(workItemRepository).save(testIssue);
         verify(assetService).recordAsset(testIssue, "github_pr", "https://github.com/x/y/pull/9", "Pull Request", "link");
 
-        ArgumentCaptor<NotificationEvent> captor = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(captor.capture());
-        NotificationEvent event = captor.getValue();
-        assertThat(event.getEventType()).isEqualTo(EventType.WORK_ITEM_STATUS_CHANGED);
-        assertThat(event.getMetadata()).containsEntry("toStatus", "DONE");
-        assertThat(event.getMetadata()).containsEntry("prUrl", "https://github.com/x/y/pull/9");
+        ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(captor.capture());
+        Signal signal = captor.getValue();
+        assertThat(signal.type()).isEqualTo(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED);
+        assertThat(signal.payload()).containsEntry("toStatus", "DONE");
+        assertThat(signal.payload()).containsEntry("prUrl", "https://github.com/x/y/pull/9");
     }
 
     @Test
@@ -452,7 +452,7 @@ class WorkItemServiceTest {
                 .isInstanceOf(EntityNotFoundException.class);
 
         verify(workItemRepository, never()).save(any());
-        verify(notificationDispatcher, never()).dispatch(any());
+        verify(signalBus, never()).publish(any());
     }
 
     @Test
@@ -475,7 +475,7 @@ class WorkItemServiceTest {
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("DONE");
         verify(assetService).recordAsset(testIssue, "github_pr", "https://github.com/x/y/pull/9", "Pull Request", "link");
-        verify(notificationDispatcher, never()).dispatch(any());
+        verify(signalBus, never()).publish(any());
     }
 
     @Test
@@ -487,6 +487,6 @@ class WorkItemServiceTest {
         workItemService.completeFromPullRequest("proj-1", "TEST", 1, "https://github.com/x/y/pull/9");
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("CLOSED");
-        verify(notificationDispatcher, never()).dispatch(any());
+        verify(signalBus, never()).publish(any());
     }
 }

@@ -49,5 +49,34 @@
       },
       "outputKeys": ["topPages"]
     }
+  ],
+  "ingest": [
+    {
+      "id": "search_analytics_weekly",
+      "label": "GSC weekly digest",
+      "description": "Weekly organic search digest: clicks, impressions, CTR, position, and top queries/pages movement",
+      "mode": "SNAPSHOT",
+      "projectOperation": "search_analytics",
+      "sourceType": "metrics.digest.{connector}.{ingest}",
+      "defaultIntervalMinutes": 10080,
+      "window": { "sizeDays": 7, "lagDays": 3, "alignTo": "ISO_WEEK" },
+      "suggestedDisposition": "KNOWLEDGE",
+      "suggestedDomain": "marketing",
+      "digest": {
+        "seriesPath": "trend",
+        "dateField": "date",
+        "pagePath": "marketing/metrics/organic-search.md",
+        "metrics": [
+          { "key": "clicks", "label": "Clicks", "agg": "SUM", "field": "clicks", "direction": "UP_IS_GOOD", "minAbsolute": 50 },
+          { "key": "impressions", "label": "Impressions", "agg": "SUM", "field": "impressions", "minAbsolute": 1000 },
+          { "key": "ctr", "label": "CTR", "agg": "RATIO", "numerator": "clicks", "denominator": "impressions", "minAbsolute": 0.004, "minRelative": 0.10 },
+          { "key": "position", "label": "Avg. position", "agg": "WEIGHTED_MEAN", "field": "position", "weightField": "impressions", "direction": "DOWN_IS_GOOD", "minAbsolute": 0.8, "minRelative": 0.05 }
+        ],
+        "dimensions": [
+          { "key": "topQueries", "label": "Top queries", "idField": "query", "valueField": "clicks", "topN": 8, "baselineN": 25, "minAbsolute": 25, "minRelative": 0.30, "minRankMove": 5 },
+          { "key": "topPages", "label": "Top pages", "idField": "page", "valueField": "clicks", "topN": 5, "baselineN": 25, "minAbsolute": 25, "minRelative": 0.30, "minRankMove": 5 }
+        ]
+      }
+    }
   ]
 }

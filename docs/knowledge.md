@@ -11,6 +11,7 @@ creates and edits them; humans and other agents read them.
 - [The ingestion envelope](#the-ingestion-envelope)
 - [Producers](#producers)
 - [The pipeline](#the-pipeline)
+- [Metrics digests](#metrics-digests)
 - [Page model](#page-model)
 - [System workflows](#system-workflows)
 - [Domains](#domains)
@@ -163,6 +164,93 @@ Source lifecycle: `PENDING → PROCESSING → PROCESSED` (success) or `PENDING �
 (retried, backoff) `→ … → DEAD` (exhausted). `DEAD` isn't necessarily final — an admin can reset a
 project's dead sources back to `PENDING` via [`POST /sources/retry`](#rest-endpoints) after fixing
 the underlying cause.
+
+---
+
+## Metrics digests
+
+A second, parallel producer feeds the same wiki: a connector can declare a scheduled **feed**
+(`ingest[]` in its tool-spec JSON — see
+[`docs/integrations-adding-a-connector.md`](integrations-adding-a-connector.md#connector-feeds-metrics-digests))
+that pulls a metric series on a cadence and, when something material happened, narrates it into a
+knowledge source. This is not the source-inbox pipeline above with a different trigger — it's a
+distinct pre-pipeline that decides *whether a source should exist at all*, then hands its output to
+that exact same inbox → librarian machinery once it does.
+
+```mermaid
+flowchart LR
+    Sched["ConnectorFeedScheduler<br/>60s poll · claims due feeds"]
+    Pull["FeedPullService<br/>pull via SnapshotIngestAdapter<br/>or a connector's own IngestConnector"]
+    Digest["MetricsDigestService<br/>aggregate → detect"]
+    Row[("connector_feed_digest<br/>PENDING (material) or SKIPPED")]
+    Narrator["metrics-narrator run<br/>agent step, zero tools"]
+    Submit["DigestSubmissionService<br/>submits the narrative"]
+    Inbox[("knowledge_sources<br/>same inbox as any other producer")]
+
+    Sched -- "claim due feed" --> Pull
+    Pull -- "one snapshot/window item" --> Digest
+    Digest -- "material?" --> Row
+    Row -- "PENDING → dispatch" --> Narrator
+    Narrator -- "title + prose" --> Submit
+    Submit -- "submit()" --> Inbox
+    Inbox -. "filed by the librarian,<br/>same as any other source" .-> Pages[("knowledge_pages")]
+```
+
+**Four stages**, each owned by a different class:
+
+1. **Aggregate** (`MetricsAggregator`) — projects the connector's raw snapshot/window down to the
+   `MetricSpec`/`DimensionSpec` series the feed's `DigestSpec` declares (e.g. clicks, impressions, CTR,
+   top queries).
+2. **Detect statistically** (`MetricsChangeDetector`) — compares each metric against a rolling EWMA
+   baseline persisted on `connector_feed.last_stats` (α ≈ 0.3, ~6-period memory), not just the prior
+   period, so a big-but-normal move on a volatile series doesn't read as material. A metric clears the
+   gate only if **all three** noise gates pass:
+   - **Absolute** — `abs(value − last) >= minAbsolute` (kills small-base nonsense like 2→4).
+   - **Relative** — `abs(value − last) / max(abs(last), 1) >= minRelative` (kills large-base jitter like
+     4210→4290).
+   - **Statistical** — `abs(value − ewma) / sqrt(ewmVar) >= zThreshold` (kills large-but-normal moves on a
+     volatile series; skipped as passing below 4 periods of history or while variance is still zero — a
+     `lowConfidence` flag on the change record marks this case for the narrator to hedge on).
+
+   Dimension breakdowns (top queries, top pages, …) get the analogous top-N-vs-baseline mover check
+   (entered/exited/rank-moved/rose/fell), independent of the metric gates.
+3. **Structure** (`DigestPayloadBuilder`) — renders the change-detector's result into the JSON payload
+   the narrator reads: which metrics/movers are material, their deltas, direction (`UP_IS_GOOD` vs.
+   `DOWN_IS_GOOD` — a falling metric isn't automatically bad news), and the `lowConfidence` flag. This is
+   the *only* thing the narrator ever sees — never the raw pulled snapshot.
+4. **Narrate** (`metrics-narrator` system workflow) — a single `agent` step turns that JSON into prose
+   (title + narrative + optional significance). **The agent has zero tools.** It cannot call
+   `write_knowledge_pages` or `submit_knowledge_source` itself — it is a pure text function from digest
+   JSON to prose, nothing more. `DigestSubmissionService` reads its output and submits it as a
+   `KnowledgeSubmission` into the ordinary inbox — **the platform submits, never the agent.** From there
+   it's just another `knowledge_sources` row: the same [pipeline](#the-pipeline) claims it into a lane
+   (by the feed's `suggestedDomain`) and the librarian files it onto the page named by the `DigestSpec`'s
+   `pagePath`, same as any other source.
+
+**The novelty gate.** A period is material overall only if at least one metric or one dimension mover
+cleared its gates — the change-detector's core design decision. Without it, a stable weekly feed would
+file ~52 near-identical "clicks were N" pages a year. A non-material period still updates the EWMA
+baseline and advances the feed's cursor (so history keeps accumulating and nothing is silently
+skipped) — it just records a `SKIPPED` digest row and dispatches no narrator run.
+
+**The quarterly steady-state valve.** The one escape from total silence: `DigestSpec.maxQuietPeriods`
+(default 13 — a quarter of weekly periods) counts consecutive non-material periods, and once that
+streak is reached the detector forces exactly one emission (`reason: "steady_state"`) and resets the
+counter. Otherwise a genuinely flat metric goes silent forever and a reader can't tell "stable" from
+"the feed is broken."
+
+**A newly enabled feed files nothing on its own** — it needs either a material period or the
+steady-state valve to fire before its first knowledge source ever appears. This is expected, not a
+bug: silence is the correct behavior for "nothing changed," and it's also why feed health has its own
+surface (below) rather than being inferred from wiki activity.
+
+**Feed health is visible independent of wiki output.** Because "no source filed yet" is the *normal*
+state for a freshly enabled or genuinely stable feed, feed health (enabled/cadence, last run, last
+success, consecutive failures, last error) is surfaced directly on the connector's own detail page — a
+Feeds panel backed by `GET .../integrations/{connectorId}/feeds` (see
+[`docs/integrations-adding-a-connector.md`](integrations-adding-a-connector.md#connector-feeds-metrics-digests))
+— instead of making an operator infer "is this feed even running?" from whether pages have recently
+changed.
 
 ---
 

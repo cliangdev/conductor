@@ -11,9 +11,9 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
-import com.conductor.notification.NotificationDispatcher;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.UserRepository;
+import com.conductor.signal.SignalBus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,7 +50,7 @@ class ReviewServiceTest {
     private UserRepository userRepository;
 
     @Mock
-    private NotificationDispatcher notificationDispatcher;
+    private SignalBus signalBus;
 
     @InjectMocks
     private ReviewService reviewService;

@@ -119,6 +119,7 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 `invites`, `api_keys`  
 `workflow_definitions` → `workflow_definition_versions` (immutable published snapshots) → `workflow_runs`/`workflow_job_runs`/`workflow_step_runs`; plus `workflow_secrets`, `workflow_artifacts`, `runtime_targets` (BYO Cloud Run)  
 `connections` (connector framework) + `webhook_event` (inbound) + `action_invocation` (outbound idempotency/retry)  
+`connector_feed` (scheduled per-connection pull binding, declared via a connector's `ingest[]`) → `connector_feed_digest` (per-period change report); `disposition_policy` (routes a signal type to a handling lane) — see [`docs/knowledge.md`](docs/knowledge.md#metrics-digests)  
 `agents` → `agent_runs` (ReAct transcripts); `provider_credentials` (BYO model keys, KMS envelope)  
 `knowledge_sources` → `knowledge_pages`/`knowledge_page_revisions` (+ links) — agent-maintained wiki, see [`docs/knowledge.md`](docs/knowledge.md)
 

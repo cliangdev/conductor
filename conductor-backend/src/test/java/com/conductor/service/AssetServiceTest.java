@@ -6,13 +6,13 @@ import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkflowDefinitionVersion;
 import com.conductor.exception.BusinessException;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowDefinitionVersionRepository;
 import com.conductor.service.view.AssetInput;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalTypes;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,7 +39,7 @@ class AssetServiceTest {
     private AssetRepository assetRepository;
     private WorkItemRepository workItemRepository;
     private ProjectSecurityService projectSecurityService;
-    private NotificationDispatcher notificationDispatcher;
+    private SignalBus signalBus;
     private AssetService service;
 
     @BeforeEach
@@ -47,7 +47,7 @@ class AssetServiceTest {
         assetRepository = Mockito.mock(AssetRepository.class);
         workItemRepository = Mockito.mock(WorkItemRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
-        notificationDispatcher = Mockito.mock(NotificationDispatcher.class);
+        signalBus = Mockito.mock(SignalBus.class);
         // Resolution is DB-only: back the resolver with a mock version repo returning the seeded ENGINEERING
         // published snapshot (ENGINEERING allows only the github_pr asset type).
         WorkflowDefinitionVersionRepository versionRepository =
@@ -56,7 +56,7 @@ class AssetServiceTest {
                 .thenReturn(Optional.of(engineeringSnapshot()));
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository);
         service = new AssetService(assetRepository, workItemRepository, projectSecurityService, resolver,
-                notificationDispatcher);
+                signalBus);
         when(assetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
     }
@@ -98,9 +98,9 @@ class AssetServiceTest {
 
         assertThat(response.getType()).isEqualTo("github_pr");
         assertThat(response.getKind()).isEqualTo("link");
-        ArgumentCaptor<NotificationEvent> event = ArgumentCaptor.forClass(NotificationEvent.class);
-        verify(notificationDispatcher).dispatch(event.capture());
-        assertThat(event.getValue().getEventType()).isEqualTo(EventType.ASSET_ADDED);
+        ArgumentCaptor<Signal> signal = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(signal.capture());
+        assertThat(signal.getValue().type()).isEqualTo(SignalTypes.CONDUCTOR_WORK_ITEM_ASSET_ADDED);
     }
 
     @Test
