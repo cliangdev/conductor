@@ -1,70 +1,35 @@
 package com.conductor.notification;
 
-import com.conductor.knowledge.KnowledgeEventTap;
-import com.conductor.service.LifecycleTriggerDispatcher;
-import com.conductor.workflow.WorkflowTriggerService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
+import com.conductor.notification.signal.NotificationSignalMapper;
+import com.conductor.signal.SignalBus;
 import org.springframework.stereotype.Service;
 
 /**
- * In-process event fan-out. Despite the name this is the event bus, not a notifier -- chat delivery is
- * one of five things it does, and now lives in {@link NotificationDeliveryService}.
+ * Translates a {@link NotificationEvent} into a {@link com.conductor.signal.Signal} and publishes it on
+ * {@link SignalBus}. This class used to BE the event fan-out (four hardcoded, ordered consumers); that
+ * fan-out now lives as {@code SignalSubscriber} beans registered on the bus -- see {@code
+ * com.conductor.notification.signal.NotificationSignalSink}, {@code
+ * com.conductor.workflow.signal.WorkflowAutomationSignalSubscriber}, {@code
+ * com.conductor.workflow.signal.LifecycleSignalSubscriber}, and {@code
+ * com.conductor.knowledge.signal.KnowledgeSignalSink}.
  *
- * <p>Note the asymmetry in {@link #dispatch}: delivery runs first and is NOT wrapped in a try/catch,
- * while the four downstream consumers each are. A failing notification-config lookup therefore escapes
- * and short-circuits the rest. See {@link NotificationDeliveryService} for why that is load-bearing.
+ * @deprecated kept only as the translator its remaining callers (e.g. {@code WorkItemService}, {@code
+ * ReviewService}) still invoke; a later commit moves those callers onto {@link SignalBus} directly, at
+ * which point this class is deleted. Publish onto {@link SignalBus} instead of adding new callers here.
  */
+@Deprecated
 @Service
 public class NotificationDispatcher {
 
-    private static final Logger log = LoggerFactory.getLogger(NotificationDispatcher.class);
+    private final SignalBus signalBus;
+    private final NotificationSignalMapper mapper;
 
-    private final NotificationDeliveryService deliveryService;
-
-    @Lazy
-    @Autowired
-    private WorkflowTriggerService workflowTriggerService;
-
-    @Lazy
-    @Autowired
-    private LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
-
-    @Lazy
-    @Autowired
-    private KnowledgeEventTap knowledgeEventTap;
-
-    public NotificationDispatcher(NotificationDeliveryService deliveryService) {
-        this.deliveryService = deliveryService;
+    public NotificationDispatcher(SignalBus signalBus, NotificationSignalMapper mapper) {
+        this.signalBus = signalBus;
+        this.mapper = mapper;
     }
 
     public void dispatch(NotificationEvent event) {
-        deliveryService.deliver(event);
-
-        try {
-            workflowTriggerService.onConductorEvent(event);
-        } catch (Exception e) {
-            log.warn("Workflow trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
-        }
-
-        try {
-            workflowTriggerService.onGitHubPullRequest(event);
-        } catch (Exception e) {
-            log.warn("GitHub PR workflow trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
-        }
-
-        try {
-            lifecycleTriggerDispatcher.onConductorEvent(event);
-        } catch (Exception e) {
-            log.warn("Lifecycle trigger evaluation failed for event {}: {}", event.getEventType(), e.getMessage());
-        }
-
-        try {
-            knowledgeEventTap.onConductorEvent(event);
-        } catch (Exception e) {
-            log.warn("Knowledge ingestion tap failed for event {}: {}", event.getEventType(), e.getMessage());
-        }
+        signalBus.publish(mapper.toSignal(event));
     }
 }

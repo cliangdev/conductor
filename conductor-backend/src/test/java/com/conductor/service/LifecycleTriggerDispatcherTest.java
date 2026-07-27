@@ -6,6 +6,7 @@ import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.workflow.lifecycle.StatechartTransition;
+import com.conductor.workflow.signal.LifecycleSignalSubscriber;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Transactional;
@@ -173,6 +174,11 @@ class LifecycleTriggerDispatcherTest {
      * {@code NotificationDispatcher}'s own try/catch around this call looks like it isolated the
      * failure. Without a boundary here, that isolation is real: the try/catch in
      * {@code NotificationDispatcher.dispatch} genuinely protects the triggering request.
+     *
+     * <p>Also asserts {@link LifecycleSignalSubscriber} (A3's SignalBus wrapper around this class) —
+     * the same rationale applies one layer up: {@code InProcessSignalBus.publish} is invoked from
+     * inside the same caller transaction, so a {@code @Transactional} boundary there would have the
+     * identical rollback-only failure mode.
      */
     @Test
     void isDeliberatelyNotTransactional() throws NoSuchMethodException {
@@ -181,6 +187,11 @@ class LifecycleTriggerDispatcherTest {
         Method onConductorEvent =
                 LifecycleTriggerDispatcher.class.getDeclaredMethod("onConductorEvent", NotificationEvent.class);
         assertThat(onConductorEvent.isAnnotationPresent(Transactional.class)).isFalse();
+
+        assertThat(LifecycleSignalSubscriber.class.isAnnotationPresent(Transactional.class)).isFalse();
+
+        Method onSignal = LifecycleSignalSubscriber.class.getDeclaredMethod("onSignal", com.conductor.signal.Signal.class);
+        assertThat(onSignal.isAnnotationPresent(Transactional.class)).isFalse();
     }
 
     @Test

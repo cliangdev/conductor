@@ -56,6 +56,33 @@ class NotificationEventContractTest {
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
+    @Test
+    void equalsAndHashCodeIgnoreTimestampButCompareTheRest() {
+        NotificationEvent first = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+                Map.of("workItemId", "wi-1"));
+        // A second, independently-constructed instance -- Instant.now() may or may not differ by the
+        // clock's resolution, which is exactly the point: equality must not depend on it either way.
+        NotificationEvent second = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+                Map.of("workItemId", "wi-1"));
+
+        assertThat(first).isNotSameAs(second);
+        assertThat(first).isEqualTo(second);
+        assertThat(first.hashCode()).isEqualTo(second.hashCode());
+    }
+
+    @Test
+    void equalsDistinguishesByEventTypeProjectIdOrMetadata() {
+        NotificationEvent base = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
+                Map.of("workItemId", "wi-1"));
+
+        assertThat(base).isNotEqualTo(
+                NotificationEvent.of(EventType.COMMENT_ADDED, PROJECT_ID, Map.of("workItemId", "wi-1")));
+        assertThat(base).isNotEqualTo(
+                NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, "other-project", Map.of("workItemId", "wi-1")));
+        assertThat(base).isNotEqualTo(
+                NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID, Map.of("workItemId", "wi-2")));
+    }
+
     /**
      * These ten strings are persisted, not just in-process constants: they live in the
      * {@code notification_channel_config.event_type} and {@code notification_group_config_event.event_type}

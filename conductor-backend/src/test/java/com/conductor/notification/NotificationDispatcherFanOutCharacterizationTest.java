@@ -2,9 +2,17 @@ package com.conductor.notification;
 
 import com.conductor.entity.NotificationGroupConfig;
 import com.conductor.knowledge.KnowledgeEventTap;
+import com.conductor.knowledge.signal.KnowledgeSignalSink;
+import com.conductor.notification.signal.NotificationSignalMapper;
+import com.conductor.notification.signal.NotificationSignalSink;
 import com.conductor.repository.NotificationGroupConfigRepository;
 import com.conductor.service.LifecycleTriggerDispatcher;
+import com.conductor.signal.InProcessSignalBus;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalSubscriber;
 import com.conductor.workflow.WorkflowTriggerService;
+import com.conductor.workflow.signal.LifecycleSignalSubscriber;
+import com.conductor.workflow.signal.WorkflowAutomationSignalSubscriber;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,8 +23,9 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.beans.factory.ObjectProvider;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -33,12 +42,14 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Characterization tests for {@link NotificationDispatcher#dispatch}'s hardcoded, ordered fan-out.
- * These pin CURRENT behaviour -- including the asymmetry between the Discord delivery step (bare,
- * un-caught lookup) and the four downstream consumers (each individually try/caught) -- so a later
- * refactor (extracting a bus translator) can prove it preserved these exact semantics. Do not "fix"
- * anything here even where the behaviour looks like a bug; see
- * {@link #notificationLookupFailurePropagatesAndShortCircuitsAllConsumers()}.
+ * Characterization tests for {@link NotificationDispatcher#dispatch}'s ordered fan-out. These pin
+ * CURRENT behaviour -- including the asymmetry between the Discord delivery step (bare, un-caught
+ * lookup) and the four downstream consumers (each individually try/caught) -- across the A3 refactor
+ * from "hardcoded fan-out in one method" to "translator + SignalBus + four SignalSubscriber beans".
+ * {@code dispatcher} here is wired over a REAL {@link InProcessSignalBus} and REAL subscriber instances
+ * (each constructed with mocked collaborators), so this still exercises genuine end-to-end fan-out
+ * rather than a mock of the bus. Do not "fix" anything here even where the behaviour looks like a bug;
+ * see {@link #notificationLookupFailurePropagatesAndShortCircuitsAllConsumers()}.
  */
 @ExtendWith(MockitoExtension.class)
 class NotificationDispatcherFanOutCharacterizationTest {
@@ -50,22 +61,29 @@ class NotificationDispatcherFanOutCharacterizationTest {
     @Mock private WorkflowTriggerService workflowTriggerService;
     @Mock private LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
     @Mock private KnowledgeEventTap knowledgeEventTap;
+    @Mock private ObjectProvider<List<SignalSubscriber>> subscribersProvider;
 
     private NotificationDispatcher dispatcher;
 
     @BeforeEach
     void setUp() {
+        NotificationSignalMapper mapper = new NotificationSignalMapper();
+
         // A REAL delivery service over the mocked repository/provider, not a mock of it: these tests
         // assert that a failing config *lookup* escapes dispatch(), which is only meaningful if the
         // real (unguarded) lookup is in the path.
-        dispatcher = new NotificationDispatcher(
-                new NotificationDeliveryService(groupConfigRepository, discordProvider));
-        // workflowTriggerService / lifecycleTriggerDispatcher / knowledgeEventTap are @Lazy @Autowired
-        // field injections, not constructor params -- wire them by field name, matching the existing
-        // NotificationDispatcherTest precedent.
-        ReflectionTestUtils.setField(dispatcher, "workflowTriggerService", workflowTriggerService);
-        ReflectionTestUtils.setField(dispatcher, "lifecycleTriggerDispatcher", lifecycleTriggerDispatcher);
-        ReflectionTestUtils.setField(dispatcher, "knowledgeEventTap", knowledgeEventTap);
+        NotificationDeliveryService deliveryService =
+                new NotificationDeliveryService(groupConfigRepository, discordProvider);
+
+        List<SignalSubscriber> subscribers = List.of(
+                new NotificationSignalSink(deliveryService, mapper),
+                new WorkflowAutomationSignalSubscriber(workflowTriggerService, mapper),
+                new LifecycleSignalSubscriber(lifecycleTriggerDispatcher, mapper),
+                new KnowledgeSignalSink(knowledgeEventTap, mapper));
+        lenient().when(subscribersProvider.getIfAvailable(any())).thenReturn(subscribers);
+
+        SignalBus signalBus = new InProcessSignalBus(subscribersProvider);
+        dispatcher = new NotificationDispatcher(signalBus, mapper);
     }
 
     private NotificationEvent eventOf(EventType type) {
