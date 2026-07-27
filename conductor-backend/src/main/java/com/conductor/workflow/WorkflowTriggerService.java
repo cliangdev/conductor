@@ -332,7 +332,20 @@ public class WorkflowTriggerService {
     private String buildEventPayload(Signal signal) {
         Map<String, Object> payload = new HashMap<>(signal.flatAttributes());
         payload.put("type", "conductor.work_item.status_changed");
+        stampTraceId(payload, signal);
         return toJson(payload);
+    }
+
+    /**
+     * Stamps the originating signal's trace id as a top-level event-payload field -- same convention
+     * {@code LibrarianDispatchService} uses for {@code sourceIds}/{@code agentSlug} -- so
+     * {@code workflow_runs.event_payload} can be joined back to the signal/webhook that caused this
+     * run (see issue #342). No-op when the signal carries no trace id.
+     */
+    private void stampTraceId(Map<String, Object> payload, Signal signal) {
+        if (signal.traceId() != null) {
+            payload.put("traceId", signal.traceId());
+        }
     }
 
     /**
@@ -360,6 +373,7 @@ public class WorkflowTriggerService {
     private String buildPullRequestEventPayload(Signal signal) {
         Map<String, Object> payload = new HashMap<>(signal.flatAttributes());
         payload.put("type", "github.pull_request");
+        stampTraceId(payload, signal);
         return toJson(payload);
     }
 

@@ -19,6 +19,15 @@ public interface ConnectorFeedDigestRepository extends JpaRepository<ConnectorFe
 
     List<ConnectorFeedDigest> findByStatus(DigestStatus status);
 
+    /** Per-status row counts for a project -- {@code PipelineHealthService}'s DIGESTS stage, including
+     *  the {@code SKIPPED} bucket that makes a quiet-by-design period legible (see issue #342). */
+    @Query("SELECT d.status, COUNT(d) FROM ConnectorFeedDigest d WHERE d.projectId = :projectId GROUP BY d.status")
+    List<Object[]> countByProjectIdGroupByStatus(@Param("projectId") String projectId);
+
+    /** Most recent digests for one feed, for the per-item trace walk ({@code PipelineTraceService}) --
+     *  bounded so a long-lived feed's full digest history is never pulled into one trace response. */
+    List<ConnectorFeedDigest> findTop20ByFeedIdOrderByCreatedAtDesc(String feedId);
+
     /**
      * Oldest-first, bounded page of digests in one status. The sweep uses this rather than
      * {@link #findByStatus} so its per-tick cost stays bounded like the two claim queries beside it:

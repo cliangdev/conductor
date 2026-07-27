@@ -2,6 +2,7 @@ package com.conductor.signal;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
@@ -73,22 +74,40 @@ public class InProcessSignalBus implements SignalBus {
             return;
         }
 
+        // Every signal a subscriber sees carries a trace id, whether the caller supplied one (e.g. a
+        // webhook's) or not -- see TraceIds. Records are immutable, so dispatch a copy rather than
+        // mutating the original.
+        Signal traced = signal.traceId() != null ? signal : signal.withTraceId(TraceIds.newId());
+
+        String previousTraceId = MDC.get("traceId");
+        MDC.put("traceId", traced.traceId());
+
         DEPTH.set(depth + 1);
+        int subscriberCount = 0;
+        int swallowedCount = 0;
         try {
             for (SignalSubscriber subscriber : resolveSubscribers()) {
-                if (!subscriber.interestedIn(signal.type())) {
+                if (!subscriber.interestedIn(traced.type())) {
                     continue;
                 }
+                subscriberCount++;
                 try {
-                    subscriber.onSignal(signal);
+                    subscriber.onSignal(traced);
+                    log.debug("signal.subscriber outcome=ran subscriber={} type={}",
+                            subscriber.name(), traced.type());
                 } catch (RuntimeException e) {
                     if (subscriber.failureMode() == FailureMode.PROPAGATE) {
                         throw e;
                     }
+                    swallowedCount++;
+                    log.debug("signal.subscriber outcome=swallowed subscriber={} type={}",
+                            subscriber.name(), traced.type());
                     log.warn("Signal subscriber '{}' failed for signal '{}': {}",
-                            subscriber.name(), signal.type(), e.getMessage(), e);
+                            subscriber.name(), traced.type(), e.getMessage(), e);
                 }
             }
+            log.info("signal.dispatched type={} traceId={} subscribers={} swallowed={}",
+                    traced.type(), traced.traceId(), subscriberCount, swallowedCount);
         } finally {
             // Clear rather than set-back at the outermost frame: publish() runs on pooled request
             // threads, so leaving a ThreadLocal entry behind on every thread that ever published is
@@ -97,6 +116,11 @@ public class InProcessSignalBus implements SignalBus {
                 DEPTH.remove();
             } else {
                 DEPTH.set(depth);
+            }
+            if (previousTraceId != null) {
+                MDC.put("traceId", previousTraceId);
+            } else {
+                MDC.remove("traceId");
             }
         }
     }

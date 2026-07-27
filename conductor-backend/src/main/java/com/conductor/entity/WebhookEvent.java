@@ -10,6 +10,8 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import com.conductor.signal.TraceIds;
+
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -63,6 +65,9 @@ public class WebhookEvent {
     @Column(name = "received_at", nullable = false, updatable = false)
     private OffsetDateTime receivedAt;
 
+    @Column(name = "trace_id", length = 64)
+    private String traceId;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -73,6 +78,9 @@ public class WebhookEvent {
         }
         if (receivedAt == null) {
             receivedAt = OffsetDateTime.now();
+        }
+        if (traceId == null) {
+            traceId = TraceIds.newId();
         }
     }
 
@@ -108,4 +116,7 @@ public class WebhookEvent {
 
     public OffsetDateTime getReceivedAt() { return receivedAt; }
     public void setReceivedAt(OffsetDateTime receivedAt) { this.receivedAt = receivedAt; }
+
+    public String getTraceId() { return traceId; }
+    public void setTraceId(String traceId) { this.traceId = traceId; }
 }

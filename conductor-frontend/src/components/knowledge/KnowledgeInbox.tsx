@@ -2,14 +2,20 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { InboxIcon } from 'lucide-react'
-import { listKnowledgeSources, type KnowledgeSourceDto, type KnowledgeSourceStatus } from '@/lib/knowledge-api'
+import { InboxIcon, Waypoints } from 'lucide-react'
+import {
+  listKnowledgeSources,
+  type KnowledgeSourceDto,
+  type KnowledgeSourceStatus,
+  type PipelineTraceAnchor,
+} from '@/lib/knowledge-api'
 import { apiErrorMessage } from '@/lib/api'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Alert } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
+import { PipelineTracePanel } from '@/components/knowledge/PipelineTracePanel'
 import { timeAgo } from '@/lib/format'
 
 // Matches KnowledgeRailFooter/KnowledgeAttentionBanner's own poll interval (KnowledgeIngestScheduler's
@@ -62,6 +68,7 @@ export function KnowledgeInbox({ projectId, token }: { projectId: string; token:
   const [sources, setSources] = useState<KnowledgeSourceDto[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [traceAnchor, setTraceAnchor] = useState<PipelineTraceAnchor | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -152,10 +159,21 @@ export function KnowledgeInbox({ projectId, token }: { projectId: string; token:
               <span className="truncate flex-1 text-foreground">{source.title ?? source.sourceRef ?? '—'}</span>
               {source.purgedAt && <span className="shrink-0 text-foreground-subtle text-xs">purged</span>}
               <span className="shrink-0 text-foreground-subtle">{timeAgo(source.receivedAt)}</span>
+              <button
+                type="button"
+                onClick={() => setTraceAnchor({ sourceId: source.id })}
+                className="shrink-0 text-foreground-subtle hover:text-foreground transition-colors rounded p-0.5"
+                aria-label="Trace this source through the pipeline"
+                title="Trace"
+              >
+                <Waypoints className="h-3.5 w-3.5" />
+              </button>
             </div>
           ))}
         </div>
       )}
+
+      <PipelineTracePanel projectId={projectId} token={token} anchor={traceAnchor} onClose={() => setTraceAnchor(null)} />
     </div>
   )
 }

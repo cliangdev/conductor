@@ -16,6 +16,7 @@ creates and edits them; humans and other agents read them.
 - [System workflows](#system-workflows)
 - [Domains](#domains)
 - [Retention](#retention)
+- [Pipeline & tracing](#pipeline--tracing)
 - [MCP tools](#mcp-tools)
 - [REST endpoints](#rest-endpoints)
 - [Frontend surfaces](#frontend-surfaces)
@@ -439,6 +440,75 @@ compacted (`purgedAt` set; `payload`/`payloadOffloaded` will read back empty).
 
 ---
 
+## Pipeline & tracing
+
+The path from a third-party source to a wiki page crosses six components — webhook, connector
+feed/digest, the ingestion inbox, a librarian workflow run, and the wiki page it produces. Most of
+that is already traceable via real FKs (`connector_feed_digest.knowledge_source_id`,
+`knowledge_source.processing_run_id`, `knowledge_revision_sources`). The one gap was the signal bus
+(`com.conductor.signal`): in-process, synchronous, non-durable, no table — so nothing recorded which
+signal caused which downstream row when the causal chain ran *through* a `Signal` rather than a
+direct FK (e.g. a webhook → `GitHubConnector` → published `Signal` → a subscriber writing a
+`knowledge_sources` row, or a `Signal` firing a `workflow_runs` row directly via workflow
+automation). This section covers how that gap is closed and the two read-only endpoints built on
+top of it.
+
+**Trace id propagation.** `Signal` carries a `traceId`. `InProcessSignalBus.publish()` assigns one
+(`TraceIds.newId()`) whenever a publisher doesn't already have one on hand, so every signal a
+subscriber sees carries one. A webhook's own `webhook_event.trace_id` (stamped at receipt, before
+dispatch) threads through `InboundEvent` into any `Signal` a connector publishes in response — the
+one real schema addition. Downstream, the trace id rides on existing jsonb columns with zero further
+schema change: `KnowledgeSignalSink` stamps it into `knowledge_sources.metadata`, and
+`WorkflowTriggerService` stamps it as a top-level `workflow_runs.event_payload` field (the same
+convention `LibrarianDispatchService` already uses for `sourceIds`/`agentSlug`). No new table, no
+signal-bus durability change — deliberately deferred until a concrete incident proves per-signal
+history is needed (a bounded `signal_trace` table would be write amplification on the hot
+`patchWorkItem` path and re-opens the "third event system" question `webhook_event` was designed to
+avoid).
+
+**Structured logs.** `InProcessSignalBus.publish()` puts `traceId` into SLF4J MDC for the duration of
+dispatch (cleared in a `finally`) — Spring Boot's structured console encoder
+(`logging.structured.format.console=logstash`) picks up MDC keys automatically, so every log line
+emitted during that dispatch carries `traceId` with no new dependency. Log volume is kept
+proportional to signal throughput, not signal×subscriber count: **one INFO line per signal**
+(`signal.dispatched type=… traceId=… subscribers=… swallowed=…`), with per-subscriber outcome detail
+(`ran`/`swallowed`) at **DEBUG** — full drill-down available on demand (e.g.
+`logging.level.com.conductor.signal=DEBUG`) without paying its log-volume cost by default. This is
+the concrete lever for keeping GCP Cloud Logging cost bounded: the default log level only ever
+produces one line per signal.
+
+**Live health.** `GET /projects/{projectId}/knowledge/pipeline/health` returns one entry per fixed
+stage (`WEBHOOKS`, `FEEDS`, `DIGESTS`, `INBOX`, `LIBRARIAN_RUNS`, `PAGES_WRITTEN`), each with
+status-keyed counts for a recent window — composed read-only from repositories that already exist
+for their own bounded context (`PipelineHealthService`, package `com.conductor.pipeline`, a sibling
+to `knowledge`/`integration`/`workflow` since it reads across all of them). The response also carries
+an `edges` array (`PipelineTopology.EDGES`) describing the pipeline's *actual* shape — a branching
+DAG, not a straight line: `WEBHOOKS` and `FEEDS` are independent producer paths that both feed
+`INBOX` (`FEEDS` by way of `DIGESTS` first), which then continues through `LIBRARIAN_RUNS` to
+`PAGES_WRITTEN`. The backend is the single source of truth for this shape — the frontend's Pipeline
+tab renders whatever `edges` it's given rather than hand-assuming stage order, and
+`PipelineTopologyToolSpecTest` fails loudly if a future non-metric connector feed makes the one edge
+`PipelineTopology` deliberately omits (a `FEEDS -> INBOX` bypass, dormant today) reachable. The
+`DIGESTS` stage always reports a `skipped` bucket on its own, never folded into another bucket — a
+quiet week (nothing material happened, see [Metrics digests](#metrics-digests)'s novelty gate) is
+meant to read as *working as intended*, not broken.
+
+**Per-item trace.** `GET /projects/{projectId}/knowledge/pipeline/trace` takes exactly one typed
+anchor (`pageId`, `sourceId`, `feedId`, or `webhookEventId`) and walks the existing FK chain plus the
+trace-id joins above (`PipelineTraceService`) to return an ordered, oldest-first list of
+`{stage, id, status, occurredAt, label, link, degraded}` nodes. **Retention interacts with this by
+design**: a `DEAD` source hard-deleted after 90 days, or any other referenced row no longer resolving,
+yields a terminal node with `degraded: true` (label "purged by retention") instead of a 404 or an
+exception — historical traces going dangling is expected (see [Retention](#retention)), so the view
+degrades gracefully rather than erroring. A `PROCESSED` source whose payload was merely *compacted*
+(`purgedAt` set) is not degraded: the row, its status, and its `metadata` (including any `traceId`)
+all survive compaction, only the payload content is gone, which the trace never reads.
+
+Both endpoints are read-only, membership-gated like the rest of the knowledge surface (no admin
+requirement), and add no new mutation surface.
+
+---
+
 ## MCP tools
 
 Six tools in `conductor-tools` (`src/mcp/tools/knowledge.ts`), used by the librarian/bootstrap workflows
@@ -516,9 +586,13 @@ Filed / Needs attention* (never "dead"), *filing rules* (schema pages), *Assign 
 - **Activity** (`knowledge/activity`, tab param). One destination for "what is the librarian
   doing": **Page changes** (rendered virtual `log.md`), **Inbox** (the status-filtered source
   browse, moved from `knowledge/sources` which now redirects here; red count badge when sources
-  need attention), and **Runs** (librarian run history). When sources are stuck, the Inbox shows an
-  attention banner pairing the diagnosis with its fixes — **Open AI Providers** and an admin-only
-  **Retry n sources** (`POST /sources/retry`).
+  need attention), **Runs** (librarian run history), and **Pipeline** (see
+  [Pipeline & tracing](#pipeline--tracing) — a stage-flow diagram, `PipelineFlowDiagram`, built on
+  the same `@xyflow/react` shell the workflow/lifecycle diagrams use; clicking a stage jumps to its
+  detail tab). When sources are stuck, the Inbox shows an attention banner pairing the diagnosis
+  with its fixes — **Open AI Providers** and an admin-only **Retry n sources**
+  (`POST /sources/retry`); each Inbox row also has a **Trace** action opening the per-item trace
+  drawer (`PipelineTracePanel`).
 - **Manage** (`knowledge/manage`, admin-only). An **Ingest cadence** setting (15 min / hourly /
   daily presets, backed by `knowledgeIngestIntervalMinutes`) up top, then the area registry:
   SUGGESTED areas as approval cards (Approve seeds the skeleton schema, Dismiss declines), then

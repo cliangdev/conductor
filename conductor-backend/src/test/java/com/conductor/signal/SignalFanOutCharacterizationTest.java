@@ -106,8 +106,11 @@ class SignalFanOutCharacterizationTest {
         InOrder inOrder = inOrder(groupConfigRepository, workflowTriggerService, lifecycleTriggerDispatcher,
                 projectSettingsService);
         inOrder.verify(groupConfigRepository).findByProjectIdAndChannelGroup(any(), any());
-        inOrder.verify(workflowTriggerService).onConductorEvent(signal);
-        inOrder.verify(lifecycleTriggerDispatcher).onConductorEvent(signal);
+        // any(Signal.class), not the original `signal`: InProcessSignalBus dispatches a copy carrying an
+        // auto-assigned trace id (see TraceIds) when the caller's signal had none -- record equality
+        // then differs on that field alone. Order/occurrence is what this test pins, not object identity.
+        inOrder.verify(workflowTriggerService).onConductorEvent(any(Signal.class));
+        inOrder.verify(lifecycleTriggerDispatcher).onConductorEvent(any(Signal.class));
         inOrder.verify(projectSettingsService).isKnowledgeEnabled(PROJECT_ID);
     }
 
@@ -131,11 +134,11 @@ class SignalFanOutCharacterizationTest {
     void aSwallowingSubscriberFailureDoesNotStopTheOnesAfterIt() {
         when(groupConfigRepository.findByProjectIdAndChannelGroup(any(), any())).thenReturn(java.util.Optional.empty());
         Signal signal = statusChanged();
-        doThrow(new RuntimeException("boom")).when(workflowTriggerService).onConductorEvent(signal);
+        doThrow(new RuntimeException("boom")).when(workflowTriggerService).onConductorEvent(any(Signal.class));
 
         assertThatNoException().isThrownBy(() -> signalBus.publish(signal));
 
-        verify(lifecycleTriggerDispatcher).onConductorEvent(signal);
+        verify(lifecycleTriggerDispatcher).onConductorEvent(any(Signal.class));
         verify(projectSettingsService).isKnowledgeEnabled(PROJECT_ID);
     }
 
@@ -143,7 +146,7 @@ class SignalFanOutCharacterizationTest {
     void lifecycleFailureDoesNotStopKnowledgeIngestion() {
         when(groupConfigRepository.findByProjectIdAndChannelGroup(any(), any())).thenReturn(java.util.Optional.empty());
         Signal signal = statusChanged();
-        doThrow(new RuntimeException("boom")).when(lifecycleTriggerDispatcher).onConductorEvent(signal);
+        doThrow(new RuntimeException("boom")).when(lifecycleTriggerDispatcher).onConductorEvent(any(Signal.class));
 
         assertThatNoException().isThrownBy(() -> signalBus.publish(signal));
 
