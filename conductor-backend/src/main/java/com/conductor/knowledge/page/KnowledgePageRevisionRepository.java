@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 
@@ -20,6 +21,9 @@ public interface KnowledgePageRevisionRepository extends JpaRepository<Knowledge
     @Query("SELECT r FROM KnowledgePageRevision r JOIN FETCH r.page WHERE r.page.projectId = :projectId "
             + "ORDER BY r.createdAt DESC")
     List<KnowledgePageRevision> findByPage_ProjectIdOrderByCreatedAtDesc(@Param("projectId") String projectId, Pageable pageable);
+
+    /** Count of revisions in a recent window -- {@code PipelineHealthService}'s PAGES_WRITTEN stage. */
+    long countByPage_ProjectIdAndCreatedAtAfter(String projectId, OffsetDateTime after);
 
     /**
      * {@code flushAutomatically}: native DML doesn't participate in Hibernate's flush-before-query
@@ -44,5 +48,31 @@ public interface KnowledgePageRevisionRepository extends JpaRepository<Knowledge
     interface RevisionSourceRef {
         String getRevisionId();
         String getSourceRef();
+    }
+
+    /**
+     * Distinct source ids provenance-linked to any revision of one page -- the backward edge from a
+     * wiki page to the sources that produced it ({@code PipelineTraceService}, issue #342). Bounded
+     * ({@code LIMIT 20}) as a backstop against a page with an unusually long revision history.
+     */
+    @Query(value = "SELECT DISTINCT rs.source_id FROM knowledge_revision_sources rs "
+            + "JOIN knowledge_page_revisions r ON r.id = rs.revision_id "
+            + "WHERE r.page_id = :pageId LIMIT 20", nativeQuery = true)
+    List<String> findSourceIdsByPageId(@Param("pageId") String pageId);
+
+    /**
+     * Distinct pages whose revisions cite this source -- the forward edge from a source to the wiki
+     * page(s) it produced ({@code PipelineTraceService}, issue #342). Bounded ({@code LIMIT 20}) for
+     * the same reason as {@link #findSourceIdsByPageId}.
+     */
+    @Query(value = "SELECT DISTINCT p.id AS pageId, p.path AS path FROM knowledge_pages p "
+            + "JOIN knowledge_page_revisions r ON r.page_id = p.id "
+            + "JOIN knowledge_revision_sources rs ON rs.revision_id = r.id "
+            + "WHERE rs.source_id = :sourceId LIMIT 20", nativeQuery = true)
+    List<PageRef> findPagesBySourceId(@Param("sourceId") String sourceId);
+
+    interface PageRef {
+        String getPageId();
+        String getPath();
     }
 }

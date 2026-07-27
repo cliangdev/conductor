@@ -46,6 +46,11 @@ tags:
     description: >-
       Knowledge Center: the ingestion inbox (knowledge sources) and the OKF wiki bundle (knowledge pages)
       an LLM librarian curates from them.
+  - name: pipeline
+    description: >-
+      Read-only observability over the source-to-wiki-page pipeline (webhooks, connector feeds/digests,
+      the ingestion inbox, librarian runs, and the pages they produce) — a query-side view across those
+      bounded contexts, not a new mutation surface. See issue #342.
 
 paths:
   /health:
@@ -5237,6 +5242,83 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /projects/{projectId}/knowledge/pipeline/health:
+    get:
+      tags: [pipeline]
+      summary: Live per-stage health for the source-to-wiki-page pipeline
+      description: >-
+        One entry per fixed pipeline stage (webhooks, feeds, digests, inbox, librarian runs, pages
+        written), each with status-keyed counts for a recent window. Read-only, membership-gated like
+        the rest of the knowledge surface — no admin requirement. The digests stage always reports a
+        `skipped` bucket on its own (never folded into another bucket) so a quiet-by-design period
+        (nothing material happened) reads as healthy, not broken — see issue #342.
+      operationId: getPipelineHealth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Per-stage health snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineHealthDto'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/knowledge/pipeline/trace:
+    get:
+      tags: [pipeline]
+      summary: Walk one item's trace across the pipeline
+      description: >-
+        Given exactly one typed anchor (`pageId`, `sourceId`, `feedId`, or `webhookEventId`), returns
+        the ordered chain of pipeline stages that produced it (or that it produced), backward and/or
+        forward as applicable. A step whose underlying record has since been hard-deleted by
+        retention (a `DEAD` source past its retention window) is reported as a terminal `degraded`
+        placeholder node rather than a 404 for the whole trace. Exactly one anchor parameter must be
+        supplied — zero or more than one is a 400.
+      operationId: getPipelineTrace
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: pageId
+          in: query
+          required: false
+          schema: {type: string}
+        - name: sourceId
+          in: query
+          required: false
+          schema: {type: string}
+        - name: feedId
+          in: query
+          required: false
+          schema: {type: string}
+        - name: webhookEventId
+          in: query
+          required: false
+          schema: {type: string}
+      responses:
+        '200':
+          description: The trace, oldest step first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineTraceDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
 components:
   responses:
     Forbidden:
@@ -7872,6 +7954,85 @@ components:
         retried:
           type: integer
           description: Number of sources moved from DEAD to PENDING.
+
+    PipelineStage:
+      type: string
+      enum: [WEBHOOKS, FEEDS, DIGESTS, INBOX, LIBRARIAN_RUNS, PAGES_WRITTEN]
+      description: A fixed stage in the source-to-wiki-page pipeline (issue #342).
+
+    PipelineStageHealth:
+      type: object
+      required:
+        - stage
+        - label
+        - counts
+      properties:
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        label:
+          type: string
+          description: Human-readable stage name for display.
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: >-
+            Status-keyed counts for this stage. Bucket names vary per stage (e.g. the DIGESTS stage
+            always includes a `skipped` bucket) — a plain map keeps this additive as stages gain new
+            buckets, without a schema change per bucket.
+
+    PipelineHealthDto:
+      type: object
+      required:
+        - stages
+      properties:
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PipelineStageHealth'
+
+    PipelineTraceNode:
+      type: object
+      required:
+        - stage
+        - id
+        - degraded
+      properties:
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        id:
+          type: string
+        status:
+          type: string
+          nullable: true
+        occurredAt:
+          type: string
+          format: date-time
+          nullable: true
+        label:
+          type: string
+          nullable: true
+        link:
+          type: string
+          nullable: true
+          description: Frontend-routable path for this node, or null if not linkable.
+        degraded:
+          type: boolean
+          description: >-
+            True when the underlying record no longer exists (purged by retention) and this is a
+            terminal placeholder rather than a resolved node.
+
+    PipelineTraceDto:
+      type: object
+      required:
+        - nodes
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/PipelineTraceNode'
+          description: Ordered oldest-step-first.
 
     KnowledgeDomainState:
       type: string

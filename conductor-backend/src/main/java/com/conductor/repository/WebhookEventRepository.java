@@ -30,4 +30,21 @@ public interface WebhookEventRepository extends JpaRepository<WebhookEvent, Stri
             + "AND (e.lastAttemptedAt IS NULL OR e.lastAttemptedAt < :cutoff)")
     List<WebhookEvent> findRetryable(@Param("maxAttempts") int maxAttempts,
                                      @Param("cutoff") OffsetDateTime cutoff);
+
+    /**
+     * Per-status row counts scoped to a project, for the pipeline health view ({@code PipelineHealthService}).
+     * {@code WebhookEvent} has no direct {@code projectId} (only {@code connectionId}), so this joins through
+     * {@code Connection}, which does carry it.
+     */
+    @Query("SELECT e.status, COUNT(e) FROM WebhookEvent e WHERE e.connectionId IN "
+            + "(SELECT c.id FROM Connection c WHERE c.projectId = :projectId) GROUP BY e.status")
+    List<Object[]> countByProjectIdGroupByStatus(@Param("projectId") String projectId);
+
+    /**
+     * Webhook events carrying a given trace id -- the backward edge from a {@code knowledge_sources}
+     * row (or a directly-fired {@code workflow_runs} row) back to the webhook that ultimately caused it,
+     * via the traceId threaded through {@code Signal} (see issue #342). More than one row is possible in
+     * principle (a redelivered/duplicate webhook could share a trace id) -- callers take the earliest.
+     */
+    List<WebhookEvent> findByTraceId(String traceId);
 }

@@ -97,6 +97,16 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
             String projectId, KnowledgeSourceStatus status, String domain);
 
     /**
+     * Sources whose {@code metadata->>'traceId'} matches -- the forward edge from a webhook/signal
+     * origin to the knowledge source(s) it produced (see issue #342, {@code PipelineTraceService}).
+     * Bounded ({@code LIMIT 20}): one trace id is expected to produce at most a handful of sources in
+     * practice, this is just a backstop against an unbounded scan.
+     */
+    @Query(value = "SELECT * FROM knowledge_sources WHERE metadata ->> 'traceId' = :traceId "
+            + "ORDER BY received_at ASC LIMIT 20", nativeQuery = true)
+    List<KnowledgeSource> findByMetadataTraceId(@Param("traceId") String traceId);
+
+    /**
      * Marks a batch of sources PROCESSED as part of the same transaction that wrote the pages derived
      * from them -- see {@code KnowledgePageService#batchWrite} -- so a crash between the page write and
      * this update can never leave a source silently re-processed or silently dropped. Guarded to only
