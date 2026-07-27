@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -41,6 +42,11 @@ public class ConnectorFeedScheduler {
 
     /** Package-private (not final) so tests can shrink the batch without waiting for a full page. */
     int batchSize = 10;
+
+    /** Bounds the NARRATING sweep per tick, so its cost can't grow with backlog size the way an
+     *  unbounded scan plus a per-row run lookup would. Package-private for the same reason as
+     *  {@link #batchSize}. Anything not reached this tick is swept on the next one. */
+    int sweepBatchSize = 50;
 
     /** In-flight marker stamped on a just-claimed feed so a concurrent tick can't reclaim it before
      *  this tick's pull (outside the claim transaction) finishes and applies the real outcome. Well
@@ -191,7 +197,9 @@ public class ConnectorFeedScheduler {
 
     private void sweepNarratingDigests() {
         OffsetDateTime staleCutoff = OffsetDateTime.now().minusMinutes(staleNarratingMinutes);
-        for (ConnectorFeedDigest digest : digestRepository.findByStatus(DigestStatus.NARRATING)) {
+        List<ConnectorFeedDigest> narrating = digestRepository.findByStatusOrderByCreatedAtAsc(
+                DigestStatus.NARRATING, PageRequest.of(0, sweepBatchSize));
+        for (ConnectorFeedDigest digest : narrating) {
             try {
                 sweepOneDigest(digest, staleCutoff);
             } catch (Exception e) {

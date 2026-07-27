@@ -44,6 +44,7 @@ import com.conductor.integration.connector.GcpBillingConnector;
 import com.conductor.integration.connector.gsc.GscConnector;
 import com.conductor.integration.ingest.ConnectorFeed;
 import com.conductor.integration.ingest.ConnectorFeedRepository;
+import com.conductor.integration.ingest.ConnectorFeedStatus;
 import com.conductor.repository.ConnectionDataCacheRepository;
 import com.conductor.repository.WebhookEventRepository;
 import com.conductor.service.ConnectionService;
@@ -202,6 +203,9 @@ public class IntegrationController implements IntegrationsApi {
         ConnectorFeed feed = requireFeed(projectId, connectorId, feedId);
         if (request.getEnabled() != null) {
             feed.setEnabled(request.getEnabled());
+            if (Boolean.TRUE.equals(request.getEnabled())) {
+                resumeFeed(feed);
+            }
         }
         if (request.getIntervalMinutes() != null) {
             feed.setIntervalMinutes(request.getIntervalMinutes());
@@ -216,6 +220,7 @@ public class IntegrationController implements IntegrationsApi {
         ConnectorFeed feed = requireFeed(projectId, connectorId, feedId);
         // "Sync now" only re-dues the feed for the existing scheduler to pick up -- it must never run
         // the pull inline and block this request on an outbound HTTP call to the third party.
+        resumeFeed(feed);
         feed.setNextRunAt(OffsetDateTime.now());
         connectorFeedRepository.save(feed);
         return ResponseEntity.status(HttpStatus.ACCEPTED)
@@ -521,6 +526,25 @@ public class IntegrationController implements IntegrationsApi {
             throw new EntityNotFoundException("Feed not found in project/connector: " + feedId);
         }
         return feed;
+    }
+
+    /**
+     * Clears the scheduler-owned failure state so an operator explicitly resuming a feed actually gets
+     * it picked up again. {@code ConnectorFeedRepository#claimDue} requires {@code status = 'ACTIVE'
+     * AND enabled = true}, so without this a PATCH of {@code enabled: true} on a DEAD, PAUSED or
+     * SETUP_REQUIRED feed -- or a "sync now" on one -- returns 200/202 and then silently never runs,
+     * contradicting {@code ConnectorFeedStatus}'s own contract that a DEAD feed resumes once re-enabled.
+     *
+     * <p>Resetting {@code consecutiveFailures} matters as much as the status: leaving it at the
+     * dead-letter threshold would send the feed straight back to DEAD on its first hiccup instead of
+     * giving the operator a fresh budget. SETUP_REQUIRED is reset too -- if the underlying connection
+     * is still unauthenticated the next pull re-marks it within one tick, which is honest feedback
+     * rather than a permanently un-retryable row.
+     */
+    private void resumeFeed(ConnectorFeed feed) {
+        feed.setStatus(ConnectorFeedStatus.ACTIVE);
+        feed.setConsecutiveFailures(0);
+        feed.setLastError(null);
     }
 
     /** The connector's currently-declared ingest feeds, keyed by ingest id -- used to enrich a

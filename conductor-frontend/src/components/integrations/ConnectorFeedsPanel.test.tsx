@@ -125,6 +125,25 @@ describe('ConnectorFeedsPanel', () => {
     )
   })
 
+  it('changing cadence rolls back the Select and shows a toast on failure', async () => {
+    vi.mocked(api.listConnectorFeeds).mockResolvedValue([weeklyMrrFeed])
+    vi.mocked(api.updateConnectorFeed).mockRejectedValue({ detail: 'cadence rejected' })
+    render(<ConnectorFeedsPanel projectId="proj-1" connectorId="datadog" />)
+
+    const select = await screen.findByRole('combobox', { name: 'Weekly MRR cadence' })
+    expect(select).toHaveValue('1440')
+    fireEvent.change(select, { target: { value: '60' } })
+
+    await waitFor(() =>
+      expect(api.updateConnectorFeed).toHaveBeenCalledWith(
+        'proj-1', 'datadog', 'feed-1', { intervalMinutes: 60 }, 'test-token',
+      ),
+    )
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('cadence rejected', 'error'))
+    // Rolled back to the prior cadence after the failed write.
+    expect(await screen.findByRole('combobox', { name: 'Weekly MRR cadence' })).toHaveValue('1440')
+  })
+
   it('clicking Sync now calls runConnectorFeedNow and shows a confirmation toast', async () => {
     vi.mocked(api.listConnectorFeeds).mockResolvedValue([weeklyMrrFeed])
     vi.mocked(api.runConnectorFeedNow).mockResolvedValue(weeklyMrrFeed)

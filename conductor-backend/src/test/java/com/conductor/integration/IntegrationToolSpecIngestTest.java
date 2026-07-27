@@ -60,6 +60,21 @@ class IntegrationToolSpecIngestTest {
         assertThat(impressions.direction()).isEqualTo(Direction.NEUTRAL); // default, not set in gsc.json
         assertThat(impressions.minRelative()).isEqualTo(0.15); // default, not set in gsc.json
         assertThat(impressions.zThreshold()).isEqualTo(2.0); // default, not set in gsc.json
+
+        // Regression guard for MetricSpec's compact-constructor validation: gsc.json is the one spec
+        // we ship, and it declares SUM, RATIO, and WEIGHTED_MEAN metrics -- successfully parsing above
+        // already proves the validation didn't break it, and these assert exactly which shapes it
+        // exercises rather than just "it didn't throw".
+        assertThat(clicks.agg()).isEqualTo(Aggregation.SUM);
+        assertThat(clicks.field()).isEqualTo("clicks");
+        MetricSpec ctr = digest.metrics().stream().filter(m -> m.key().equals("ctr")).findFirst().orElseThrow();
+        assertThat(ctr.agg()).isEqualTo(Aggregation.RATIO);
+        assertThat(ctr.numerator()).isEqualTo("clicks");
+        assertThat(ctr.denominator()).isEqualTo("impressions");
+        MetricSpec position = digest.metrics().stream().filter(m -> m.key().equals("position")).findFirst().orElseThrow();
+        assertThat(position.agg()).isEqualTo(Aggregation.WEIGHTED_MEAN);
+        assertThat(position.field()).isEqualTo("position");
+        assertThat(position.weightField()).isEqualTo("impressions");
     }
 
     @Test

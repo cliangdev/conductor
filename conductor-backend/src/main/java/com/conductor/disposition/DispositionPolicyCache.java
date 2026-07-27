@@ -4,6 +4,8 @@ import com.conductor.signal.SignalGlob;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -49,9 +51,28 @@ public class DispositionPolicyCache {
         return policies.stream().filter(p -> SignalGlob.matches(p.getSignalType(), signalType)).toList();
     }
 
-    /** Drops {@code projectId}'s cached snapshot so the next {@link #matching} call re-reads it --
-     *  call after any write to {@code disposition_policy} for that project. */
+    /**
+     * Drops {@code projectId}'s cached snapshot so the next {@link #matching} call re-reads it -- call
+     * after any write to {@code disposition_policy} for that project.
+     *
+     * <p>When called inside an active transaction the drop is DEFERRED until after commit. Dropping
+     * immediately would open a window in which another thread's {@link #matching} repopulates the
+     * snapshot via {@code computeIfAbsent} from a still-uncommitted read -- i.e. WITHOUT the row being
+     * written -- and, because nothing invalidates again after the commit lands, that stale snapshot
+     * would survive until some unrelated write happened to touch the same project. Deferring makes the
+     * drop happen when the new row is actually visible. Also correct on rollback: the write never
+     * landed, so the cached snapshot was right all along and is left alone.
+     */
     public void invalidate(String projectId) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    byProject.remove(projectId);
+                }
+            });
+            return;
+        }
         byProject.remove(projectId);
     }
 }

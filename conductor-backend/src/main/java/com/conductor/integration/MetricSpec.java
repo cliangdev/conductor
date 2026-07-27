@@ -28,5 +28,28 @@ public record MetricSpec(
         if (minAbsolute == null) minAbsolute = 0.0;
         if (minRelative == null) minRelative = 0.15;
         if (zThreshold == null) zThreshold = 2.0;
+
+        // Fail at load time, not silently at digest time. Each aggregation reads different fields, and
+        // MetricsAggregator coerces a missing one to 0.0 -- so a RATIO declared without a
+        // numerator/denominator would emit a flat 0 every period forever, which the novelty gate then
+        // correctly judges "not material", making a broken spec look exactly like a quiet metric. Same
+        // reasoning as Connector#getToolSpec dropping a WINDOW ingest a connector can't honour: a
+        // silently wrong digest is worse than no digest.
+        if (agg == Aggregation.RATIO && (isBlank(numerator) || isBlank(denominator))) {
+            throw new IllegalArgumentException(
+                    "MetricSpec '" + key + "': agg RATIO requires both numerator and denominator");
+        }
+        if (agg == Aggregation.WEIGHTED_MEAN && (isBlank(field) || isBlank(weightField))) {
+            throw new IllegalArgumentException(
+                    "MetricSpec '" + key + "': agg WEIGHTED_MEAN requires both field and weightField");
+        }
+        if ((agg == Aggregation.SUM || agg == Aggregation.MEAN || agg == Aggregation.LAST) && isBlank(field)) {
+            throw new IllegalArgumentException(
+                    "MetricSpec '" + key + "': agg " + agg + " requires field");
+        }
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 }

@@ -1,5 +1,6 @@
 package com.conductor.integration.ingest;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -17,6 +18,15 @@ public interface ConnectorFeedDigestRepository extends JpaRepository<ConnectorFe
     List<ConnectorFeedDigest> findByFeedId(String feedId);
 
     List<ConnectorFeedDigest> findByStatus(DigestStatus status);
+
+    /**
+     * Oldest-first, bounded page of digests in one status. The sweep uses this rather than
+     * {@link #findByStatus} so its per-tick cost stays bounded like the two claim queries beside it:
+     * an unbounded scan plus a per-row workflow-run lookup would grow with backlog size exactly when
+     * the system is already struggling (narration stalling is what creates the backlog). Anything not
+     * reached this tick is picked up on the next one, 60s later.
+     */
+    List<ConnectorFeedDigest> findByStatusOrderByCreatedAtAsc(DigestStatus status, Pageable pageable);
 
     /**
      * Oldest-first batch (up to {@code limit}) of due, PENDING digests, row-locked so two concurrent

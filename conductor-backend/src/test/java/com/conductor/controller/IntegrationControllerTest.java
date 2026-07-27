@@ -636,4 +636,144 @@ class IntegrationControllerTest {
                 .andExpect(status().isForbidden());
         org.mockito.Mockito.verifyNoInteractions(connectorFeedRepository);
     }
+
+    // ---- resumeFeed (updateConnectorFeed enabled:true / runConnectorFeedNow) ----
+
+    private ConnectorFeed feedWithStatus(ConnectorFeedStatus status) {
+        ConnectorFeed feed = activeFeed();
+        feed.setEnabled(false);
+        feed.setStatus(status);
+        feed.setConsecutiveFailures(8);
+        feed.setLastError("previous failure");
+        return feed;
+    }
+
+    @Test
+    void updateConnectorFeed_enabledTrueOnDeadFeed_resumesIt() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        stubIngestSpec();
+        ConnectorFeed feed = feedWithStatus(ConnectorFeedStatus.DEAD);
+        when(connectorFeedRepository.findById("feed-1")).thenReturn(Optional.of(feed));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<ConnectorFeed> captor = org.mockito.ArgumentCaptor.forClass(ConnectorFeed.class);
+        verify(connectorFeedRepository).save(captor.capture());
+        ConnectorFeed saved = captor.getValue();
+        assertThat(saved.getStatus()).isEqualTo(ConnectorFeedStatus.ACTIVE);
+        assertThat(saved.getConsecutiveFailures()).isZero();
+        assertThat(saved.getLastError()).isNull();
+    }
+
+    @Test
+    void updateConnectorFeed_enabledTrueOnSetupRequiredFeed_resumesIt() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        stubIngestSpec();
+        ConnectorFeed feed = feedWithStatus(ConnectorFeedStatus.SETUP_REQUIRED);
+        when(connectorFeedRepository.findById("feed-1")).thenReturn(Optional.of(feed));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<ConnectorFeed> captor = org.mockito.ArgumentCaptor.forClass(ConnectorFeed.class);
+        verify(connectorFeedRepository).save(captor.capture());
+        ConnectorFeed saved = captor.getValue();
+        assertThat(saved.getStatus()).isEqualTo(ConnectorFeedStatus.ACTIVE);
+        assertThat(saved.getConsecutiveFailures()).isZero();
+        assertThat(saved.getLastError()).isNull();
+    }
+
+    @Test
+    void updateConnectorFeed_enabledTrueOnPausedFeed_resumesIt() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        stubIngestSpec();
+        ConnectorFeed feed = feedWithStatus(ConnectorFeedStatus.PAUSED);
+        when(connectorFeedRepository.findById("feed-1")).thenReturn(Optional.of(feed));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<ConnectorFeed> captor = org.mockito.ArgumentCaptor.forClass(ConnectorFeed.class);
+        verify(connectorFeedRepository).save(captor.capture());
+        ConnectorFeed saved = captor.getValue();
+        assertThat(saved.getStatus()).isEqualTo(ConnectorFeedStatus.ACTIVE);
+        assertThat(saved.getConsecutiveFailures()).isZero();
+        assertThat(saved.getLastError()).isNull();
+    }
+
+    @Test
+    void updateConnectorFeed_enabledFalse_doesNotResume() throws Exception {
+        // A user disabling a feed isn't asking to clear its failure state.
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        stubIngestSpec();
+        ConnectorFeed feed = feedWithStatus(ConnectorFeedStatus.DEAD);
+        feed.setEnabled(true);
+        when(connectorFeedRepository.findById("feed-1")).thenReturn(Optional.of(feed));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":false}"))
+                .andExpect(status().isOk());
+
+        assertThat(feed.getStatus()).isEqualTo(ConnectorFeedStatus.DEAD);
+        assertThat(feed.getConsecutiveFailures()).isEqualTo(8);
+        assertThat(feed.getLastError()).isEqualTo("previous failure");
+    }
+
+    @Test
+    void updateConnectorFeed_intervalOnly_doesNotResume() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        stubIngestSpec();
+        ConnectorFeed feed = feedWithStatus(ConnectorFeedStatus.DEAD);
+        when(connectorFeedRepository.findById("feed-1")).thenReturn(Optional.of(feed));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"intervalMinutes\":60}"))
+                .andExpect(status().isOk());
+
+        assertThat(feed.getStatus()).isEqualTo(ConnectorFeedStatus.DEAD);
+        assertThat(feed.getConsecutiveFailures()).isEqualTo(8);
+        assertThat(feed.getLastError()).isEqualTo("previous failure");
+        assertThat(feed.getIntervalMinutes()).isEqualTo(60);
+    }
+
+    @Test
+    void runConnectorFeedNow_deadFeed_resumesAndReduesIt() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        stubIngestSpec();
+        ConnectorFeed feed = feedWithStatus(ConnectorFeedStatus.DEAD);
+        when(connectorFeedRepository.findById("feed-1")).thenReturn(Optional.of(feed));
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1/runs")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isAccepted());
+
+        org.mockito.ArgumentCaptor<ConnectorFeed> captor = org.mockito.ArgumentCaptor.forClass(ConnectorFeed.class);
+        verify(connectorFeedRepository).save(captor.capture());
+        ConnectorFeed saved = captor.getValue();
+        assertThat(saved.getStatus()).isEqualTo(ConnectorFeedStatus.ACTIVE);
+        assertThat(saved.getConsecutiveFailures()).isZero();
+        assertThat(saved.getLastError()).isNull();
+        assertThat(saved.getNextRunAt()).isBeforeOrEqualTo(java.time.OffsetDateTime.now());
+        assertThat(saved.getNextRunAt()).isAfter(java.time.OffsetDateTime.now().minusSeconds(30));
+    }
 }
