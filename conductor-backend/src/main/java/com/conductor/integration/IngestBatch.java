@@ -39,6 +39,12 @@ public record IngestBatch(
         return new IngestBatch(List.of(), null, false, false, ConnectorHealth.HEALTHY, null);
     }
 
+    /** No items to hand off, but the cursor still advances (or stays put) at {@code cursor} — e.g. a
+     *  SNAPSHOT feed re-pulled within the same period it already filed. */
+    public static IngestBatch empty(String cursor) {
+        return new IngestBatch(List.of(), cursor, false, false, ConnectorHealth.HEALTHY, null);
+    }
+
     /** Expected remote failure (rate limit, timeout, transient API error) — never throw for these. */
     public static IngestBatch degraded(String errorMessage) {
         return new IngestBatch(List.of(), null, false, false, ConnectorHealth.DEGRADED, errorMessage);

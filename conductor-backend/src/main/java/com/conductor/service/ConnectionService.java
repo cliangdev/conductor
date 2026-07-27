@@ -7,6 +7,7 @@ import com.conductor.integration.Connector;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.IntegrationToolSpec;
+import com.conductor.integration.ingest.ConnectorFeedProvisioner;
 import com.conductor.repository.ConnectionDataCacheRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -43,6 +44,7 @@ public class ConnectionService {
     private final CredentialService credentialService;
     private final ConnectorRegistry connectorRegistry;
     private final ObjectMapper objectMapper;
+    private final ConnectorFeedProvisioner connectorFeedProvisioner;
 
     /**
      * Self-reference (via the Spring proxy) so {@link #createSingleInNewTx} actually runs in a
@@ -57,12 +59,14 @@ public class ConnectionService {
                              ConnectionDataCacheRepository cacheRepository,
                              CredentialService credentialService,
                              @Lazy ConnectorRegistry connectorRegistry,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             @Lazy ConnectorFeedProvisioner connectorFeedProvisioner) {
         this.connectionRepository = connectionRepository;
         this.cacheRepository = cacheRepository;
         this.credentialService = credentialService;
         this.connectorRegistry = connectorRegistry;
         this.objectMapper = objectMapper;
+        this.connectorFeedProvisioner = connectorFeedProvisioner;
     }
 
     public List<Connection> list(String projectId, String connectorId) {
@@ -148,7 +152,9 @@ public class ConnectionService {
         c.setStatus("ACTIVE");
         c.setSingleInstance(isSingleInstance(connectorId));
         computeAndStoreToolMetadata(c);
-        return connectionRepository.save(c);
+        Connection saved = connectionRepository.save(c);
+        connectorFeedProvisioner.reconcile(saved);
+        return saved;
     }
 
     @Transactional
@@ -157,6 +163,7 @@ public class ConnectionService {
         c.setStatus("ACTIVE");
         computeAndStoreToolMetadata(c);
         connectionRepository.save(c);
+        connectorFeedProvisioner.reconcile(c);
     }
 
     @Transactional
@@ -185,6 +192,7 @@ public class ConnectionService {
         }
         computeAndStoreToolMetadata(c);
         connectionRepository.save(c);
+        connectorFeedProvisioner.reconcile(c);
     }
 
     @Transactional
