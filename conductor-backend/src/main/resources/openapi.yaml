@@ -7982,15 +7982,35 @@ components:
             always includes a `skipped` bucket) — a plain map keeps this additive as stages gain new
             buckets, without a schema change per bucket.
 
+    PipelineStageEdge:
+      type: object
+      required:
+        - from
+        - to
+      properties:
+        from:
+          $ref: '#/components/schemas/PipelineStage'
+        to:
+          $ref: '#/components/schemas/PipelineStage'
+      description: >-
+        A directed edge in the pipeline's actual data-flow graph (issue #342 correction) — data-driven,
+        not positional. Consumers must not infer an edge from two stages being adjacent in any list.
+
     PipelineHealthDto:
       type: object
       required:
         - stages
+        - edges
       properties:
         stages:
           type: array
           items:
             $ref: '#/components/schemas/PipelineStageHealth'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/PipelineStageEdge'
+          description: The pipeline's directed stage graph. See PipelineTopology.EDGES on the backend.
 
     PipelineTraceNode:
       type: object

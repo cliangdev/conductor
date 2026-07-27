@@ -481,11 +481,17 @@ produces one line per signal.
 stage (`WEBHOOKS`, `FEEDS`, `DIGESTS`, `INBOX`, `LIBRARIAN_RUNS`, `PAGES_WRITTEN`), each with
 status-keyed counts for a recent window — composed read-only from repositories that already exist
 for their own bounded context (`PipelineHealthService`, package `com.conductor.pipeline`, a sibling
-to `knowledge`/`integration`/`workflow` since it reads across all of them). The `DIGESTS` stage
-always reports a `skipped` bucket on its own, never folded into another bucket — a quiet week
-(nothing material happened, see [Metrics digests](#metrics-digests)'s novelty gate) is meant to read
-as *working as intended*, not broken. The frontend's Pipeline tab (see below) renders this as a
-small stage-flow diagram.
+to `knowledge`/`integration`/`workflow` since it reads across all of them). The response also carries
+an `edges` array (`PipelineTopology.EDGES`) describing the pipeline's *actual* shape — a branching
+DAG, not a straight line: `WEBHOOKS` and `FEEDS` are independent producer paths that both feed
+`INBOX` (`FEEDS` by way of `DIGESTS` first), which then continues through `LIBRARIAN_RUNS` to
+`PAGES_WRITTEN`. The backend is the single source of truth for this shape — the frontend's Pipeline
+tab renders whatever `edges` it's given rather than hand-assuming stage order, and
+`PipelineTopologyToolSpecTest` fails loudly if a future non-metric connector feed makes the one edge
+`PipelineTopology` deliberately omits (a `FEEDS -> INBOX` bypass, dormant today) reachable. The
+`DIGESTS` stage always reports a `skipped` bucket on its own, never folded into another bucket — a
+quiet week (nothing material happened, see [Metrics digests](#metrics-digests)'s novelty gate) is
+meant to read as *working as intended*, not broken.
 
 **Per-item trace.** `GET /projects/{projectId}/knowledge/pipeline/trace` takes exactly one typed
 anchor (`pageId`, `sourceId`, `feedId`, or `webhookEventId`) and walks the existing FK chain plus the

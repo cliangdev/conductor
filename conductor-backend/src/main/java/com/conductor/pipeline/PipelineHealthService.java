@@ -37,8 +37,12 @@ import java.util.Optional;
  * project-scoped group-by queries needed adding, see {@code WebhookEventRepository},
  * {@code ConnectorFeedDigestRepository}).
  *
- * <p>Stage order matches the pipeline's actual data flow: WEBHOOKS -&gt; FEEDS -&gt; DIGESTS -&gt;
- * INBOX -&gt; LIBRARIAN_RUNS -&gt; PAGES_WRITTEN.
+ * <p>The list returned by {@link #getHealth} is NOT a linear chain, despite the fixed enumeration
+ * order below being convenient to iterate: WEBHOOKS and FEEDS are two independent producer paths that
+ * both feed INBOX (FEEDS by way of DIGESTS first), which then continues through LIBRARIAN_RUNS to
+ * PAGES_WRITTEN. See {@link PipelineTopology} for the actual directed edges, exposed to callers via
+ * {@link #getTopology()} — a frontend diagram must render the real branching shape from that edge
+ * list rather than assuming stage N flows into stage N+1.
  */
 @Service
 public class PipelineHealthService {
@@ -86,6 +90,12 @@ public class PipelineHealthService {
                 inboxStage(projectId),
                 librarianRunStage(projectId),
                 pagesWrittenStage(projectId));
+    }
+
+    /** The pipeline's fixed directed stage graph — see {@link PipelineTopology}'s javadoc for the
+     *  edge-by-edge justification and the one dormant edge it deliberately omits. */
+    public List<PipelineTopology.Edge> getTopology() {
+        return PipelineTopology.EDGES;
     }
 
     private PipelineStageHealthView webhookStage(String projectId) {

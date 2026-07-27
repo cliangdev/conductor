@@ -5,6 +5,7 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.PipelineApi;
 import com.conductor.generated.model.PipelineHealthDto;
 import com.conductor.generated.model.PipelineStage;
+import com.conductor.generated.model.PipelineStageEdge;
 import com.conductor.generated.model.PipelineStageHealth;
 import com.conductor.generated.model.PipelineTraceDto;
 import com.conductor.generated.model.PipelineTraceNode;
@@ -45,8 +46,12 @@ public class PipelineController implements PipelineApi {
         List<PipelineStageHealth> stages = healthService.getHealth(projectId).stream()
                 .map(this::toDto)
                 .toList();
+        List<PipelineStageEdge> edges = healthService.getTopology().stream()
+                .map(this::toDto)
+                .toList();
         PipelineHealthDto dto = new PipelineHealthDto();
         dto.setStages(stages);
+        dto.setEdges(edges);
         return ResponseEntity.ok(dto);
     }
 
@@ -89,6 +94,10 @@ public class PipelineController implements PipelineApi {
 
     private PipelineStageHealth toDto(PipelineStageHealthView view) {
         return new PipelineStageHealth(PipelineStage.fromValue(view.stage()), view.label(), view.counts());
+    }
+
+    private PipelineStageEdge toDto(PipelineTopology.Edge edge) {
+        return new PipelineStageEdge(PipelineStage.fromValue(edge.from()), PipelineStage.fromValue(edge.to()));
     }
 
     private PipelineTraceNode toDto(PipelineTraceNodeView view) {
