@@ -25,6 +25,12 @@ vi.mock('@/components/integrations/ConnectorDocsPanel', () => ({
   ),
 }))
 
+// Renders nothing by default (matches the real component's no-declared-feeds behavior) -- layout
+// behavior is covered here, ConnectorFeedsPanel's own behavior in its colocated test.
+vi.mock('@/components/integrations/ConnectorFeedsPanel', () => ({
+  default: () => null,
+}))
+
 import ConnectorLayout from './layout'
 
 describe('ConnectorLayout', () => {

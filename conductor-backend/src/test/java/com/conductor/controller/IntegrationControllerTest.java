@@ -15,8 +15,14 @@ import com.conductor.integration.ConnectorMetadata;
 import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.FieldType;
+import com.conductor.integration.IngestMode;
+import com.conductor.integration.IngestSpec;
+import com.conductor.integration.IntegrationToolSpec;
 import com.conductor.integration.connector.GcpBillingConnector;
 import com.conductor.integration.ConnectorRegistry;
+import com.conductor.integration.ingest.ConnectorFeed;
+import com.conductor.integration.ingest.ConnectorFeedRepository;
+import com.conductor.integration.ingest.ConnectorFeedStatus;
 import com.conductor.repository.ConnectionDataCacheRepository;
 import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
@@ -54,6 +60,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -77,6 +84,7 @@ class IntegrationControllerTest {
     @MockitoBean private ConnectionDataCacheRepository cacheRepository;
     @MockitoBean private WebhookEventRepository webhookEventRepository;
     @MockitoBean private ProjectSecurityService projectSecurityService;
+    @MockitoBean private ConnectorFeedRepository connectorFeedRepository;
     @MockitoBean private GcpBillingConnector gcpBillingConnector;
     @MockitoBean private RuntimeTargetService runtimeTargetService;
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
@@ -401,6 +409,7 @@ class IntegrationControllerTest {
                 "posthog", "PostHog", ConnectorCategory.ANALYTICS, "Product analytics", "PH"));
         when(connector.getSpec()).thenReturn(ConnectorSpec.apiKey(true, List.of(
                 ConnectorConfigField.userInput("apiKey", "API Key", "hint", FieldType.SECRET, true))));
+        when(connector.getToolSpec()).thenReturn(new IntegrationToolSpec("Product analytics", List.of()));
         when(connectorRegistry.getAll()).thenReturn(List.of(connector));
         when(connectorRegistry.capabilitiesOf(connector)).thenReturn(List.of(Capability.FETCH));
 
@@ -438,6 +447,7 @@ class IntegrationControllerTest {
         when(connector.getMetadata()).thenReturn(new ConnectorMetadata(
                 "posthog", "PostHog", ConnectorCategory.ANALYTICS, "Product analytics", "PH"));
         when(connector.getSpec()).thenReturn(ConnectorSpec.apiKey(true, List.of()));
+        when(connector.getToolSpec()).thenReturn(new IntegrationToolSpec("Product analytics", List.of()));
         when(connectorRegistry.getAll()).thenReturn(List.of(connector));
         when(connectorRegistry.capabilitiesOf(connector)).thenReturn(List.of(Capability.FETCH));
         when(connectionService.list(PROJECT_ID, "posthog")).thenReturn(List.of());
@@ -447,5 +457,183 @@ class IntegrationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].connected").value(false))
                 .andExpect(jsonPath("$[0].activeConnectionIds.length()").value(0));
+    }
+
+    // ---- connector feeds ----
+
+    private static final String FEED_CONNECTOR_ID = "posthog";
+
+    private ConnectorFeed activeFeed() {
+        ConnectorFeed feed = new ConnectorFeed();
+        feed.setId("feed-1");
+        feed.setProjectId(PROJECT_ID);
+        feed.setConnectionId("conn-1");
+        feed.setConnectorId(FEED_CONNECTOR_ID);
+        feed.setIngestId("weekly-mrr");
+        feed.setEnabled(true);
+        feed.setIntervalMinutes(1440);
+        feed.setStatus(ConnectorFeedStatus.ACTIVE);
+        feed.setConsecutiveFailures(0);
+        feed.setNextRunAt(java.time.OffsetDateTime.now());
+        return feed;
+    }
+
+    private void stubIngestSpec() {
+        Connector connector = mock(Connector.class);
+        IngestSpec spec = new IngestSpec("weekly-mrr", "Weekly MRR", "Weekly revenue snapshot",
+                IngestMode.SNAPSHOT, null, null, 1440, null, null, null,
+                new com.conductor.integration.DigestSpec("trend", "date", List.of(), List.of(), "metrics/mrr", 13));
+        when(connector.getToolSpec()).thenReturn(new IntegrationToolSpec("PostHog", List.of(), List.of(), List.of(spec)));
+        when(connectorRegistry.getById(FEED_CONNECTOR_ID)).thenReturn(Optional.of(connector));
+    }
+
+    @Test
+    void listConnectorFeeds_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/" + FEED_CONNECTOR_ID + "/feeds")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listConnectorFeeds_member_returnsFeedsEnrichedWithIngestSpecLabel() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        stubIngestSpec();
+        when(connectorFeedRepository.findByProjectIdAndConnectorId(PROJECT_ID, FEED_CONNECTOR_ID))
+                .thenReturn(List.of(activeFeed()));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/" + FEED_CONNECTOR_ID + "/feeds")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value("feed-1"))
+                .andExpect(jsonPath("$[0].ingestId").value("weekly-mrr"))
+                .andExpect(jsonPath("$[0].label").value("Weekly MRR"))
+                .andExpect(jsonPath("$[0].description").value("Weekly revenue snapshot"))
+                .andExpect(jsonPath("$[0].enabled").value(true))
+                .andExpect(jsonPath("$[0].intervalMinutes").value(1440))
+                .andExpect(jsonPath("$[0].status").value("ACTIVE"))
+                .andExpect(jsonPath("$[0].isMetricFeed").value(true));
+    }
+
+    // ---- updateConnectorFeed ----
+
+    @Test
+    void updateConnectorFeed_nonAdminOrCreator_returns403() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":false}"))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verifyNoInteractions(connectorFeedRepository);
+    }
+
+    @Test
+    void updateConnectorFeed_machinePrincipal_isRejectedStructurally() throws Exception {
+        // A project API key resolves to a ProjectScopedPrincipal, not a User -- requireAdminOrCreator
+        // must reject it before ever touching the repository, per the "!(principal instanceof User)"
+        // idiom this controller already uses for writes.
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1")
+                        .header("Authorization", "Bearer project-api-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":false}"))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verifyNoInteractions(connectorFeedRepository);
+    }
+
+    @Test
+    void updateConnectorFeed_happyPath_updatesEnabledAndInterval() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        stubIngestSpec();
+        ConnectorFeed feed = activeFeed();
+        when(connectorFeedRepository.findById("feed-1")).thenReturn(Optional.of(feed));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":false,\"intervalMinutes\":60}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.enabled").value(false))
+                .andExpect(jsonPath("$.intervalMinutes").value(60));
+
+        assertThat(feed.isEnabled()).isFalse();
+        assertThat(feed.getIntervalMinutes()).isEqualTo(60);
+        verify(connectorFeedRepository).save(feed);
+    }
+
+    @Test
+    void updateConnectorFeed_intervalOutOfRange_returns400() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"intervalMinutes\":0}"))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verifyNoInteractions(connectorFeedRepository);
+    }
+
+    @Test
+    void updateConnectorFeed_wrongProject_returns404() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        ConnectorFeed feed = activeFeed();
+        feed.setProjectId("some-other-project");
+        when(connectorFeedRepository.findById("feed-1")).thenReturn(Optional.of(feed));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":false}"))
+                .andExpect(status().isNotFound());
+        verify(connectorFeedRepository, never()).save(any());
+    }
+
+    // ---- runConnectorFeedNow ----
+
+    @Test
+    void runConnectorFeedNow_happyPath_returns202AndReduesFeed() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        stubIngestSpec();
+        ConnectorFeed feed = activeFeed();
+        java.time.OffsetDateTime originalNextRun = feed.getNextRunAt();
+        when(connectorFeedRepository.findById("feed-1")).thenReturn(Optional.of(feed));
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1/runs")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.id").value("feed-1"));
+
+        assertThat(feed.getNextRunAt()).isBeforeOrEqualTo(java.time.OffsetDateTime.now());
+        assertThat(feed.getNextRunAt()).isNotEqualTo(originalNextRun);
+        verify(connectorFeedRepository).save(feed);
+    }
+
+    @Test
+    void runConnectorFeedNow_machinePrincipal_isRejectedStructurally() throws Exception {
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1/runs")
+                        .header("Authorization", "Bearer project-api-key"))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verifyNoInteractions(connectorFeedRepository);
+    }
+
+    @Test
+    void runConnectorFeedNow_nonAdminOrCreator_returns403() throws Exception {
+        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + FEED_CONNECTOR_ID + "/feeds/feed-1/runs")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+        org.mockito.Mockito.verifyNoInteractions(connectorFeedRepository);
     }
 }

@@ -6,6 +6,7 @@ import { Breadcrumb } from '@/components/layout/PageHeader';
 import { Tabs } from '@/components/ui/tabs';
 import WorkflowToolsPanel from '@/components/integrations/WorkflowToolsPanel';
 import ConnectorDocsPanel from '@/components/integrations/ConnectorDocsPanel';
+import ConnectorFeedsPanel from '@/components/integrations/ConnectorFeedsPanel';
 import { ConnectorCatalogProvider, useConnectorCatalogItem } from '@/components/integrations/ConnectorCatalogContext';
 
 // Known-connector labels render instantly, before the catalog fetch resolves — avoids a breadcrumb
@@ -52,7 +53,14 @@ function ConnectorLayoutInner({ children }: { children: React.ReactNode }) {
         />
       </div>
 
-      {tab === 'overview' && children}
+      {tab === 'overview' && (
+        <>
+          {children}
+          {/* Owns its own container/spacing and renders nothing (zero DOM) when the connector
+              declares no feeds -- the six pre-existing connectors must look unchanged. */}
+          <ConnectorFeedsPanel projectId={projectId} connectorId={connectorId} />
+        </>
+      )}
       {tab === 'tools' && <WorkflowToolsPanel projectId={projectId} connectorId={connectorId} />}
       {tab === 'docs' && <ConnectorDocsPanel connectorId={connectorId} />}
     </>

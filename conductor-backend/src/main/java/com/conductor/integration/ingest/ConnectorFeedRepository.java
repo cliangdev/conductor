@@ -18,6 +18,8 @@ public interface ConnectorFeedRepository extends JpaRepository<ConnectorFeed, St
 
     List<ConnectorFeed> findByConnectionId(String connectionId);
 
+    List<ConnectorFeed> findByProjectIdAndConnectorId(String projectId, String connectorId);
+
     /**
      * Oldest-first batch (up to {@code limit}) of due, enabled, ACTIVE feeds, row-locked so two
      * concurrent scheduler instances can never claim the same feed -- {@code FOR UPDATE SKIP LOCKED}
