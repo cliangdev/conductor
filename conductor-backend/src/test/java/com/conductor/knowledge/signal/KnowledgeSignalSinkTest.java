@@ -17,6 +17,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -72,10 +75,11 @@ class KnowledgeSignalSinkTest {
         assertThat(sink.failureMode()).isEqualTo(FailureMode.SWALLOW);
     }
 
-    /** Narrowed in A6: exact string equality against the one type this subscriber acts on. */
+    /** Narrowed in A6, widened in A8: exact string equality against the two types this subscriber acts on. */
     @Test
-    void interestedInConductorStatusChangedOnly() {
+    void interestedInStatusChangedAndMergedPullRequestOnly() {
         assertThat(sink.interestedIn(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED)).isTrue();
+        assertThat(sink.interestedIn(SignalTypes.GITHUB_PULL_REQUEST_MERGED)).isTrue();
         assertThat(sink.interestedIn(SignalTypes.GITHUB_PULL_REQUEST)).isFalse();
         assertThat(sink.interestedIn("anything")).isFalse();
     }
@@ -201,5 +205,111 @@ class KnowledgeSignalSinkTest {
         ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
         verify(ingestionService).submit(captor.capture());
         assertThat(captor.getValue().sourceRef()).isEqualTo("conductor:unknown");
+    }
+
+    // --- GITHUB_PULL_REQUEST_MERGED : formerly GitHubConnector#submitMergedPrKnowledge, moved here in
+    //     A8 -- submits regardless of whether the PR body references a Conductor issue. ---
+
+    private Signal mergedPrSignal(Map<String, Object> payload) {
+        return Signal.of(SignalTypes.GITHUB_PULL_REQUEST_MERGED, PROJECT_ID, "3", Instant.now(),
+                payload, new SignalOrigin("test", null));
+    }
+
+    private Map<String, Object> mergedPrPayload() {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("repoFullName", "x/y");
+        payload.put("number", 3);
+        payload.put("title", "Add feature");
+        payload.put("body", "just a PR, no conductor link");
+        payload.put("labels", List.of("enhancement"));
+        payload.put("mergedBy", "alice");
+        payload.put("baseSha", "aaa");
+        payload.put("headSha", "bbb");
+        return payload;
+    }
+
+    @Test
+    void mergedPr_knowledgeEnabled_submitsSource() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        sink.onSignal(mergedPrSignal(mergedPrPayload()));
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        KnowledgeSubmission submission = captor.getValue();
+        assertThat(submission.projectId()).isEqualTo(PROJECT_ID);
+        assertThat(submission.sourceType()).isEqualTo("github.pr_merged");
+        assertThat(submission.sourceRef()).isEqualTo("github:x/y#3");
+        assertThat(submission.title()).isEqualTo("Add feature");
+        assertThat(submission.payload()).contains("\"enhancement\"", "\"alice\"", "\"aaa\"", "\"bbb\"");
+        assertThat(submission.dedupKey()).isEqualTo("github-pr-merged:github:x/y#3");
+        assertThat(submission.origin().kind()).isEqualTo("GITHUB_CONNECTOR");
+        assertThat(submission.origin().id()).isEqualTo("github:x/y#3");
+    }
+
+    @Test
+    void mergedPr_knowledgeDisabled_doesNotSubmit() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(false);
+
+        sink.onSignal(mergedPrSignal(mergedPrPayload()));
+
+        verify(ingestionService, never()).submit(any());
+    }
+
+    @Test
+    void mergedPr_missingRepoFullNameOrNumber_doesNotSubmit() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        sink.onSignal(mergedPrSignal(Map.of("body", "no repo info here")));
+
+        verify(ingestionService, never()).submit(any());
+    }
+
+    @Test
+    void mergedPr_changedFilesCountIncludedOnlyWhenPresent() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        Map<String, Object> withCount = mergedPrPayload();
+        withCount.put("changedFilesCount", 5);
+
+        sink.onSignal(mergedPrSignal(withCount));
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        assertThat(captor.getValue().payload()).contains("\"changedFilesCount\":5");
+    }
+
+    @Test
+    void mergedPr_changedFilesCountAbsent_omitsKey() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        sink.onSignal(mergedPrSignal(mergedPrPayload()));
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        assertThat(captor.getValue().payload()).doesNotContain("changedFilesCount");
+    }
+
+    @Test
+    void mergedPrIngestFailure_isSwallowed() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        doThrow(new RuntimeException("boom")).when(ingestionService).submit(any());
+
+        assertThatNoException().isThrownBy(() -> sink.onSignal(mergedPrSignal(mergedPrPayload())));
+    }
+
+    /** Pins that the submission's occurredAt is stamped fresh at submission time -- not derived from
+     *  {@link Signal#occurredAt()}, which may be considerably older by the time this sink runs. */
+    @Test
+    void mergedPr_occurredAtIsSubmissionTime_notSignalOccurredAt() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        Instant longAgo = Instant.parse("2000-01-01T00:00:00Z");
+        Signal signal = Signal.of(SignalTypes.GITHUB_PULL_REQUEST_MERGED, PROJECT_ID, "3", longAgo,
+                mergedPrPayload(), new SignalOrigin("test", null));
+
+        sink.onSignal(signal);
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        assertThat(captor.getValue().occurredAt()).isAfter(OffsetDateTime.now().minusMinutes(1));
     }
 }

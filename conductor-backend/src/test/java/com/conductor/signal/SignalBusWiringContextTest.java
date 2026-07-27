@@ -2,6 +2,7 @@ package com.conductor.signal;
 
 import com.conductor.knowledge.signal.KnowledgeSignalSink;
 import com.conductor.notification.signal.NotificationSignalSink;
+import com.conductor.service.signal.PullRequestMergeSubscriber;
 import com.conductor.support.AbstractNoneWebIntegrationTest;
 import com.conductor.workflow.signal.LifecycleSignalSubscriber;
 import com.conductor.workflow.signal.WorkflowAutomationSignalSubscriber;
@@ -17,14 +18,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 
 /**
- * Full Spring context test proving the four production {@link SignalSubscriber} beans resolve without
- * a circular-dependency failure ({@code BeanCurrentlyInCreationException}) and register in the expected
+ * Full Spring context test proving the production {@link SignalSubscriber} beans resolve without a
+ * circular-dependency failure ({@code BeanCurrentlyInCreationException}) and register in the expected
  * dispatch order. {@code BeanConstructorResolutionTest} is reflection-only and does NOT catch this class
  * of failure -- it never actually asks the context to construct the graph. See {@link
  * InProcessSignalBus}'s javadoc for the latent cycle this exercises: {@code WorkItemService ->
  * NotificationDispatcher -> SignalBus -> LifecycleSignalSubscriber -> LifecycleTriggerDispatcher ->
  * WorkItemService}, broken by {@code InProcessSignalBus}'s {@code ObjectProvider}-based lazy,
- * post-refresh subscriber resolution.
+ * post-refresh subscriber resolution. {@code PullRequestMergeSubscriber} (added in A8) closes the same
+ * kind of cycle a second way -- {@code GitHubConnector -> SignalBus -> PullRequestMergeSubscriber ->
+ * WorkItemService} -- so it belongs in this same proof.
  */
 class SignalBusWiringContextTest extends AbstractNoneWebIntegrationTest {
 
@@ -35,7 +38,7 @@ class SignalBusWiringContextTest extends AbstractNoneWebIntegrationTest {
     private List<SignalSubscriber> subscribers;
 
     @Test
-    void allFourProductionSubscribersAreRegisteredInOrder() {
+    void allFiveProductionSubscribersAreRegisteredInOrder() {
         List<SignalSubscriber> sorted = subscribers.stream()
                 .sorted(Comparator.comparingInt(SignalSubscriber::order))
                 .toList();
@@ -44,15 +47,16 @@ class SignalBusWiringContextTest extends AbstractNoneWebIntegrationTest {
                 NotificationSignalSink.class,
                 WorkflowAutomationSignalSubscriber.class,
                 LifecycleSignalSubscriber.class,
-                KnowledgeSignalSink.class);
-        assertThat(sorted).extracting(SignalSubscriber::order).containsExactly(10, 20, 30, 40);
+                KnowledgeSignalSink.class,
+                PullRequestMergeSubscriber.class);
+        assertThat(sorted).extracting(SignalSubscriber::order).containsExactly(10, 20, 30, 40, 50);
     }
 
     @Test
     void publishResolvesTheFullSubscriberChainWithoutACircularDependencyFailure() {
-        // ASSET_ADDED has no ChannelGroup and is neither WORK_ITEM_STATUS_CHANGED nor
-        // GITHUB_PULL_REQUEST, so every production subscriber's internal type guard makes this a real
-        // no-op fan-out -- the point is proving the bean graph resolves and publish() completes
+        // ASSET_ADDED has no ChannelGroup and is none of WORK_ITEM_STATUS_CHANGED, GITHUB_PULL_REQUEST,
+        // or GITHUB_PULL_REQUEST_MERGED, so every production subscriber's internal type guard makes this
+        // a real no-op fan-out -- the point is proving the bean graph resolves and publish() completes
         // end-to-end through real (not mocked) beans, not exercising any one subscriber's business
         // logic (that's covered by the per-subscriber unit tests).
         Signal signal = Signal.of(SignalTypes.CONDUCTOR_WORK_ITEM_ASSET_ADDED, "proj-context-test", null,

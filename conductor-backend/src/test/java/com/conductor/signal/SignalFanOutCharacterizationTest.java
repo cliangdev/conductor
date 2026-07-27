@@ -9,6 +9,8 @@ import com.conductor.notification.signal.NotificationSignalSink;
 import com.conductor.repository.NotificationGroupConfigRepository;
 import com.conductor.service.LifecycleTriggerDispatcher;
 import com.conductor.service.ProjectSettingsService;
+import com.conductor.service.WorkItemService;
+import com.conductor.service.signal.PullRequestMergeSubscriber;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.signal.LifecycleSignalSubscriber;
 import com.conductor.workflow.signal.WorkflowAutomationSignalSubscriber;
@@ -39,7 +41,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * Composition-level characterization of the ordered fan-out, over a REAL {@link InProcessSignalBus}
- * wired to the four REAL production subscribers (their collaborators are mocked, the subscribers are
+ * wired to all five REAL production subscribers (their collaborators are mocked, the subscribers are
  * not). Successor to the pre-refactor {@code NotificationDispatcherFanOutCharacterizationTest}, whose
  * subject class no longer exists -- the behaviour it pinned is a property of the fan-out, not of the
  * deleted dispatcher, so it is re-pinned here at the new entry point rather than dropped.
@@ -64,6 +66,7 @@ class SignalFanOutCharacterizationTest {
     @Mock private LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
     @Mock private KnowledgeIngestionService knowledgeIngestionService;
     @Mock private ProjectSettingsService projectSettingsService;
+    @Mock private WorkItemService workItemService;
     @Mock private ObjectProvider<List<SignalSubscriber>> subscribersProvider;
 
     private SignalBus signalBus;
@@ -80,7 +83,8 @@ class SignalFanOutCharacterizationTest {
                 new NotificationSignalSink(deliveryService, new NotificationSignalMapper()),
                 new WorkflowAutomationSignalSubscriber(workflowTriggerService),
                 new LifecycleSignalSubscriber(lifecycleTriggerDispatcher),
-                new KnowledgeSignalSink(knowledgeIngestionService, projectSettingsService, new ObjectMapper()));
+                new KnowledgeSignalSink(knowledgeIngestionService, projectSettingsService, new ObjectMapper()),
+                new PullRequestMergeSubscriber(workItemService));
         lenient().when(subscribersProvider.getIfAvailable(any())).thenReturn(subscribers);
 
         signalBus = new InProcessSignalBus(subscribersProvider);
@@ -159,21 +163,54 @@ class SignalFanOutCharacterizationTest {
 
         assertThatNoException().isThrownBy(() -> signalBus.publish(signal));
 
-        verifyNoInteractions(workflowTriggerService, lifecycleTriggerDispatcher, knowledgeIngestionService);
+        verifyNoInteractions(workflowTriggerService, lifecycleTriggerDispatcher, knowledgeIngestionService,
+                workItemService);
     }
 
     private enum UnclaimedType {
         REVIEWER_ASSIGNED(SignalTypes.CONDUCTOR_WORK_ITEM_REVIEWER_ASSIGNED),
         COMMENT_ADDED(SignalTypes.CONDUCTOR_WORK_ITEM_COMMENT_ADDED),
         ASSET_ADDED(SignalTypes.CONDUCTOR_WORK_ITEM_ASSET_ADDED),
-        WORKFLOW_AUTO_PAUSED(SignalTypes.CONDUCTOR_WORKFLOW_AUTO_PAUSED),
-        /** Guards the prefix hazard: this must not be picked up by the github.pull_request subscriber. */
-        PULL_REQUEST_MERGED(SignalTypes.GITHUB_PULL_REQUEST_MERGED);
+        WORKFLOW_AUTO_PAUSED(SignalTypes.CONDUCTOR_WORKFLOW_AUTO_PAUSED);
 
         private final String signalType;
 
         UnclaimedType(String signalType) {
             this.signalType = signalType;
         }
+    }
+
+    /**
+     * As of A8, {@link SignalTypes#GITHUB_PULL_REQUEST_MERGED} is no longer unclaimed -- {@code
+     * KnowledgeSignalSink} and {@code PullRequestMergeSubscriber} both claim it, in that order (order
+     * {@link SignalDispatchOrder#KNOWLEDGE} then {@link SignalDispatchOrder#PULL_REQUEST_MERGE}),
+     * matching the pre-A8 {@code submitMergedPrKnowledge} -> {@code completeFromPullRequest} sequence
+     * inline in {@code GitHubConnector}. This also re-pins the prefix-collision guard formerly covered by
+     * {@code UnclaimedType.PULL_REQUEST_MERGED}: a merged-PR signal must NOT reach {@code
+     * NotificationSignalSink} or {@code WorkflowAutomationSignalSubscriber}, whose {@code interestedIn}
+     * checks {@link SignalTypes#GITHUB_PULL_REQUEST} by exact equality -- {@code
+     * "github.pull_request_merged"} must never be (mis)treated as a prefix match for {@code
+     * "github.pull_request"}.
+     */
+    @Test
+    void mergedPullRequestReachesKnowledgeThenPullRequestMergeSubscriber_andNoOthers() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        Signal signal = Signal.of(SignalTypes.GITHUB_PULL_REQUEST_MERGED, PROJECT_ID, "3", Instant.now(),
+                Map.of(
+                        "repoFullName", "x/y",
+                        "number", 3,
+                        "body", "closes conductor/PROJ-1",
+                        "htmlUrl", "https://github.com/x/y/pull/3"),
+                new SignalOrigin("test", null));
+
+        signalBus.publish(signal);
+
+        InOrder inOrder = inOrder(knowledgeIngestionService, workItemService);
+        inOrder.verify(knowledgeIngestionService).submit(any());
+        inOrder.verify(workItemService).completeFromPullRequest(PROJECT_ID, "PROJ", 1,
+                "https://github.com/x/y/pull/3");
+        // The prefix-collision guard: not delivered where "github.pull_request" (unmerged) is handled,
+        // and not delivered to notification delivery (no EventType maps to the merged type).
+        verifyNoInteractions(groupConfigRepository, workflowTriggerService, lifecycleTriggerDispatcher);
     }
 }

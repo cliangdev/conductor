@@ -7,7 +7,6 @@ import com.conductor.integration.connector.github.GitHubConnector;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.WebhookEventRepository;
 import com.conductor.service.ConnectionService;
-import com.conductor.service.WorkItemService;
 import com.conductor.service.WebhookDispatchService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,7 +48,6 @@ class WebhookReceiverControllerTest {
     @Mock private ConnectionRepository connectionRepository;
     @Mock private WebhookEventRepository eventRepository;
     @Mock private WebhookDispatchService dispatchService;
-    @Mock private WorkItemService workItemService;
 
     private WebhookReceiverController controller;
 
@@ -62,13 +60,11 @@ class WebhookReceiverControllerTest {
     /** Register a REAL GitHub connector so verify/route/handleLifecycle run for "github". */
     private void registerGitHub() {
         GitHubConnector connector = new GitHubConnector(
-                workItemService, connectionRepository, connectionService,
+                connectionRepository, connectionService,
                 org.mockito.Mockito.mock(com.conductor.integration.connector.github.GitHubAppService.class),
-                org.mockito.Mockito.mock(com.conductor.knowledge.KnowledgeIngestionService.class),
-                // Mockito default-answers false for a boolean method, so knowledge submission is a
-                // no-op here without needing to stub it — this suite only exercises the pre-existing
-                // issue-completion path.
-                org.mockito.Mockito.mock(com.conductor.service.ProjectSettingsService.class),
+                // A mocked SignalBus is a no-op here without needing to stub it — this suite only
+                // exercises the generic receiver's verify/route/dedup/lifecycle behaviour, not what a
+                // merge or review Signal fans out to (see GitHubConnectorTest / SignalFanOutCharacterizationTest).
                 org.mockito.Mockito.mock(com.conductor.signal.SignalBus.class),
                 new ObjectMapper(), SECRET);
         when(connectorRegistry.findWebhook("github")).thenReturn(Optional.of(connector));
