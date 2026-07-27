@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import type { PipelineStageHealth } from '@/lib/knowledge-api'
+import type { PipelineStageHealth, PipelineStageEdge } from '@/lib/knowledge-api'
 
 // Same xyflow mocking approach as WorkflowDiagram.test.tsx — real xyflow needs ResizeObserver etc.
 // jsdom doesn't provide, so we swap <ReactFlow> for a plain div that renders each node's `data`
@@ -54,6 +54,16 @@ function stage(overrides: Partial<PipelineStageHealth> = {}): PipelineStageHealt
   }
 }
 
+// The pipeline's real 5-edge branching DAG (issue #342 correction) — WEBHOOKS and DIGESTS both feed
+// INBOX, which is exactly the shape a flat linear chain could never represent.
+const REAL_EDGES: PipelineStageEdge[] = [
+  { from: 'WEBHOOKS', to: 'INBOX' },
+  { from: 'FEEDS', to: 'DIGESTS' },
+  { from: 'DIGESTS', to: 'INBOX' },
+  { from: 'INBOX', to: 'LIBRARIAN_RUNS' },
+  { from: 'LIBRARIAN_RUNS', to: 'PAGES_WRITTEN' },
+]
+
 describe('PipelineFlowDiagram', () => {
   it('renders all six stages with their counts', () => {
     const stages: PipelineStageHealth[] = [
@@ -65,7 +75,7 @@ describe('PipelineFlowDiagram', () => {
       stage({ stage: 'PAGES_WRITTEN', label: 'Pages written (30d)', counts: { written: 7 } }),
     ]
 
-    render(<PipelineFlowDiagram stages={stages} />)
+    render(<PipelineFlowDiagram stages={stages} edges={REAL_EDGES} />)
 
     for (const s of stages) {
       expect(screen.getByTestId(`node-label-${s.stage}`)).toHaveTextContent(s.label)
@@ -73,26 +83,68 @@ describe('PipelineFlowDiagram', () => {
     expect(screen.getByTestId('node-count-DIGESTS-skipped')).toHaveTextContent('12')
     expect(screen.getByTestId('node-count-WEBHOOKS-processed')).toHaveTextContent('3')
 
-    // Five edges connect six sequential stages.
-    expect(screen.getAllByTestId(/^edge-/)).toHaveLength(5)
+    // The real 5-edge DAG, including the fan-in at INBOX — both WEBHOOKS and DIGESTS feed it.
+    const edgeIds = screen.getAllByTestId(/^edge-/).map((el) => el.getAttribute('data-testid'))
+    expect(edgeIds).toHaveLength(5)
+    expect(screen.getByTestId('edge-WEBHOOKS-INBOX')).toBeInTheDocument()
+    expect(screen.getByTestId('edge-DIGESTS-INBOX')).toBeInTheDocument()
   })
 
   it('invokes onStageClick with the clicked stage', () => {
     const onStageClick = vi.fn()
-    render(<PipelineFlowDiagram stages={[stage({ stage: 'INBOX', label: 'Knowledge inbox' })]} onStageClick={onStageClick} />)
+    render(
+      <PipelineFlowDiagram
+        stages={[stage({ stage: 'INBOX', label: 'Knowledge inbox' })]}
+        edges={REAL_EDGES}
+        onStageClick={onStageClick}
+      />,
+    )
 
     fireEvent.click(screen.getByTestId('node-INBOX'))
 
     expect(onStageClick).toHaveBeenCalledWith('INBOX')
   })
 
-  it('only renders nodes/edges for stages actually present in the response', () => {
-    render(<PipelineFlowDiagram stages={[stage({ stage: 'WEBHOOKS' }), stage({ stage: 'PAGES_WRITTEN', counts: { written: 0 } })]} />)
+  it('drops an edge whose endpoint stage is absent from the stages actually rendered', () => {
+    render(
+      <PipelineFlowDiagram
+        stages={[
+          stage({ stage: 'FEEDS', label: 'Connector feeds', counts: { active: 1 } }),
+          stage({ stage: 'DIGESTS', label: 'Metrics digests', counts: { pending: 0 } }),
+        ]}
+        edges={REAL_EDGES}
+      />,
+    )
 
-    expect(screen.getByTestId('node-WEBHOOKS')).toBeInTheDocument()
-    expect(screen.getByTestId('node-PAGES_WRITTEN')).toBeInTheDocument()
-    expect(screen.queryByTestId('node-INBOX')).not.toBeInTheDocument()
-    // Non-adjacent stages present (WEBHOOKS, PAGES_WRITTEN) yield no edge between them.
-    expect(screen.queryAllByTestId(/^edge-/)).toHaveLength(0)
+    expect(screen.getByTestId('node-FEEDS')).toBeInTheDocument()
+    expect(screen.getByTestId('node-DIGESTS')).toBeInTheDocument()
+    expect(screen.queryByTestId('node-WEBHOOKS')).not.toBeInTheDocument()
+
+    // Only the edge whose both endpoints are present renders — WEBHOOKS->INBOX has neither.
+    expect(screen.getAllByTestId(/^edge-/)).toHaveLength(1)
+    expect(screen.getByTestId('edge-FEEDS-DIGESTS')).toBeInTheDocument()
+    expect(screen.queryByTestId('edge-WEBHOOKS-INBOX')).not.toBeInTheDocument()
+  })
+
+  it('renders both fan-in edges into INBOX — the scenario a linear chain could never produce', () => {
+    render(
+      <PipelineFlowDiagram
+        stages={[
+          stage({ stage: 'WEBHOOKS', label: 'Webhooks' }),
+          stage({ stage: 'FEEDS', label: 'Connector feeds', counts: { active: 1 } }),
+          stage({ stage: 'DIGESTS', label: 'Metrics digests', counts: { pending: 0 } }),
+          stage({ stage: 'INBOX', label: 'Knowledge inbox', counts: { pending: 0 } }),
+        ]}
+        edges={[
+          { from: 'WEBHOOKS', to: 'INBOX' },
+          { from: 'FEEDS', to: 'DIGESTS' },
+          { from: 'DIGESTS', to: 'INBOX' },
+        ]}
+      />,
+    )
+
+    expect(screen.getByTestId('node-INBOX')).toBeInTheDocument()
+    expect(screen.getByTestId('edge-WEBHOOKS-INBOX')).toBeInTheDocument()
+    expect(screen.getByTestId('edge-DIGESTS-INBOX')).toBeInTheDocument()
   })
 })

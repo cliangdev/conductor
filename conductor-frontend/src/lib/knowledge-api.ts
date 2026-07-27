@@ -282,8 +282,20 @@ export interface PipelineStageHealth {
   counts: Record<string, number>
 }
 
+/**
+ * A directed edge in the pipeline's actual data-flow graph (issue #342 correction) — data-driven, not
+ * positional. WEBHOOKS and FEEDS are independent producer paths that both feed INBOX (FEEDS by way of
+ * DIGESTS first); a diagram must render this real branching shape from `edges`, never infer an edge
+ * from two stages being adjacent in some list. See `PipelineTopology` on the backend.
+ */
+export interface PipelineStageEdge {
+  from: PipelineStage
+  to: PipelineStage
+}
+
 export interface PipelineHealthDto {
   stages: PipelineStageHealth[]
+  edges: PipelineStageEdge[]
 }
 
 export function getPipelineHealth(projectId: string, token: string): Promise<PipelineHealthDto> {

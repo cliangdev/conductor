@@ -11,7 +11,7 @@ import {
   getPipelineHealth,
   KNOWLEDGE_LIBRARIAN_SLUG,
   type PipelineStage,
-  type PipelineStageHealth,
+  type PipelineHealthDto,
 } from '@/lib/knowledge-api'
 import { listWorkflows, listWorkflowRuns } from '@/lib/workflows'
 import type { WorkflowRunDto } from '@/types/workflow'
@@ -169,14 +169,14 @@ function PipelineTab({
   token: string
   onStageClick: (stage: PipelineStage) => void
 }) {
-  const [stages, setStages] = useState<PipelineStageHealth[] | null>(null)
+  const [health, setHealth] = useState<PipelineHealthDto | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     getPipelineHealth(projectId, token)
       .then((dto) => {
-        if (!cancelled) setStages(dto.stages)
+        if (!cancelled) setHealth(dto)
       })
       .catch((err) => {
         if (!cancelled) setError(apiErrorMessage(err, 'Failed to load pipeline health'))
@@ -187,14 +187,14 @@ function PipelineTab({
   }, [projectId, token])
 
   if (error) return <Alert variant="destructive">{error}</Alert>
-  if (!stages) return <Skeleton className="h-[180px] w-full" />
+  if (!health) return <Skeleton className="h-[180px] w-full" />
 
   return (
     <div className="space-y-2">
       <p className="text-xs text-foreground-subtle">
         Click a stage to jump to its detail. A quiet stage (e.g. skipped digests) is working as intended, not broken.
       </p>
-      <PipelineFlowDiagram stages={stages} onStageClick={onStageClick} />
+      <PipelineFlowDiagram stages={health.stages} edges={health.edges} onStageClick={onStageClick} />
     </div>
   )
 }
