@@ -38,6 +38,9 @@ vi.mock('@xyflow/react', () => ({
   MiniMap: () => null,
   ReactFlowProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useReactFlow: () => ({ zoomIn: vi.fn(), zoomOut: vi.fn() }),
+  Handle: () => null,
+  Position: { Top: 'top', Bottom: 'bottom', Left: 'left', Right: 'right' },
+  MarkerType: { ArrowClosed: 'arrowclosed' },
 }))
 
 import { PipelineFlowDiagram } from './PipelineFlowDiagram'

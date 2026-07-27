@@ -4,10 +4,12 @@
 // on the shared FlowCanvas shell (see components/workflow/FlowCanvas.tsx) the same way the
 // automation/lifecycle diagrams do. Positions are hardcoded, not dagre-laid-out — the topology is a
 // known constant (WEBHOOKS -> FEEDS -> DIGESTS -> INBOX -> LIBRARIAN_RUNS -> PAGES_WRITTEN), so an
-// auto-layout pass would be pure overhead for six nodes that never reflow.
+// auto-layout pass would be pure overhead for six nodes that never reflow. Top-to-bottom (not
+// left-to-right): a single column reads top-to-bottom like the rest of the page, and keeps each
+// stage's height independent of how many count buckets it has.
 
 import { useMemo } from 'react'
-import type { Node, Edge, NodeTypes } from '@xyflow/react'
+import { Handle, Position, MarkerType, type Node, type Edge, type NodeTypes } from '@xyflow/react'
 import { FlowCanvas } from '@/components/workflow/FlowCanvas'
 import { statusHueClasses } from '@/components/ui/status-badge'
 import { statusHue, humanizeId } from '@/lib/workflows'
@@ -22,12 +24,15 @@ function bucketLabel(bucket: string): string {
 
 const STAGE_ORDER: PipelineStage[] = ['WEBHOOKS', 'FEEDS', 'DIGESTS', 'INBOX', 'LIBRARIAN_RUNS', 'PAGES_WRITTEN']
 
-const NODE_W = 168
-const NODE_H = 108
-const NODE_GAP_X = 220
+// A wide, short row per stage (label + a single horizontal line of counts) rather than a tall
+// narrow card — height stays constant regardless of a stage having 4 or 5 buckets, which is what a
+// fixed-height card got wrong before (counts got clipped for the busier stages).
+const NODE_W = 620
+const NODE_H = 60
+const NODE_GAP_Y = 44
 
 const STAGE_POSITIONS: Record<PipelineStage, { x: number; y: number }> = Object.fromEntries(
-  STAGE_ORDER.map((stage, i) => [stage, { x: i * NODE_GAP_X, y: 0 }]),
+  STAGE_ORDER.map((stage, i) => [stage, { x: 0, y: i * (NODE_H + NODE_GAP_Y) }]),
 ) as Record<PipelineStage, { x: number; y: number }>
 
 // Count buckets that mean "something needs attention" for a stage's overall ring color — kept as a
@@ -50,32 +55,38 @@ export interface PipelineStageNodeData {
 
 function PipelineStageNode({ data }: { data: PipelineStageNodeData }) {
   const { health } = data
-  const ring = statusHueClasses(overallHue(health.counts))
+  const hue = statusHueClasses(overallHue(health.counts))
   const entries = Object.entries(health.counts)
 
   return (
     <div
-      className={cn('flex flex-col gap-1.5 rounded-md border border-border bg-surface px-3 py-2.5 shadow-sm ring-2', ring.ring)}
-      style={{ width: NODE_W, height: NODE_H }}
+      className={cn(
+        'flex items-center gap-4 rounded-md border border-border bg-surface px-4 py-3 shadow-sm ring-2',
+        hue.ring,
+        hue.text,
+      )}
+      style={{ width: NODE_W, minHeight: NODE_H }}
     >
-      <div className="truncate text-xs font-semibold text-foreground">{health.label}</div>
-      <div className="flex-1 space-y-0.5 overflow-hidden">
+      <Handle type="target" position={Position.Top} className="!bg-current opacity-40" />
+      <div className="w-32 shrink-0 truncate text-sm font-semibold text-foreground">{health.label}</div>
+      <div className="flex flex-1 flex-wrap items-center gap-x-4 gap-y-1">
         {entries.map(([bucket, count]) => {
           const isSkipped = bucket.toLowerCase() === 'skipped'
           return (
             <div
               key={bucket}
               className={cn(
-                'flex items-center justify-between text-[11px]',
+                'flex items-center gap-1.5 whitespace-nowrap text-[11px]',
                 isSkipped ? 'text-foreground-subtle italic' : 'text-foreground-muted',
               )}
             >
-              <span className="truncate">{isSkipped ? 'skipped (by design)' : bucketLabel(bucket)}</span>
-              <span className="shrink-0 font-mono tabular-nums">{count}</span>
+              <span>{isSkipped ? 'skipped (by design)' : bucketLabel(bucket)}</span>
+              <span className="font-mono tabular-nums text-foreground">{count}</span>
             </div>
           )
         })}
       </div>
+      <Handle type="source" position={Position.Bottom} className="!bg-current opacity-40" />
     </div>
   )
 }
@@ -89,19 +100,23 @@ export interface PipelineFlowDiagramProps {
 
 export function PipelineFlowDiagram({ stages, onStageClick }: PipelineFlowDiagramProps) {
   const byStage = useMemo(() => new Map(stages.map((s) => [s.stage, s])), [stages])
+  const visibleStages = useMemo(() => STAGE_ORDER.filter((stage) => byStage.has(stage)), [byStage])
 
   const nodes: Node[] = useMemo(
     () =>
-      STAGE_ORDER.filter((stage) => byStage.has(stage)).map((stage) => ({
+      visibleStages.map((stage) => ({
         id: stage,
         type: 'pipelineStage',
         position: STAGE_POSITIONS[stage],
         data: { health: byStage.get(stage)! } satisfies PipelineStageNodeData,
         draggable: false,
       })),
-    [byStage],
+    [byStage, visibleStages],
   )
 
+  // Only connects stages that are adjacent in the canonical STAGE_ORDER — a missing middle stage
+  // (not expected today; PipelineHealthService always returns all six) doesn't get bridged over with
+  // an edge implying a direct connection that isn't real.
   const edges: Edge[] = useMemo(() => {
     const result: Edge[] = []
     for (let i = 0; i < STAGE_ORDER.length - 1; i++) {
@@ -114,14 +129,19 @@ export function PipelineFlowDiagram({ stages, onStageClick }: PipelineFlowDiagra
           target,
           type: 'straight',
           style: { stroke: 'hsl(var(--border-strong))' },
+          markerEnd: { type: MarkerType.ArrowClosed },
         })
       }
     }
     return result
   }, [byStage])
 
+  // Sized to fit the whole column at ~1:1 scale (fitView still handles any overflow), so the page
+  // scrolls normally instead of the diagram needing its own internal pan/zoom to see every stage.
+  const height = Math.max(1, visibleStages.length) * (NODE_H + NODE_GAP_Y) - NODE_GAP_Y + 32
+
   return (
-    <div className="h-[180px] w-full">
+    <div className="w-full" style={{ height }}>
       <FlowCanvas
         nodes={nodes}
         edges={edges}
