@@ -273,7 +273,7 @@ describe('mutations', () => {
     const user = userEvent.setup()
     await renderList()
     const row = rowFor('i1')
-    const ringButton = within(row).getByRole('button', { name: /Change status/ })
+    const ringButton = await within(row).findByRole('button', { name: /Change status/ })
     await user.click(ringButton)
     await user.click(await screen.findByRole('menuitem', { name: 'Start' }))
 
