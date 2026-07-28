@@ -2,9 +2,10 @@
 import { useEffect, useRef } from 'react'
 import { Dialog } from '@base-ui/react/dialog'
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from 'react-zoom-pan-pinch'
-import { ZoomIn, ZoomOut, RotateCcw, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { MermaidRenderer } from './MermaidRenderer'
+import { MermaidControls } from './MermaidControls'
 
 interface Props {
   chart: string
@@ -66,45 +67,22 @@ export function MermaidFullscreenViewer({ chart, open, onOpenChange }: Props) {
             </TransformComponent>
           </TransformWrapper>
 
-          <div
-            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1 rounded-lg border border-border bg-popover/90 backdrop-blur px-2 py-1 shadow-lg"
-            role="toolbar"
-            aria-label="Diagram controls"
+          <MermaidControls
+            transformRef={transformRef}
+            size="default"
+            ariaLabel="Diagram controls"
+            className="fixed bottom-6 right-6 z-10"
+          />
+
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Close fullscreen"
+            onClick={() => onOpenChange(false)}
+            className="fixed top-4 right-4 z-10"
           >
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Zoom out"
-              onClick={() => transformRef.current?.zoomOut()}
-            >
-              <ZoomOut className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Reset zoom"
-              onClick={() => transformRef.current?.resetTransform()}
-            >
-              <RotateCcw className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Zoom in"
-              onClick={() => transformRef.current?.zoomIn()}
-            >
-              <ZoomIn className="h-4 w-4" />
-            </Button>
-            <div className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Close fullscreen"
-              onClick={() => onOpenChange(false)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
+            <X className="h-4 w-4" />
+          </Button>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
