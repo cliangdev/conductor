@@ -48,7 +48,11 @@ export function MoveDocDialog({
     setSaving(true)
     setError(null)
     try {
-      await apiPatch(`/api/v1/projects/${projectId}/docs/${docId}`, { folderId: selectedFolderId }, token)
+      // moveToRoot rather than folderId: null — the API can't tell an omitted folderId from an
+      // explicit one, so moving out of a folder has to say so.
+      const body =
+        selectedFolderId === null ? { moveToRoot: true } : { folderId: selectedFolderId }
+      await apiPatch(`/api/v1/projects/${projectId}/docs/${docId}`, body, token)
       onSuccess()
       onClose()
     } catch (err: unknown) {

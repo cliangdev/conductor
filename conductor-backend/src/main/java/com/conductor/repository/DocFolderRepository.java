@@ -14,4 +14,9 @@ public interface DocFolderRepository extends JpaRepository<DocFolder, String> {
     boolean existsByProjectIdAndParentIsNullAndName(String projectId, String name);
 
     boolean existsByProjectIdAndParentIdAndName(String projectId, String parentId, String name);
+
+    // ...AndIdNot variants: renaming a folder in place must not collide with itself.
+    boolean existsByProjectIdAndParentIsNullAndNameAndIdNot(String projectId, String name, String id);
+
+    boolean existsByProjectIdAndParentIdAndNameAndIdNot(String projectId, String parentId, String name, String id);
 }

@@ -87,18 +87,7 @@ public class RuntimeTargetController implements RuntimeTargetsApi {
      * {@code KnowledgeController#requireProjectAccess}.
      */
     private void requireMember(String projectId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = auth != null ? auth.getPrincipal() : null;
-        if (principal instanceof User user) {
-            if (!projectSecurityService.isProjectMember(projectId, user.getId())) {
-                throw new AccessDeniedException("Not a member of this project");
-            }
-            return;
-        }
-        if (auth instanceof ProjectScopedPrincipal scoped && projectId.equals(scoped.getProjectId())) {
-            return;
-        }
-        throw new AccessDeniedException("Not a member of this project");
+        projectSecurityService.requireProjectAccess(projectId);
     }
 
     /**

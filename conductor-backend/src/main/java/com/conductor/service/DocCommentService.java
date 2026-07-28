@@ -33,7 +33,7 @@ public class DocCommentService {
     }
 
     @Transactional
-    public DocComment createComment(String projectId, String docId, DocActor actor, String content,
+    public DocComment createComment(String projectId, String docId, ProjectActor actor, String content,
                                     Integer lineNumber, String quotedText) {
         ProjectDoc doc = projectDocService.getDoc(projectId, docId);
 
@@ -60,7 +60,7 @@ public class DocCommentService {
      * reviewer's comment, not to remove it.
      */
     @Transactional
-    public void deleteComment(String projectId, String docId, String commentId, DocActor actor) {
+    public void deleteComment(String projectId, String docId, String commentId, ProjectActor actor) {
         DocComment comment = getComment(projectId, docId, commentId);
 
         boolean allowed;
@@ -80,7 +80,7 @@ public class DocCommentService {
     }
 
     @Transactional
-    public DocCommentReply addReply(String projectId, String docId, String commentId, DocActor actor, String content) {
+    public DocCommentReply addReply(String projectId, String docId, String commentId, ProjectActor actor, String content) {
         DocComment comment = getComment(projectId, docId, commentId);
 
         DocCommentReply reply = new DocCommentReply();
@@ -93,7 +93,7 @@ public class DocCommentService {
     }
 
     @Transactional
-    public DocComment resolveThread(String projectId, String docId, String commentId, DocActor actor) {
+    public DocComment resolveThread(String projectId, String docId, String commentId, ProjectActor actor) {
         // Authors fetch-joined so the caller can map this to a response after the transaction closes.
         DocComment comment = docCommentRepository.findByIdWithAuthors(commentId)
                 .orElseThrow(() -> new EntityNotFoundException("Comment not found: " + commentId));
@@ -101,6 +101,7 @@ public class DocCommentService {
 
         comment.setResolvedAt(OffsetDateTime.now());
         comment.setResolvedBy(actor.user());
+        comment.setResolvedByLabel(actor.label());
         return docCommentRepository.save(comment);
     }
 

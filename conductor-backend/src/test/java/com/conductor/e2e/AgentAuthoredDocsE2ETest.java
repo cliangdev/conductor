@@ -169,6 +169,139 @@ class AgentAuthoredDocsE2ETest extends AbstractE2ETest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void movingADocToTheRootActuallyMovesIt() {
+        String folder = createFolder("Plans " + System.nanoTime(), null);
+        var created = rest.exchange(url(docsUrl()), HttpMethod.POST,
+                new HttpEntity<>(Map.of("title", "Roadmap", "folderId", folder, "content", ""), agentHeaders),
+                Map.class);
+        String docId = (String) created.getBody().get("id");
+
+        // The payload a client sends when it wants "rename and pull out of the folder". Sending
+        // folderId: null instead would be indistinguishable from omitting it.
+        var moved = rest.exchange(url(docsUrl() + "/" + docId), HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("title", "Roadmap", "moveToRoot", true), authHeaders), Map.class);
+        assertThat(moved.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(moved.getBody().get("folderId")).isNull();
+
+        // Assert against storage, not the response: the bug this pins was a reply that claimed a move
+        // that never happened.
+        var atRoot = rest.exchange(url(docsUrl()), HttpMethod.GET, new HttpEntity<>(authHeaders), List.class);
+        assertThat((List<Map<String, Object>>) atRoot.getBody())
+                .anySatisfy(d -> assertThat(d.get("id")).isEqualTo(docId));
+    }
+
+    @Test
+    void renamingIntoAnotherFolderChecksTheDestinationNotTheSource() {
+        String source = createFolder("Source " + System.nanoTime(), null);
+        String destination = createFolder("Destination " + System.nanoTime(), null);
+
+        // A doc named "Taken" already sits in the SOURCE folder. Renaming our doc to that name while
+        // moving it to the destination must succeed: the old two-step orchestration checked the name
+        // against the source folder and would 409 here.
+        rest.exchange(url(docsUrl()), HttpMethod.POST,
+                new HttpEntity<>(Map.of("title", "Taken", "folderId", source, "content", ""), authHeaders),
+                Map.class);
+        var subject = rest.exchange(url(docsUrl()), HttpMethod.POST,
+                new HttpEntity<>(Map.of("title", "Subject", "folderId", source, "content", ""), authHeaders),
+                Map.class);
+        String docId = (String) subject.getBody().get("id");
+
+        var moved = rest.exchange(url(docsUrl() + "/" + docId), HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("title", "Taken", "folderId", destination), authHeaders), Map.class);
+
+        assertThat(moved.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(moved.getBody().get("folderId")).isEqualTo(destination);
+        assertThat(moved.getBody().get("title")).isEqualTo("Taken");
+    }
+
+    @Test
+    void aRejectedMoveLeavesTheTitleUntouched() {
+        String source = createFolder("From " + System.nanoTime(), null);
+        String destination = createFolder("To " + System.nanoTime(), null);
+        rest.exchange(url(docsUrl()), HttpMethod.POST,
+                new HttpEntity<>(Map.of("title", "Clash", "folderId", destination, "content", ""), authHeaders),
+                Map.class);
+        var subject = rest.exchange(url(docsUrl()), HttpMethod.POST,
+                new HttpEntity<>(Map.of("title", "Original", "folderId", source, "content", ""), authHeaders),
+                Map.class);
+        String docId = (String) subject.getBody().get("id");
+
+        var rejected = rest.exchange(url(docsUrl() + "/" + docId), HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("title", "Clash", "folderId", destination), authHeaders), Map.class);
+        assertThat(rejected.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        // Rename and move commit together, so a rejected move leaves nothing half-applied.
+        var unchanged = rest.exchange(url(docsUrl() + "/" + docId), HttpMethod.GET,
+                new HttpEntity<>(authHeaders), Map.class);
+        assertThat(unchanged.getBody().get("title")).isEqualTo("Original");
+        assertThat(unchanged.getBody().get("folderId")).isEqualTo(source);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void movingAFolderCarriesItsSubtreeAndRefusesACycle() {
+        long seed = System.nanoTime();
+        String parent = createFolder("Parent " + seed, null);
+        String child = createFolder("Child", parent);
+        String archive = createFolder("Archive " + seed, null);
+
+        var moved = rest.exchange(url(docsUrl() + "/folders/" + parent), HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("parentId", archive), authHeaders), Map.class);
+        assertThat(moved.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(moved.getBody().get("parentId")).isEqualTo(archive);
+
+        // The child rode along: it still hangs off the folder that moved.
+        var folders = rest.exchange(url(docsUrl() + "/folders"), HttpMethod.GET,
+                new HttpEntity<>(authHeaders), List.class);
+        assertThat((List<Map<String, Object>>) folders.getBody()).anySatisfy(f -> {
+            assertThat(f.get("id")).isEqualTo(child);
+            assertThat(f.get("parentId")).isEqualTo(parent);
+        });
+
+        // Moving the parent under its own child would cut that subtree out of the tree entirely.
+        var cycle = rest.exchange(url(docsUrl() + "/folders/" + parent), HttpMethod.PATCH,
+                new HttpEntity<>(Map.of("parentId", child), authHeaders), String.class);
+        assertThat(cycle.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void deletingAFolderKeepsItsDocumentsAtTheRoot() {
+        String folder = createFolder("Doomed " + System.nanoTime(), null);
+        var created = rest.exchange(url(docsUrl()), HttpMethod.POST,
+                new HttpEntity<>(Map.of("title", "Survivor " + System.nanoTime(), "folderId", folder, "content", "x"), authHeaders),
+                Map.class);
+        String docId = (String) created.getBody().get("id");
+
+        rest.exchange(url(docsUrl() + "/folders/" + folder), HttpMethod.DELETE,
+                new HttpEntity<>(authHeaders), Void.class);
+
+        var atRoot = rest.exchange(url(docsUrl()), HttpMethod.GET, new HttpEntity<>(authHeaders), List.class);
+        assertThat((List<Map<String, Object>>) atRoot.getBody())
+                .anySatisfy(d -> assertThat(d.get("id")).isEqualTo(docId));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void recursiveListingReturnsDocsFromEveryFolder() {
+        long seed = System.nanoTime();
+        String folder = createFolder("Nested " + seed, null);
+        rest.exchange(url(docsUrl()), HttpMethod.POST,
+                new HttpEntity<>(Map.of("title", "Deep " + seed, "folderId", folder, "content", ""), authHeaders),
+                Map.class);
+        rest.exchange(url(docsUrl()), HttpMethod.POST,
+                new HttpEntity<>(Map.of("title", "Shallow " + seed, "content", ""), authHeaders), Map.class);
+
+        var all = rest.exchange(url(docsUrl() + "?recursive=true"), HttpMethod.GET,
+                new HttpEntity<>(authHeaders), List.class);
+        List<Map<String, Object>> body = (List<Map<String, Object>>) all.getBody();
+
+        assertThat(body).anySatisfy(d -> assertThat(d.get("title")).isEqualTo("Deep " + seed));
+        assertThat(body).anySatisfy(d -> assertThat(d.get("title")).isEqualTo("Shallow " + seed));
+    }
+
+    @Test
     void aNonMemberCannotReadTheProjectsDocs() {
         var resp = rest.exchange(url(docsUrl()), HttpMethod.GET,
                 new HttpEntity<>(outsiderHeaders), String.class);

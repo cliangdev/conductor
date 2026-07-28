@@ -52,7 +52,7 @@ class ProjectDocServiceTest {
 
     private ProjectDocService service;
     private ProjectDoc doc;
-    private DocActor human;
+    private ProjectActor human;
 
     @BeforeEach
     void setUp() {
@@ -64,7 +64,7 @@ class ProjectDocServiceTest {
 
         User user = new User();
         user.setId("user-1");
-        human = DocActor.of(user);
+        human = ProjectActor.of(user);
 
         Project project = new Project();
         project.setId("proj-1");
@@ -199,7 +199,7 @@ class ProjectDocServiceTest {
     void recordsAnAgentEditorAsALabelWithNoUser() {
         doc.setContent("- [ ] alpha");
 
-        service.setTaskState("proj-1", "doc-1", 1, true, DocActor.agent("Agent (run abc12345)"));
+        service.setTaskState("proj-1", "doc-1", 1, true, ProjectActor.agent("Agent (run abc12345)"));
 
         // No user row exists for a run-scoped token, so the label is the only byline the doc can carry.
         assertThat(doc.getUpdatedBy()).isNull();

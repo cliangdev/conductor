@@ -71,6 +71,15 @@ class DocImageMarkersTest {
     }
 
     @Test
+    void summarizesMarkersForProseRatherThanSigningThem() {
+        String stored = "See ![shot](conductor-image:" + PATH + ") for the layout";
+
+        // A search snippet is ~200 characters; one signed URL is longer than that, so signing here
+        // would push out the match the snippet exists to show.
+        assertThat(DocImageMarkers.summarize(stored)).isEqualTo("See ![shot]([image]) for the layout");
+    }
+
+    @Test
     void handlesNullAndEmptyContent() {
         assertThat(DocImageMarkers.normalize(null)).isNull();
         assertThat(DocImageMarkers.render(null, "proj-1", SIGNER)).isNull();

@@ -59,6 +59,12 @@ async function listDocsIn(folderId: string | null, config: Config): Promise<DocR
   return Array.isArray(raw) ? raw : []
 }
 
+/** Every doc in the project in one call — the whole tree without a request per folder. */
+async function listAllDocs(config: Config): Promise<DocRow[]> {
+  const raw = await apiGet<DocRow[]>(`${docsBase(config)}?recursive=true`, config)
+  return Array.isArray(raw) ? raw : []
+}
+
 /** Full path of a folder, e.g. "Plans/Q3". */
 function folderPath(folder: FolderRow, byId: Map<string, FolderRow>): string {
   const segments: string[] = []
@@ -207,27 +213,35 @@ export async function listProjectDocs(
   const folders = await listFolders(config)
   const byId = new Map(folders.map((f) => [f.id, f]))
 
-  // Without a folder filter, walk every folder plus the root so one call returns the whole tree.
-  const wanted =
-    params.folder === undefined
-      ? [null, ...folders.map((f) => f.id)]
-      : [resolveFolder(splitPathAsFolders(params.folder), folders, params.folder)]
+  // One recursive call rather than one per folder: this is the orientation call, so a project with
+  // thirty folders must not cost thirty-one serial round trips.
+  const all = params.folder === undefined
+    ? await listAllDocs(config)
+    : await listDocsIn(resolveFolder(splitPathAsFolders(params.folder), folders, params.folder), config)
 
-  const docs: Record<string, unknown>[] = []
-  for (const folderId of wanted) {
-    for (const doc of await listDocsIn(folderId, config)) {
-      docs.push({
-        docId: doc.id,
-        path: joinPath(doc.folderId ?? null, doc.title, byId),
-        updatedAt: doc.updatedAt,
-        updatedByName: doc.updatedByName,
-      })
-    }
-  }
+  const docs = all.map((doc) => ({
+    docId: doc.id,
+    path: joinPath(doc.folderId ?? null, doc.title, byId),
+    updatedAt: doc.updatedAt,
+    updatedByName: doc.updatedByName,
+  }))
 
   return {
-    folders: folders.map((f) => folderPath(f, byId)).sort(),
-    docs: docs.sort((a, b) => String(a['path']).localeCompare(String(b['path']))),
+    // docCount and lastUpdatedAt come free from the doc list, and answer the question an agent
+    // actually has when it looks at a tree: which of these folders carry weight, and which are stale
+    // or empty and worth reorganising.
+    folders: folders
+      .map((f) => {
+        const inFolder = all.filter((d) => d.folderId === f.id)
+        const timestamps = inFolder.map((d) => d.updatedAt).filter((t): t is string => Boolean(t))
+        return {
+          path: folderPath(f, byId),
+          docCount: inFolder.length,
+          lastUpdatedAt: timestamps.length ? timestamps.sort()[timestamps.length - 1] : null,
+        }
+      })
+      .sort((a, b) => a.path.localeCompare(b.path)),
+    docs: docs.sort((a, b) => a.path.localeCompare(b.path)),
   }
 }
 
@@ -409,9 +423,66 @@ export async function moveProjectDoc(
   const { folderSegments, title } = splitPath(params.newPath)
   const folderId = await ensureFolder(folderSegments, config)
 
-  const body: Record<string, unknown> = { title, folderId }
+  // moveToRoot rather than folderId: null. The API cannot distinguish an omitted folderId from an
+  // explicit null, so sending null would rename the doc and silently leave it where it was — while
+  // this tool reported a move.
+  const body: Record<string, unknown> =
+    folderId === null ? { title, moveToRoot: true } : { title, folderId }
+
   const moved = await apiPatch<DocRow>(`${docsBase(config)}/${docId}`, body, config)
   return { docId: moved.id, path: params.newPath }
+}
+
+/** Resolves a folder path to its id, requiring every segment to exist. */
+async function requireFolderId(path: string, config: Config): Promise<string> {
+  const segments = splitPathAsFolders(path)
+  if (segments.length === 0) {
+    throw new Error('Path is empty — expected a folder path like "Plans/Q3"')
+  }
+  const folders = await listFolders(config)
+  const folderId = resolveFolder(segments, folders, path)
+  if (folderId === null) {
+    throw new Error(`No folder at path "${path}"`)
+  }
+  return folderId
+}
+
+/**
+ * Renames and/or reparents a folder, moving its whole subtree with it. Creating destination folders
+ * on the way mirrors write_project_doc, so "Plans/Q3" → "Archive/2026/Q3" works without pre-creating
+ * Archive/2026.
+ */
+export async function moveProjectFolder(
+  params: { path: string; newPath: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  const folderId = await requireFolderId(params.path, config)
+
+  const segments = splitPathAsFolders(params.newPath)
+  if (segments.length === 0) {
+    throw new Error('newPath is empty — expected a folder path like "Archive/Q3"')
+  }
+  const name = segments.pop() as string
+  const parentId = await ensureFolder(segments, config)
+
+  const body: Record<string, unknown> =
+    parentId === null ? { name, moveToRoot: true } : { name, parentId }
+
+  await apiPatch<FolderRow>(`${docsBase(config)}/folders/${folderId}`, body, config)
+  return { folderId, path: params.newPath }
+}
+
+/**
+ * Deletes a folder and its subfolders. Documents inside are not deleted — they resurface at the
+ * project root — so this is a reorganisation, not a way to remove content.
+ */
+export async function deleteProjectFolder(
+  params: { path: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  const folderId = await requireFolderId(params.path, config)
+  await apiDelete(`${docsBase(config)}/folders/${folderId}`, config)
+  return { folderId, deleted: true }
 }
 
 export async function deleteProjectDoc(

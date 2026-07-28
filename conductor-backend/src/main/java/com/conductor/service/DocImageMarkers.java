@@ -87,6 +87,19 @@ public final class DocImageMarkers {
         return out.toString();
     }
 
+    /**
+     * Collapses every marker to a short {@code [image]} placeholder, for text shown as prose rather
+     * than rendered as Markdown — search snippets, most of all. Signing there would be worse than
+     * useless: a snippet is a couple of hundred characters, and one signed URL is longer than that,
+     * so the match the reader came for would be pushed out by a credential nobody can see.
+     */
+    public static String summarize(String content) {
+        if (content == null || content.isEmpty() || !content.contains(SCHEME)) {
+            return content;
+        }
+        return MARKER.matcher(content).replaceAll("[image]");
+    }
+
     /** Narrow view of {@link StorageService#generateSignedUrl} so this stays testable without one. */
     @FunctionalInterface
     public interface UrlSigner {

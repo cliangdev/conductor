@@ -42,7 +42,7 @@ public class DocVersionService {
     }
 
     @Transactional
-    public ProjectDoc restoreVersion(String projectId, String docId, String versionId, DocActor actor) {
+    public ProjectDoc restoreVersion(String projectId, String docId, String versionId, ProjectActor actor) {
         DocVersion version = getVersion(projectId, docId, versionId);
         return projectDocService.updateDoc(projectId, docId, version.getContent(), actor);
     }

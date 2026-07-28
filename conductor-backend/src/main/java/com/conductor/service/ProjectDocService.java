@@ -51,8 +51,15 @@ public class ProjectDocService {
         this.projectRepository = projectRepository;
     }
 
+    /**
+     * Documents in one folder, or every document in the project when {@code recursive}. Recursive
+     * exists so a client building the whole tree makes one call rather than one per folder.
+     */
     @Transactional(readOnly = true)
-    public List<ProjectDoc> getDocs(String projectId, String folderId) {
+    public List<ProjectDoc> getDocs(String projectId, String folderId, boolean recursive) {
+        if (recursive) {
+            return projectDocRepository.findAllByProjectId(projectId);
+        }
         if (folderId == null) {
             return projectDocRepository.findByProjectIdAndFolderIsNull(projectId);
         }
@@ -63,7 +70,7 @@ public class ProjectDocService {
     }
 
     @Transactional
-    public ProjectDoc createDoc(String projectId, String folderId, String title, String content, DocActor actor) {
+    public ProjectDoc createDoc(String projectId, String folderId, String title, String content, ProjectActor actor) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
 
@@ -121,7 +128,7 @@ public class ProjectDocService {
     }
 
     @Transactional
-    public ProjectDoc updateDoc(String projectId, String docId, String content, DocActor actor) {
+    public ProjectDoc updateDoc(String projectId, String docId, String content, ProjectActor actor) {
         ProjectDoc doc = getDoc(projectId, docId);
 
         // Signed image URLs never reach the database: a client that read this doc got freshly signed
@@ -162,7 +169,7 @@ public class ProjectDocService {
      * full-content PUT has: two people ticking different boxes no longer clobber each other.
      */
     @Transactional
-    public ProjectDoc setTaskState(String projectId, String docId, int lineNumber, boolean checked, DocActor actor) {
+    public ProjectDoc setTaskState(String projectId, String docId, int lineNumber, boolean checked, ProjectActor actor) {
         ProjectDoc doc = getDoc(projectId, docId);
 
         String content = doc.getContent() == null ? "" : doc.getContent();
@@ -192,45 +199,47 @@ public class ProjectDocService {
         return doc;
     }
 
+    /**
+     * Renames and/or moves a document as one operation.
+     *
+     * <p>Deliberately a single transactional method rather than a rename call followed by a move call.
+     * Sequenced separately, the rename checks its new title against the <em>source</em> folder — which
+     * is not where the document is going, so it can reject a title that is free at the destination —
+     * and a conflict on the second call leaves the document renamed but unmoved.
+     *
+     * @param newTitle      new title, or null to keep the current one
+     * @param targetFolderId destination folder, or null for the project root
+     * @param moveRequested  whether {@code targetFolderId} is meaningful; false leaves the document
+     *                       where it is. The caller decides this, because "no folder given" and "move
+     *                       to root" are the same payload once the generated models drop the
+     *                       distinction between an absent and a null field.
+     */
     @Transactional
-    public ProjectDoc renameDoc(String projectId, String docId, String title) {
+    public ProjectDoc relocate(String projectId, String docId, String newTitle,
+                               String targetFolderId, boolean moveRequested) {
         ProjectDoc doc = getDoc(projectId, docId);
 
-        DocFolder folder = doc.getFolder();
+        String title = newTitle != null ? newTitle : doc.getTitle();
+        String currentFolderId = doc.getFolder() != null ? doc.getFolder().getId() : null;
+        String destinationFolderId = moveRequested ? targetFolderId : currentFolderId;
 
-        boolean titleConflict;
-        if (folder == null) {
-            titleConflict = projectDocRepository.existsByProjectIdAndFolderIsNullAndTitle(projectId, title);
-        } else {
-            titleConflict = projectDocRepository.existsByProjectIdAndFolderIdAndTitle(projectId, folder.getId(), title);
-        }
+        DocFolder destination = destinationFolderId == null
+                ? null
+                : docFolderService.getFolder(projectId, destinationFolderId);
+
+        // Checked against the destination, and excluding this doc so a no-op rename doesn't collide
+        // with itself.
+        boolean titleConflict = destinationFolderId == null
+                ? projectDocRepository.existsByProjectIdAndFolderIsNullAndTitleAndIdNot(projectId, title, docId)
+                : projectDocRepository.existsByProjectIdAndFolderIdAndTitleAndIdNot(projectId, destinationFolderId, title, docId);
 
         if (titleConflict) {
-            throw new ConflictException("A document titled '" + title + "' already exists in this location");
+            throw new ConflictException(
+                    "A document titled '" + title + "' already exists in the target location");
         }
 
         doc.setTitle(title);
-        return projectDocRepository.save(doc);
-    }
-
-    @Transactional
-    public ProjectDoc moveDoc(String projectId, String docId, String targetFolderId) {
-        ProjectDoc doc = getDoc(projectId, docId);
-
-        DocFolder targetFolder = null;
-        boolean titleConflict;
-        if (targetFolderId == null) {
-            titleConflict = projectDocRepository.existsByProjectIdAndFolderIsNullAndTitle(projectId, doc.getTitle());
-        } else {
-            targetFolder = docFolderService.getFolder(projectId, targetFolderId);
-            titleConflict = projectDocRepository.existsByProjectIdAndFolderIdAndTitle(projectId, targetFolderId, doc.getTitle());
-        }
-
-        if (titleConflict) {
-            throw new ConflictException("A document titled '" + doc.getTitle() + "' already exists in the target location");
-        }
-
-        doc.setFolder(targetFolder);
+        doc.setFolder(destination);
         return projectDocRepository.save(doc);
     }
 
@@ -246,7 +255,7 @@ public class ProjectDocService {
     }
 
     /** Records who last touched the doc — a user, or a machine actor's label. */
-    private void applyEditor(ProjectDoc doc, DocActor actor) {
+    private void applyEditor(ProjectDoc doc, ProjectActor actor) {
         doc.setUpdatedBy(actor.user());
         doc.setUpdatedByLabel(actor.label());
     }

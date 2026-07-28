@@ -1,6 +1,8 @@
 package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
+import com.conductor.entity.MemberRole;
+import com.conductor.entity.ProjectMember;
 import com.conductor.entity.Connection;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectApiKey;
@@ -27,6 +29,7 @@ import com.conductor.service.ConnectionService;
 import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.JwtService;
 import com.conductor.service.OAuthFlowService;
+import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.RuntimeTargetService;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -59,7 +62,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(IntegrationController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, ProjectSecurityService.class})
 class IntegrationControllerTest {
 
     private static final String PROJECT_ID = "proj-1";
@@ -76,7 +79,7 @@ class IntegrationControllerTest {
     @MockitoBean private OAuthFlowService oAuthFlowService;
     @MockitoBean private ConnectionDataCacheRepository cacheRepository;
     @MockitoBean private WebhookEventRepository webhookEventRepository;
-    @MockitoBean private ProjectSecurityService projectSecurityService;
+    @MockitoBean private ProjectMemberRepository projectMemberRepository;
     @MockitoBean private GcpBillingConnector gcpBillingConnector;
     @MockitoBean private RuntimeTargetService runtimeTargetService;
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
@@ -148,7 +151,7 @@ class IntegrationControllerTest {
 
     @Test
     void listGcpProjects_happyPath_returnsProjects() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         Connection conn = gcpConnectionWithToken();
         when(connectionService.findSingle(PROJECT_ID, GCP_CONNECTOR_ID)).thenReturn(Optional.of(conn));
         when(connectionService.decrypt(conn))
@@ -167,7 +170,7 @@ class IntegrationControllerTest {
 
     @Test
     void listGcpProjects_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/gcp-projects")
                         .header("Authorization", "Bearer member-token"))
@@ -176,7 +179,7 @@ class IntegrationControllerTest {
 
     @Test
     void listGcpProjects_noOAuthCredentials_isRejected_andDoesNotCallConnector() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         when(connectionService.findSingle(PROJECT_ID, GCP_CONNECTOR_ID)).thenReturn(Optional.empty());
 
         // Missing OAuth credentials raises a CONFLICT ResponseStatusException; the application's
@@ -191,7 +194,7 @@ class IntegrationControllerTest {
 
     @Test
     void listGcpProjects_refreshesExpiringToken() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         Connection conn = gcpConnectionWithToken();
         when(connectionService.findSingle(PROJECT_ID, GCP_CONNECTOR_ID)).thenReturn(Optional.of(conn));
         when(connectionService.decrypt(conn))
@@ -210,7 +213,7 @@ class IntegrationControllerTest {
 
     @Test
     void listBqDatasets_happyPath_returnsDatasets() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         Connection conn = gcpConnectionWithToken();
         when(connectionService.findSingle(PROJECT_ID, GCP_CONNECTOR_ID)).thenReturn(Optional.of(conn));
         when(connectionService.decrypt(conn))
@@ -229,7 +232,7 @@ class IntegrationControllerTest {
 
     @Test
     void listBqDatasets_invalidProjectId_isRejected_andDoesNotCallConnector() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
 
         // Invalid gcpProjectId raises a BAD_REQUEST ResponseStatusException, rendered as 5xx by the
         // catch-all handler (preserved behavior). Contract: rejected, and the connector is not called.
@@ -242,7 +245,7 @@ class IntegrationControllerTest {
 
     @Test
     void listBqDatasets_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/bq-datasets")
                         .param("gcpProjectId", "my-gcp-project")
@@ -262,7 +265,8 @@ class IntegrationControllerTest {
 
     @Test
     void createConnection_serviceAccount_happyPath_storesKeyAndNeverEchoesIt() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         Connector gcpConnector = gcpConnectorSpecMock();
         when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(gcpConnector));
 
@@ -295,7 +299,8 @@ class IntegrationControllerTest {
 
     @Test
     void createConnection_serviceAccount_malformedJson_returns400_andNeverStoresTokens() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         Connector gcpConnector = gcpConnectorSpecMock();
         when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(gcpConnector));
         when(connectionService.create(any(), any(), any(), any(), any())).thenReturn(new Connection());
@@ -316,7 +321,8 @@ class IntegrationControllerTest {
 
     @Test
     void createConnection_serviceAccount_wrongCredentialType_returns400() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         Connector gcpConnector = gcpConnectorSpecMock();
         when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(gcpConnector));
         when(connectionService.create(any(), any(), any(), any(), any())).thenReturn(new Connection());
@@ -339,7 +345,8 @@ class IntegrationControllerTest {
 
     @Test
     void deleteConnection_flipsReferencingRuntimeTargetsBeforeDeleting() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         Connection conn = new Connection();
         conn.setId("conn-9");
         conn.setProjectId(PROJECT_ID);
@@ -363,7 +370,7 @@ class IntegrationControllerTest {
 
     @Test
     void listIntegrations_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations")
                         .header("Authorization", "Bearer member-token"))
@@ -372,7 +379,7 @@ class IntegrationControllerTest {
 
     @Test
     void listIntegrations_member_returns200() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         when(connectorRegistry.getAll()).thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations")
@@ -384,7 +391,7 @@ class IntegrationControllerTest {
 
     @Test
     void listConnectorCatalog_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/catalog")
                         .header("Authorization", "Bearer member-token"))
@@ -393,7 +400,7 @@ class IntegrationControllerTest {
 
     @Test
     void listConnectorCatalog_member_returnsAllRegisteredConnectors_withActiveConnectionState() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
 
         Connector connector = mock(Connector.class);
         when(connector.getId()).thenReturn("posthog");
@@ -431,7 +438,7 @@ class IntegrationControllerTest {
 
     @Test
     void listConnectorCatalog_noActiveConnections_isNotConnected() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
 
         Connector connector = mock(Connector.class);
         when(connector.getId()).thenReturn("posthog");
@@ -447,5 +454,12 @@ class IntegrationControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].connected").value(false))
                 .andExpect(jsonPath("$[0].activeConnectionIds.length()").value(0));
+    }
+
+    /** A membership row carrying {@code role} — what the real ProjectSecurityService reads. */
+    private static ProjectMember memberWithRole(MemberRole role) {
+        ProjectMember member = new ProjectMember();
+        member.setRole(role);
+        return member;
     }
 }

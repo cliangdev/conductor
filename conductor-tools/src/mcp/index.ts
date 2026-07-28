@@ -56,6 +56,8 @@ import {
   listProjectDocVersions,
   restoreProjectDocVersion,
   uploadProjectDocImage,
+  moveProjectFolder,
+  deleteProjectFolder,
 } from './tools/project-docs.js'
 
 const TOOLS = [
@@ -581,7 +583,7 @@ const TOOLS = [
   // --- Project Docs (the project's own document tree, not Work Item documents) ---
   {
     name: 'list_project_docs',
-    description: "Map the project's Docs section: folder paths plus every document as a \"Folder/Title\" path with its docId. Pass query to full-text search instead. Call this first to orient before reading or writing project docs.",
+    description: "Map the project's Docs section: every document as a \"Folder/Title\" path with its docId, plus each folder with its docCount and lastUpdatedAt so you can judge which parts of the tree carry weight or have gone stale. Pass query to full-text search instead. Call this first to orient before reading or writing project docs.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -734,6 +736,29 @@ const TOOLS = [
         filePath: { type: 'string', description: 'Path to the image file on this machine' },
       },
       required: ['filePath'],
+    },
+  },
+  {
+    name: 'move_project_folder',
+    description: 'Rename a docs folder and/or move it under another one, taking its whole subtree with it. Missing folders in the destination path are created. Cannot move a folder into its own subtree. Verify with list_project_docs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Current folder path, e.g. "Plans/Q3"' },
+        newPath: { type: 'string', description: 'New folder path, e.g. "Archive/2026/Q3"' },
+      },
+      required: ['path', 'newPath'],
+    },
+  },
+  {
+    name: 'delete_project_folder',
+    description: 'Delete a docs folder and its subfolders. Not destructive to content: documents inside are kept and resurface at the project root. Use it to clear away empty or obsolete folders after reorganising. Verify with list_project_docs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Folder path to delete, e.g. "Archive/Old"' },
+      },
+      required: ['path'],
     },
   },
 ]
@@ -1339,6 +1364,20 @@ export async function runMcpServer(): Promise<void> {
             },
             config
           )
+          return successResponse(result)
+        }
+        case 'move_project_folder': {
+          const result = await moveProjectFolder(
+            {
+              path: params['path'] as string,
+              newPath: params['newPath'] as string,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'delete_project_folder': {
+          const result = await deleteProjectFolder({ path: params['path'] as string }, config)
           return successResponse(result)
         }
         case 'upload_project_doc_image': {

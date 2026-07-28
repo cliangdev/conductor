@@ -7,7 +7,7 @@ import com.conductor.entity.DocVersion;
 import com.conductor.entity.ProjectDoc;
 import com.conductor.entity.User;
 import com.conductor.generated.api.ProjectDocsApi;
-import com.conductor.exception.ForbiddenException;
+import com.conductor.exception.BusinessException;
 import com.conductor.exception.StorageUploadException;
 import com.conductor.generated.model.CreateDocCommentReplyRequest;
 import com.conductor.generated.model.CreateDocCommentRequest;
@@ -27,9 +27,7 @@ import com.conductor.generated.model.RenameFolderRequest;
 import com.conductor.generated.model.SetDocTaskStateRequest;
 import com.conductor.generated.model.UpdateDocRequest;
 import com.conductor.repository.DocCommentReplyRepository;
-import com.conductor.security.ProjectScopedPrincipal;
-import com.conductor.security.WorkflowRunAuthenticationToken;
-import com.conductor.service.DocActor;
+import com.conductor.service.ProjectActor;
 import com.conductor.service.DocCommentService;
 import com.conductor.service.DocImageMarkers;
 import com.conductor.service.DocFolderService;
@@ -40,8 +38,6 @@ import com.conductor.service.StorageService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
@@ -115,7 +111,15 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<DocFolderResponse> renameDocFolder(String projectId, String folderId, RenameFolderRequest renameFolderRequest) {
         requireDocEditor(projectId);
-        DocFolder folder = docFolderService.renameFolder(projectId, folderId, renameFolderRequest.getName());
+
+        boolean moveToRoot = Boolean.TRUE.equals(renameFolderRequest.getMoveToRoot());
+        if (moveToRoot && renameFolderRequest.getParentId() != null) {
+            throw new BusinessException("Pass either parentId or moveToRoot, not both");
+        }
+        boolean moveRequested = moveToRoot || renameFolderRequest.getParentId() != null;
+
+        DocFolder folder = docFolderService.relocateFolder(
+                projectId, folderId, renameFolderRequest.getName(), renameFolderRequest.getParentId(), moveRequested);
         return ResponseEntity.ok(toFolderResponse(folder));
     }
 
@@ -129,9 +133,9 @@ public class ProjectDocsController implements ProjectDocsApi {
     // --- Doc CRUD endpoints ---
 
     @Override
-    public ResponseEntity<List<ProjectDocSummaryResponse>> listProjectDocs(String projectId, String folderId) {
+    public ResponseEntity<List<ProjectDocSummaryResponse>> listProjectDocs(String projectId, String folderId, Boolean recursive) {
         requireDocAccess(projectId);
-        List<ProjectDoc> docs = projectDocService.getDocs(projectId, folderId);
+        List<ProjectDoc> docs = projectDocService.getDocs(projectId, folderId, Boolean.TRUE.equals(recursive));
         List<ProjectDocSummaryResponse> response = docs.stream()
                 .map(this::toDocSummaryResponse)
                 .collect(Collectors.toList());
@@ -140,7 +144,7 @@ public class ProjectDocsController implements ProjectDocsApi {
 
     @Override
     public ResponseEntity<ProjectDocResponse> createProjectDoc(String projectId, CreateDocRequest createDocRequest) {
-        DocActor actor = requireDocEditor(projectId);
+        ProjectActor actor = requireDocEditor(projectId);
         ProjectDoc doc = projectDocService.createDoc(
                 projectId,
                 createDocRequest.getFolderId(),
@@ -159,7 +163,7 @@ public class ProjectDocsController implements ProjectDocsApi {
 
     @Override
     public ResponseEntity<ProjectDocResponse> updateProjectDoc(String projectId, String docId, UpdateDocRequest updateDocRequest) {
-        DocActor actor = requireDocEditor(projectId);
+        ProjectActor actor = requireDocEditor(projectId);
         ProjectDoc doc = projectDocService.updateDoc(projectId, docId, updateDocRequest.getContent(), actor);
         return ResponseEntity.ok(toDocResponse(doc));
     }
@@ -167,7 +171,7 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<ProjectDocResponse> setDocTaskState(
             String projectId, String docId, Integer lineNumber, SetDocTaskStateRequest setDocTaskStateRequest) {
-        DocActor actor = requireDocEditor(projectId);
+        ProjectActor actor = requireDocEditor(projectId);
         ProjectDoc doc = projectDocService.setTaskState(
                 projectId, docId, lineNumber, Boolean.TRUE.equals(setDocTaskStateRequest.getChecked()), actor);
         return ResponseEntity.ok(toDocResponse(doc));
@@ -176,16 +180,17 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<ProjectDocResponse> renameOrMoveProjectDoc(String projectId, String docId, RenameDocRequest renameDocRequest) {
         requireDocEditor(projectId);
-        ProjectDoc doc = projectDocService.getDoc(projectId, docId);
 
-        if (renameDocRequest.getTitle() != null) {
-            doc = projectDocService.renameDoc(projectId, docId, renameDocRequest.getTitle());
+        boolean moveToRoot = Boolean.TRUE.equals(renameDocRequest.getMoveToRoot());
+        if (moveToRoot && renameDocRequest.getFolderId() != null) {
+            throw new BusinessException("Pass either folderId or moveToRoot, not both");
         }
+        // The caller states the intent explicitly: with openApiNullable=false an omitted folderId and
+        // an explicit null are the same payload, so a "did they mean root?" heuristic would guess.
+        boolean moveRequested = moveToRoot || renameDocRequest.getFolderId() != null;
 
-        if (renameDocRequest.getFolderId() != null || isFolderIdExplicitlyNull(renameDocRequest)) {
-            doc = projectDocService.moveDoc(projectId, docId, renameDocRequest.getFolderId());
-        }
-
+        ProjectDoc doc = projectDocService.relocate(
+                projectId, docId, renameDocRequest.getTitle(), renameDocRequest.getFolderId(), moveRequested);
         return ResponseEntity.ok(toDocResponse(doc));
     }
 
@@ -227,7 +232,7 @@ public class ProjectDocsController implements ProjectDocsApi {
 
     @Override
     public ResponseEntity<ProjectDocResponse> restoreDocVersion(String projectId, String docId, String versionId) {
-        DocActor actor = requireDocEditor(projectId);
+        ProjectActor actor = requireDocEditor(projectId);
         ProjectDoc doc = docVersionService.restoreVersion(projectId, docId, versionId, actor);
         return ResponseEntity.ok(toDocResponse(doc));
     }
@@ -246,7 +251,7 @@ public class ProjectDocsController implements ProjectDocsApi {
 
     @Override
     public ResponseEntity<DocCommentResponse> createDocComment(String projectId, String docId, CreateDocCommentRequest createDocCommentRequest) {
-        DocActor actor = requireDocAccess(projectId);
+        ProjectActor actor = requireDocAccess(projectId);
         DocComment comment = docCommentService.createComment(
                 projectId,
                 docId,
@@ -259,14 +264,14 @@ public class ProjectDocsController implements ProjectDocsApi {
 
     @Override
     public ResponseEntity<Void> deleteDocComment(String projectId, String docId, String commentId) {
-        DocActor actor = requireDocAccess(projectId);
+        ProjectActor actor = requireDocAccess(projectId);
         docCommentService.deleteComment(projectId, docId, commentId, actor);
         return ResponseEntity.noContent().build();
     }
 
     @Override
     public ResponseEntity<DocCommentReplyResponse> addDocCommentReply(String projectId, String docId, String commentId, CreateDocCommentReplyRequest createDocCommentReplyRequest) {
-        DocActor actor = requireDocAccess(projectId);
+        ProjectActor actor = requireDocAccess(projectId);
         DocCommentReply reply = docCommentService.addReply(
                 projectId,
                 docId,
@@ -278,7 +283,7 @@ public class ProjectDocsController implements ProjectDocsApi {
 
     @Override
     public ResponseEntity<DocCommentResponse> resolveDocComment(String projectId, String docId, String commentId) {
-        DocActor actor = requireDocAccess(projectId);
+        ProjectActor actor = requireDocAccess(projectId);
         DocComment comment = docCommentService.resolveThread(projectId, docId, commentId, actor);
         return ResponseEntity.ok(toCommentResponse(comment));
     }
@@ -320,50 +325,21 @@ public class ProjectDocsController implements ProjectDocsApi {
     // --- Auth ---
 
     /**
-     * Read gate, and the identity writes are attributed to. Accepts a human {@link User} principal
-     * (JWT or user API key) who is a member of the project, or a project-scoped machine principal
-     * ({@link ProjectScopedPrincipal} — a project API key or a run-scoped MCP token — whose
-     * {@code projectId} must equal the path {@code projectId}). Mirrors
-     * {@code KnowledgeController#requireProjectAccess}.
-     *
-     * <p>Note the machine check is on the {@link Authentication}, not the principal: those tokens'
-     * principal is the project id string, not an object.
+     * Read gate, and the identity writes are attributed to. Resolution lives in
+     * {@link ProjectSecurityService#requireProjectAccess} so all five project-scoped controllers share
+     * one implementation.
      */
-    private DocActor requireDocAccess(String projectId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = auth != null ? auth.getPrincipal() : null;
-        if (principal instanceof User user) {
-            if (!projectSecurityService.isProjectMember(projectId, user.getId())) {
-                throw new ForbiddenException("Not a member of this project");
-            }
-            return DocActor.of(user);
-        }
-        if (auth instanceof ProjectScopedPrincipal scoped && projectId.equals(scoped.getProjectId())) {
-            return DocActor.agent(agentLabel(auth));
-        }
-        throw new ForbiddenException("Not a member of this project");
+    private ProjectActor requireDocAccess(String projectId) {
+        return projectSecurityService.requireProjectAccess(projectId);
     }
 
     /**
      * Write gate. A human must be ADMIN or CREATOR — REVIEWERs get read-only docs, matching what the
-     * UI offers them. A project-scoped machine principal is trusted to edit its own project's docs;
-     * that is the whole point of letting agents maintain them.
+     * UI offers them. A project-scoped machine credential may edit its own project's docs; that is the
+     * whole point of letting agents maintain them.
      */
-    private DocActor requireDocEditor(String projectId) {
-        DocActor actor = requireDocAccess(projectId);
-        if (actor.user() != null && !projectSecurityService.isAdminOrCreator(projectId, actor.userId())) {
-            throw new ForbiddenException("Requires ADMIN or CREATOR role");
-        }
-        return actor;
-    }
-
-    /** Byline for a machine actor — the run id when there is one, so edits are traceable to a run. */
-    private String agentLabel(Authentication auth) {
-        if (auth instanceof WorkflowRunAuthenticationToken run && run.getRunId() != null) {
-            String runId = run.getRunId();
-            return "Agent (run " + runId.substring(0, Math.min(8, runId.length())) + ")";
-        }
-        return "Agent";
+    private ProjectActor requireDocEditor(String projectId) {
+        return projectSecurityService.requireProjectEditor(projectId);
     }
 
     // --- Mapping helpers ---
@@ -411,7 +387,7 @@ public class ProjectDocsController implements ProjectDocsApi {
         result.setId(doc.getId());
         result.setTitle(doc.getTitle());
         result.setFolderId(doc.getFolder() != null ? doc.getFolder().getId() : null);
-        result.setSnippet(extractSnippet(doc.getContent(), query));
+        result.setSnippet(extractSnippet(DocImageMarkers.summarize(doc.getContent()), query));
         return result;
     }
 
@@ -454,7 +430,9 @@ public class ProjectDocsController implements ProjectDocsApi {
         response.setQuotedText(comment.getQuotedText());
         response.setLineStale(comment.isLineStale());
         response.setResolvedAt(comment.getResolvedAt());
-        response.setResolvedByName(comment.getResolvedBy() != null ? displayName(comment.getResolvedBy(), null) : null);
+        response.setResolvedByName(comment.getResolvedAt() == null
+                ? null
+                : displayName(comment.getResolvedBy(), comment.getResolvedByLabel()));
         response.setCreatedAt(comment.getCreatedAt());
         response.setUpdatedAt(comment.getUpdatedAt());
         response.setReplies(replyResponses);
@@ -515,9 +493,5 @@ public class ProjectDocsController implements ProjectDocsApi {
         int start = Math.max(0, index - 50);
         int end = Math.min(content.length(), index + query.length() + 150);
         return content.substring(start, end);
-    }
-
-    private boolean isFolderIdExplicitlyNull(RenameDocRequest request) {
-        return request.getFolderId() == null && request.getTitle() == null;
     }
 }

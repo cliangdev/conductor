@@ -3,8 +3,9 @@
 -- author a doc, a version, a comment or a reply at all.
 --
 -- Authorship becomes "either a user or a label": the FK goes nullable and a *_label column carries
--- the machine actor's identity (e.g. 'Agent (run a1b2c3d4)'). The CHECK constraints are the point --
--- exactly one form of attribution is always present, so no byline can render blank.
+-- the machine actor's identity (e.g. 'Agent (run a1b2c3d4)'). The CHECK constraints are what keep a
+-- byline from ever rendering blank -- at least one form of attribution is always present. (Which of
+-- the two a row uses is decided by ProjectActor, which never sets both.)
 
 ALTER TABLE project_docs
     ALTER COLUMN created_by DROP NOT NULL,
@@ -22,9 +23,12 @@ ALTER TABLE doc_versions
     ADD CONSTRAINT chk_doc_versions_attribution
         CHECK (author_id IS NOT NULL OR author_label IS NOT NULL);
 
+-- resolved_by_label completes the pair for the one attribution that is optional either way: a thread
+-- may be unresolved (both null), but once resolved it names whoever resolved it, agent or human.
 ALTER TABLE doc_comments
     ALTER COLUMN author_id DROP NOT NULL,
     ADD COLUMN author_label VARCHAR(255),
+    ADD COLUMN resolved_by_label VARCHAR(255),
     ADD CONSTRAINT chk_doc_comments_attribution
         CHECK (author_id IS NOT NULL OR author_label IS NOT NULL);
 

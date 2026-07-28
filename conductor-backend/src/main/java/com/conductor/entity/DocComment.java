@@ -52,6 +52,10 @@ public class DocComment {
     @JoinColumn(name = "resolved_by")
     private User resolvedBy;
 
+    /** Set instead of {@link #resolvedBy} when a machine actor resolved the thread. */
+    @Column(name = "resolved_by_label", length = 255)
+    private String resolvedByLabel;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -101,6 +105,9 @@ public class DocComment {
 
     public User getResolvedBy() { return resolvedBy; }
     public void setResolvedBy(User resolvedBy) { this.resolvedBy = resolvedBy; }
+
+    public String getResolvedByLabel() { return resolvedByLabel; }
+    public void setResolvedByLabel(String resolvedByLabel) { this.resolvedByLabel = resolvedByLabel; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

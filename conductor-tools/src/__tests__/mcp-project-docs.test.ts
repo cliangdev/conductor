@@ -16,6 +16,8 @@ import { readFile } from 'node:fs/promises'
 import { apiGet, apiPost, apiPut, apiPatch, apiDelete, apiPostFile } from '../mcp/api.js'
 import {
   listProjectDocs,
+  moveProjectFolder,
+  deleteProjectFolder,
   readProjectDoc,
   writeProjectDoc,
   moveProjectDoc,
@@ -111,21 +113,41 @@ describe('project docs MCP tools', () => {
   })
 
   describe('list_project_docs', () => {
-    it('returns the whole tree as paths when no filter is given', async () => {
+    it('builds the whole tree from one recursive call, not one per folder', async () => {
       routeGet({
         [`${BASE}/folders`]: FOLDERS,
-        [`${BASE}`]: [{ id: 'doc-root', folderId: null, title: 'README' }],
-        [`${BASE}?folderId=f-plans`]: [],
-        [`${BASE}?folderId=f-q3`]: [{ id: 'doc-1', folderId: 'f-q3', title: 'Roadmap' }],
+        [`${BASE}?recursive=true`]: [
+          { id: 'doc-root', folderId: null, title: 'README' },
+          { id: 'doc-1', folderId: 'f-q3', title: 'Roadmap', updatedAt: '2026-03-01T00:00:00Z' },
+        ],
       })
 
       const result = await listProjectDocs({}, config)
 
-      expect(result['folders']).toEqual(['Plans', 'Plans/Q3'])
+      // Two GETs total regardless of folder count — this is the orientation call, so a per-folder
+      // fan-out would cost one serial round trip per folder.
+      expect(mockGet).toHaveBeenCalledTimes(2)
       // Sorted by path, so a nested doc can precede a root one.
       expect(result['docs']).toEqual([
-        { docId: 'doc-1', path: 'Plans/Q3/Roadmap', updatedAt: undefined, updatedByName: undefined },
+        { docId: 'doc-1', path: 'Plans/Q3/Roadmap', updatedAt: '2026-03-01T00:00:00Z', updatedByName: undefined },
         { docId: 'doc-root', path: 'README', updatedAt: undefined, updatedByName: undefined },
+      ])
+    })
+
+    it('reports docCount and lastUpdatedAt per folder so the agent can judge the structure', async () => {
+      routeGet({
+        [`${BASE}/folders`]: FOLDERS,
+        [`${BASE}?recursive=true`]: [
+          { id: 'doc-1', folderId: 'f-q3', title: 'Roadmap', updatedAt: '2026-03-01T00:00:00Z' },
+          { id: 'doc-2', folderId: 'f-q3', title: 'Budget', updatedAt: '2026-05-01T00:00:00Z' },
+        ],
+      })
+
+      const result = await listProjectDocs({}, config)
+
+      expect(result['folders']).toEqual([
+        { path: 'Plans', docCount: 0, lastUpdatedAt: null },
+        { path: 'Plans/Q3', docCount: 2, lastUpdatedAt: '2026-05-01T00:00:00Z' },
       ])
     })
 
@@ -252,13 +274,15 @@ describe('project docs MCP tools', () => {
       expect(result).toEqual({ docId: 'doc-1', path: 'Plans/Q3/Old Roadmap' })
     })
 
-    it('move_project_doc to a bare title moves the doc to the root', async () => {
+    it('move_project_doc to a bare title says moveToRoot rather than folderId: null', async () => {
       routeGet({ [`${BASE}/folders`]: FOLDERS })
       mockPatch.mockResolvedValue({ id: 'doc-1' })
 
       await moveProjectDoc({ docId: 'doc-1', newPath: 'Roadmap' }, config)
 
-      expect(mockPatch).toHaveBeenCalledWith(`${BASE}/doc-1`, { title: 'Roadmap', folderId: null }, config)
+      // folderId: null is indistinguishable from an omitted folderId server-side, so it would rename
+      // the doc and leave it in place while this tool reported a move.
+      expect(mockPatch).toHaveBeenCalledWith(`${BASE}/doc-1`, { title: 'Roadmap', moveToRoot: true }, config)
     })
 
     it('delete_project_doc DELETEs the resolved doc', async () => {
@@ -272,6 +296,69 @@ describe('project docs MCP tools', () => {
 
       expect(mockDelete).toHaveBeenCalledWith(`${BASE}/doc-2`, config)
       expect(result).toEqual({ docId: 'doc-2', deleted: true })
+    })
+  })
+
+  describe('folders', () => {
+    it('move_project_folder renames and reparents in one PATCH', async () => {
+      routeGet({ [`${BASE}/folders`]: FOLDERS })
+      mockPatch.mockResolvedValue({ id: 'f-q3', parentId: 'f-plans', name: 'Q4' })
+
+      const result = await moveProjectFolder({ path: 'Plans/Q3', newPath: 'Plans/Q4' }, config)
+
+      expect(mockPatch).toHaveBeenCalledWith(
+        `${BASE}/folders/f-q3`,
+        { name: 'Q4', parentId: 'f-plans' },
+        config
+      )
+      expect(result).toEqual({ folderId: 'f-q3', path: 'Plans/Q4' })
+    })
+
+    it('move_project_folder creates missing destination folders', async () => {
+      routeGet({ [`${BASE}/folders`]: FOLDERS })
+      mockPost.mockResolvedValue({ id: 'f-archive', parentId: null, name: 'Archive' })
+      mockPatch.mockResolvedValue({ id: 'f-q3' })
+
+      await moveProjectFolder({ path: 'Plans/Q3', newPath: 'Archive/Q3' }, config)
+
+      expect(mockPost).toHaveBeenCalledWith(`${BASE}/folders`, { name: 'Archive', parentId: null }, config)
+      expect(mockPatch).toHaveBeenCalledWith(
+        `${BASE}/folders/f-q3`,
+        { name: 'Q3', parentId: 'f-archive' },
+        config
+      )
+    })
+
+    it('move_project_folder to the top level uses moveToRoot', async () => {
+      routeGet({ [`${BASE}/folders`]: FOLDERS })
+      mockPatch.mockResolvedValue({ id: 'f-q3' })
+
+      await moveProjectFolder({ path: 'Plans/Q3', newPath: 'Q3' }, config)
+
+      expect(mockPatch).toHaveBeenCalledWith(
+        `${BASE}/folders/f-q3`,
+        { name: 'Q3', moveToRoot: true },
+        config
+      )
+    })
+
+    it('delete_project_folder resolves the path and DELETEs it', async () => {
+      routeGet({ [`${BASE}/folders`]: FOLDERS })
+      mockDelete.mockResolvedValue(undefined)
+
+      const result = await deleteProjectFolder({ path: 'Plans/Q3' }, config)
+
+      expect(mockDelete).toHaveBeenCalledWith(`${BASE}/folders/f-q3`, config)
+      expect(result).toEqual({ folderId: 'f-q3', deleted: true })
+    })
+
+    it('names the missing segment when a folder path does not exist', async () => {
+      routeGet({ [`${BASE}/folders`]: FOLDERS })
+
+      await expect(deleteProjectFolder({ path: 'Nope' }, config)).rejects.toThrow(
+        'Folder "Nope" not found'
+      )
+      expect(mockDelete).not.toHaveBeenCalled()
     })
   })
 

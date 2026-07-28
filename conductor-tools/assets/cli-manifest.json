@@ -441,6 +441,18 @@
       "description": "Upload a local image file to a project document and get the Markdown snippet to embed.",
       "category": "project-docs",
       "requiredParams": ["filePath"]
+    },
+    {
+      "name": "move_project_folder",
+      "description": "Rename a docs folder and/or move it under another one, taking its whole subtree with it.",
+      "category": "project-docs",
+      "requiredParams": ["path", "newPath"]
+    },
+    {
+      "name": "delete_project_folder",
+      "description": "Delete a docs folder and its subfolders; documents inside are kept and resurface at the project root.",
+      "category": "project-docs",
+      "requiredParams": ["path"]
     }
   ]
 }

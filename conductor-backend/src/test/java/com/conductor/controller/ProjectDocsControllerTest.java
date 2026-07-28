@@ -9,10 +9,13 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.repository.DocCommentReplyRepository;
+import com.conductor.entity.MemberRole;
+import com.conductor.entity.ProjectMember;
 import com.conductor.repository.ProjectApiKeyRepository;
+import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
-import com.conductor.service.DocActor;
+import com.conductor.service.ProjectActor;
 import com.conductor.service.DocCommentService;
 import com.conductor.service.DocFolderService;
 import com.conductor.service.DocVersionService;
@@ -53,7 +56,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@code ProjectDocServiceTest}.
  */
 @WebMvcTest(ProjectDocsController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, ProjectSecurityService.class})
 class ProjectDocsControllerTest {
 
     private static final String PROJECT_ID = "proj-1";
@@ -69,7 +72,7 @@ class ProjectDocsControllerTest {
     @MockitoBean private DocCommentService docCommentService;
     @MockitoBean private DocCommentReplyRepository docCommentReplyRepository;
     @MockitoBean private StorageService storageService;
-    @MockitoBean private ProjectSecurityService projectSecurityService;
+    @MockitoBean private ProjectMemberRepository projectMemberRepository;
 
     // Security filter chain collaborators
     @MockitoBean private JwtService jwtService;
@@ -88,7 +91,7 @@ class ProjectDocsControllerTest {
         when(jwtService.validateToken("member-token")).thenReturn(true);
         when(jwtService.getUserIdFromToken("member-token")).thenReturn("user-1");
         when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        memberWithRole(MemberRole.REVIEWER);
 
         Project project = new Project();
         project.setId(PROJECT_ID);
@@ -99,6 +102,15 @@ class ProjectDocsControllerTest {
         apiKey.setKeyValue("project-api-key");
         when(projectApiKeyRepository.findByKeyValueWithProject("project-api-key"))
                 .thenReturn(Optional.of(apiKey));
+    }
+
+    /** Puts user-1 in the project with the given role, which is what the real gate reads. */
+    private void memberWithRole(MemberRole role) {
+        ProjectMember member = new ProjectMember();
+        member.setRole(role);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(member));
     }
 
     private ProjectDoc storedDoc() {
@@ -123,8 +135,8 @@ class ProjectDocsControllerTest {
 
     @Test
     void creatorTogglesACheckbox_returns200WithUpdatedContent() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(true);
-        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(1), eq(true), any(DocActor.class)))
+        memberWithRole(MemberRole.CREATOR);
+        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(1), eq(true), any(ProjectActor.class)))
                 .thenReturn(storedDoc());
 
         mockMvc.perform(patch(PATH + "1")
@@ -138,7 +150,7 @@ class ProjectDocsControllerTest {
 
     @Test
     void reviewerCannotToggle_returns403AndNeverTouchesTheDoc() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(false);
+        memberWithRole(MemberRole.REVIEWER);
 
         mockMvc.perform(patch(PATH + "1")
                         .header("Authorization", "Bearer member-token")
@@ -152,11 +164,11 @@ class ProjectDocsControllerTest {
 
     /**
      * A project-scoped credential is how a headless agent ticks off work it has finished. It has no
-     * user behind it, so the doc is attributed to a label instead — see {@code DocActor}.
+     * user behind it, so the doc is attributed to a label instead — see {@code ProjectActor}.
      */
     @Test
     void projectApiKeyMayToggle_andIsAttributedToALabel() throws Exception {
-        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(1), eq(true), any(DocActor.class)))
+        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(1), eq(true), any(ProjectActor.class)))
                 .thenReturn(storedDoc());
 
         mockMvc.perform(patch(PATH + "1")
@@ -165,7 +177,7 @@ class ProjectDocsControllerTest {
                         .content("{\"checked\":true}"))
                 .andExpect(status().isOk());
 
-        ArgumentCaptor<DocActor> actor = ArgumentCaptor.forClass(DocActor.class);
+        ArgumentCaptor<ProjectActor> actor = ArgumentCaptor.forClass(ProjectActor.class);
         verify(projectDocService).setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(1), eq(true), actor.capture());
         assertThat(actor.getValue().user()).isNull();
         assertThat(actor.getValue().label()).isEqualTo("Agent");
@@ -195,13 +207,13 @@ class ProjectDocsControllerTest {
 
     @Test
     void nonMemberCannotReadDocs_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/docs")
                         .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isForbidden());
 
-        verify(projectDocService, never()).getDocs(anyString(), anyString());
+        verify(projectDocService, never()).getDocs(anyString(), anyString(), anyBoolean());
     }
 
     @Test
@@ -222,8 +234,8 @@ class ProjectDocsControllerTest {
 
     @Test
     void staleLine_surfacesAs409() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(true);
-        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(4), eq(true), any(DocActor.class)))
+        memberWithRole(MemberRole.CREATOR);
+        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(4), eq(true), any(ProjectActor.class)))
                 .thenThrow(new ConflictException("Line 4 is no longer a task list item"));
 
         mockMvc.perform(patch(PATH + "4")
@@ -240,8 +252,8 @@ class ProjectDocsControllerTest {
      */
     @Test
     void outOfRangeLineNumber_returns400NotServerError() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(true);
-        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(0), eq(true), any(DocActor.class)))
+        memberWithRole(MemberRole.CREATOR);
+        when(projectDocService.setTaskState(eq(PROJECT_ID), eq(DOC_ID), eq(0), eq(true), any(ProjectActor.class)))
                 .thenThrow(new BusinessException("Line 0 is out of range for this document"));
 
         mockMvc.perform(patch(PATH + "0")

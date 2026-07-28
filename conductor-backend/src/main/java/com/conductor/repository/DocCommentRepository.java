@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface DocCommentRepository extends JpaRepository<DocComment, String> {
@@ -33,7 +34,7 @@ public interface DocCommentRepository extends JpaRepository<DocComment, String> 
             LEFT JOIN FETCH c.resolvedBy
             WHERE c.id = :commentId
             """)
-    java.util.Optional<DocComment> findByIdWithAuthors(@Param("commentId") String commentId);
+    Optional<DocComment> findByIdWithAuthors(@Param("commentId") String commentId);
 
     List<DocComment> findByDocIdAndLineNumberInAndResolvedAtIsNull(String docId, List<Integer> lineNumbers);
 

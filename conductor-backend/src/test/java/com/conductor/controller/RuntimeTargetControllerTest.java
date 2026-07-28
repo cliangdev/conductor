@@ -1,6 +1,8 @@
 package com.conductor.controller;
 
 import com.conductor.config.SecurityConfig;
+import com.conductor.entity.MemberRole;
+import com.conductor.entity.ProjectMember;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectApiKey;
 import com.conductor.entity.RuntimeTarget;
@@ -15,6 +17,7 @@ import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
+import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.RuntimeTargetService;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,7 +44,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(RuntimeTargetController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, ProjectSecurityService.class})
 class RuntimeTargetControllerTest {
 
     private static final String PROJECT_ID = "proj-1";
@@ -50,7 +53,7 @@ class RuntimeTargetControllerTest {
     private MockMvc mockMvc;
 
     @MockitoBean private RuntimeTargetService runtimeTargetService;
-    @MockitoBean private ProjectSecurityService projectSecurityService;
+    @MockitoBean private ProjectMemberRepository projectMemberRepository;
 
     // Security filter chain collaborators
     @MockitoBean private JwtService jwtService;
@@ -152,7 +155,7 @@ class RuntimeTargetControllerTest {
 
     @Test
     void listRuntimeTargets_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/runtime-targets")
                         .header("Authorization", "Bearer member-token"))
@@ -161,7 +164,7 @@ class RuntimeTargetControllerTest {
 
     @Test
     void listRuntimeTargets_member_returns200WithMappedFields() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         RuntimeTarget target = targetWithConfig();
         when(runtimeTargetService.list(PROJECT_ID)).thenReturn(List.of(target));
         when(runtimeTargetService.toResponse(target)).thenReturn(responseFor(target, config()));
@@ -181,7 +184,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void createRuntimeTarget_nonAdminOrCreator_returns403() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         String body = """
                 {"name":"my-target","provider":"gcp-cloud-run","connectionId":"conn-1",
@@ -197,7 +201,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void createRuntimeTarget_happyPath_returns201() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         RuntimeTarget created = targetWithConfig();
         when(runtimeTargetService.create(eq(PROJECT_ID), any(CreateRuntimeTargetRequest.class))).thenReturn(created);
         when(runtimeTargetService.toResponse(created)).thenReturn(responseFor(created, config()));
@@ -218,7 +223,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void createRuntimeTarget_reservedName_returns409() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         when(runtimeTargetService.create(eq(PROJECT_ID), any(CreateRuntimeTargetRequest.class)))
                 .thenThrow(new ConflictException("'cloud-run' is a reserved runs-on value"));
 
@@ -236,7 +242,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void createRuntimeTarget_withErrorStatusAndMessage_stillReturns201WithErrorBody() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         RuntimeTarget errored = targetWithConfig();
         errored.setStatus(RuntimeTargetStatus.ERROR);
         errored.setErrorMessage("Image not found in Artifact Registry repository my-repo");
@@ -259,7 +266,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void createRuntimeTarget_warningsSerialized() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         RuntimeTarget created = targetWithConfig();
         when(runtimeTargetService.create(eq(PROJECT_ID), any(CreateRuntimeTargetRequest.class))).thenReturn(created);
         RuntimeTargetService.TargetRuntimeConfig warningConfig = new RuntimeTargetService.TargetRuntimeConfig(
@@ -285,7 +293,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void updateRuntimeTarget_nonAdminOrCreator_returns403() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/runtime-targets/target-1")
                         .header("Authorization", "Bearer member-token")
@@ -296,7 +305,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void updateRuntimeTarget_happyPath_returns200() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         RuntimeTarget updated = targetWithConfig();
         when(runtimeTargetService.update(eq(PROJECT_ID), eq("target-1"), any())).thenReturn(updated);
         when(runtimeTargetService.toResponse(updated)).thenReturn(responseFor(updated, config()));
@@ -313,7 +323,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void deleteRuntimeTarget_nonAdminOrCreator_returns403() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(delete("/api/v1/projects/" + PROJECT_ID + "/runtime-targets/target-1")
                         .header("Authorization", "Bearer member-token"))
@@ -322,7 +333,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void deleteRuntimeTarget_happyPath_returns204() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
 
         mockMvc.perform(delete("/api/v1/projects/" + PROJECT_ID + "/runtime-targets/target-1")
                         .header("Authorization", "Bearer member-token"))
@@ -333,7 +345,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void provisionRuntimeTarget_nonAdminOrCreator_returns403() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/runtime-targets/target-1/provision")
                         .header("Authorization", "Bearer member-token"))
@@ -342,7 +355,8 @@ class RuntimeTargetControllerTest {
 
     @Test
     void provisionRuntimeTarget_happyPath_returns200() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         RuntimeTarget target = targetWithConfig();
         when(runtimeTargetService.provisionById(PROJECT_ID, "target-1")).thenReturn(target);
         when(runtimeTargetService.toResponse(target)).thenReturn(responseFor(target, config()));
@@ -351,5 +365,12 @@ class RuntimeTargetControllerTest {
                         .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
+    }
+
+    /** A membership row carrying {@code role} — what the real ProjectSecurityService reads. */
+    private static ProjectMember memberWithRole(MemberRole role) {
+        ProjectMember member = new ProjectMember();
+        member.setRole(role);
+        return member;
     }
 }

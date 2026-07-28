@@ -6,6 +6,8 @@ import com.conductor.agent.AgentService;
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.agent.credential.ProviderCredentialService.ProviderCredentialStatusView;
 import com.conductor.config.SecurityConfig;
+import com.conductor.entity.MemberRole;
+import com.conductor.entity.ProjectMember;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectApiKey;
 import com.conductor.entity.User;
@@ -16,6 +18,7 @@ import com.conductor.workflow.RunTokenService;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.ClaudeRuntimeService;
 import com.conductor.service.JwtService;
+import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.ProviderVerificationService;
 import com.conductor.service.RuntimeTargetService;
@@ -31,6 +34,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -47,7 +51,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(AgentController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, ProjectSecurityService.class})
 class AgentControllerTest {
 
     private static final String PROJECT_ID = "proj-1";
@@ -61,7 +65,7 @@ class AgentControllerTest {
     @MockitoBean private ProviderVerificationService providerVerificationService;
     @MockitoBean private ClaudeRuntimeService claudeRuntimeService;
     @MockitoBean private RuntimeTargetService runtimeTargetService;
-    @MockitoBean private ProjectSecurityService projectSecurityService;
+    @MockitoBean private ProjectMemberRepository projectMemberRepository;
     @MockitoBean private ObjectMapper objectMapper;
 
     // Security filter chain collaborators
@@ -143,7 +147,7 @@ class AgentControllerTest {
 
     @Test
     void getAgent_seededLibrarianSlug_isDefaultTrue() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         Agent librarian = stubAgent();
         librarian.setSlug("knowledge-librarian");
         when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(librarian);
@@ -156,7 +160,7 @@ class AgentControllerTest {
 
     @Test
     void getAgent_userCreatedSlug_isDefaultFalse() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(stubAgent());
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
@@ -169,7 +173,7 @@ class AgentControllerTest {
 
     @Test
     void listAgentTools_happyPath_returnsToolsTaggedWithSource() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         when(agentService.listAvailableTools(PROJECT_ID)).thenReturn(List.of(
                 new AgentService.ToolOption(
                         "connector:posthog/web_analytics_summary",
@@ -188,7 +192,7 @@ class AgentControllerTest {
 
     @Test
     void listAgentTools_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/tools")
                         .header("Authorization", "Bearer member-token"))
@@ -199,7 +203,7 @@ class AgentControllerTest {
 
     @Test
     void listAgentProviders_happyPath_returnsProvidersWithDefaultModel() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         when(agentService.listProviders()).thenReturn(List.of(
                 new AgentService.ProviderOption("claude", "claude-opus-4-8")));
 
@@ -213,7 +217,7 @@ class AgentControllerTest {
 
     @Test
     void listAgentProviders_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers")
                         .header("Authorization", "Bearer member-token"))
@@ -224,7 +228,7 @@ class AgentControllerTest {
 
     @Test
     void listProviderCredentialStatuses_happyPath_returnsAllProviderStatuses() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         when(providerCredentialService.listStatuses(PROJECT_ID)).thenReturn(List.of(
                 new ProviderCredentialStatusView("claude", true),
                 new ProviderCredentialStatusView("claude-code", false)));
@@ -241,7 +245,7 @@ class AgentControllerTest {
 
     @Test
     void listProviderCredentialStatuses_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/credentials")
                         .header("Authorization", "Bearer member-token"))
@@ -250,7 +254,7 @@ class AgentControllerTest {
 
     @Test
     void listProviderCredentialStatuses_carriesVerificationFields() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         // AgentController's ObjectMapper is a @MockitoBean here (WebMvcTest slice) — delegate readTree
         // to a real Jackson instance so firstFailingCheckMessage's parsing is genuinely exercised.
         com.fasterxml.jackson.databind.ObjectMapper realMapper = new com.fasterxml.jackson.databind.ObjectMapper();
@@ -275,7 +279,8 @@ class AgentControllerTest {
 
     @Test
     void setProviderCredential_nonAdmin_returns403() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(put("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude/credential")
                         .header("Authorization", "Bearer member-token")
@@ -286,7 +291,8 @@ class AgentControllerTest {
 
     @Test
     void setProviderCredential_savesThenVerifiesAndCarriesVerificationInResponse() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         java.time.OffsetDateTime checkedAt = java.time.OffsetDateTime.parse("2026-07-01T00:00:00Z");
         when(providerCredentialService.getStatus(PROJECT_ID, "claude")).thenReturn(
                 new ProviderCredentialStatusView("claude", true, "verified", checkedAt, "{\"checks\":[]}"));
@@ -305,7 +311,8 @@ class AgentControllerTest {
 
     @Test
     void setProviderCredential_verifyThrows_putStillSucceeds() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         when(providerVerificationService.verify(PROJECT_ID, "claude"))
                 .thenThrow(new RuntimeException("boom"));
         when(providerCredentialService.getStatus(PROJECT_ID, "claude")).thenReturn(
@@ -321,7 +328,8 @@ class AgentControllerTest {
 
     @Test
     void verifyProviderCredential_nonAdmin_returns403() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude/credential/verify")
                         .header("Authorization", "Bearer member-token"))
@@ -330,7 +338,8 @@ class AgentControllerTest {
 
     @Test
     void verifyProviderCredential_happyPath_returnsReport() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         java.time.OffsetDateTime checkedAt = java.time.OffsetDateTime.parse("2026-07-01T00:00:00Z");
         when(providerVerificationService.verify(PROJECT_ID, "claude")).thenReturn(
                 new ProviderVerificationService.VerificationReport("claude",
@@ -351,7 +360,7 @@ class AgentControllerTest {
 
     @Test
     void getClaudeRuntime_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude-code/runtime")
                         .header("Authorization", "Bearer member-token"))
@@ -360,7 +369,7 @@ class AgentControllerTest {
 
     @Test
     void getClaudeRuntime_builtinSource_returnsConfigWithoutTarget() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         when(claudeRuntimeService.getConfig(PROJECT_ID)).thenReturn(
                 new ClaudeRuntimeService.ClaudeRuntimeConfig("builtin", null, null, true));
 
@@ -374,7 +383,8 @@ class AgentControllerTest {
 
     @Test
     void setClaudeRuntime_nonAdmin_returns403() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(put("/api/v1/projects/" + PROJECT_ID + "/agents/providers/claude-code/runtime")
                         .header("Authorization", "Bearer member-token")
@@ -385,7 +395,8 @@ class AgentControllerTest {
 
     @Test
     void setClaudeRuntime_happyPath_returnsDesignatedTargetConfig() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         com.conductor.entity.RuntimeTarget target = new com.conductor.entity.RuntimeTarget();
         target.setId("target-1");
         target.setName("my-target");
@@ -415,7 +426,8 @@ class AgentControllerTest {
 
     @Test
     void createAgent_withRuntimeConfig_passesRuntimeThroughToService() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         when(agentService.create(eq(PROJECT_ID), any())).thenReturn(stubAgent());
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
@@ -432,7 +444,8 @@ class AgentControllerTest {
 
     @Test
     void updateAgent_withRuntimeConfig_passesRuntimeThroughToService() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
 
         mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
@@ -448,7 +461,8 @@ class AgentControllerTest {
 
     @Test
     void createAgent_invalidRuntimeValue_returns400() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
                         .header("Authorization", "Bearer member-token")
@@ -460,7 +474,7 @@ class AgentControllerTest {
 
     @Test
     void getAgent_persistedRuntimeConfig_returnsRuntimeInResponse() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         // AgentController's ObjectMapper is a @MockitoBean here (WebMvcTest slice) — delegate to a
         // real Jackson instance so readConfig's deserialization is genuinely exercised, confirming
         // AgentService's execution-time resolution (which reads configJson's "runtime" key) would
@@ -485,7 +499,8 @@ class AgentControllerTest {
 
     @Test
     void createAgent_withoutAvatar_returnsResponseWithDerivedDefaults() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         when(agentService.create(eq(PROJECT_ID), any())).thenReturn(stubAgent());
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
@@ -499,7 +514,8 @@ class AgentControllerTest {
 
     @Test
     void createAgent_withExplicitAvatar_persistedValuesAreReturned() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         Agent created = stubAgent();
         created.setAvatarEmoji("🦉");
         created.setAvatarColor("teal");
@@ -521,7 +537,8 @@ class AgentControllerTest {
 
     @Test
     void updateAgent_avatarFields_passedThroughToService() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
 
         mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
@@ -538,7 +555,8 @@ class AgentControllerTest {
 
     @Test
     void createAgent_unknownAvatarColorToken_returns400() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
                         .header("Authorization", "Bearer member-token")
@@ -553,7 +571,8 @@ class AgentControllerTest {
 
     @Test
     void createAgent_unknownAvatarColorToken_detailNamesFieldAndAcceptedValues() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
                         .header("Authorization", "Bearer member-token")
@@ -567,7 +586,8 @@ class AgentControllerTest {
 
     @Test
     void createAgent_malformedJsonBody_keepsGenericUnreadableDetail() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
                         .header("Authorization", "Bearer member-token")
@@ -585,7 +605,8 @@ class AgentControllerTest {
 
     @Test
     void updateAgent_omitsToolIds_passesNullToServiceSoBindingsAreUnchanged() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
 
         mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
@@ -601,7 +622,8 @@ class AgentControllerTest {
 
     @Test
     void updateAgent_explicitEmptyToolIds_passesEmptyListToServiceSoBindingsClear() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
 
         mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
@@ -617,7 +639,8 @@ class AgentControllerTest {
 
     @Test
     void updateAgent_nonAdmin_returns403() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
                         .header("Authorization", "Bearer member-token")
@@ -630,7 +653,8 @@ class AgentControllerTest {
 
     @Test
     void deleteAgent_happyPath_returns204() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
 
         mockMvc.perform(delete("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
                         .header("Authorization", "Bearer member-token"))
@@ -641,7 +665,8 @@ class AgentControllerTest {
 
     @Test
     void deleteAgent_nonAdmin_returns403() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(delete("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
                         .header("Authorization", "Bearer member-token"))
@@ -650,7 +675,8 @@ class AgentControllerTest {
 
     @Test
     void deleteAgent_referencedByWorkflow_returns409WithConflictsList() throws Exception {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         doThrow(new com.conductor.agent.AgentReferencedByWorkflowsException(
                 List.of(new com.conductor.agent.AgentReferencedByWorkflowsException.Reference("wf-1", "PR Review"))))
                 .when(agentService).delete(PROJECT_ID, "agent-1");
@@ -672,5 +698,12 @@ class AgentControllerTest {
         agent.setProvider("claude");
         agent.setState("DRAFT");
         return agent;
+    }
+
+    /** A membership row carrying {@code role} — what the real ProjectSecurityService reads. */
+    private static ProjectMember memberWithRole(MemberRole role) {
+        ProjectMember member = new ProjectMember();
+        member.setRole(role);
+        return member;
     }
 }

@@ -28,7 +28,8 @@ export interface DocVersion {
   id: string
   docId: string
   versionNumber: number
-  authorId: string
+  /** Null when an agent authored this — authorName still carries a byline. */
+  authorId: string | null
   authorName: string
   createdAt: string
   content?: string
@@ -37,7 +38,8 @@ export interface DocVersion {
 export interface DocCommentReply {
   id: string
   commentId: string
-  authorId: string
+  /** Null when an agent authored this — authorName still carries a byline. */
+  authorId: string | null
   authorName: string
   content: string
   createdAt: string
@@ -46,7 +48,8 @@ export interface DocCommentReply {
 export interface DocComment {
   id: string
   docId: string
-  authorId: string
+  /** Null when an agent authored this — authorName still carries a byline. */
+  authorId: string | null
   authorName: string
   content: string
   lineNumber: number | null

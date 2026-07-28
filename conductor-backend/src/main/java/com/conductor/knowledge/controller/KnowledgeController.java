@@ -36,7 +36,7 @@ import com.conductor.knowledge.page.PageWrite;
 import com.conductor.knowledge.page.PageWriteResult;
 import com.conductor.knowledge.page.RevisionView;
 import com.conductor.knowledge.page.SearchHit;
-import com.conductor.security.ProjectScopedPrincipal;
+import com.conductor.service.ProjectActor;
 import com.conductor.service.ProjectSecurityService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -213,28 +213,17 @@ public class KnowledgeController implements KnowledgeApi {
     }
 
     /**
-     * Verifies the authenticated caller may act on {@code projectId} and derives its Actor/Origin
-     * provenance in the same step -- both a user JWT/user-API-key principal ({@link User}, checked
-     * via {@link ProjectSecurityService#isProjectMember}) and a project-scoped machine principal
-     * ({@link ProjectScopedPrincipal} -- a project API key or a run-scoped MCP token -- whose
-     * {@code projectId} must equal the path {@code projectId}) are accepted, mirroring
-     * {@code DaemonEventsController#requireProjectApiKeyScopeForRun}.
+     * Maps the caller resolved by {@link ProjectSecurityService#requireProjectAccess} onto this
+     * domain's Actor/Origin provenance.
      */
     private Caller requireProjectAccess(String projectId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = auth != null ? auth.getPrincipal() : null;
-        if (principal instanceof User user) {
-            if (!projectSecurityService.isProjectMember(projectId, user.getId())) {
-                throw new ForbiddenException("Not a member of this project");
-            }
-            return new Caller(new Actor("user", user.getId(), null),
-                    new KnowledgeSubmission.Origin("USER", user.getId()));
-        }
-        if (auth instanceof ProjectScopedPrincipal scoped && projectId.equals(scoped.getProjectId())) {
+        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        if (actor.isMachine()) {
             return new Caller(new Actor("agent", projectId, null),
                     new KnowledgeSubmission.Origin("API_KEY", projectId));
         }
-        throw new ForbiddenException("Not a member of this project");
+        return new Caller(new Actor("user", actor.userId(), null),
+                new KnowledgeSubmission.Origin("USER", actor.userId()));
     }
 
     /** Domain-registry mutation gate: ADMIN only, {@link User} principals only -- the registry is an

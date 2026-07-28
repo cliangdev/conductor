@@ -790,6 +790,10 @@ paths:
         - project-docs
       summary: List docs in a project
       operationId: listProjectDocs
+      description: >
+        Documents directly inside `folderId`, or at the project root when it is omitted. Pass
+        `recursive=true` for every document in the project regardless of folder — one call instead of
+        one per folder when a client is building the whole tree.
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -804,6 +808,13 @@ paths:
           required: false
           schema:
             type: string
+        - name: recursive
+          in: query
+          required: false
+          description: Return every document in the project. Ignores folderId.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: List of docs
@@ -6962,11 +6973,21 @@ components:
 
     RenameFolderRequest:
       type: object
-      required:
-        - name
+      description: >
+        Rename and/or reparent in one call. `name` renames. `parentId` moves the folder (and its
+        whole subtree) under that folder; `moveToRoot: true` moves it to the top level.
       properties:
         name:
           type: string
+          description: New name. Omit to keep the current one.
+        parentId:
+          type: string
+          nullable: true
+          description: New parent folder. Mutually exclusive with moveToRoot; may not be the folder itself or one of its descendants.
+        moveToRoot:
+          type: boolean
+          default: false
+          description: Move the folder to the top level. Mutually exclusive with parentId.
 
     ProjectDocSummaryResponse:
       type: object
@@ -7066,6 +7087,10 @@ components:
 
     RenameDocRequest:
       type: object
+      description: >
+        Rename and/or move in one call. `title` renames. `folderId` moves into that folder;
+        `moveToRoot: true` moves out of any folder. Moving to root needs the explicit flag because
+        the generated models cannot distinguish an omitted `folderId` from an explicit null.
       properties:
         title:
           type: string
@@ -7073,6 +7098,10 @@ components:
         folderId:
           type: string
           nullable: true
+        moveToRoot:
+          type: boolean
+          default: false
+          description: Move the document out of its folder to the project root. Mutually exclusive with folderId.
 
     ProjectDocSearchResult:
       type: object
