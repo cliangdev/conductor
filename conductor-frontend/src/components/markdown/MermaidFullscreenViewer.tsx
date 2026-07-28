@@ -1,11 +1,15 @@
 'use client'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { Dialog } from '@base-ui/react/dialog'
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from 'react-zoom-pan-pinch'
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { MermaidRenderer } from './MermaidRenderer'
 import { MermaidControls } from './MermaidControls'
+import { computeFitScale } from './mermaidFit'
+
+const MIN_SCALE = 0.2
+const MAX_SCALE = 8
 
 interface Props {
   chart: string
@@ -15,6 +19,14 @@ interface Props {
 
 export function MermaidFullscreenViewer({ chart, open, onOpenChange }: Props) {
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const handleRendered = useCallback((svg: SVGSVGElement) => {
+    const container = containerRef.current
+    if (!container) return
+    const fitScale = computeFitScale(container, svg, { minScale: MIN_SCALE, maxScale: MAX_SCALE, padding: 32 })
+    transformRef.current?.centerView(fitScale, 0)
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -50,19 +62,19 @@ export function MermaidFullscreenViewer({ chart, open, onOpenChange }: Props) {
 
           <TransformWrapper
             ref={transformRef}
-            minScale={0.2}
-            maxScale={8}
+            minScale={MIN_SCALE}
+            maxScale={MAX_SCALE}
             limitToBounds={false}
             wheel={{ step: 0.1 }}
             doubleClick={{ mode: 'toggle' }}
-            centerOnInit
+            initialScale={1}
           >
             <TransformComponent
               wrapperStyle={{ width: '100vw', height: '100vh' }}
               contentStyle={{ width: '100%', height: '100%' }}
             >
-              <div className="w-screen h-screen flex items-center justify-center p-8">
-                <MermaidRenderer chart={chart} />
+              <div ref={containerRef} className="w-screen h-screen flex items-center justify-center p-8">
+                <MermaidRenderer chart={chart} onRendered={handleRendered} />
               </div>
             </TransformComponent>
           </TransformWrapper>

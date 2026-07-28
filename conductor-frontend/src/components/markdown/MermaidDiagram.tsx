@@ -5,6 +5,7 @@ import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from 
 import { MermaidRenderer } from './MermaidRenderer'
 import { MermaidFullscreenViewer } from './MermaidFullscreenViewer'
 import { MermaidControls } from './MermaidControls'
+import { computeFitScale } from './mermaidFit'
 import { toastError, toastSuccess } from '@/components/ui/toast'
 
 interface Props {
@@ -21,10 +22,9 @@ export function MermaidDiagram({ chart }: Props) {
   const transformRef = useRef<ReactZoomPanPinchRef | null>(null)
 
   const handleRendered = useCallback((svg: SVGSVGElement) => {
-    const containerWidth = containerRef.current?.clientWidth
-    const svgWidth = svg.getBoundingClientRect().width
-    if (!containerWidth || !svgWidth) return
-    const fitScale = Math.min(1, Math.max(MIN_SCALE, containerWidth / svgWidth))
+    const container = containerRef.current
+    if (!container) return
+    const fitScale = computeFitScale(container, svg, { minScale: MIN_SCALE, maxScale: MAX_SCALE, padding: 16 })
     transformRef.current?.centerView(fitScale, 0)
   }, [])
 
