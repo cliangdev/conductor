@@ -67,4 +67,19 @@ describe('layoutPipelineGraph', () => {
     expect(nodes).toEqual([])
     expect(edges).toEqual([])
   })
+
+  it('does not throw when edges is undefined (a live backend a deploy step behind can omit it)', () => {
+    // Regression: frontend and backend deploy independently (separate Cloud Run services); a rolling
+    // deploy window where this frontend is newer than the live backend crashed the whole Pipeline tab
+    // with `Cannot read properties of undefined (reading 'filter')` before this guard was added.
+    expect(() => layoutPipelineGraph(ALL_STAGES, undefined)).not.toThrow()
+    const { edges } = layoutPipelineGraph(ALL_STAGES, undefined)
+    expect(edges).toEqual([])
+  })
+
+  it('does not throw when stages is undefined', () => {
+    expect(() => layoutPipelineGraph(undefined, REAL_EDGES)).not.toThrow()
+    const { nodes } = layoutPipelineGraph(undefined, REAL_EDGES)
+    expect(nodes).toEqual([])
+  })
 })

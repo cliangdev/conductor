@@ -87,7 +87,9 @@ export interface PipelineFlowDiagramProps {
 
 export function PipelineFlowDiagram({ stages, edges, onStageClick }: PipelineFlowDiagramProps) {
   const layout = useMemo(() => layoutPipelineGraph(stages, edges), [stages, edges])
-  const byStage = useMemo(() => new Map(stages.map((s) => [s.stage, s])), [stages])
+  // Guards the same rolling-deploy version-skew case layoutPipelineGraph does — stages/edges are typed
+  // as required, but a live backend a step behind this frontend's deploy could still omit either field.
+  const byStage = useMemo(() => new Map((stages ?? []).map((s) => [s.stage, s])), [stages])
 
   const nodes: Node[] = useMemo(
     () =>

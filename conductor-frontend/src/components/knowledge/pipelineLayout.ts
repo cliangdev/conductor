@@ -45,20 +45,25 @@ export function nodeHeight(health: PipelineStageHealth): number {
 }
 
 export function layoutPipelineGraph(
-  stages: PipelineStageHealth[],
-  edges: PipelineStageEdge[],
+  stages: PipelineStageHealth[] | null | undefined,
+  edges: PipelineStageEdge[] | null | undefined,
 ): PipelineLayoutResult {
-  const byStage = new Map(stages.map((s) => [s.stage, s]))
+  // Frontend and backend are deployed independently (separate Cloud Run services) — during a rolling
+  // deploy the frontend can briefly be newer than the live backend, which would then answer without
+  // this field. Treat a missing/null array as empty rather than crashing the whole page on `.filter`.
+  const safeStages = stages ?? []
+  const safeEdges = edges ?? []
+  const byStage = new Map(safeStages.map((s) => [s.stage, s]))
 
   // A stage missing from the health response drops any edge touching it — the data-driven equivalent
   // of "don't bridge over a gap that isn't there."
-  const visibleEdges = edges.filter((e) => byStage.has(e.from) && byStage.has(e.to))
+  const visibleEdges = safeEdges.filter((e) => byStage.has(e.from) && byStage.has(e.to))
 
   const g = new dagre.graphlib.Graph()
   g.setDefaultEdgeLabel(() => ({}))
   g.setGraph({ rankdir: 'TB', nodesep: NODESEP, ranksep: RANKSEP })
 
-  for (const health of stages) {
+  for (const health of safeStages) {
     g.setNode(health.stage, { width: NODE_W, height: nodeHeight(health) })
   }
   for (const edge of visibleEdges) {
@@ -67,7 +72,7 @@ export function layoutPipelineGraph(
 
   dagre.layout(g)
 
-  const nodes: PipelineNodeLayout[] = stages.map((health) => {
+  const nodes: PipelineNodeLayout[] = safeStages.map((health) => {
     const height = nodeHeight(health)
     const { x, y } = g.node(health.stage)
     // dagre positions are center-based; xyflow positions are top-left based.
