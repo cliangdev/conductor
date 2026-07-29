@@ -69,6 +69,10 @@ public class Agent {
     @Column(name = "avatar_color", length = 32)
     private String avatarColor;
 
+    /** Nullable free-text grouping label; values in {@link com.conductor.validation.ReservedTags} are rejected. */
+    @Column(name = "tag", length = 64)
+    private String tag;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -137,6 +141,9 @@ public class Agent {
 
     public String getAvatarColor() { return avatarColor; }
     public void setAvatarColor(String avatarColor) { this.avatarColor = avatarColor; }
+
+    public String getTag() { return tag; }
+    public void setTag(String tag) { this.tag = tag; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
