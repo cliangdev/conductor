@@ -292,12 +292,13 @@ public class KnowledgeController implements KnowledgeApi {
         dto.setStatus(KnowledgeSourceStatus.valueOf(v.status().name()));
         dto.setAttempts(v.attempts());
         dto.setErrorMessage(v.errorMessage());
+        dto.setSkipReason(v.skipReason());
         dto.setPurgedAt(v.purgedAt());
         dto.setDomain(v.domain());
         return dto;
     }
 
-    private static final KnowledgeSourceCountsView ZERO_COUNTS = new KnowledgeSourceCountsView(0, 0, 0, 0);
+    private static final KnowledgeSourceCountsView ZERO_COUNTS = new KnowledgeSourceCountsView(0, 0, 0, 0, 0);
 
     private KnowledgeDomainDto toDto(KnowledgeDomain d, KnowledgeSourceCountsView counts) {
         KnowledgeSourceCountsView c = counts != null ? counts : ZERO_COUNTS;
@@ -322,6 +323,7 @@ public class KnowledgeController implements KnowledgeApi {
         dto.setPending(v.pending());
         dto.setProcessing(v.processing());
         dto.setProcessed(v.processed());
+        dto.setSkipped(v.skipped());
         dto.setDead(v.dead());
         return dto;
     }

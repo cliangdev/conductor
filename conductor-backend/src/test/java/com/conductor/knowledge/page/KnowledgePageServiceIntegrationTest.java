@@ -165,6 +165,27 @@ class KnowledgePageServiceIntegrationTest extends AbstractNoneWebIntegrationTest
                 .isEqualTo(KnowledgeSourceStatus.PROCESSED);
     }
 
+    /**
+     * Guards {@code markProcessed}'s {@code WHERE status IN (PENDING, PROCESSING)} invariant against a
+     * future edit -- a SKIPPED source already carries the librarian's own verdict (not worth a page), so
+     * batchWrite referencing it (e.g. a stale/duplicate reference) must never silently flip it back to
+     * PROCESSED.
+     */
+    @Test
+    void batchWriteDoesNotMoveASkippedSourceToProcessed() {
+        KnowledgeSource skipped = newSource("slack-message", "slack://C1/skipped");
+        skipped.setStatus(KnowledgeSourceStatus.SKIPPED);
+        skipped.setSkipReason("not material");
+        sourceRepository.saveAndFlush(skipped);
+
+        pageService.batchWrite(projectId,
+                List.of(new PageWrite("notes/b.md", doc("note", "B", "Body."), null, false)),
+                List.of(skipped.getId()), new Actor("user", "u1", null));
+
+        assertThat(sourceRepository.findById(skipped.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.SKIPPED);
+    }
+
     private KnowledgeSource newSource(String sourceType, String sourceRef) {
         KnowledgeSource source = new KnowledgeSource();
         source.setProjectId(projectId);

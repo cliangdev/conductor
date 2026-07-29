@@ -120,12 +120,13 @@ export function retryDeadKnowledgeSources(projectId: string, token: string): Pro
 
 // ── Ingestion inbox (sources) ───────────────────────────────────────────────
 
-export type KnowledgeSourceStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'DEAD'
+export type KnowledgeSourceStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'SKIPPED' | 'DEAD'
 
 export interface KnowledgeSourceCounts {
   pending: number
   processing: number
   processed: number
+  skipped: number
   dead: number
 }
 
@@ -155,6 +156,9 @@ export interface KnowledgeSourceDto {
   status: KnowledgeSourceStatus
   attempts: number
   errorMessage?: string | null
+  /** Set when status is SKIPPED — why the librarian judged this source not worth a page. Null for
+   *  every other status. */
+  skipReason?: string | null
   /** Set once retention has compacted this source's payload; null means it's still intact. */
   purgedAt?: string | null
   /** The domain lane this source was routed to at submit time. Null is the unclassified/generalist lane. */

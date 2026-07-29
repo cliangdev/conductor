@@ -210,7 +210,7 @@ class KnowledgeControllerTest {
         when(ingestionService.getSources(eq(PROJECT_ID), any()))
                 .thenReturn(List.of(new KnowledgeSourceView("src-1", PROJECT_ID, "manual_note", null, null,
                         null, "hello", false, null, null, null, null,
-                        com.conductor.knowledge.KnowledgeSourceStatus.PENDING, 0, null, null, null)));
+                        com.conductor.knowledge.KnowledgeSourceStatus.PENDING, 0, null, null, null, null)));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources?ids=src-1")
                         .header("Authorization", "Bearer valid-token"))
@@ -219,13 +219,36 @@ class KnowledgeControllerTest {
                 .andExpect(jsonPath("$[0].id").value("src-1"));
     }
 
+    /**
+     * The generated OpenAPI {@code KnowledgeSourceStatus} enum and the domain
+     * {@code com.conductor.knowledge.KnowledgeSourceStatus} enum are two separate types bridged by
+     * name via {@code valueOf} in {@link KnowledgeController#listKnowledgeSources} -- adding SKIPPED
+     * to only one of them (e.g. the domain enum but not the OpenAPI spec) would 400 or 500 here rather
+     * than compile-fail, since the bridge is a runtime name lookup, not a shared type.
+     */
+    @Test
+    void listSources_statusSkipped_roundTripsToDomainEnum() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(ingestionService.listSources(eq(PROJECT_ID), eq(com.conductor.knowledge.KnowledgeSourceStatus.SKIPPED), isNull()))
+                .thenReturn(List.of(new KnowledgeSourceView("src-1", PROJECT_ID, "manual_note", null, null,
+                        null, null, false, null, null, null, null,
+                        com.conductor.knowledge.KnowledgeSourceStatus.SKIPPED, 0, null, "not material", null, null)));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources?status=SKIPPED")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].status").value("SKIPPED"))
+                .andExpect(jsonPath("$[0].skipReason").value("not material"));
+    }
+
     // ---- getKnowledgeSourceCounts ----
 
     @Test
     void sourceCounts_happyPath_returnsCountsPerStatus() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.getSourceCounts(PROJECT_ID))
-                .thenReturn(new KnowledgeSourceCountsView(3, 1, 42, 2));
+                .thenReturn(new KnowledgeSourceCountsView(3, 1, 42, 4, 2));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
                         .header("Authorization", "Bearer valid-token"))
@@ -233,6 +256,7 @@ class KnowledgeControllerTest {
                 .andExpect(jsonPath("$.pending").value(3))
                 .andExpect(jsonPath("$.processing").value(1))
                 .andExpect(jsonPath("$.processed").value(42))
+                .andExpect(jsonPath("$.skipped").value(4))
                 .andExpect(jsonPath("$.dead").value(2));
     }
 
@@ -240,7 +264,7 @@ class KnowledgeControllerTest {
     void sourceCounts_zeroDefaultsWhenProjectHasNoSources() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.getSourceCounts(PROJECT_ID))
-                .thenReturn(new KnowledgeSourceCountsView(0, 0, 0, 0));
+                .thenReturn(new KnowledgeSourceCountsView(0, 0, 0, 0, 0));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
                         .header("Authorization", "Bearer valid-token"))
@@ -248,6 +272,7 @@ class KnowledgeControllerTest {
                 .andExpect(jsonPath("$.pending").value(0))
                 .andExpect(jsonPath("$.processing").value(0))
                 .andExpect(jsonPath("$.processed").value(0))
+                .andExpect(jsonPath("$.skipped").value(0))
                 .andExpect(jsonPath("$.dead").value(0));
     }
 
@@ -308,7 +333,7 @@ class KnowledgeControllerTest {
         engineering.setState(com.conductor.knowledge.domain.KnowledgeDomainState.ACTIVE);
         when(domainService.list(PROJECT_ID)).thenReturn(List.of(engineering));
         when(ingestionService.getDomainCounts(PROJECT_ID))
-                .thenReturn(java.util.Map.of("engineering", new KnowledgeSourceCountsView(2, 1, 5, 0)));
+                .thenReturn(java.util.Map.of("engineering", new KnowledgeSourceCountsView(2, 1, 5, 0, 0)));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains")
                         .header("Authorization", "Bearer valid-token"))
@@ -475,7 +500,7 @@ class KnowledgeControllerTest {
         when(runTokenService.parseMcpToken("eyJ.mcp.matching"))
                 .thenReturn(Optional.of(new RunTokenService.McpTokenClaims(PROJECT_ID, "run-1")));
         when(ingestionService.getSourceCounts(PROJECT_ID))
-                .thenReturn(new KnowledgeSourceCountsView(1, 0, 0, 0));
+                .thenReturn(new KnowledgeSourceCountsView(1, 0, 0, 0, 0));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
                         .header("Authorization", "Bearer eyJ.mcp.matching"))

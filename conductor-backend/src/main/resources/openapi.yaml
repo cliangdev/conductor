@@ -4832,9 +4832,9 @@ paths:
       tags: [knowledge]
       summary: Inbox status counts for a project
       description: >-
-        Cheap summary of the ingestion inbox by status (pending/processing/processed/dead) — for the
-        UI's inbox badge/summary without a full listSources per status. Statuses with no rows are
-        reported as 0, not omitted.
+        Cheap summary of the ingestion inbox by status (pending/processing/processed/skipped/dead) —
+        for the UI's inbox badge/summary without a full listSources per status. Statuses with no rows
+        are reported as 0, not omitted.
       operationId: getKnowledgeSourceCounts
       security:
         - bearerAuth: []
@@ -7830,7 +7830,7 @@ components:
 
     KnowledgeSourceStatus:
       type: string
-      enum: [PENDING, PROCESSING, PROCESSED, DEAD]
+      enum: [PENDING, PROCESSING, PROCESSED, SKIPPED, DEAD]
 
     KnowledgeOrigin:
       type: object
@@ -7945,6 +7945,12 @@ components:
         errorMessage:
           type: string
           nullable: true
+        skipReason:
+          type: string
+          nullable: true
+          description: >-
+            Set when status is SKIPPED -- why the librarian judged this source not worth a page. Null
+            for every other status.
         purgedAt:
           type: string
           format: date-time
@@ -7964,6 +7970,7 @@ components:
         - pending
         - processing
         - processed
+        - skipped
         - dead
       properties:
         pending:
@@ -7973,6 +7980,9 @@ components:
           type: integer
           format: int64
         processed:
+          type: integer
+          format: int64
+        skipped:
           type: integer
           format: int64
         dead:

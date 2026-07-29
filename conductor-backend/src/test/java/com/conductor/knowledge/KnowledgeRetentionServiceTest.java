@@ -14,6 +14,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -24,6 +25,7 @@ class KnowledgeRetentionServiceTest {
 
     private static final int COMPACT_AFTER_DAYS = 30;
     private static final int DELETE_DEAD_AFTER_DAYS = 90;
+    private static final int DELETE_SKIPPED_AFTER_DAYS = 90;
 
     @Mock
     private KnowledgeSourceRepository repository;
@@ -34,10 +36,17 @@ class KnowledgeRetentionServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new KnowledgeRetentionService(repository, storageService, COMPACT_AFTER_DAYS, DELETE_DEAD_AFTER_DAYS);
+        service = new KnowledgeRetentionService(repository, storageService, COMPACT_AFTER_DAYS,
+                DELETE_DEAD_AFTER_DAYS, DELETE_SKIPPED_AFTER_DAYS);
         // No real Spring proxy in a unit test — point the self-reference at the instance itself so the
         // REQUIRES_NEW helpers are still reachable (mirrors ActionInvocationServiceTest's precedent).
         service.self = service;
+        // Every sweep() runs all three passes -- default every test to an empty SKIPPED batch so tests
+        // focused on PROCESSED/DEAD don't also need to reason about the SKIPPED pass. lenient(): the
+        // SKIPPED-focused tests below re-stub this same matcher with real data, which would otherwise
+        // make Mockito's strict-stub checker flag this default as an unused/"unnecessary" stubbing.
+        lenient().when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.SKIPPED), any(), any())).thenReturn(List.of());
     }
 
     private KnowledgeSource source(String id, KnowledgeSourceStatus status, String payload, String payloadUri) {
@@ -209,6 +218,83 @@ class KnowledgeRetentionServiceTest {
         org.mockito.ArgumentCaptor<OffsetDateTime> cutoffCaptor = org.mockito.ArgumentCaptor.forClass(OffsetDateTime.class);
         verify(repository).findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
                 eq(KnowledgeSourceStatus.DEAD), cutoffCaptor.capture(), any());
+        assertThat(cutoffCaptor.getValue()).isBetween(before, after);
+    }
+
+    // ---- delete: SKIPPED (mirrors the DEAD tests above -- same terminal-unfiled treatment) ----
+
+    @Test
+    void deletesSkippedSourcePastThreshold_hardDeletesRow() {
+        KnowledgeSource src = source("src-skip-1", KnowledgeSourceStatus.SKIPPED, null, null);
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.PROCESSED), any(), any())).thenReturn(List.of());
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.DEAD), any(), any())).thenReturn(List.of());
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.SKIPPED), any(), any())).thenReturn(List.of(src));
+        when(repository.findById("src-skip-1")).thenReturn(Optional.of(src));
+
+        service.sweep();
+
+        verify(repository).delete(src);
+    }
+
+    @Test
+    void gcsDeleteFailureOnSkippedSource_skipsDeletionForRetryNextTick() {
+        KnowledgeSource src = source("src-skip-2", KnowledgeSourceStatus.SKIPPED, null, "knowledge-sources/proj-1/src-skip-2");
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.PROCESSED), any(), any())).thenReturn(List.of());
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.DEAD), any(), any())).thenReturn(List.of());
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.SKIPPED), any(), any())).thenReturn(List.of(src));
+        when(repository.findById("src-skip-2")).thenReturn(Optional.of(src));
+        org.mockito.Mockito.doThrow(new RuntimeException("bucket unreachable"))
+                .when(storageService).delete("knowledge-sources/proj-1/src-skip-2");
+
+        service.sweep();
+
+        // Never delete the row unless its offloaded object is confirmed gone first -- same rule as DEAD.
+        verify(repository, never()).delete(any());
+    }
+
+    /** Mirrors {@code KnowledgeRetentionServiceIntegrationTest#referencedDeadSourceIsTombstonedNotDeleted}
+     *  for SKIPPED -- a skip produced no page, so this is a defensive hedge (not expected to trigger in
+     *  practice) rather than the DEAD path's known race, but the guard must behave identically either way. */
+    @Test
+    void referencedSkippedSourceIsTombstonedNotDeleted() {
+        KnowledgeSource src = source("src-skip-3", KnowledgeSourceStatus.SKIPPED, null, null);
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.PROCESSED), any(), any())).thenReturn(List.of());
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.DEAD), any(), any())).thenReturn(List.of());
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.SKIPPED), any(), any())).thenReturn(List.of(src));
+        when(repository.findById("src-skip-3")).thenReturn(Optional.of(src));
+        when(repository.isReferencedByRevision("src-skip-3")).thenReturn(true);
+
+        service.sweep();
+
+        assertThat(src.getStatus()).isEqualTo(KnowledgeSourceStatus.SKIPPED);
+        assertThat(src.getPurgedAt()).isNotNull();
+        verify(repository, never()).delete(any());
+        verify(repository).save(src);
+    }
+
+    @Test
+    void deleteSkippedQueryUsesConfiguredDeleteSkippedAfterDays() {
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.PROCESSED), any(), any())).thenReturn(List.of());
+        when(repository.findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.DEAD), any(), any())).thenReturn(List.of());
+
+        OffsetDateTime before = OffsetDateTime.now().minusDays(DELETE_SKIPPED_AFTER_DAYS).minusSeconds(5);
+        service.sweep();
+        OffsetDateTime after = OffsetDateTime.now().minusDays(DELETE_SKIPPED_AFTER_DAYS).plusSeconds(5);
+
+        org.mockito.ArgumentCaptor<OffsetDateTime> cutoffCaptor = org.mockito.ArgumentCaptor.forClass(OffsetDateTime.class);
+        verify(repository).findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
+                eq(KnowledgeSourceStatus.SKIPPED), cutoffCaptor.capture(), any());
         assertThat(cutoffCaptor.getValue()).isBetween(before, after);
     }
 
