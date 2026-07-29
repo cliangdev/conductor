@@ -11,12 +11,19 @@ import com.conductor.repository.ProjectSettingsRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowRunRepository;
-import com.conductor.support.AbstractNoneWebIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.TestPropertySource;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.sql.Timestamp;
 import java.time.OffsetDateTime;
@@ -35,11 +42,34 @@ import static org.awaitility.Awaitility.await;
  * mocking the collaborators. Deliberately NOT {@code @Transactional} -- {@link
  * KnowledgeIngestionService#submit} inserts via a {@code REQUIRES_NEW} nested transaction (see {@link
  * KnowledgeIngestionServiceIntegrationTest}), and {@link KnowledgeIngestScheduler}'s own claim/resurrect
- * helpers do the same. Each test uses its own random project so the real {@code @Scheduled} tick of
- * this same bean (fixedDelay 30s) running concurrently in the background can't interfere within a
- * test's lifetime.
+ * helpers do the same.
+ *
+ * <p>Own private {@code @Container} (this scheduler enqueues workflow jobs, same reasoning as {@code
+ * ConnectorFeedSchedulerIntegrationTest}) plus {@code @TestPropertySource} to flip {@code
+ * conductor.knowledge.ingest-scheduler.enabled} back on for just this context -- see {@code
+ * src/test/resources/application.properties} for why it defaults off. Each test still uses its own
+ * random project so this test class's own tests don't collide with each other; the private database is
+ * what stops the live 30s tick from colliding with every *other* test class's shared-context data.
  */
-class KnowledgeIngestSchedulerIntegrationTest extends AbstractNoneWebIntegrationTest {
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@ActiveProfiles("local")
+@TestPropertySource(properties = "conductor.knowledge.ingest-scheduler.enabled=true")
+@Testcontainers
+class KnowledgeIngestSchedulerIntegrationTest {
+
+    @Container
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:18-alpine");
+
+    @DynamicPropertySource
+    static void props(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", postgres::getUsername);
+        registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
+        registry.add("spring.jpa.database-platform", () -> "org.hibernate.dialect.PostgreSQLDialect");
+        registry.add("spring.flyway.enabled", () -> "true");
+        registry.add("spring.jpa.hibernate.ddl-auto", () -> "validate");
+    }
 
     @Autowired
     private KnowledgeIngestScheduler scheduler;
