@@ -764,7 +764,7 @@ export function enableWorkflow(
 /** Create a lifecycle (statechart) Workflow. Returns the saved workflow + any validation warnings. */
 export function createLifecycleWorkflow(
   projectId: string,
-  body: { name: string; area?: string; definition: StatechartDefinition },
+  body: { name: string; area?: string; tag?: string; definition: StatechartDefinition },
   token: string,
 ): Promise<WorkflowCreateResponse> {
   return apiPost<WorkflowCreateResponse>(`/api/v1/projects/${projectId}/workflows`, body, token)
@@ -774,7 +774,7 @@ export function createLifecycleWorkflow(
 export function updateLifecycleWorkflow(
   projectId: string,
   workflowId: string,
-  body: { name?: string; area?: string; definition: StatechartDefinition },
+  body: { name?: string; area?: string; tag?: string; definition: StatechartDefinition },
   token: string,
 ): Promise<WorkflowCreateResponse> {
   return apiPut<WorkflowCreateResponse>(

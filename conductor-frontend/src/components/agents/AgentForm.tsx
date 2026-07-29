@@ -11,6 +11,7 @@ import {
   type CreateAgentBody,
 } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
+import { isReservedTag } from '@/lib/tags'
 import { Button } from '@/components/ui/button'
 import { AgentAvatarPicker, randomAvatar } from '@/components/agents/AgentAvatarPicker'
 
@@ -43,6 +44,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
 
   const [name, setName] = useState(initial?.name ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
+  const [tag, setTag] = useState(initial?.tag ?? '')
   const [provider, setProvider] = useState(initial?.provider ?? '')
   const [model, setModel] = useState(initial?.model ?? '')
   const [systemPrompt, setSystemPrompt] = useState(initial?.systemPrompt ?? '')
@@ -52,6 +54,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set(initial?.toolIds ?? []))
   const [state, setState] = useState<'DRAFT' | 'ACTIVE'>(initial?.state ?? 'DRAFT')
   const [nameError, setNameError] = useState<string | null>(null)
+  const [tagError, setTagError] = useState<string | null>(null)
   // New agent: seed a random pair client-side so what's shown is what gets submitted (the server
   // only derives its own default when the fields are omitted, which this form never does).
   const [avatar, setAvatar] = useState(() =>
@@ -101,6 +104,11 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
       return
     }
     setNameError(null)
+    if (tag.trim() && isReservedTag(tag)) {
+      setTagError(`"${tag.trim()}" is a reserved tag.`)
+      return
+    }
+    setTagError(null)
 
     // Send the full form state so a PATCH saves exactly what's on screen: blanked text fields and
     // guardrails clear (the backend normalizes blanks), and an empty tool set clears the bindings.
@@ -113,6 +121,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
     onSubmit({
       name: name.trim(),
       description: description.trim(),
+      tag: tag.trim(),
       provider,
       model: model.trim(),
       systemPrompt: systemPrompt.trim(),
@@ -159,6 +168,17 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
             onChange={(e) => setDescription(e.target.value)}
             placeholder="What this agent is for (optional)."
           />
+        </div>
+        <div>
+          <label className={LABEL} htmlFor="agent-tag">Tag</label>
+          <input
+            id="agent-tag"
+            className={INPUT}
+            value={tag}
+            onChange={(e) => setTag(e.target.value)}
+            placeholder="e.g. engineering, marketing"
+          />
+          {tagError && <p className="text-sm text-destructive mt-1">{tagError}</p>}
         </div>
       </div>
 

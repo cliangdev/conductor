@@ -44,7 +44,8 @@ function useCanSplit(containerRef: React.RefObject<HTMLDivElement | null>): bool
 interface WorkflowEditorLayoutProps {
   initialYaml: string;
   initialName?: string;
-  onSave: (name: string, yaml: string) => Promise<void>;
+  initialTag?: string;
+  onSave: (name: string, tag: string, yaml: string) => Promise<void>;
   onDiscard: () => void;
   saving: boolean;
   error: string | null;
@@ -59,6 +60,7 @@ interface WorkflowEditorLayoutProps {
 export default function WorkflowEditorLayout({
   initialYaml,
   initialName = '',
+  initialTag = '',
   onSave,
   onDiscard,
   saving,
@@ -68,12 +70,13 @@ export default function WorkflowEditorLayout({
 }: WorkflowEditorLayoutProps) {
   const [yaml, setYaml] = useState(initialYaml);
   const [name, setName] = useState(initialName);
+  const [tag, setTag] = useState(initialTag);
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const canSplit = useCanSplit(splitContainerRef);
 
   const handleSave = () => {
     const workflowName = name || extractNameFromYaml(yaml);
-    onSave(workflowName, yaml);
+    onSave(workflowName, tag, yaml);
   };
 
   const editor = <MonacoYamlEditor value={yaml} onChange={setYaml} readOnly={readOnly} />;
@@ -113,6 +116,18 @@ export default function WorkflowEditorLayout({
             placeholder="Workflow name (or set in YAML)"
             value={name}
             onChange={e => setName(e.target.value)}
+          />
+        </div>
+      )}
+
+      {!readOnly && (
+        <div className="px-4 py-2 border-b">
+          <Label htmlFor="workflow-tag" className="mb-1">Tag</Label>
+          <Input
+            id="workflow-tag"
+            placeholder="Optional grouping, e.g. engineering"
+            value={tag}
+            onChange={e => setTag(e.target.value)}
           />
         </div>
       )}

@@ -59,7 +59,7 @@ export default function LifecycleEditorPage() {
       const res = await updateLifecycleWorkflow(
         projectId,
         workflowId,
-        { name: workflow?.name, area: def.area || undefined, definition: def },
+        { name: workflow?.name, area: def.area || undefined, tag: def.tag || undefined, definition: def },
         accessToken,
       )
       setWorkflow(res.workflow)

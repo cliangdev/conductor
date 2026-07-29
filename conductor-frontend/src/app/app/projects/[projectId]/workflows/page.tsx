@@ -14,6 +14,7 @@ import { TriggerBadges } from '@/components/workflow/TriggerBadges';
 import { WorkflowStatusBadge } from '@/components/workflow/WorkflowStatusBadge';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { TagBadge } from '@/components/ui/TagBadge';
 import { Switch } from '@/components/ui/switch';
 import { ConfirmModal } from '@/components/ui/confirm-modal';
 import { Tabs, type TabItem } from '@/components/ui/tabs';
@@ -269,7 +270,12 @@ function WorkflowsPageContent() {
                       className="h-[38px] hover:bg-muted cursor-pointer transition-colors"
                       onClick={() => router.push(`/app/projects/${projectId}/workflows/${workflow.id}/runs`)}
                     >
-                      <td className="px-3 py-2 text-sm font-medium text-foreground">{workflow.name}</td>
+                      <td className="px-3 py-2 text-sm font-medium text-foreground">
+                        <div className="flex items-center gap-2">
+                          <span>{workflow.name}</span>
+                          {workflow.tag && <TagBadge tag={workflow.tag} />}
+                        </div>
+                      </td>
                       <td className="px-3 py-2">
                         {lastRun ? (
                           <div className="flex items-center gap-1.5">
@@ -377,7 +383,12 @@ function WorkflowsPageContent() {
                       className="h-[38px] hover:bg-muted cursor-pointer transition-colors"
                       onClick={() => router.push(`/app/projects/${projectId}/workflows/lifecycle/${wf.id}`)}
                     >
-                      <td className="px-3 py-2 text-sm font-medium text-foreground">{wf.name}</td>
+                      <td className="px-3 py-2 text-sm font-medium text-foreground">
+                        <div className="flex items-center gap-2">
+                          <span>{wf.name}</span>
+                          {wf.tag && <TagBadge tag={wf.tag} />}
+                        </div>
+                      </td>
                       <td className="px-3 py-2 text-sm text-muted-foreground">{noun ?? '—'}</td>
                       <td className="px-3 py-2">
                         <WorkflowStatusBadge workflow={wf} />

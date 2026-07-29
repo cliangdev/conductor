@@ -230,6 +230,13 @@ export function StatechartEditor({
               onChange={(e) => update({ noun: e.target.value })}
             />
           </Field>
+          <Field label="Tag (optional grouping, e.g. engineering, marketing)">
+            <Input
+              value={value.tag ?? ''}
+              placeholder="e.g. marketing"
+              onChange={(e) => update({ tag: e.target.value })}
+            />
+          </Field>
           <Field label="Default view">
             <Select
               value={value.default_view}
