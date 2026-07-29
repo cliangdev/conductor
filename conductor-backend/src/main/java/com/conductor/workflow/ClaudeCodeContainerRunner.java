@@ -258,6 +258,14 @@ public class ClaudeCodeContainerRunner {
         CloudRunJobLauncher.LaunchResult launch;
         try {
             launch = launcher.startExecution(target, task);
+        } catch (CloudRunJobLauncher.LaunchUnconfirmedException e) {
+            // Genuinely inconclusive, not a confirmed failure (see the exception's javadoc): no
+            // operationName was ever obtained, so unlike every other branch here there is nothing to
+            // persist and poll/resume on. Surfaced as its own errorReason so a user isn't told the launch
+            // definitively failed when the container may in fact be running to completion, orphaned.
+            log.warn("Cloud Run did not acknowledge the RunJob request for claude-code step {}: {}", stepId, e.getMessage());
+            appendLauncherLine(stepRun, projectId, logBuilder, "✗ " + e.getMessage());
+            return StepResult.failed(logBuilder.toString(), "CLOUD_RUN_LAUNCH_UNCONFIRMED").withWorkerJobId(workerJobId);
         } catch (Exception e) {
             log.warn("Failed to start Cloud Run execution for claude-code step {}: {}", stepId, e.getMessage());
             appendLauncherLine(stepRun, projectId, logBuilder, "✗ " + e.getMessage());

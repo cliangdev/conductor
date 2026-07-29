@@ -4,7 +4,9 @@ import com.conductor.entity.Connection;
 import com.conductor.exception.BusinessException;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.service.ConnectionService;
+import com.google.api.gax.core.ExecutorProvider;
 import com.google.api.gax.core.FixedCredentialsProvider;
+import com.google.api.gax.core.InstantiatingExecutorProvider;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.run.v2.ExecutionsClient;
 import com.google.cloud.run.v2.ExecutionsSettings;
@@ -135,15 +137,28 @@ public class CloudRunClientFactory {
         Clients build(String serviceAccountKeyJson) throws IOException;
     }
 
+    /** Same rationale/sizing as {@code CloudRunJobsConfig}'s default-client executor: these clients are
+     *  cached and reused for every concurrent launch/poll/cancel against this connection's Cloud Run
+     *  project, so gax's single-client-sized default executor risks the same launch-request starvation. */
+    private static final int CLOUD_RUN_EXECUTOR_THREAD_COUNT = 16;
+
+    private static ExecutorProvider cloudRunExecutorProvider() {
+        return InstantiatingExecutorProvider.newBuilder()
+                .setExecutorThreadCount(CLOUD_RUN_EXECUTOR_THREAD_COUNT)
+                .build();
+    }
+
     private static Clients buildClients(String serviceAccountKeyJson) throws IOException {
         GoogleCredentials credentials =
                 GoogleCredentials.fromStream(new ByteArrayInputStream(serviceAccountKeyJson.getBytes(StandardCharsets.UTF_8)))
                         .createScoped("https://www.googleapis.com/auth/cloud-platform");
         FixedCredentialsProvider provider = FixedCredentialsProvider.create(credentials);
-        JobsClient jobs = JobsClient.create(JobsSettings.newBuilder().setCredentialsProvider(provider).build());
-        ExecutionsClient executions = ExecutionsClient.create(
-                ExecutionsSettings.newBuilder().setCredentialsProvider(provider).build());
-        TasksClient tasks = TasksClient.create(TasksSettings.newBuilder().setCredentialsProvider(provider).build());
+        JobsClient jobs = JobsClient.create(JobsSettings.newBuilder()
+                .setCredentialsProvider(provider).setExecutorProvider(cloudRunExecutorProvider()).build());
+        ExecutionsClient executions = ExecutionsClient.create(ExecutionsSettings.newBuilder()
+                .setCredentialsProvider(provider).setExecutorProvider(cloudRunExecutorProvider()).build());
+        TasksClient tasks = TasksClient.create(TasksSettings.newBuilder()
+                .setCredentialsProvider(provider).setExecutorProvider(cloudRunExecutorProvider()).build());
         return new Clients(jobs, executions, tasks);
     }
 }
