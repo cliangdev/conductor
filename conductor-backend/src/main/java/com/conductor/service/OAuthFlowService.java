@@ -6,6 +6,7 @@ import com.conductor.exception.BusinessException;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.OAuth2Connector;
+import com.conductor.integration.OAuthReauthRequiredException;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
@@ -181,7 +183,17 @@ public class OAuthFlowService {
         params.add("client_secret", creds.clientSecret());
 
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(params, headers);
-        ResponseEntity<Map> response = restTemplate.exchange(connector.tokenUrl(), HttpMethod.POST, request, Map.class);
+        ResponseEntity<Map> response;
+        try {
+            response = restTemplate.exchange(connector.tokenUrl(), HttpMethod.POST, request, Map.class);
+        } catch (HttpClientErrorException e) {
+            if (isInvalidGrant(e)) {
+                throw new OAuthReauthRequiredException(
+                        "Refresh token for connection " + conn.getId() + " is no longer valid ("
+                                + e.getStatusCode() + ") — the user must reconnect via OAuth", e);
+            }
+            throw e;
+        }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> body = response.getBody();
@@ -198,6 +210,14 @@ public class OAuthFlowService {
         connectionService.updateAccessToken(conn, newAccessToken, newExpiresAt);
         log.info("Access token refreshed for connection={}", conn.getId());
         return newAccessToken;
+    }
+
+    /** Google (and most providers) return 400 {@code invalid_grant} both for a genuinely
+     * expired/revoked refresh token and, rarely, for a malformed request — either way, retrying the
+     * same refresh token will never succeed. */
+    private boolean isInvalidGrant(HttpClientErrorException e) {
+        String body = e.getResponseBodyAsString();
+        return body != null && body.contains("invalid_grant");
     }
 
     @SuppressWarnings("unchecked")

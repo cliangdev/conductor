@@ -7,6 +7,7 @@ import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorHealth;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.FetchConnector;
+import com.conductor.integration.OAuthReauthRequiredException;
 import com.conductor.repository.ConnectionDataCacheRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -17,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.Optional;
@@ -201,6 +203,31 @@ class IntegrationFetchServiceTest {
 
         assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
         verify(connector, never()).fetchData(any());
+    }
+
+    @Test
+    void oauthRefreshPermanentlyDead_returnsSetupRequired_withoutCallingConnector() {
+        Connection oauthConn = new Connection();
+        oauthConn.setId(CONNECTION_ID);
+        oauthConn.setProjectId(PROJECT_ID);
+        oauthConn.setConnectorId(CONNECTOR_ID);
+        oauthConn.setAuthType("OAUTH2");
+        when(connectionService.getById(CONNECTION_ID)).thenReturn(Optional.of(oauthConn));
+        when(connectionService.toContext(oauthConn)).thenReturn(new ConnectionContext(
+                PROJECT_ID, CONNECTOR_ID, CONNECTION_ID, "stale-token", "refresh-token",
+                Instant.now().minusSeconds(60), Map.of(), null));
+        when(cacheRepository.findByConnectionId(CONNECTION_ID)).thenReturn(Optional.empty());
+        when(oAuthFlowService.refreshAccessToken(oauthConn, "refresh-token"))
+                .thenThrow(new OAuthReauthRequiredException("refresh token dead", null));
+
+        ConnectorData result = service.fetchData(CONNECTION_ID, true);
+
+        assertThat(result.healthStatus()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
+        assertThat(result.errorMessage()).contains("reconnect");
+        // Never fetches with a token we already know is dead, and never touches the cache — matches
+        // the existing "not connected" short-circuit above.
+        verify(connector, never()).fetchData(any());
+        verify(cacheRepository, never()).save(any());
     }
 
     @Test
