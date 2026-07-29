@@ -10,6 +10,7 @@ import com.conductor.repository.NotificationGroupConfigRepository;
 import com.conductor.service.LifecycleTriggerDispatcher;
 import com.conductor.service.ProjectSettingsService;
 import com.conductor.service.WorkItemService;
+import com.conductor.service.WorkItemSnapshotService;
 import com.conductor.service.signal.PullRequestMergeSubscriber;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.signal.LifecycleSignalSubscriber;
@@ -66,6 +67,7 @@ class SignalFanOutCharacterizationTest {
     @Mock private LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
     @Mock private KnowledgeIngestionService knowledgeIngestionService;
     @Mock private ProjectSettingsService projectSettingsService;
+    @Mock private WorkItemSnapshotService workItemSnapshotService;
     @Mock private WorkItemService workItemService;
     @Mock private ObjectProvider<List<SignalSubscriber>> subscribersProvider;
 
@@ -83,7 +85,8 @@ class SignalFanOutCharacterizationTest {
                 new NotificationSignalSink(deliveryService, new NotificationSignalMapper()),
                 new WorkflowAutomationSignalSubscriber(workflowTriggerService),
                 new LifecycleSignalSubscriber(lifecycleTriggerDispatcher),
-                new KnowledgeSignalSink(knowledgeIngestionService, projectSettingsService, new ObjectMapper()),
+                new KnowledgeSignalSink(knowledgeIngestionService, projectSettingsService, workItemSnapshotService,
+                        new ObjectMapper()),
                 new PullRequestMergeSubscriber(workItemService));
         lenient().when(subscribersProvider.getIfAvailable(any())).thenReturn(subscribers);
 

@@ -26,4 +26,12 @@ public interface CommentRepository extends JpaRepository<Comment, String> {
 
     @Query("SELECT COUNT(c) FROM Comment c WHERE c.workItem.id = :workItemId AND c.resolvedAt IS NULL")
     long countUnresolvedByWorkItemId(@Param("workItemId") String workItemId);
+
+    /**
+     * All comments on a Work Item with {@code author} and {@code document} eagerly resolved -- both are
+     * {@code FetchType.LAZY}, so a naive {@code findAllByWorkItemId} would cost 2N extra selects across a
+     * comment list. Backs {@link com.conductor.service.WorkItemSnapshotService}.
+     */
+    @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author LEFT JOIN FETCH c.document WHERE c.workItem.id = :workItemId")
+    List<Comment> findAllByWorkItemIdWithAuthorAndDocument(@Param("workItemId") String workItemId);
 }

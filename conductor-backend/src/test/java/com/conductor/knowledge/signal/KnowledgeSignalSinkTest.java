@@ -3,6 +3,8 @@ package com.conductor.knowledge.signal;
 import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSubmission;
 import com.conductor.service.ProjectSettingsService;
+import com.conductor.service.WorkItemSnapshotService;
+import com.conductor.service.view.WorkItemSnapshot;
 import com.conductor.signal.FailureMode;
 import com.conductor.signal.Signal;
 import com.conductor.signal.SignalDispatchOrder;
@@ -21,6 +23,7 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
@@ -28,6 +31,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,34 +40,75 @@ import static org.mockito.Mockito.when;
  * written as the ingestion anti-corruption adapter, so there was no longer a reason for it to be a
  * separate injected collaborator). This file absorbs the old {@code KnowledgeEventTapTest} coverage
  * alongside the pre-existing subscriber-contract tests (order/failureMode/interestedIn).
+ *
+ * <p>As of the terminal-status-ingestion change, the status-changed section below covers: the terminal
+ * gate (including the {@code toTerminal} hardening for a category-less Workflow), the "did this Work Item
+ * actually produce anything" significance gate, the shape of the snapshot-based submission, and the
+ * content-addressed dedup key. {@link WorkItemSnapshotService} is mocked throughout -- its own assembly
+ * logic (including the 32 KB document truncation) is covered by {@code WorkItemSnapshotServiceTest}.
  */
 @ExtendWith(MockitoExtension.class)
 class KnowledgeSignalSinkTest {
 
     private static final String PROJECT_ID = "proj-1";
+    private static final String WORK_ITEM_ID = "wi-1";
+    private static final OffsetDateTime T0 = OffsetDateTime.parse("2026-01-01T00:00:00Z");
 
     @Mock private KnowledgeIngestionService ingestionService;
     @Mock private ProjectSettingsService projectSettingsService;
+    @Mock private WorkItemSnapshotService snapshotService;
 
     private KnowledgeSignalSink sink;
 
     @BeforeEach
     void setUp() {
-        sink = new KnowledgeSignalSink(ingestionService, projectSettingsService, new ObjectMapper());
+        sink = new KnowledgeSignalSink(ingestionService, projectSettingsService, snapshotService, new ObjectMapper());
     }
 
-    private Signal statusChangedSignal(Map<String, String> payload) {
+    // ---- helpers ----
+
+    private Signal statusChangedSignal(Map<String, Object> payload) {
         return Signal.of(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED, PROJECT_ID, null, Instant.now(),
-                Map.copyOf(payload), new SignalOrigin("test", null));
+                payload, new SignalOrigin("test", null));
     }
 
-    private Signal statusChangedSignal() {
-        return statusChangedSignal(Map.of(
-                "workItemId", "wi-1",
-                "workItemTitle", "Ship the thing",
-                "fromStatus", "IN_PROGRESS",
-                "toStatus", "CODE_REVIEW"));
+    /** A transition on {@link #WORK_ITEM_ID} landing on a terminal status -- the shape the sink now
+     *  requires before it will even attempt a snapshot. */
+    private Map<String, Object> terminalTransitionPayload() {
+        return terminalTransitionPayload("IN_PROGRESS", "DONE", "Done");
     }
+
+    /** A transition landing on an arbitrary terminal status -- lets a test model the two *different* edges
+     *  a {@code LifecycleTriggerDispatcher} cascade dispatches for one Work Item. */
+    private Map<String, Object> terminalTransitionPayload(String fromStatus, String toStatus, String toStatusLabel) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("workItemId", WORK_ITEM_ID);
+        payload.put("workItemTitle", "Ship the thing");
+        payload.put("fromStatus", fromStatus);
+        payload.put("toStatus", toStatus);
+        payload.put("toStatusLabel", toStatusLabel);
+        payload.put("toCategory", "terminal");
+        payload.put("noun", "Issue");
+        return payload;
+    }
+
+    private WorkItemSnapshot snapshotWith(List<WorkItemSnapshot.Doc> docs, List<WorkItemSnapshot.Note> comments,
+                                          List<WorkItemSnapshot.Artifact> assets, List<WorkItemSnapshot.Verdict> reviews) {
+        return new WorkItemSnapshot(WORK_ITEM_ID, PROJECT_ID, "ENG", 42, "Ship the thing", "the description",
+                "TASK", "ENGINEERING", "DONE", "Alice", T0, T0, docs, comments, assets, reviews);
+    }
+
+    private WorkItemSnapshot snapshotWithOneComment() {
+        return snapshotWith(List.of(),
+                List.of(new WorkItemSnapshot.Note("c-1", "Alice", null, "Looks good", T0)),
+                List.of(), List.of());
+    }
+
+    private void stubSnapshot(WorkItemSnapshot snapshot) {
+        when(snapshotService.snapshot(WORK_ITEM_ID)).thenReturn(Optional.of(snapshot));
+    }
+
+    // ---- subscriber contract (unchanged) ----
 
     @Test
     void orderIsKnowledgeLast() {
@@ -85,33 +130,6 @@ class KnowledgeSignalSinkTest {
     }
 
     @Test
-    void knowledgeEnabled_submitsNormalizedEnvelope() {
-        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
-
-        sink.onSignal(statusChangedSignal());
-
-        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
-        verify(ingestionService).submit(captor.capture());
-        KnowledgeSubmission submission = captor.getValue();
-        assertThat(submission.projectId()).isEqualTo(PROJECT_ID);
-        assertThat(submission.sourceType()).isEqualTo("conductor.work_item.status_changed");
-        assertThat(submission.sourceRef()).isEqualTo("conductor:wi-1");
-        assertThat(submission.title()).isEqualTo("Ship the thing");
-        assertThat(submission.origin().kind()).isEqualTo("EVENT_TAP");
-        assertThat(submission.payload()).contains("IN_PROGRESS", "CODE_REVIEW", "wi-1");
-        assertThat(submission.dedupKey()).isEqualTo("work-item-status-changed:proj-1:wi-1:IN_PROGRESS->CODE_REVIEW");
-    }
-
-    @Test
-    void knowledgeDisabled_doesNotSubmit() {
-        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(false);
-
-        sink.onSignal(statusChangedSignal());
-
-        verify(ingestionService, never()).submit(any());
-    }
-
-    @Test
     void nonStatusChangedSignal_isIgnoredWithoutCheckingSettings() {
         Signal signal = Signal.of(SignalTypes.CONDUCTOR_PROJECT_MEMBER_JOINED, PROJECT_ID, null, Instant.now(),
                 Map.of("memberName", "Alice"), new SignalOrigin("test", null));
@@ -122,46 +140,163 @@ class KnowledgeSignalSinkTest {
         verify(ingestionService, never()).submit(any());
     }
 
-    @Test
-    void aFailingIngestIsSwallowedInsideOnSignal() {
-        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
-        doThrow(new RuntimeException("boom")).when(ingestionService).submit(any());
+    // ---- terminal-status gate ----
 
-        assertThatNoException().isThrownBy(() -> sink.onSignal(statusChangedSignal()));
+    @Test
+    void nonTerminalTransition_doesNotSnapshotOrSubmit() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        Map<String, Object> payload = terminalTransitionPayload();
+        payload.put("toCategory", "in_progress");
+
+        sink.onSignal(statusChangedSignal(payload));
+
+        verify(snapshotService, never()).snapshot(any());
+        verify(ingestionService, never()).submit(any());
+    }
+
+    /** Pins the Part 1 hardening: a category-less (but still terminal) Workflow -- e.g. one seeded by
+     *  {@code WorkflowSeeder}, which bypasses {@code WorkflowDefinitionValidator} -- must not silently
+     *  file nothing forever just because {@code toCategory} never got stamped. */
+    @Test
+    void missingToCategoryButToTerminalTrue_submits() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        Map<String, Object> payload = terminalTransitionPayload();
+        payload.remove("toCategory");
+        payload.put("toTerminal", true);
+        stubSnapshot(snapshotWithOneComment());
+
+        sink.onSignal(statusChangedSignal(payload));
+
+        verify(ingestionService).submit(any());
     }
 
     @Test
-    void dedupKeyFormatIsStable() {
-        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+    void knowledgeDisabled_doesNotSnapshotOrSubmit() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(false);
 
-        sink.onSignal(statusChangedSignal());
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload()));
+
+        verify(snapshotService, never()).snapshot(any());
+        verify(ingestionService, never()).submit(any());
+    }
+
+    /**
+     * Previously (see the pre-existing {@code missingWorkItemIdFallsBackToUnknownRef}), a status-changed
+     * signal with no {@code workItemId} still submitted, under a synthetic {@code conductor:unknown} ref.
+     * Under the snapshot-based contract there is nothing meaningful to snapshot without an id, so the new
+     * contract is simply: no id, no submit, no throw.
+     */
+    @Test
+    void missingWorkItemId_doesNotSubmit() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        Map<String, Object> payload = terminalTransitionPayload();
+        payload.remove("workItemId");
+
+        sink.onSignal(statusChangedSignal(payload));
+
+        verify(snapshotService, never()).snapshot(any());
+        verify(ingestionService, never()).submit(any());
+    }
+
+    // ---- significance gate ----
+
+    @Test
+    void terminalButNoArtifacts_doesNotSubmit() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        WorkItemSnapshot empty = new WorkItemSnapshot(WORK_ITEM_ID, PROJECT_ID, "ENG", 42, "Ship the thing", "   ",
+                "TASK", "ENGINEERING", "DONE", "Alice", T0, T0, List.of(), List.of(), List.of(), List.of());
+        stubSnapshot(empty);
+
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload()));
+
+        verify(ingestionService, never()).submit(any());
+    }
+
+    // ---- submission shape ----
+
+    @Test
+    void terminalWithOneComment_submitsAsWorkItemCompleted() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        stubSnapshot(snapshotWithOneComment());
+
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload()));
 
         ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
         verify(ingestionService).submit(captor.capture());
-        assertThat(captor.getValue().dedupKey())
-                .isEqualTo("work-item-status-changed:proj-1:wi-1:IN_PROGRESS->CODE_REVIEW");
+        KnowledgeSubmission submission = captor.getValue();
+        assertThat(submission.projectId()).isEqualTo(PROJECT_ID);
+        assertThat(submission.sourceType()).isEqualTo("conductor.work_item.completed");
+        assertThat(submission.sourceRef()).isEqualTo("conductor:wi-1");
+        assertThat(submission.title()).isEqualTo("Ship the thing");
+        assertThat(submission.origin().kind()).isEqualTo("EVENT_TAP");
     }
 
     @Test
-    void payloadJsonIsSortedAndByteStable() {
-        // Pins the TreeMap-based serialization in KnowledgeSignalSink#toJson — key order in the JSON
-        // payload is alphabetical regardless of the metadata Map's insertion/iteration order.
+    void payloadContainsAllProducedContent() {
         when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        WorkItemSnapshot.Doc doc = new WorkItemSnapshot.Doc("spec.md", "text/markdown", "the spec body", false, T0, T0);
+        WorkItemSnapshot.Note note = new WorkItemSnapshot.Note("c-1", "Alice", "spec.md", "looks good to me", T0);
+        WorkItemSnapshot.Artifact asset = new WorkItemSnapshot.Artifact("github_pr", "Pull Request", "link",
+                "https://github.com/x/y/pull/3", true, T0);
+        WorkItemSnapshot.Verdict verdict = new WorkItemSnapshot.Verdict("Bob", "APPROVED", "ship it", T0);
+        stubSnapshot(snapshotWith(List.of(doc), List.of(note), List.of(asset), List.of(verdict)));
 
-        sink.onSignal(statusChangedSignal());
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload()));
 
         ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
         verify(ingestionService).submit(captor.capture());
-        assertThat(captor.getValue().payload()).isEqualTo(
-                "{\"fromStatus\":\"IN_PROGRESS\",\"toStatus\":\"CODE_REVIEW\","
-                + "\"workItemId\":\"wi-1\",\"workItemTitle\":\"Ship the thing\"}");
+        assertThat(captor.getValue().payload()).contains(
+                "the spec body", "looks good to me", "https://github.com/x/y/pull/3", "ship it", "APPROVED");
+    }
+
+    /** Pins that the payload tree is built as fixed-order {@code LinkedHashMap}s (the declared field
+     *  order), not the alphabetically-sorted {@code TreeMap} the old scalar payload used -- {@code
+     *  documents}/{@code comments}/{@code assets}/{@code reviews} would sort as
+     *  assets/comments/documents/reviews if this regressed to alphabetical ordering. */
+    @Test
+    void payloadJsonHasFixedFieldOrder_notAlphabeticallySorted() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        stubSnapshot(snapshotWithOneComment());
+
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload()));
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        String payload = captor.getValue().payload();
+        int workItemIdx = payload.indexOf("\"workItem\"");
+        int documentsIdx = payload.indexOf("\"documents\"");
+        int commentsIdx = payload.indexOf("\"comments\"");
+        int assetsIdx = payload.indexOf("\"assets\"");
+        int reviewsIdx = payload.indexOf("\"reviews\"");
+        assertThat(workItemIdx).isGreaterThanOrEqualTo(0).isLessThan(documentsIdx);
+        assertThat(documentsIdx).isLessThan(commentsIdx);
+        assertThat(commentsIdx).isLessThan(assetsIdx);
+        assertThat(assetsIdx).isLessThan(reviewsIdx);
+    }
+
+    /** The 32 KB per-document cap itself is {@code WorkItemSnapshotServiceTest}'s job (it's where the
+     *  truncation happens); this only pins that the sink faithfully carries a snapshot's already-truncated
+     *  content and flag through into the submitted payload rather than losing or re-deriving them. */
+    @Test
+    void truncatedDocumentFlowsThroughToPayload() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        String truncatedContent = "x".repeat(40_000) + "\n\n[... truncated at 32 KB; content continues beyond this point ...]";
+        WorkItemSnapshot.Doc doc = new WorkItemSnapshot.Doc("spec.md", "text/markdown", truncatedContent, true, T0, T0);
+        stubSnapshot(snapshotWith(List.of(doc), List.of(), List.of(), List.of()));
+
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload()));
+
+        ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
+        verify(ingestionService).submit(captor.capture());
+        assertThat(captor.getValue().payload()).contains("\"truncated\":true", "truncated at 32 KB");
     }
 
     @Test
     void originKindIsExactlyEventTap() {
         when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        stubSnapshot(snapshotWithOneComment());
 
-        sink.onSignal(statusChangedSignal());
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload()));
 
         ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
         verify(ingestionService).submit(captor.capture());
@@ -169,42 +304,87 @@ class KnowledgeSignalSinkTest {
         assertThat(captor.getValue().origin().id()).isEqualTo("wi-1");
     }
 
-    @Test
-    void sourceTypeIsExactly_conductor_work_item_status_changed() {
-        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+    // ---- dedup key ----
 
-        sink.onSignal(statusChangedSignal());
+    @Test
+    void dedupKeyFormatIsStable() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        stubSnapshot(snapshotWithOneComment());
+
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload()));
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload()));
 
         ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
-        verify(ingestionService).submit(captor.capture());
-        assertThat(captor.getValue().sourceType()).isEqualTo("conductor.work_item.status_changed");
+        verify(ingestionService, times(2)).submit(captor.capture());
+        List<KnowledgeSubmission> submissions = captor.getAllValues();
+        assertThat(submissions.get(0).dedupKey())
+                .matches("work-item-completed:wi-1:[0-9a-f]{16}")
+                .isEqualTo(submissions.get(1).dedupKey());
     }
 
     /**
-     * The ingest logic only filters on signal type -- it has no notion of "is this shaped like a real
-     * Work Item event," so a status-changed signal with no {@code workItemId} key still submits, with a
-     * synthetic {@code conductor:unknown} ref, rather than being rejected. That is a legitimate,
-     * still-relied-on fallback (it must not throw or silently drop the submission just because a key is
-     * missing).
-     *
-     * <p>Previously this was exercised (in the pre-A6 {@code KnowledgeEventTapTest}) with a {@code
-     * {test: true}}-shaped payload to document that {@code NotificationChannelService}/{@code
-     * NotificationGroupService}'s admin "send a test notification" buttons abused this fallback by
-     * routing straight through the tap. As of the A5 refactor those buttons call {@code
-     * NotificationDeliveryService.deliver} directly and no longer touch the {@code SignalBus} at all, so
-     * this sink is never reachable from them any more -- see {@code
-     * NotificationGroupServiceTest}/{@code NotificationChannelServiceTest} for that guarantee. What
-     * remains here is just the defensive contract for a malformed/incomplete signal payload.
+     * Content-addressed, not {@code {fromStatus}->{toStatus}}: two dispatches of the identical snapshot
+     * (e.g. a {@code LifecycleTriggerDispatcher} cascade re-running the sink at a different edge for the
+     * same already-saved Work Item) collapse to the same key, while a snapshot that actually changed
+     * (one more comment -- a genuine reopen-with-new-material case) gets a different one. Also pins that
+     * the payload itself is byte-identical across the two identical dispatches -- the wall-clock-free
+     * contract {@link WorkItemSnapshotService#snapshot} depends on.
      */
     @Test
-    void missingWorkItemIdFallsBackToUnknownRef() {
+    void dedupKeyIsContentAddressed() {
         when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        WorkItemSnapshot snapshot = snapshotWithOneComment();
+        stubSnapshot(snapshot);
 
-        sink.onSignal(statusChangedSignal(Map.of("fromStatus", "A", "toStatus", "B")));
+        // The two dispatches a real cascade produces: the nested one for the edge the cascade advanced to,
+        // and the outer one for the edge that triggered it. Different fromStatus/toStatus/toStatusLabel,
+        // same already-saved Work Item -- so nothing edge-derived may reach the payload, or these two stop
+        // hashing alike and the cascade double-files. (An earlier revision put toStatusLabel in the payload
+        // and this is the case that catches it; asserting with two *identical* payloads would not.)
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload("CODE_REVIEW", "DONE", "Done")));
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload("DONE", "CLOSED", "Closed")));
+
+        WorkItemSnapshot.Note extraComment = new WorkItemSnapshot.Note("c-2", "Bob", null, "one more note", T0.plusMinutes(1));
+        WorkItemSnapshot withExtraComment = snapshotWith(snapshot.documents(),
+                List.of(snapshot.comments().get(0), extraComment), snapshot.assets(), snapshot.reviews());
+        stubSnapshot(withExtraComment);
+        sink.onSignal(statusChangedSignal(terminalTransitionPayload()));
 
         ArgumentCaptor<KnowledgeSubmission> captor = ArgumentCaptor.forClass(KnowledgeSubmission.class);
-        verify(ingestionService).submit(captor.capture());
-        assertThat(captor.getValue().sourceRef()).isEqualTo("conductor:unknown");
+        verify(ingestionService, times(3)).submit(captor.capture());
+        List<KnowledgeSubmission> submissions = captor.getAllValues();
+        assertThat(submissions.get(1).dedupKey()).isEqualTo(submissions.get(0).dedupKey());
+        assertThat(submissions.get(1).payload()).isEqualTo(submissions.get(0).payload());
+        assertThat(submissions.get(2).dedupKey()).isNotEqualTo(submissions.get(0).dedupKey());
+    }
+
+    // ---- failure modes ----
+
+    @Test
+    void aFailingIngestIsSwallowedInsideOnSignal() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        stubSnapshot(snapshotWithOneComment());
+        doThrow(new RuntimeException("boom")).when(ingestionService).submit(any());
+
+        assertThatNoException().isThrownBy(() -> sink.onSignal(statusChangedSignal(terminalTransitionPayload())));
+    }
+
+    @Test
+    void snapshotThrows_swallowedNoSubmit() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        when(snapshotService.snapshot(WORK_ITEM_ID)).thenThrow(new RuntimeException("db down"));
+
+        assertThatNoException().isThrownBy(() -> sink.onSignal(statusChangedSignal(terminalTransitionPayload())));
+        verify(ingestionService, never()).submit(any());
+    }
+
+    @Test
+    void snapshotEmpty_noSubmitNoThrow() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        when(snapshotService.snapshot(WORK_ITEM_ID)).thenReturn(Optional.empty());
+
+        assertThatNoException().isThrownBy(() -> sink.onSignal(statusChangedSignal(terminalTransitionPayload())));
+        verify(ingestionService, never()).submit(any());
     }
 
     // --- GITHUB_PULL_REQUEST_MERGED : formerly GitHubConnector#submitMergedPrKnowledge, moved here in

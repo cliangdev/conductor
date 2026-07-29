@@ -259,6 +259,10 @@ public class WorkItemService {
         workItemRepository.save(workItem);
 
         // COND-18 E5: record the merged PR as a github_pr Asset. Idempotent on (workItem, type, ref).
+        // Must run BEFORE publishStatusChanged below: KnowledgeSignalSink's terminal-status ingestion
+        // snapshots the Work Item synchronously off this same transaction, and it's the pending Hibernate
+        // session's auto-flush of this insert that puts the merged-PR Asset into that snapshot. Reorder
+        // these two calls and a PR-merge-to-terminal transition would file without its own PR asset.
         assetService.recordAsset(workItem, "github_pr", pullRequestUrl, "Pull Request", "link");
 
         if (applied.isPresent()) {
@@ -295,6 +299,11 @@ public class WorkItemService {
             if (s.category() != null) {
                 meta.put("toCategory", s.category());
             }
+            // Stamped alongside (not instead of) toCategory: WorkflowSeeder writes workflow_definitions
+            // directly, bypassing WorkflowDefinitionValidator, so a seeded-but-category-less Workflow can
+            // reach a terminal status with toCategory absent. KnowledgeSignalSink's terminal gate falls
+            // back to this explicit boolean so that gap doesn't silently file nothing forever.
+            meta.put("toTerminal", s.terminal());
         });
         if (workItem.getAssignee() != null) {
             User a = workItem.getAssignee();
