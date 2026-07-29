@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -299,5 +300,66 @@ class WorkItemSnapshotServiceTest {
 
         assertThat(verdicts).extracting(WorkItemSnapshot.Verdict::reviewerName)
                 .containsExactlyInAnyOrder("Bob", "u-ghost"); // unresolvable id falls back to itself
+    }
+
+    // ---- deterministic ordering ----
+
+    /**
+     * The finders backing this service carry no {@code ORDER BY}, and Postgres guarantees no row order
+     * without one. That matters because {@code KnowledgeSignalSink} hashes the assembled snapshot for its
+     * dedup key: if two assemblies of the same unchanged Work Item can order these lists differently, the
+     * two payloads hash differently and a lifecycle cascade double-files. Feeding every collaborator its
+     * rows in reversed order and asserting the assembled snapshot is unchanged is the only way to pin
+     * that -- asserting on a single assembly cannot, which is why this class of bug survives a green suite
+     * and then shows up intermittently in production.
+     */
+    @Test
+    void listsAreOrderedIndependentlyOfRepositoryRowOrder() {
+        WorkItem workItem = workItem("has a description");
+        User alice = user("u-1", "Alice", "alice@example.com");
+        User bob = user("u-2", "Bob", "bob@example.com");
+
+        Document apple = document(workItem, "apple.md", "first");
+        Document banana = document(workItem, "banana.md", "second");
+        Comment earlier = comment(workItem, alice, "earlier");
+        earlier.setCreatedAt(OffsetDateTime.parse("2026-01-01T00:00:00Z"));
+        Comment later = comment(workItem, bob, "later");
+        later.setCreatedAt(OffsetDateTime.parse("2026-01-03T00:00:00Z"));
+        Asset prAsset = asset(workItem);
+        Asset docsAsset = asset(workItem);
+        docsAsset.setType("published_url");
+        docsAsset.setRef("https://example.com/docs");
+        Review firstReview = review("u-1", "APPROVED");
+        Review secondReview = review("u-2", "CHANGES_REQUESTED");
+        secondReview.setSubmittedAt(OffsetDateTime.parse("2026-01-04T00:00:00Z"));
+
+        when(workItemRepository.findByIdWithProjectAndAssignee(WORK_ITEM_ID)).thenReturn(Optional.of(workItem));
+        // anyList(), not an exact list: reversing the reviews also reverses the distinct reviewer-id list
+        // this is called with. That argument order is irrelevant to the result (the ids are resolved into a
+        // map), so pinning it here would only make the test order-sensitive in a way the service isn't.
+        when(userRepository.findAllById(anyList())).thenReturn(List.of(alice, bob));
+
+        // First assembly: rows in one order.
+        when(documentRepository.findByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(apple, banana));
+        when(commentRepository.findAllByWorkItemIdWithAuthorAndDocument(WORK_ITEM_ID))
+                .thenReturn(List.of(earlier, later));
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(prAsset, docsAsset));
+        when(reviewRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(firstReview, secondReview));
+        WorkItemSnapshot first = service.snapshot(WORK_ITEM_ID).orElseThrow();
+
+        // Second assembly: every list reversed, as an unlucky query plan or a moved heap tuple would.
+        when(documentRepository.findByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(banana, apple));
+        when(commentRepository.findAllByWorkItemIdWithAuthorAndDocument(WORK_ITEM_ID))
+                .thenReturn(List.of(later, earlier));
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(docsAsset, prAsset));
+        when(reviewRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(secondReview, firstReview));
+        WorkItemSnapshot second = service.snapshot(WORK_ITEM_ID).orElseThrow();
+
+        assertThat(second.documents()).isEqualTo(first.documents());
+        assertThat(second.comments()).isEqualTo(first.comments());
+        assertThat(second.assets()).isEqualTo(first.assets());
+        assertThat(second.reviews()).isEqualTo(first.reviews());
+        // Records are value types, so this pins the whole snapshot, not just the four lists.
+        assertThat(second).isEqualTo(first);
     }
 }

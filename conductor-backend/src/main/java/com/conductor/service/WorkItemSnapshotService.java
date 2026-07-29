@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +40,33 @@ public class WorkItemSnapshotService {
 
     private static final String TRUNCATION_MARKER =
             "\n\n[... truncated at " + (MAX_DOCUMENT_CONTENT_BYTES / 1024) + " KB; content continues beyond this point ...]";
+
+    /*
+     * Every list this service returns is sorted on a stable business key, because a consumer hashes the
+     * assembled snapshot: KnowledgeSignalSink's dedup key is sha256(payload), and that only collapses two
+     * dispatches about the same Work Item (a LifecycleTriggerDispatcher cascade) if both assemble to the
+     * exact same bytes. The finders below (findByWorkItemId / findAllByWorkItemId) carry no ORDER BY, and
+     * Postgres guarantees no order without one -- same-transaction repeats usually agree, which is exactly
+     * what would make the resulting double-file intermittent rather than obvious. Sorting here rather than
+     * adding ORDER BY to the shared finders keeps their semantics untouched for their other callers, and
+     * puts the ordering next to the contract that depends on it.
+     *
+     * nullsFirst throughout: none of these keys is non-null in the schema.
+     */
+    private static final Comparator<WorkItemSnapshot.Doc> DOC_ORDER =
+            Comparator.comparing(WorkItemSnapshot.Doc::filename, Comparator.nullsFirst(Comparator.naturalOrder()));
+
+    private static final Comparator<WorkItemSnapshot.Note> NOTE_ORDER =
+            Comparator.comparing(WorkItemSnapshot.Note::createdAt, Comparator.nullsFirst(Comparator.naturalOrder()))
+                    .thenComparing(WorkItemSnapshot.Note::id, Comparator.nullsFirst(Comparator.naturalOrder()));
+
+    private static final Comparator<WorkItemSnapshot.Artifact> ARTIFACT_ORDER =
+            Comparator.comparing(WorkItemSnapshot.Artifact::type, Comparator.nullsFirst(Comparator.naturalOrder()))
+                    .thenComparing(WorkItemSnapshot.Artifact::ref, Comparator.nullsFirst(Comparator.naturalOrder()));
+
+    private static final Comparator<WorkItemSnapshot.Verdict> VERDICT_ORDER =
+            Comparator.comparing(WorkItemSnapshot.Verdict::submittedAt, Comparator.nullsFirst(Comparator.naturalOrder()))
+                    .thenComparing(WorkItemSnapshot.Verdict::reviewerName, Comparator.nullsFirst(Comparator.naturalOrder()));
 
     private final WorkItemRepository workItemRepository;
     private final DocumentRepository documentRepository;
@@ -106,10 +134,10 @@ public class WorkItemSnapshotService {
                 assignee != null ? displayName(assignee) : null,
                 workItem.getCreatedAt(),
                 workItem.getUpdatedAt(),
-                documents.stream().map(this::toDoc).toList(),
-                comments.stream().map(this::toNote).toList(),
-                assets.stream().map(this::toArtifact).toList(),
-                reviews.stream().map(r -> toVerdict(r, reviewerNames)).toList());
+                documents.stream().map(this::toDoc).sorted(DOC_ORDER).toList(),
+                comments.stream().map(this::toNote).sorted(NOTE_ORDER).toList(),
+                assets.stream().map(this::toArtifact).sorted(ARTIFACT_ORDER).toList(),
+                reviews.stream().map(r -> toVerdict(r, reviewerNames)).sorted(VERDICT_ORDER).toList());
     }
 
     /**
