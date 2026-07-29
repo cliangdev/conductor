@@ -151,6 +151,29 @@ describe('knowledge MCP tools', () => {
     )
   })
 
+  it('write_knowledge_pages includes skipped in the body when given', async () => {
+    ;(apiPost as ReturnType<typeof vi.fn>).mockResolvedValue({ results: [] })
+    await writeKnowledgePages(
+      { writes: [], skipped: [{ sourceId: 's1', reason: 'not material' }] },
+      config
+    )
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/knowledge/pages/batch-write',
+      { writes: [], skipped: [{ sourceId: 's1', reason: 'not material' }] },
+      config
+    )
+  })
+
+  it('write_knowledge_pages omits skipped from the body when not given', async () => {
+    ;(apiPost as ReturnType<typeof vi.fn>).mockResolvedValue({ results: [] })
+    await writeKnowledgePages({ writes: [{ path: 'a.md', content: 'x' }] }, config)
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v1/projects/proj-1/knowledge/pages/batch-write',
+      { writes: [{ path: 'a.md', content: 'x' }] },
+      config
+    )
+  })
+
   it('write_knowledge_pages surfaces a 409 conflict as structured data, not a thrown error', async () => {
     const conflictBody = JSON.stringify({
       type: 'about:blank',

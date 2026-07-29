@@ -14,6 +14,7 @@ import com.conductor.generated.model.KnowledgePageView;
 import com.conductor.generated.model.KnowledgePageWrite;
 import com.conductor.generated.model.KnowledgePageWriteResult;
 import com.conductor.generated.model.KnowledgeSearchHit;
+import com.conductor.generated.model.KnowledgeSkippedSource;
 import com.conductor.generated.model.KnowledgeSourceCounts;
 import com.conductor.generated.model.KnowledgeSourceDto;
 import com.conductor.generated.model.KnowledgeSourceReceipt;
@@ -36,6 +37,7 @@ import com.conductor.knowledge.page.PageWrite;
 import com.conductor.knowledge.page.PageWriteResult;
 import com.conductor.knowledge.page.RevisionView;
 import com.conductor.knowledge.page.SearchHit;
+import com.conductor.knowledge.page.SkippedSource;
 import com.conductor.security.ProjectScopedPrincipal;
 import com.conductor.service.ProjectSecurityService;
 import org.springframework.http.ResponseEntity;
@@ -167,7 +169,10 @@ public class KnowledgeController implements KnowledgeApi {
         List<PageWrite> writes = request.getWrites().stream()
                 .map(this::toDomain)
                 .toList();
-        List<PageWriteResult> results = pageService.batchWrite(projectId, writes, request.getSourceIds(), caller.actor());
+        List<SkippedSource> skipped = request.getSkipped() == null ? List.of()
+                : request.getSkipped().stream().map(this::toDomain).toList();
+        List<PageWriteResult> results =
+                pageService.batchWrite(projectId, writes, request.getSourceIds(), skipped, caller.actor());
 
         KnowledgePageBatchWriteResponse response = new KnowledgePageBatchWriteResponse();
         response.setResults(results.stream().map(this::toDto).toList());
@@ -330,6 +335,10 @@ public class KnowledgeController implements KnowledgeApi {
 
     private PageWrite toDomain(KnowledgePageWrite w) {
         return new PageWrite(w.getPath(), w.getContent(), w.getBaseVersion(), Boolean.TRUE.equals(w.getDelete()));
+    }
+
+    private SkippedSource toDomain(KnowledgeSkippedSource s) {
+        return new SkippedSource(s.getSourceId(), s.getReason());
     }
 
     private KnowledgePageWriteResult toDto(PageWriteResult r) {

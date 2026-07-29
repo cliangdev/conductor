@@ -5055,10 +5055,12 @@ paths:
       description: >-
         Applies every write atomically with optimistic concurrency (`baseVersion`): any conflict across
         the whole batch aborts it entirely (nothing written) — see the 409 response. On success, rebuilds
-        each written page's link graph and, if `sourceIds` is supplied, marks those ingestion sources
-        PROCESSED in the same transaction so a crash never leaves a source silently re-processed or a
-        write silently lost. The write's `actor`/origin provenance is derived server-side from the
-        caller's auth, never accepted from the client.
+        each written page's link graph and, if `sourceIds`/`skipped` are supplied, marks those ingestion
+        sources PROCESSED/SKIPPED (respectively) in the same transaction so a crash never leaves a source
+        silently re-processed or a write silently lost. `writes` may be empty when `sourceIds`/`skipped`
+        cover the batch, to settle sources with no page change. A source id must appear in at most one of
+        `sourceIds`/`skipped` — both is a 400. The write's `actor`/origin provenance is derived
+        server-side from the caller's auth, never accepted from the client.
       operationId: batchWriteKnowledgePages
       security:
         - bearerAuth: []
@@ -5082,7 +5084,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/KnowledgePageBatchWriteResponse'
         '400':
-          description: Invalid path, or a duplicate path within the batch
+          description: >-
+            Invalid path, a duplicate path within the batch, a `skipped` entry with a blank/null
+            sourceId or reason, or a source id present in both `sourceIds` and `skipped`.
           content:
             application/json:
               schema:
@@ -8234,6 +8238,18 @@ components:
           type: boolean
           default: false
 
+    KnowledgeSkippedSource:
+      type: object
+      required:
+        - sourceId
+        - reason
+      properties:
+        sourceId:
+          type: string
+        reason:
+          type: string
+          description: Why this source was reviewed and deliberately not filed. Required -- shown to a human in the Inbox.
+
     KnowledgePageBatchWriteRequest:
       type: object
       required:
@@ -8249,6 +8265,15 @@ components:
           items:
             type: string
           description: Ingestion sources this batch was derived from. Marked PROCESSED in the same transaction on success.
+        skipped:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/KnowledgeSkippedSource'
+          description: >-
+            Ingestion sources this batch reviewed and deliberately did not file. Marked SKIPPED with the
+            given reason in the same transaction on success. A source id must appear in at most one of
+            `sourceIds`/`skipped` -- both is a 400.
 
     KnowledgePageWriteResult:
       type: object

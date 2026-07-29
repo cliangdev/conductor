@@ -43,6 +43,7 @@ public class KnowledgePageService {
     static final String VIRTUAL_LOG = "log.md";
     private static final int MAX_PATH_LENGTH = 512;
     private static final int LOG_REVISION_LIMIT = 100;
+    private static final int MAX_SKIP_REASON_LENGTH = 2000;
 
     private static final Pattern PATH_PATTERN = Pattern.compile("^[a-z0-9_][a-z0-9_/.-]*\\.md$");
     private static final Pattern MARKDOWN_LINK = Pattern.compile("\\[[^\\]]*]\\(([^)]+)\\)");
@@ -91,16 +92,25 @@ public class KnowledgePageService {
      * page the caller thinks they're updating has vanished). Deletes require an exact {@code baseVersion}
      * match against a live page.
      *
-     * <p>{@code writes} may be empty while {@code sourceIds} is not: that's the librarian's explicit "no
-     * wiki change needed" ack for a batch, and still marks those sources PROCESSED so they don't rot
-     * through the stale-processing sweep into DEAD.
+     * <p>{@code writes} may be empty while {@code sourceIds} and/or {@code skipped} are not: that's the
+     * librarian settling a batch it read in full without a page-worthy change from every source in it --
+     * {@code sourceIds} marks its filed sources PROCESSED, {@code skipped} marks its declined sources
+     * SKIPPED with the librarian's reason, so neither rots through the stale-processing sweep into DEAD.
+     * A source id must belong to exactly one of the two lists -- appearing in both throws a
+     * {@link BusinessException}, since {@code markProcessed} runs first and a silent PROCESSED win would
+     * drop the skip reason with no signal. A {@code skipped} entry with a blank/null {@code reason} or
+     * {@code sourceId} throws for the same reason: the reason is the entire point of a skip. A
+     * {@code skipped} entry referencing a source outside this batch, or one that already settled
+     * (PROCESSED/DEAD), is left to {@link KnowledgeSourceRepository#markSkipped}'s own guard to silently
+     * no-op -- aborting an otherwise-good batch over one rotted id is strictly worse.
      */
     @Transactional
-    public List<PageWriteResult> batchWrite(String projectId, List<PageWrite> writes, List<String> sourceIds, Actor actor) {
+    public List<PageWriteResult> batchWrite(String projectId, List<PageWrite> writes, List<String> sourceIds,
+                                            List<SkippedSource> skipped, Actor actor) {
+        List<SkippedSource> normalizedSkips = validateAndNormalizeSkips(sourceIds, skipped);
+
         if (writes == null || writes.isEmpty()) {
-            if (sourceIds != null && !sourceIds.isEmpty()) {
-                markSourcesProcessed(projectId, sourceIds);
-            }
+            markSources(projectId, sourceIds, normalizedSkips);
             return List.of();
         }
 
@@ -153,11 +163,31 @@ public class KnowledgePageService {
             results.add(p.delete() ? applyDelete(p, sourceIds, actorMap) : applyUpsert(projectId, p, sourceIds, actorMap));
         }
 
+        markSources(projectId, sourceIds, normalizedSkips);
+
+        return results;
+    }
+
+    /**
+     * Four-arg overload for callers that only ever settle a batch via {@code sourceIds} -- the system
+     * seeds ({@code KnowledgeWorkflowProvisioner}, {@code KnowledgeDomainService}) that write classpath
+     * template pages and never skip an ingestion source. Equivalent to passing an empty {@code skipped}.
+     */
+    @Transactional
+    public List<PageWriteResult> batchWrite(String projectId, List<PageWrite> writes, List<String> sourceIds, Actor actor) {
+        return batchWrite(projectId, writes, sourceIds, List.of(), actor);
+    }
+
+    /** Marks {@code sourceIds} PROCESSED and {@code skipped} SKIPPED -- called on both the empty-writes
+     *  ack path and the normal write path, so a batch that is entirely skips with no page writes still
+     *  settles its sources instead of silently marking nothing. */
+    private void markSources(String projectId, List<String> sourceIds, List<SkippedSource> skipped) {
         if (sourceIds != null && !sourceIds.isEmpty()) {
             markSourcesProcessed(projectId, sourceIds);
         }
-
-        return results;
+        if (skipped != null && !skipped.isEmpty()) {
+            markSourcesSkipped(projectId, skipped);
+        }
     }
 
     private void markSourcesProcessed(String projectId, List<String> sourceIds) {
@@ -166,6 +196,80 @@ public class KnowledgePageService {
             log.warn("markProcessed updated {}/{} sources for project {} -- the rest were already "
                     + "PROCESSED/DEAD or don't exist", updated, sourceIds.size(), projectId);
         }
+    }
+
+    /** Marks each distinct reason's id group SKIPPED in one statement -- {@link
+     *  KnowledgeSourceRepository#markSkipped} takes one reason per id set, so a 10-source batch with a
+     *  handful of distinct reasons is a handful of statements, not ten. Same short-count-is-fine posture
+     *  as {@link #markSourcesProcessed}: a stale, duplicate, or already-settled id here just means fewer
+     *  rows moved, not a failed batch. */
+    private void markSourcesSkipped(String projectId, List<SkippedSource> skipped) {
+        Map<String, List<String>> idsByReason = new LinkedHashMap<>();
+        for (SkippedSource skip : skipped) {
+            idsByReason.computeIfAbsent(skip.reason(), r -> new ArrayList<>()).add(skip.sourceId());
+        }
+        for (Map.Entry<String, List<String>> entry : idsByReason.entrySet()) {
+            List<String> ids = entry.getValue();
+            int updated = sourceRepository.markSkipped(projectId, ids, entry.getKey());
+            if (updated < ids.size()) {
+                log.warn("markSkipped updated {}/{} sources for project {} -- the rest were already "
+                        + "PROCESSED/DEAD, don't exist, or weren't part of this batch", updated, ids.size(), projectId);
+            }
+        }
+    }
+
+    /**
+     * Validates {@code skipped} against {@code sourceIds} and against itself, and normalizes every
+     * surviving entry's reason. Strict failures (thrown as {@link BusinessException}, aborting the whole
+     * batch before anything is written) are the ones a model can't safely recover from: a source id
+     * claimed by both lists (a later {@code markProcessed} would silently win over {@code markSkipped}'s
+     * guard, dropping the reason with no signal), or a skip with a blank/null {@code sourceId}/{@code
+     * reason}. A duplicate id within {@code skipped} itself is permissive -- the first occurrence wins,
+     * silently.
+     */
+    private List<SkippedSource> validateAndNormalizeSkips(List<String> sourceIds, List<SkippedSource> skipped) {
+        if (skipped == null || skipped.isEmpty()) {
+            return List.of();
+        }
+        Set<String> processedIds = sourceIds == null ? Set.of() : new HashSet<>(sourceIds);
+        List<SkippedSource> normalized = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (SkippedSource skip : skipped) {
+            if (skip.sourceId() == null || skip.sourceId().isBlank()) {
+                throw new BusinessException("Every skipped entry requires a sourceId");
+            }
+            String sourceId = skip.sourceId();
+            if (processedIds.contains(sourceId)) {
+                throw new BusinessException("Source " + sourceId + " appears in both sourceIds and skipped -- "
+                        + "a source is either filed (PROCESSED) or deliberately not filed (SKIPPED), never both");
+            }
+            if (!seen.add(sourceId)) {
+                continue;
+            }
+            normalized.add(new SkippedSource(sourceId, normalizeSkipReason(sourceId, skip.reason())));
+        }
+        return normalized;
+    }
+
+    /**
+     * Collapses whitespace and trims -- a later commit renders {@code skip_reason} as a single Markdown
+     * bullet in the Inbox, and an embedded newline/tab would break that list -- then truncates to {@value
+     * #MAX_SKIP_REASON_LENGTH} chars with a warning ({@code skip_reason} is TEXT so the DB won't
+     * complain, but a model dumping page-sized content into it poisons the UI). Throws on a blank reason:
+     * the reason is the entire point of a skip. Named/shaped for a sibling "not worth filing" dismissal
+     * path to reuse verbatim.
+     */
+    private String normalizeSkipReason(String sourceId, String rawReason) {
+        if (rawReason == null || rawReason.isBlank()) {
+            throw new BusinessException("skipped entry for source " + sourceId + " requires a non-blank reason");
+        }
+        String normalized = rawReason.replaceAll("\\s+", " ").trim();
+        if (normalized.length() > MAX_SKIP_REASON_LENGTH) {
+            log.warn("Skip reason for source {} truncated from {} to {} characters",
+                    sourceId, normalized.length(), MAX_SKIP_REASON_LENGTH);
+            normalized = normalized.substring(0, MAX_SKIP_REASON_LENGTH);
+        }
+        return normalized;
     }
 
     private KnowledgeConflictException.Conflict conflictFor(String path, KnowledgePage current) {
@@ -222,6 +326,8 @@ public class KnowledgePageService {
         return new PageWriteResult(p.path(), newVersion, page.getContentHash());
     }
 
+    // Deliberately takes sourceIds only, never skipped -- knowledge_revision_sources means "this source
+    // fed this edit", and a skipped source fed nothing into the page it was reviewed alongside.
     private void saveRevision(KnowledgePage page, int version, Map<String, Object> frontmatter, String body, String hash,
                               KnowledgePageRevision.ChangeKind changeKind, Map<String, Object> actorMap, List<String> sourceIds) {
         KnowledgePageRevision revision = new KnowledgePageRevision();

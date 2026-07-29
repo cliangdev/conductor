@@ -186,6 +186,117 @@ class KnowledgePageServiceIntegrationTest extends AbstractNoneWebIntegrationTest
                 .isEqualTo(KnowledgeSourceStatus.SKIPPED);
     }
 
+    /**
+     * The headline mixed-batch case: some sources filed into a page, some deliberately skipped, in one
+     * transaction. Guards that {@code sourceIds}/{@code skipped} settle independently of each other and
+     * of the page writes.
+     */
+    @Test
+    void mixedBatchLeavesFiledSourcesProcessedAndSkippedSourcesSkippedWithReason() {
+        KnowledgeSource processed1 = newSource("slack-message", "slack://C1/1");
+        KnowledgeSource processed2 = newSource("slack-message", "slack://C1/2");
+        KnowledgeSource processed3 = newSource("slack-message", "slack://C1/3");
+        KnowledgeSource skipped1 = newSource("slack-message", "slack://C1/4");
+        KnowledgeSource skipped2 = newSource("slack-message", "slack://C1/5");
+        KnowledgeSource skipped3 = newSource("slack-message", "slack://C1/6");
+        KnowledgeSource skipped4 = newSource("slack-message", "slack://C1/7");
+
+        pageService.batchWrite(projectId,
+                List.of(new PageWrite("notes/a.md", doc("note", "A", "Body A."), null, false),
+                        new PageWrite("notes/b.md", doc("note", "B", "Body B."), null, false)),
+                List.of(processed1.getId(), processed2.getId(), processed3.getId()),
+                List.of(new SkippedSource(skipped1.getId(), "duplicate of notes/a.md"),
+                        new SkippedSource(skipped2.getId(), "duplicate of notes/a.md"),
+                        new SkippedSource(skipped3.getId(), "not material"),
+                        new SkippedSource(skipped4.getId(), "off-topic")),
+                new Actor("user", "u1", null));
+
+        assertThat(sourceRepository.findById(processed1.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.PROCESSED);
+        assertThat(sourceRepository.findById(processed2.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.PROCESSED);
+        assertThat(sourceRepository.findById(processed3.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.PROCESSED);
+
+        KnowledgeSource reloaded1 = sourceRepository.findById(skipped1.getId()).orElseThrow();
+        assertThat(reloaded1.getStatus()).isEqualTo(KnowledgeSourceStatus.SKIPPED);
+        assertThat(reloaded1.getSkipReason()).isEqualTo("duplicate of notes/a.md");
+
+        KnowledgeSource reloaded2 = sourceRepository.findById(skipped2.getId()).orElseThrow();
+        assertThat(reloaded2.getStatus()).isEqualTo(KnowledgeSourceStatus.SKIPPED);
+        assertThat(reloaded2.getSkipReason()).isEqualTo("duplicate of notes/a.md");
+
+        KnowledgeSource reloaded3 = sourceRepository.findById(skipped3.getId()).orElseThrow();
+        assertThat(reloaded3.getStatus()).isEqualTo(KnowledgeSourceStatus.SKIPPED);
+        assertThat(reloaded3.getSkipReason()).isEqualTo("not material");
+
+        KnowledgeSource reloaded4 = sourceRepository.findById(skipped4.getId()).orElseThrow();
+        assertThat(reloaded4.getStatus()).isEqualTo(KnowledgeSourceStatus.SKIPPED);
+        assertThat(reloaded4.getSkipReason()).isEqualTo("off-topic");
+    }
+
+    /**
+     * Guards the restructured early return ({@code batchWrite}'s empty-{@code writes} path): a batch
+     * that is entirely skips with no page changes must still settle its sources, not silently mark
+     * nothing.
+     */
+    @Test
+    void emptyWritesWithOnlySkippedStillMarksSourcesSkipped() {
+        KnowledgeSource source1 = newSource("slack-message", "slack://C1/only-skip-1");
+        KnowledgeSource source2 = newSource("slack-message", "slack://C1/only-skip-2");
+
+        List<PageWriteResult> results = pageService.batchWrite(projectId, List.of(), List.of(),
+                List.of(new SkippedSource(source1.getId(), "nothing new here"),
+                        new SkippedSource(source2.getId(), "nothing new here")),
+                new Actor("user", "u1", null));
+
+        assertThat(results).isEmpty();
+        assertThat(sourceRepository.findById(source1.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.SKIPPED);
+        assertThat(sourceRepository.findById(source2.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.SKIPPED);
+    }
+
+    /**
+     * Mirrors {@link #batchWriteDoesNotMoveASkippedSourceToProcessed} for the skip direction: a DEAD
+     * source referenced in {@code skipped} (e.g. a stale/duplicate reference) must not be silently
+     * revived, and must not fail the rest of the batch.
+     */
+    @Test
+    void deadSourceInSkippedIsNotMovedAndDoesNotFailTheBatch() {
+        KnowledgeSource dead = newSource("slack-message", "slack://C1/dead");
+        dead.setStatus(KnowledgeSourceStatus.DEAD);
+        sourceRepository.saveAndFlush(dead);
+        KnowledgeSource live = newSource("slack-message", "slack://C1/live");
+
+        List<PageWriteResult> results = pageService.batchWrite(projectId, List.of(), List.of(),
+                List.of(new SkippedSource(dead.getId(), "too late"), new SkippedSource(live.getId(), "too late")),
+                new Actor("user", "u1", null));
+
+        assertThat(results).isEmpty();
+        assertThat(sourceRepository.findById(dead.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.DEAD);
+        assertThat(sourceRepository.findById(live.getId()).orElseThrow().getStatus())
+                .isEqualTo(KnowledgeSourceStatus.SKIPPED);
+    }
+
+    /** {@code knowledge_revision_sources} means "this source fed this edit" -- a skipped source fed
+     *  nothing, so revision provenance must link only {@code sourceIds}, never {@code skipped} ids. */
+    @Test
+    void revisionsLinkOnlySourceIdsNeverSkippedIds() {
+        KnowledgeSource filed = newSource("slack-message", "slack://C1/filed");
+        KnowledgeSource skipped = newSource("slack-message", "slack://C1/declined");
+
+        pageService.batchWrite(projectId,
+                List.of(new PageWrite("notes/c.md", doc("note", "C", "Body C."), null, false)),
+                List.of(filed.getId()), List.of(new SkippedSource(skipped.getId(), "not material")),
+                new Actor("user", "u1", null));
+
+        List<RevisionView> revisions = pageService.getRevisions(projectId, "notes/c.md");
+        assertThat(revisions).hasSize(1);
+        assertThat(revisions.get(0).sourceRefs()).containsExactly("slack://C1/filed");
+    }
+
     private KnowledgeSource newSource(String sourceType, String sourceRef) {
         KnowledgeSource source = new KnowledgeSource();
         source.setProjectId(projectId);

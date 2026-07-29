@@ -31,6 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -82,7 +83,7 @@ class KnowledgeControllerTest {
     @Test
     void batchWrite_happyPath_returns200WithResults() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any()))
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any(), any()))
                 .thenReturn(List.of(new PageWriteResult("dir/page.md", 1, "abc123")));
 
         String body = """
@@ -103,7 +104,7 @@ class KnowledgeControllerTest {
     @Test
     void batchWrite_conflict_returns409WithConflictsArray() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any()))
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any(), any()))
                 .thenThrow(new KnowledgeConflictException(List.of(
                         new KnowledgeConflictException.Conflict("dir/page.md", 3, "---\ntype: doc\n---\n\nold"))));
 
@@ -125,7 +126,7 @@ class KnowledgeControllerTest {
     @Test
     void batchWrite_invalidFrontmatter_returns422() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any()))
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any(), any()))
                 .thenThrow(new FrontmatterException("Document is empty -- every page needs a frontmatter 'type'"));
 
         String body = """
@@ -152,6 +153,50 @@ class KnowledgeControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void batchWrite_acceptsAndForwardsSkipped() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), anyList(), any()))
+                .thenReturn(List.of());
+
+        String body = """
+                {"writes":[],"skipped":[{"sourceId":"src-1","reason":"not material"}]}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/batch-write")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.results.length()").value(0));
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<com.conductor.knowledge.page.SkippedSource>> skippedCaptor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(pageService)
+                .batchWrite(eq(PROJECT_ID), anyList(), any(), skippedCaptor.capture(), any());
+        assertThat(skippedCaptor.getValue()).containsExactly(
+                new com.conductor.knowledge.page.SkippedSource("src-1", "not material"));
+    }
+
+    @Test
+    void batchWrite_sourceIdInBothListsReturns400() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), anyList(), any()))
+                .thenThrow(new com.conductor.exception.BusinessException(
+                        "Source src-1 appears in both sourceIds and skipped"));
+
+        String body = """
+                {"writes":[],"sourceIds":["src-1"],"skipped":[{"sourceId":"src-1","reason":"not material"}]}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/batch-write")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
     }
 
     // ---- submitKnowledgeSource ----
