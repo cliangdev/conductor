@@ -8,6 +8,7 @@ import com.conductor.integration.ConnectorData;
 import com.conductor.integration.ConnectorHealth;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.FetchConnector;
+import com.conductor.integration.OAuthReauthRequiredException;
 import com.conductor.repository.ConnectionDataCacheRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -85,7 +86,16 @@ public class IntegrationFetchService {
         if (ctx.accessToken() == null && !storesNoAccessToken(conn.getAuthType())) {
             return ConnectorData.setupRequired("Integration not connected — add credentials in Settings");
         }
-        ctx = maybeRefreshToken(conn, ctx);
+        try {
+            ctx = maybeRefreshToken(conn, ctx);
+        } catch (OAuthReauthRequiredException e) {
+            // The refresh token is permanently dead — calling the connector anyway would just burn
+            // an API call to relearn the same 401. Short-circuit like the "never connected" case above.
+            log.warn("Reauth required for connection={}: {}", connectionId, e.getMessage());
+            return ConnectorData.setupRequired(
+                    "Google access expired or was revoked — reconnect this integration.",
+                    Map.of("oauthConnected", false));
+        }
 
         final ConnectionContext finalCtx = ctx;
         ConnectorData result;
@@ -140,6 +150,10 @@ public class IntegrationFetchService {
                 // treat the new token as already expired.
                 return new ConnectionContext(ctx.projectId(), ctx.connectorId(), ctx.connectionId(),
                         newToken, ctx.refreshToken(), null, ctx.config(), ctx.webhookSecret());
+            } catch (OAuthReauthRequiredException e) {
+                // Permanent failure — let the caller short-circuit instead of fetching with a token
+                // we already know is dead.
+                throw e;
             } catch (Exception e) {
                 log.warn("Token refresh failed for connection={}: {}", conn.getId(), e.getMessage());
             }

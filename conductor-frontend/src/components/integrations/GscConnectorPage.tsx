@@ -51,6 +51,9 @@ interface DeviceRow extends DimensionClicks { device: string }
 /** Shape of the connector-specific `data` blob inside ConnectionDataResponse. */
 interface GscData {
   siteUrl?: string;
+  /** Only present on SETUP_REQUIRED responses — distinguishes "never connected" (false, show the
+   * OAuth button again) from "connected, just needs a property" (true, show the property picker). */
+  oauthConnected?: boolean;
   trend?: TrendPoint[];
   topQueries?: QueryRow[];
   brandedClickShare?: number;
@@ -191,7 +194,10 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
   const effectiveSiteUrl = siteUrl || savedSiteUrl;
 
   if (health === 'SETUP_REQUIRED' || !response) {
-    const oauthConnected = connectionId != null;
+    // The backend tells us explicitly when OAuth itself needs to be redone (e.g. a dead refresh
+    // token) via data.oauthConnected=false — a stored connection row alone doesn't mean the grant
+    // still works, so don't infer "connected" purely from connectionId existing.
+    const oauthConnected = data?.oauthConnected ?? (connectionId != null);
 
     return (
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -364,14 +370,29 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
         <HealthDot ok={true} label="Google connected" />
         <HealthDot
           ok={health === 'HEALTHY'}
-          label={data?.siteUrl ? `Property: ${data.siteUrl}` : 'Property not accessible'}
+          // health is HEALTHY or DEGRADED here (SETUP_REQUIRED returns above) — an empty siteUrl on
+          // a DEGRADED response just means the last attempt didn't get far enough to know, not that
+          // the property specifically is inaccessible (e.g. it could be a dead OAuth token instead).
+          label={data?.siteUrl ? `Property: ${data.siteUrl}` : 'Property status unknown — see below'}
         />
       </div>
 
       {errorBanner && (
         <Alert variant="warning" className="mb-4 text-xs">
-          <p className="font-medium">Fetch issue</p>
-          <p className="mt-0.5 break-words">{errorBanner}</p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-medium">Fetch issue</p>
+              <p className="mt-0.5 break-words">{errorBanner}</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleAuthorize}
+              disabled={authorizing}
+              className="shrink-0 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              {authorizing ? 'Redirecting…' : 'Reconnect Google'}
+            </button>
+          </div>
         </Alert>
       )}
 

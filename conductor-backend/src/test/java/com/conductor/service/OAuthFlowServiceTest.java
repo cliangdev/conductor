@@ -8,6 +8,7 @@ import com.conductor.integration.ConnectorMetadata;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.OAuth2Connector;
+import com.conductor.integration.OAuthReauthRequiredException;
 import com.conductor.integration.connector.gsc.GscConnector;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,9 +20,12 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.OffsetDateTime;
@@ -249,6 +253,54 @@ class OAuthFlowServiceTest {
         MultiValueMapAssertHelper.assertContains(requestCaptor.getValue(), "client_secret", "acme-client-secret");
         MultiValueMapAssertHelper.assertContains(requestCaptor.getValue(), "refresh_token", "refresh-456");
         verify(connectionService).updateAccessToken(eq(conn), eq("new-access"), any(OffsetDateTime.class));
+    }
+
+    @Test
+    void refreshAccessTokenOnInvalidGrantThrowsReauthRequired() {
+        FakeOAuth2Connector connector = new FakeOAuth2Connector();
+        Connection conn = new Connection();
+        conn.setId("conn-1");
+        conn.setConnectorId("acme");
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(connector));
+        when(environment.getProperty("ACME_OAUTH_CLIENT_ID", "")).thenReturn("acme-client-id");
+        when(environment.getProperty("ACME_OAUTH_CLIENT_SECRET", "")).thenReturn("acme-client-secret");
+
+        HttpClientErrorException invalidGrant = HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", new HttpHeaders(),
+                "{\"error\": \"invalid_grant\", \"error_description\": \"Token has been expired or revoked.\"}"
+                        .getBytes(), null);
+        when(restTemplate.exchange(eq("https://acme.example.com/oauth/token"), eq(HttpMethod.POST),
+                any(HttpEntity.class), eq(Map.class)))
+                .thenThrow(invalidGrant);
+
+        assertThatThrownBy(() -> service.refreshAccessToken(conn, "refresh-456"))
+                .isInstanceOf(OAuthReauthRequiredException.class)
+                .hasMessageContaining("conn-1");
+        verify(connectionService, never()).updateAccessToken(any(), any(), any());
+    }
+
+    @Test
+    void refreshAccessTokenOnOtherClientErrorRethrowsAsIs() {
+        FakeOAuth2Connector connector = new FakeOAuth2Connector();
+        Connection conn = new Connection();
+        conn.setId("conn-1");
+        conn.setConnectorId("acme");
+        when(connectorRegistry.findOAuth2("acme")).thenReturn(Optional.of(connector));
+        when(environment.getProperty("ACME_OAUTH_CLIENT_ID", "")).thenReturn("acme-client-id");
+        when(environment.getProperty("ACME_OAUTH_CLIENT_SECRET", "")).thenReturn("acme-client-secret");
+
+        HttpClientErrorException rateLimited = HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS, "Too Many Requests", new HttpHeaders(),
+                "{\"error\": \"rate_limit_exceeded\"}".getBytes(), null);
+        when(restTemplate.exchange(eq("https://acme.example.com/oauth/token"), eq(HttpMethod.POST),
+                any(HttpEntity.class), eq(Map.class)))
+                .thenThrow(rateLimited);
+
+        // A transient failure must NOT be reclassified as a permanent reauth requirement — the
+        // caller (IntegrationFetchService) treats these very differently.
+        assertThatThrownBy(() -> service.refreshAccessToken(conn, "refresh-456"))
+                .isInstanceOf(HttpClientErrorException.class)
+                .isNotInstanceOf(OAuthReauthRequiredException.class);
     }
 
     @Test
