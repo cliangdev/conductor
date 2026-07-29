@@ -9,6 +9,7 @@ import com.conductor.service.ProjectSettingsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -68,6 +69,7 @@ public class KnowledgeIngestScheduler {
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowRunRepository workflowRunRepository;
     private final LibrarianDispatchService dispatchService;
+    private final boolean enabled;
 
     /** Self-reference so {@code @Transactional(REQUIRES_NEW)} helpers run through the Spring proxy. */
     @Autowired
@@ -78,16 +80,31 @@ public class KnowledgeIngestScheduler {
                                     ProjectSettingsService projectSettingsService,
                                     WorkflowDefinitionRepository workflowRepository,
                                     WorkflowRunRepository workflowRunRepository,
-                                    LibrarianDispatchService dispatchService) {
+                                    LibrarianDispatchService dispatchService,
+                                    @Value("${conductor.knowledge.ingest-scheduler.enabled:true}") boolean enabled) {
         this.sourceRepository = sourceRepository;
         this.projectSettingsService = projectSettingsService;
         this.workflowRepository = workflowRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.dispatchService = dispatchService;
+        this.enabled = enabled;
     }
 
+    /**
+     * {@code enabled} gates BOTH the automatic {@code @Scheduled} firing and a test's direct manual
+     * call — see {@code src/test/resources/application.properties}'s {@code
+     * conductor.knowledge.ingest-scheduler.enabled=false} for why: every subclass of {@code
+     * AbstractPostgresIntegrationTest} shares ONE Postgres database (and one cached Spring context), so
+     * this bean's live tick firing every 30s would let it claim/dispatch another test's just-inserted
+     * sources out from under it. Same fix already applied to {@code ConnectorFeedScheduler}. The one
+     * test that needs this scheduler live ({@code KnowledgeIngestSchedulerIntegrationTest}) carries its
+     * own private {@code @Container} plus {@code @TestPropertySource} to flip it back on in isolation.
+     */
     @Scheduled(fixedDelay = 30_000)
     public void poll() {
+        if (!enabled) {
+            return;
+        }
         dispatchDueProjects();
         sweepStaleProcessing();
     }
