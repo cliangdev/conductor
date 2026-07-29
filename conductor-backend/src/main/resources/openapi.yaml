@@ -6601,6 +6601,11 @@ components:
         area:
           type: string
           description: Nav-grouping slug; single-Workflow Areas render flat. (COND-18)
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: Free-text grouping label. "default" and "system" are reserved.
         schemaVersion:
           type: integer
           description: Version of the workflow-definition schema this definition targets. (COND-18)
@@ -6653,6 +6658,11 @@ components:
         area:
           type: string
           description: Nav-grouping slug (e.g. "marketing", "engineering")
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: Free-text grouping label. "default" and "system" are reserved.
         yaml:
           type: string
           description: YAML automation workflow definition
@@ -6670,6 +6680,13 @@ components:
         area:
           type: string
           description: Nav-grouping slug (e.g. "marketing", "engineering")
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: >-
+            Free-text grouping label. Omit (or send null) to leave unchanged.
+            "default" and "system" are reserved.
         yaml:
           type: string
           description: YAML automation workflow definition
@@ -7563,6 +7580,11 @@ components:
           description: >-
             Always present -- the server derives a deterministic default from the agent's slug when
             none is explicitly set.
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: Free-text grouping label. "default" and "system" are reserved.
         isDefault:
           type: boolean
           description: >-
@@ -7615,6 +7637,11 @@ components:
           type: string
           enum: [gray, blue, amber, violet, teal, green, rose, slate]
           description: Optional. A deterministic default is derived from the slug when omitted.
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: Optional free-text grouping label. "default" and "system" are reserved.
 
     UpdateAgentRequest:
       type: object
@@ -7653,6 +7680,13 @@ components:
           type: string
           enum: [gray, blue, amber, violet, teal, green, rose, slate]
           description: Optional. Omit to leave unchanged.
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: >-
+            Free-text grouping label. Omit (or send null) to leave unchanged.
+            "default" and "system" are reserved.
 
     SetProviderCredentialRequest:
       type: object

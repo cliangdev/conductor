@@ -67,14 +67,14 @@ class AgentServiceTest {
     }
 
     private AgentService.AgentInput onlyToolIds(List<String> toolIds) {
-        return new AgentService.AgentInput(null, null, null, null, null, null, null, toolIds, null, null, null);
+        return new AgentService.AgentInput(null, null, null, null, null, null, null, toolIds, null, null, null, null);
     }
 
     @Test
     void update_explicitBlankModel_clearsPinBackToNull() {
         existingAgent();
         AgentService.AgentInput input =
-                new AgentService.AgentInput(null, null, null, null, "  ", null, null, null, null, null, null);
+                new AgentService.AgentInput(null, null, null, null, "  ", null, null, null, null, null, null, null);
 
         Agent updated = service.update(PROJECT_ID, AGENT_ID, input);
 
@@ -103,7 +103,7 @@ class AgentServiceTest {
     void update_blankDescription_clearsToNull() {
         existingAgent();
         AgentService.AgentInput input =
-                new AgentService.AgentInput(null, null, "", null, null, null, null, null, null, null, null);
+                new AgentService.AgentInput(null, null, "", null, null, null, null, null, null, null, null, null);
 
         Agent updated = service.update(PROJECT_ID, AGENT_ID, input);
 
@@ -114,7 +114,7 @@ class AgentServiceTest {
 
     private AgentService.AgentInput createInput(String avatarEmoji, String avatarColor) {
         return new AgentService.AgentInput(
-                "Test Agent", null, null, "claude", null, null, null, null, null, avatarEmoji, avatarColor);
+                "Test Agent", null, null, "claude", null, null, null, null, null, avatarEmoji, avatarColor, null);
     }
 
     @Test
@@ -151,7 +151,7 @@ class AgentServiceTest {
     void update_setsAvatarEmojiAndColor() {
         existingAgent();
         AgentService.AgentInput input =
-                new AgentService.AgentInput(null, null, null, null, null, null, null, null, null, "🚀", "rose");
+                new AgentService.AgentInput(null, null, null, null, null, null, null, null, null, "🚀", "rose", null);
 
         Agent updated = service.update(PROJECT_ID, AGENT_ID, input);
 
@@ -165,7 +165,7 @@ class AgentServiceTest {
         agent.setAvatarEmoji("🧠");
         agent.setAvatarColor("amber");
         AgentService.AgentInput input =
-                new AgentService.AgentInput(null, null, null, null, null, null, null, null, null, null, null);
+                new AgentService.AgentInput(null, null, null, null, null, null, null, null, null, null, null, null);
 
         Agent updated = service.update(PROJECT_ID, AGENT_ID, input);
 
@@ -177,11 +177,57 @@ class AgentServiceTest {
     void update_invalidAvatarColor_throwsBusinessException() {
         existingAgent();
         AgentService.AgentInput input =
-                new AgentService.AgentInput(null, null, null, null, null, null, null, null, null, null, "chartreuse");
+                new AgentService.AgentInput(null, null, null, null, null, null, null, null, null, null, "chartreuse", null);
 
         assertThatThrownBy(() -> service.update(PROJECT_ID, AGENT_ID, input))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid avatar color");
+    }
+
+    // ---- tag ----
+
+    private AgentService.AgentInput onlyTag(String tag) {
+        return new AgentService.AgentInput(null, null, null, null, null, null, null, null, null, null, null, tag);
+    }
+
+    @Test
+    void create_withReservedTag_throwsBusinessException() {
+        when(providerRegistry.findById("claude")).thenReturn(Optional.of(mock(ChatModelProvider.class)));
+        AgentService.AgentInput input = new AgentService.AgentInput(
+                "Test Agent", null, null, "claude", null, null, null, null, null, null, null, "  Default ");
+
+        assertThatThrownBy(() -> service.create(PROJECT_ID, input))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("is reserved");
+    }
+
+    @Test
+    void update_setsTag() {
+        existingAgent();
+
+        Agent updated = service.update(PROJECT_ID, AGENT_ID, onlyTag(" growth "));
+
+        assertThat(updated.getTag()).isEqualTo("growth");
+    }
+
+    @Test
+    void update_nullTag_leavesTagUnchanged() {
+        Agent agent = existingAgent();
+        agent.setTag("growth");
+
+        Agent updated = service.update(PROJECT_ID, AGENT_ID, onlyTag(null));
+
+        assertThat(updated.getTag()).isEqualTo("growth");
+    }
+
+    @Test
+    void update_blankTag_clearsToNull() {
+        Agent agent = existingAgent();
+        agent.setTag("growth");
+
+        Agent updated = service.update(PROJECT_ID, AGENT_ID, onlyTag(""));
+
+        assertThat(updated.getTag()).isNull();
     }
 
     // ---- delete guard ----
