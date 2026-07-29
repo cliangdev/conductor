@@ -63,14 +63,48 @@ class GcpCloudRunJobLauncherTest {
     }
 
     @Test
-    void initialFutureTimesOut_throwsCleanlyWithoutEverWaitingOnMetadata() throws Exception {
+    void initialFutureTimesOutAfterRetries_throwsLaunchUnconfirmedWithoutEverWaitingOnMetadata() throws Exception {
         stubRunJobAsync();
         when(initialFuture.get(20L, TimeUnit.SECONDS)).thenThrow(new TimeoutException("no ack"));
+
+        assertThatThrownBy(() -> launcher.startExecution(TARGET, TASK))
+                .isInstanceOf(CloudRunJobLauncher.LaunchUnconfirmedException.class)
+                .hasMessageContaining("did not acknowledge the RunJob request");
+
+        // 3 attempts at 20s each before giving up — a single timeout does not confirm nothing was created.
+        verify(initialFuture, times(3)).get(20L, TimeUnit.SECONDS);
+        verify(operationFuture, org.mockito.Mockito.never()).getMetadata();
+    }
+
+    @Test
+    void initialFutureResolvesOnRetry_proceedsNormally() throws Exception {
+        stubRunJobAsync();
+        when(initialFuture.get(20L, TimeUnit.SECONDS))
+                .thenThrow(new TimeoutException("no ack"))
+                .thenReturn(snapshot);
+        when(snapshot.getName()).thenReturn("op-1");
+        when(operationFuture.getMetadata()).thenReturn(metadataFuture);
+        Execution execution = Execution.newBuilder().setName("exec-1").build();
+        when(metadataFuture.get(30L, TimeUnit.SECONDS)).thenReturn(execution);
+
+        CloudRunJobLauncher.LaunchResult result = launcher.startExecution(TARGET, TASK);
+
+        assertThat(result.operationName()).isEqualTo("op-1");
+        assertThat(result.executionName()).contains("exec-1");
+        verify(initialFuture, times(2)).get(20L, TimeUnit.SECONDS);
+    }
+
+    @Test
+    void initialFutureReportsGenuineFailure_throwsImmediatelyWithoutRetrying() throws Exception {
+        stubRunJobAsync();
+        when(initialFuture.get(20L, TimeUnit.SECONDS))
+                .thenThrow(new ExecutionException("Cloud Run rejected the request", new RuntimeException()));
 
         assertThatThrownBy(() -> launcher.startExecution(TARGET, TASK))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Failed to start Cloud Run Job execution");
 
+        verify(initialFuture, times(1)).get(20L, TimeUnit.SECONDS);
         verify(operationFuture, org.mockito.Mockito.never()).getMetadata();
     }
 

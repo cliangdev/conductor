@@ -189,6 +189,40 @@ class ClaudeCodeContainerRunnerTest {
     }
 
     @Test
+    void launcherThrowsGenericException_failsWithClaudeLaunchError() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class)))
+                .thenThrow(new IllegalStateException("Cloud Run rejected the request"));
+
+        StepResult result = runner.run(context(Map.of()), invocation(List.of(), Map.of()));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).isEqualTo("CLAUDE_LAUNCH_ERROR");
+    }
+
+    @Test
+    void launcherThrowsLaunchUnconfirmed_failsWithDistinctInconclusiveErrorReason() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class)))
+                .thenThrow(new CloudRunJobLauncher.LaunchUnconfirmedException("Cloud Run did not acknowledge the request"));
+
+        StepResult result = runner.run(context(Map.of()), invocation(List.of(), Map.of()));
+
+        // Distinct from CLAUDE_LAUNCH_ERROR: this case is genuinely inconclusive (no operation name was
+        // ever obtained), not a confirmed failure -- see CloudRunJobLauncher.LaunchUnconfirmedException.
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).isEqualTo("CLOUD_RUN_LAUNCH_UNCONFIRMED");
+    }
+
+    @Test
     void missingActiveConnection_failsStepClearly() {
         when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
         when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");

@@ -46,9 +46,16 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
 
     private static final Logger log = LoggerFactory.getLogger(GcpCloudRunJobLauncher.class);
 
-    /** Bound on the RunJob operation's *creation* (a single fast RPC round trip) — a timeout here means
-     *  Cloud Run never even accepted the request, so nothing was started. */
-    private static final int INITIAL_FUTURE_TIMEOUT_SECONDS = 20;
+    /** Per-attempt bound on the RunJob operation's *creation* (normally a single fast RPC round trip).
+     *  A single timeout here does NOT reliably mean Cloud Run never accepted the request — under
+     *  control-plane load or client-side executor contention, the underlying future can sit unscheduled
+     *  (zero real RPC attempts made) for the whole window and still resolve on a later attempt, so this
+     *  is retried like {@link #METADATA_ATTEMPT_TIMEOUT_SECONDS} rather than treated as instantly fatal. */
+    private static final int INITIAL_FUTURE_ATTEMPT_TIMEOUT_SECONDS = 20;
+    /** Total initial-future wait budget ({@link #INITIAL_FUTURE_ATTEMPT_TIMEOUT_SECONDS} * this) before
+     *  giving up — at that point we still have no operation name, so unlike the metadata-wait fallback
+     *  this genuinely can't confirm or track the launch; see {@link LaunchUnconfirmedException}. */
+    private static final int INITIAL_FUTURE_MAX_ATTEMPTS = 3;
     /** Per-attempt bound on waiting for the operation's metadata (the actual {@link Execution}) to
      *  materialize — genuinely async, can be slow under cold-start/control-plane load. */
     private static final int METADATA_ATTEMPT_TIMEOUT_SECONDS = 30;
@@ -78,17 +85,7 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
                 .build();
 
         OperationFuture<Execution, Execution> operation = jobsClient.runJobAsync(request);
-
-        OperationSnapshot initial;
-        try {
-            // Resolves as soon as Cloud Run has acknowledged and is tracking the RunJob request — a
-            // fast, single RPC round trip. A timeout here means nothing was created: safe to treat as a
-            // definitive launch failure.
-            initial = operation.getInitialFuture().get(INITIAL_FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (ExecutionException | InterruptedException | TimeoutException e) {
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            throw new IllegalStateException("Failed to start Cloud Run Job execution: " + e.getMessage(), e);
-        }
+        OperationSnapshot initial = awaitInitialFuture(operation, target.jobName());
         String operationName = initial.getName();
         log.info("Cloud Run accepted RunJob request (operation {}) for job {}", operationName, target.jobName());
 
@@ -96,6 +93,37 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
         return executionName
                 .map(name -> LaunchResult.confirmed(operationName, name))
                 .orElseGet(() -> LaunchResult.unconfirmed(operationName));
+    }
+
+    /**
+     * Waits for Cloud Run to acknowledge and start tracking the RunJob request, retrying a per-attempt
+     * {@link TimeoutException} up to {@link #INITIAL_FUTURE_MAX_ATTEMPTS} times (same shape as {@link
+     * #awaitExecutionMetadata}) rather than failing on the first one — a lesson learned live: a run was
+     * observed where every attempt in a 20s window made zero real RPC calls (client-side executor
+     * contention), yet the RunJob request had in fact gone through and the container ran to completion,
+     * orphaned, because the caller had already been told the launch failed. An {@link ExecutionException}
+     * is different: Cloud Run itself reported the create-operation failed, which is definitive and thrown
+     * immediately. Only once the full retry budget is exhausted do we give up — and even then, we still
+     * don't know whether Cloud Run actually started the job, so that's raised as {@link
+     * CloudRunJobLauncher.LaunchUnconfirmedException} rather than folded into the same exception type as
+     * a confirmed failure.
+     */
+    private OperationSnapshot awaitInitialFuture(OperationFuture<Execution, Execution> operation, String jobName) {
+        for (int attempt = 1; attempt <= INITIAL_FUTURE_MAX_ATTEMPTS; attempt++) {
+            try {
+                return operation.getInitialFuture().get(INITIAL_FUTURE_ATTEMPT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                log.warn("Timed out waiting for Cloud Run to acknowledge the RunJob request (attempt {}/{}) for job {}",
+                        attempt, INITIAL_FUTURE_MAX_ATTEMPTS, jobName);
+            } catch (ExecutionException | InterruptedException e) {
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                throw new IllegalStateException("Failed to start Cloud Run Job execution: " + e.getMessage(), e);
+            }
+        }
+        throw new CloudRunJobLauncher.LaunchUnconfirmedException(
+                "Cloud Run did not acknowledge the RunJob request for job " + jobName
+                + " after " + INITIAL_FUTURE_MAX_ATTEMPTS + " attempts (" + (INITIAL_FUTURE_MAX_ATTEMPTS * INITIAL_FUTURE_ATTEMPT_TIMEOUT_SECONDS)
+                + "s) — this does not confirm the launch failed; a container may still be running unobserved");
     }
 
     /**
