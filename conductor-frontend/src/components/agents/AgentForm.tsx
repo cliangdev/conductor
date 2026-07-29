@@ -265,8 +265,11 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
               className={INPUT}
               value={maxToolTurns}
               onChange={(e) => setMaxToolTurns(e.target.value)}
-              placeholder="8"
+              placeholder="default"
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              Blank: unlimited on the Claude Code runtime, 8 on the API runtime.
+            </p>
           </div>
         </div>
       </div>
