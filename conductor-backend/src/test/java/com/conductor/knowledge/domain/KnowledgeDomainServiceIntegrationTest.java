@@ -175,6 +175,33 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
     }
 
     @Test
+    void approvingSuggestedDomainSeedsSkeletonCurationPage() {
+        createDomain("legal", "Legal", KnowledgeDomainState.SUGGESTED);
+
+        domainService.update(projectId, "legal", null, null, null, KnowledgeDomainState.ACTIVE);
+
+        Optional<KnowledgePage> page = pageRepository.findByProjectIdAndPath(projectId, "legal/_curation.md");
+        assertThat(page).isPresent();
+        assertThat(page.get().getPageType()).isEqualTo("schema");
+        assertThat(page.get().getBody()).contains("Legal") // %DOMAIN_DISPLAY% placeholder replaced
+                .contains("legal/"); // %DOMAIN_SLUG% placeholder replaced
+    }
+
+    @Test
+    void approvingSuggestedDomainWithExistingCurationPageDoesNotOverwriteIt() {
+        createDomain("legal", "Legal", KnowledgeDomainState.SUGGESTED);
+        String customContent = "---\ntype: schema\ntitle: Custom curation\n---\n\nAlready written by someone.";
+        pageService.batchWrite(projectId, List.of(new PageWrite("legal/_curation.md", customContent, null, false)),
+                List.of(), new Actor("user", "u1", null));
+
+        domainService.update(projectId, "legal", null, null, null, KnowledgeDomainState.ACTIVE);
+
+        KnowledgePage page = pageRepository.findByProjectIdAndPath(projectId, "legal/_curation.md").orElseThrow();
+        assertThat(page.getVersion()).isEqualTo(1);
+        assertThat(page.getBody()).contains("Already written by someone.");
+    }
+
+    @Test
     void approvingSuggestedDomainWithExistingSchemaPageDoesNotOverwriteIt() {
         createDomain("legal", "Legal", KnowledgeDomainState.SUGGESTED);
         String customContent = "---\ntype: schema\ntitle: Custom\n---\n\nAlready written by someone.";
@@ -195,6 +222,7 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         domainService.update(projectId, "legal", "Legal Affairs", null, null, null);
 
         assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_schema.md")).isEmpty();
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_curation.md")).isEmpty();
     }
 
     @Test
@@ -204,6 +232,7 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         domainService.update(projectId, "legal", null, null, null, KnowledgeDomainState.ACTIVE);
 
         assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_schema.md")).isPresent();
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_curation.md")).isPresent();
     }
 
     // ---- applyPatch atomicity (PATCH endpoint's entry point) ----
@@ -330,6 +359,23 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
     void createSpecialistThrowsNotFoundForUnknownDomain() {
         assertThatThrownBy(() -> domainService.createSpecialist(projectId, "nonexistent"))
                 .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    void createSpecialistSeedsNeitherSchemaNorCurationPage() {
+        // Pins the deliberate decision recorded in createSpecialist's inline comment: this method never
+        // transitions state and requires an already-ACTIVE domain, so any domain it can target already
+        // got both pages from provision() or the SUGGESTED->ACTIVE approval branch -- a seed here would
+        // be dead code, and this domain (created directly as ACTIVE, bypassing both of those paths) has
+        // neither page to prove it.
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "engineering/_schema.md")).isEmpty();
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "engineering/_curation.md")).isEmpty();
+
+        domainService.createSpecialist(projectId, "engineering");
+
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "engineering/_schema.md")).isEmpty();
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "engineering/_curation.md")).isEmpty();
     }
 
     // ---- end to end: gap report -> approval -> routing ----

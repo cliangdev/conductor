@@ -5,6 +5,7 @@ import com.conductor.agent.AgentAvatarDefaults;
 import com.conductor.agent.AgentRepository;
 import com.conductor.exception.BusinessException;
 import com.conductor.knowledge.Actor;
+import com.conductor.knowledge.KnowledgeCurationPaths;
 import com.conductor.knowledge.KnowledgeWorkflowProvisioner;
 import com.conductor.knowledge.page.KnowledgePageRepository;
 import com.conductor.knowledge.page.KnowledgePageService;
@@ -54,6 +55,9 @@ public class KnowledgeDomainService {
     private static final int DISPLAY_NAME_MAX_LENGTH = 255;
 
     private static final String SKELETON_RESOURCE = "/knowledge/domains/_suggested-skeleton.md";
+    /** Shared with {@code KnowledgeWorkflowProvisioner}'s registry-driven seed -- see
+     *  {@link KnowledgeDomainTemplates}. */
+    private static final String CURATION_SKELETON_RESOURCE = "/knowledge/domains/_curation-skeleton.md";
     private static final String SPECIALIST_SYSTEM_PROMPT_RESOURCE = "/knowledge/specialist-system-prompt.md";
     private static final String SPECIALIST_AGENT_PROVIDER = "claude";
     private static final Actor SYSTEM_ACTOR = new Actor("system", "knowledge-domain-service", null);
@@ -89,9 +93,10 @@ public class KnowledgeDomainService {
      * Updates the editable metadata fields; a null argument leaves that field unchanged. To transition
      * {@code state} (e.g. approving a {@code SUGGESTED} or re-approving a {@code DISMISSED} domain),
      * pass the target state -- a transition to {@code ACTIVE} from any other state also seeds a generic
-     * skeleton {@code <slug>/_schema.md} page if one isn't already there (an admin approving a gap
-     * report shouldn't be left with a domain that has nowhere for the librarian to file anything; the
-     * seed is if-absent, so re-approving a domain that already has a schema page is a no-op there).
+     * skeleton {@code <slug>/_schema.md} page and a generic skeleton {@code <slug>/_curation.md} page if
+     * either isn't already there (an admin approving a gap report shouldn't be left with a domain that
+     * has nowhere for the librarian to file anything, or no area-specific curation policy; both seeds
+     * are if-absent, so re-approving a domain that already has either page is a no-op for that page).
      * Owning-agent assignment is a separate operation -- see {@link #updateOwningAgent} -- since a null
      * {@code owningAgentSlug} there means "clear it", which would be ambiguous alongside this method's
      * "null means unchanged" convention for every other field. Called directly, this method's own
@@ -120,6 +125,7 @@ public class KnowledgeDomainService {
         KnowledgeDomain saved = domainRepository.save(domain);
         if (previousState != KnowledgeDomainState.ACTIVE && saved.getState() == KnowledgeDomainState.ACTIVE) {
             seedSkeletonSchemaPageIfAbsent(projectId, saved);
+            seedSkeletonCurationPageIfAbsent(projectId, saved);
         }
         return saved;
     }
@@ -228,6 +234,11 @@ public class KnowledgeDomainService {
     @Transactional
     public KnowledgeDomain createSpecialist(String projectId, String slug) {
         KnowledgeDomain domain = findRequired(projectId, slug);
+        // No schema/curation page seeding here (unlike the SUGGESTED->ACTIVE branch in update()): this
+        // method never transitions state and requires an already-ACTIVE domain (findRequired below would
+        // still succeed for a non-ACTIVE domain, but nothing routes to or dispatches against one -- see
+        // KnowledgeDomainResolver/LibrarianDispatchService), so any domain reachable here already went
+        // ACTIVE through provision() or the approval branch and already has both pages.
         String agentSlug = specialistAgentSlug(slug);
         if (!agentRepository.existsByProjectIdAndSlug(projectId, agentSlug)) {
             Agent agent = new Agent();
@@ -257,22 +268,33 @@ public class KnowledgeDomainService {
     }
 
     private String readSpecialistSystemPrompt(KnowledgeDomain domain) {
-        return readResource(SPECIALIST_SYSTEM_PROMPT_RESOURCE)
-                .replace("%DOMAIN_SLUG%", domain.getSlug())
-                .replace("%DOMAIN_DISPLAY%", domain.getDisplayName());
+        return KnowledgeDomainTemplates.render(readResource(SPECIALIST_SYSTEM_PROMPT_RESOURCE), domain);
     }
 
     private void seedSkeletonSchemaPageIfAbsent(String projectId, KnowledgeDomain domain) {
         if (pageRepository.findByProjectIdAndPath(projectId, domain.getSchemaPagePath()).isPresent()) {
             return;
         }
-        String content = readResource(SKELETON_RESOURCE)
-                .replace("%DOMAIN_SLUG%", domain.getSlug())
-                .replace("%DOMAIN_DISPLAY%", domain.getDisplayName());
+        String content = KnowledgeDomainTemplates.render(readResource(SKELETON_RESOURCE), domain);
         pageService.batchWrite(projectId, List.of(new PageWrite(domain.getSchemaPagePath(), content, null, false)),
                 List.of(), SYSTEM_ACTOR);
         log.info("Seeded skeleton {} for approved domain '{}' in project {}", domain.getSchemaPagePath(),
                 domain.getSlug(), projectId);
+    }
+
+    /** Curation counterpart to {@link #seedSkeletonSchemaPageIfAbsent}, fired from the same
+     *  SUGGESTED/DISMISSED -&gt; ACTIVE approval branch in {@link #update} -- an approved gap-report
+     *  domain gets both a place to file pages and a policy for whether to file them at all. Seed-if-
+     *  absent, same as the schema counterpart: this is a human-owned page, never overwritten. */
+    private void seedSkeletonCurationPageIfAbsent(String projectId, KnowledgeDomain domain) {
+        String path = KnowledgeCurationPaths.forDomain(domain);
+        if (pageRepository.findByProjectIdAndPath(projectId, path).isPresent()) {
+            return;
+        }
+        String content = KnowledgeDomainTemplates.render(readResource(CURATION_SKELETON_RESOURCE), domain);
+        pageService.batchWrite(projectId, List.of(new PageWrite(path, content, null, false)),
+                List.of(), SYSTEM_ACTOR);
+        log.info("Seeded skeleton {} for approved domain '{}' in project {}", path, domain.getSlug(), projectId);
     }
 
     private void validateSlug(String slug) {

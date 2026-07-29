@@ -128,6 +128,90 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
     }
 
     @Test
+    void provisionSeedsRootCurationPage() {
+        provisioner.provision(projectId);
+
+        Optional<KnowledgePage> curationPage = pageRepository.findByProjectIdAndPath(projectId, "_curation.md");
+        assertThat(curationPage).isPresent();
+        assertThat(curationPage.get().getPageType()).isEqualTo("schema");
+    }
+
+    @Test
+    void reprovisioningDoesNotDuplicateOrOverwriteRootCurationPage() {
+        provisioner.provision(projectId);
+        KnowledgePage curationPage = pageRepository.findByProjectIdAndPath(projectId, "_curation.md").orElseThrow();
+        curationPage.setBody(curationPage.getBody() + "\n\n- Never file a raw log dump. (added by a human)");
+        pageRepository.save(curationPage);
+
+        provisioner.provision(projectId);
+
+        KnowledgePage reloaded = pageRepository.findByProjectIdAndPath(projectId, "_curation.md").orElseThrow();
+        assertThat(reloaded.getVersion()).isEqualTo(1); // never rewritten by re-provisioning
+        assertThat(reloaded.getBody()).contains("added by a human"); // the human edit survives
+    }
+
+    @Test
+    void provisionSeedsOneCurationPagePerActiveDomainWithPlaceholdersSubstituted() {
+        provisioner.provision(projectId);
+
+        List<KnowledgeDomain> domains = domainRepository.findByProjectIdOrderBySlugAsc(projectId);
+        assertThat(domains).hasSize(5);
+        for (KnowledgeDomain domain : domains) {
+            String path = domain.getSlug() + "/_curation.md";
+            Optional<KnowledgePage> curationPage = pageRepository.findByProjectIdAndPath(projectId, path);
+            assertThat(curationPage).as("curation page for domain " + domain.getSlug()).isPresent();
+            assertThat(curationPage.get().getPageType()).isEqualTo("schema");
+            assertThat(curationPage.get().getBody()).contains(domain.getDisplayName());
+            assertThat(curationPage.get().getBody()).doesNotContain("%DOMAIN_");
+        }
+    }
+
+    @Test
+    void reprovisioningDoesNotDuplicateOrOverwriteDomainCurationPages() {
+        provisioner.provision(projectId);
+        KnowledgePage engineeringCuration = pageRepository
+                .findByProjectIdAndPath(projectId, "engineering/_curation.md").orElseThrow();
+        engineeringCuration.setBody(engineeringCuration.getBody() + "\n\n- Skip flaky-test reruns.");
+        pageRepository.save(engineeringCuration);
+
+        provisioner.provision(projectId);
+
+        KnowledgePage reloaded = pageRepository.findByProjectIdAndPath(projectId, "engineering/_curation.md")
+                .orElseThrow();
+        assertThat(reloaded.getVersion()).isEqualTo(1);
+        assertThat(reloaded.getBody()).contains("Skip flaky-test reruns.");
+
+        // Still exactly 5 domain curation pages -- no duplicates from the second provision() call.
+        for (String slug : List.of("engineering", "product", "marketing", "finance", "people")) {
+            assertThat(pageRepository.findByProjectIdAndPath(projectId, slug + "/_curation.md")).isPresent();
+        }
+    }
+
+    @Test
+    void provisionSeedsACurationPageForARegistryDomainNotInDomainSeeds() {
+        // Simulate a librarian-raised gap-report domain approved via KnowledgeDomainService, i.e. a
+        // registry row that exists but is not in KnowledgeWorkflowProvisioner's hardcoded DOMAIN_SEEDS
+        // list -- the whole point of driving curation seeding off the live registry, not DOMAIN_SEEDS.
+        provisioner.provision(projectId);
+
+        KnowledgeDomain legal = new KnowledgeDomain();
+        legal.setProjectId(projectId);
+        legal.setSlug("legal");
+        legal.setDisplayName("Legal");
+        legal.setPathPrefix("legal/");
+        legal.setSchemaPagePath("legal/_schema.md");
+        legal.setSourceTypePatterns(List.of());
+        legal.setState(KnowledgeDomainState.ACTIVE);
+        domainRepository.save(legal);
+
+        provisioner.provision(projectId);
+
+        Optional<KnowledgePage> legalCuration = pageRepository.findByProjectIdAndPath(projectId, "legal/_curation.md");
+        assertThat(legalCuration).isPresent();
+        assertThat(legalCuration.get().getBody()).contains("Legal");
+    }
+
+    @Test
     void provisionSeedsDomainRegistryAndSchemaPages() {
         provisioner.provision(projectId);
 

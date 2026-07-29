@@ -9,6 +9,7 @@ import com.conductor.entity.WorkflowDefinition;
 import com.conductor.knowledge.domain.KnowledgeDomain;
 import com.conductor.knowledge.domain.KnowledgeDomainRepository;
 import com.conductor.knowledge.domain.KnowledgeDomainState;
+import com.conductor.knowledge.domain.KnowledgeDomainTemplates;
 import com.conductor.knowledge.page.KnowledgePageRepository;
 import com.conductor.knowledge.page.KnowledgePageService;
 import com.conductor.knowledge.page.PageWrite;
@@ -32,9 +33,10 @@ import java.util.Optional;
 
 /**
  * Idempotently provisions the two knowledge-domain system workflows (see
- * {@code src/main/resources/knowledge/*.yaml}), the {@code _schema.md} seed page, and the domain
- * registry (5 {@link KnowledgeDomain} rows -- engineering/product/marketing/finance/people -- plus each
- * one's {@code <slug>/_schema.md} page) for a project. Called from {@code ProjectSettingsService} on
+ * {@code src/main/resources/knowledge/*.yaml}), the {@code _schema.md} and {@code _curation.md} root
+ * seed pages, and the domain registry (5 {@link KnowledgeDomain} rows --
+ * engineering/product/marketing/finance/people -- plus each one's {@code <slug>/_schema.md} and
+ * {@code <slug>/_curation.md} pages) for a project. Called from {@code ProjectSettingsService} on
  * every settings save that leaves knowledge enabled
  * (not just the false-&gt;true transition) -- catch-up provisioning for projects that were enabled
  * before a given artifact existed, or where a seeded artifact (most commonly the librarian
@@ -81,6 +83,10 @@ public class KnowledgeWorkflowProvisioner {
      *  e.g. {@code MetricsNarratorDispatchService} -- can pass it without this class exposing a getter. */
     static final String NARRATOR_RESOURCE = "/knowledge/metrics-narrator.yaml";
     private static final String SCHEMA_RESOURCE = "/knowledge/_schema.md";
+    private static final String CURATION_RESOURCE = "/knowledge/_curation.md";
+    /** Shared with {@code KnowledgeDomainService}'s approval-time seed -- see
+     *  {@link KnowledgeDomainTemplates}. */
+    private static final String DOMAIN_CURATION_SKELETON_RESOURCE = "/knowledge/domains/_curation-skeleton.md";
     private static final String LIBRARIAN_SYSTEM_PROMPT_RESOURCE = "/knowledge/librarian-system-prompt.md";
     private static final String METRICS_ANALYST_SYSTEM_PROMPT_RESOURCE = "/knowledge/metrics-analyst-system-prompt.md";
     private static final String LIBRARIAN_AGENT_NAME = "Knowledge Librarian";
@@ -169,8 +175,10 @@ public class KnowledgeWorkflowProvisioner {
         upsertWorkflow(project, BOOTSTRAP_WORKFLOW_NAME, BOOTSTRAP_RESOURCE);
         upsertWorkflow(project, NARRATOR_WORKFLOW_NAME, NARRATOR_RESOURCE);
         seedSchemaPage(projectId);
+        seedCurationPage(projectId);
         seedDomainRegistry(projectId);
         seedDomainSchemaPages(projectId);
+        seedDomainCurationPages(projectId);
     }
 
     private void seedLibrarianAgent(String projectId) {
@@ -367,6 +375,20 @@ public class KnowledgeWorkflowProvisioner {
         log.info("Seeded {} for project {}", SCHEMA_PAGE_PATH, projectId);
     }
 
+    /** Seeds the root {@value KnowledgeCurationPaths#ROOT} page -- seed-if-absent, same as
+     *  {@link #seedSchemaPage}: this is a human-owned policy page (the veto list a librarian reads
+     *  every batch), not canonical system content, so it is never refreshed or overwritten once it
+     *  exists, even if the classpath resource later changes. */
+    private void seedCurationPage(String projectId) {
+        if (pageRepository.findByProjectIdAndPath(projectId, KnowledgeCurationPaths.ROOT).isPresent()) {
+            return;
+        }
+        String content = readResource(CURATION_RESOURCE);
+        pageService.batchWrite(projectId, List.of(new PageWrite(KnowledgeCurationPaths.ROOT, content, null, false)),
+                List.of(), PROVISIONER_ACTOR);
+        log.info("Seeded {} for project {}", KnowledgeCurationPaths.ROOT, projectId);
+    }
+
     /** Seeds the 5 domain registry rows (by natural key {@code (projectId, slug)}) that don't already
      *  exist -- a surviving row (e.g. one an admin edited) is left untouched, never reset. */
     private void seedDomainRegistry(String projectId) {
@@ -404,6 +426,49 @@ public class KnowledgeWorkflowProvisioner {
         }
         pageService.batchWrite(projectId, writes, List.of(), PROVISIONER_ACTOR);
         log.info("Seeded {} domain schema page(s) for project {}", writes.size(), projectId);
+    }
+
+    /**
+     * Seeds whichever domain {@code <slug>/_curation.md} pages are missing, in one batch -- seed-if-
+     * absent only, same reasoning as {@link #seedDomainSchemaPages}: these are human-owned policy pages,
+     * never overwritten once they exist.
+     *
+     * <p><b>Deliberately iterates the live {@link #domainRepository} registry (ACTIVE rows), not
+     * {@link #DOMAIN_SEEDS}</b> -- unlike {@link #seedDomainSchemaPages}, which iterates
+     * {@code DOMAIN_SEEDS} and therefore can never reach a domain approved later from a librarian gap
+     * report (that domain isn't in the hardcoded list and never will be). If curation seeding copied
+     * that pattern, an approved gap-report domain would never get a curation page from any code path --
+     * {@link KnowledgeDomainService}'s approval-time seed only fires on the SUGGESTED-&gt;ACTIVE
+     * transition itself, so a domain approved before this seeding existed, or whose seed failed
+     * transiently, would be stuck without one forever. Driving this off the registry instead means
+     * {@link #provision} (called on every settings save that leaves knowledge enabled, and
+     * just-in-time before dispatch) self-heals every ACTIVE domain uniformly, regardless of how or when
+     * it became ACTIVE. Do not "simplify" this back to {@code DOMAIN_SEEDS} -- that would silently
+     * reintroduce the gap.
+     *
+     * <p>All domains render the same {@link #DOMAIN_CURATION_SKELETON_RESOURCE} template (unlike domain
+     * schema pages, where the 5 seeded domains get bespoke per-domain content and only gap-report
+     * domains get a generic skeleton) -- curation policy starts identical everywhere and accretes
+     * per-domain rules over time via the "Not worth filing" action, so there is no bespoke starting
+     * content to write per domain.
+     */
+    private void seedDomainCurationPages(String projectId) {
+        List<KnowledgeDomain> activeDomains =
+                domainRepository.findByProjectIdAndStateOrderBySlugAsc(projectId, KnowledgeDomainState.ACTIVE);
+        String template = readResource(DOMAIN_CURATION_SKELETON_RESOURCE);
+        List<PageWrite> writes = new ArrayList<>();
+        for (KnowledgeDomain domain : activeDomains) {
+            String path = KnowledgeCurationPaths.forDomain(domain);
+            if (pageRepository.findByProjectIdAndPath(projectId, path).isPresent()) {
+                continue;
+            }
+            writes.add(new PageWrite(path, KnowledgeDomainTemplates.render(template, domain), null, false));
+        }
+        if (writes.isEmpty()) {
+            return;
+        }
+        pageService.batchWrite(projectId, writes, List.of(), PROVISIONER_ACTOR);
+        log.info("Seeded {} domain curation page(s) for project {}", writes.size(), projectId);
     }
 
     private String readResource(String classpathPath) {
