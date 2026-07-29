@@ -110,7 +110,8 @@ public class AgentController implements AgentsApi {
                 request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null,
                 request.getAvatarEmoji(),
-                request.getAvatarColor() != null ? request.getAvatarColor().getValue() : null);
+                request.getAvatarColor() != null ? request.getAvatarColor().getValue() : null,
+                request.getTag());
         Agent created = agentService.create(projectId, input);
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(created));
     }
@@ -129,7 +130,8 @@ public class AgentController implements AgentsApi {
                 request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null,
                 request.getAvatarEmoji(),
-                request.getAvatarColor() != null ? request.getAvatarColor().getValue() : null);
+                request.getAvatarColor() != null ? request.getAvatarColor().getValue() : null,
+                request.getTag());
         Agent updated = agentService.update(projectId, agentId, input);
         return ResponseEntity.ok(toResponse(updated));
     }
@@ -240,6 +242,7 @@ public class AgentController implements AgentsApi {
                         ? agent.getAvatarEmoji() : AgentAvatarDefaults.defaultEmoji(agent.getSlug()))
                 .avatarColor(AgentResponse.AvatarColorEnum.fromValue(agent.getAvatarColor() != null
                         ? agent.getAvatarColor() : AgentAvatarDefaults.defaultColor(agent.getSlug())))
+                .tag(agent.getTag())
                 .isDefault(DefaultAgentSlugs.isDefault(agent.getSlug()))
                 .createdAt(agent.getCreatedAt())
                 .updatedAt(agent.getUpdatedAt());

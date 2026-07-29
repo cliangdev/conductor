@@ -64,6 +64,10 @@ public class WorkflowDefinition {
     @Column(name = "area", length = 64)
     private String area;
 
+    /** Nullable free-text grouping label; values in {@link com.conductor.validation.ReservedTags} are rejected. */
+    @Column(name = "tag", length = 64)
+    private String tag;
+
     /** Version of the workflow-definition schema this row targets. */
     @Column(name = "schema_version")
     private Integer schemaVersion;
@@ -143,6 +147,9 @@ public class WorkflowDefinition {
 
     public String getArea() { return area; }
     public void setArea(String area) { this.area = area; }
+
+    public String getTag() { return tag; }
+    public void setTag(String tag) { this.tag = tag; }
 
     public Integer getSchemaVersion() { return schemaVersion; }
     public void setSchemaVersion(Integer schemaVersion) { this.schemaVersion = schemaVersion; }

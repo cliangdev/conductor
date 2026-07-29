@@ -1,0 +1,2 @@
+ALTER TABLE agents ADD COLUMN tag VARCHAR(64);
+ALTER TABLE workflow_definitions ADD COLUMN tag VARCHAR(64);

@@ -34,14 +34,14 @@ export default function WorkflowDefinitionPage() {
     return <Skeleton className="h-[calc(100vh-260px)] min-h-[520px] rounded-lg" />;
   }
 
-  const handleSave = async (name: string, yaml: string) => {
+  const handleSave = async (name: string, tag: string, yaml: string) => {
     if (!accessToken) return;
     setSaving(true);
     setError(null);
     try {
       const updated = await apiPut<WorkflowDefinitionDto>(
         `/api/v1/projects/${projectId}/workflows/${workflowId}`,
-        { name, yaml },
+        { name, tag, yaml },
         accessToken
       );
       if (updated) setWorkflow(updated);
@@ -62,6 +62,7 @@ export default function WorkflowDefinitionPage() {
         readOnly={!canManage}
         initialYaml={workflow.yaml ?? ''}
         initialName={workflow.name}
+        initialTag={workflow.tag ?? ''}
         onSave={handleSave}
         onDiscard={() => router.push(`/app/projects/${projectId}/workflows/${workflowId}/runs`)}
         saving={saving}

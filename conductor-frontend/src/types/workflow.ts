@@ -31,6 +31,8 @@ export interface WorkflowDefinitionDto {
   state?: WorkflowState;
   /** Nav-grouping slug; single-Workflow Areas render flat. (COND-18) */
   area?: string;
+  /** Free-text grouping tag (e.g. "engineering"); "default"/"system" are reserved server-side. */
+  tag?: string | null;
   /** Work items bound to this workflow (any version); 0 (or absent) for automations. */
   workItemCount?: number;
   schemaVersion?: number;

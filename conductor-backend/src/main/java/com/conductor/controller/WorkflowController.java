@@ -589,6 +589,7 @@ public class WorkflowController implements WorkflowsApi {
         dto.setVersion(def.getVersion());
         dto.setState(def.getState() == null ? null : WorkflowState.fromValue(def.getState()));
         dto.setArea(def.getArea());
+        dto.setTag(def.getTag());
         dto.setSchemaVersion(def.getSchemaVersion());
         // COND-22: explicit, authoritative kind + sidebar visibility. `definition` is set explicitly to
         // null for automations — the generated DTO field otherwise defaults to {}, which would mislead

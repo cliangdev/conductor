@@ -10,6 +10,7 @@ import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowSecretRepository;
+import com.conductor.validation.ReservedTags;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.conductor.workflow.WorkflowValidator;
@@ -106,6 +107,7 @@ public class WorkflowService {
         def.setProject(project);
         def.setName(request.getName());
         def.setArea(request.getArea());
+        def.setTag(validateTag(request.getTag()));
         def.setYaml(request.getYaml());
         def.setDefinition(toJsonNode(request.getDefinition()));
         def.setEnabled(true);
@@ -160,6 +162,8 @@ public class WorkflowService {
 
         def.setName(request.getName());
         if (request.getArea() != null) def.setArea(request.getArea());
+        // An explicit blank clears the tag (stored as null); null leaves it unchanged.
+        if (request.getTag() != null) def.setTag(validateTag(request.getTag()));
         if (request.getYaml() != null) def.setYaml(request.getYaml());
         if (request.getDefinition() != null) def.setDefinition(toJsonNode(request.getDefinition()));
         WorkflowDefinition updated = workflowRepository.save(def);
@@ -289,6 +293,17 @@ public class WorkflowService {
         if (definition == null) return null;
         Object id = definition.get("id");
         return id == null ? null : id.toString();
+    }
+
+    /** {@code null}/blank leaves the tag unset; anything else must not be a reserved value. */
+    private static String validateTag(String tag) {
+        if (tag == null || tag.isBlank()) {
+            return null;
+        }
+        if (ReservedTags.isReserved(tag)) {
+            throw new BusinessException("Tag '" + tag + "' is reserved");
+        }
+        return tag.trim();
     }
 
     /**

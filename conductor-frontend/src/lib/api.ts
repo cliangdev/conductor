@@ -513,6 +513,8 @@ export interface Agent {
    *  project member. Deleting one is allowed — it is recreated the next time the owning feature
    *  self-heals. */
   isDefault: boolean
+  /** Free-text grouping tag (e.g. "engineering"); "default"/"system" are reserved server-side. */
+  tag?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -521,6 +523,7 @@ export interface CreateAgentBody {
   name: string
   slug?: string
   description?: string
+  tag?: string | null
   provider: string
   model?: string
   systemPrompt?: string

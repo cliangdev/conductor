@@ -45,7 +45,7 @@ export default function NewLifecycleWorkflowPage() {
     try {
       const res = await createLifecycleWorkflow(
         projectId,
-        { name: name || def.id || 'Untitled Workflow', area: def.area || undefined, definition: def },
+        { name: name || def.id || 'Untitled Workflow', area: def.area || undefined, tag: def.tag || undefined, definition: def },
         accessToken,
       )
       setWarnings(res.warnings ?? [])
