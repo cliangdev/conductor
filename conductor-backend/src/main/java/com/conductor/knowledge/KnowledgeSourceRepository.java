@@ -125,6 +125,22 @@ public interface KnowledgeSourceRepository extends JpaRepository<KnowledgeSource
             + "com.conductor.knowledge.KnowledgeSourceStatus.PROCESSING)")
     int markProcessed(@Param("projectId") String projectId, @Param("ids") Collection<String> ids);
 
+    /**
+     * Marks a batch of sources SKIPPED (read and judged not worth a page) with the librarian's
+     * reason -- same shape as {@link #markProcessed}, including the identical guard set: a skip is
+     * still a verdict reached from PENDING or PROCESSING, and a PROCESSED row (already filed) or a
+     * DEAD row (exhausted retries, never got a verdict) must never be silently overwritten by a
+     * later-arriving skip decision.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE KnowledgeSource s SET s.status = com.conductor.knowledge.KnowledgeSourceStatus.SKIPPED, "
+            + "s.skipReason = :reason "
+            + "WHERE s.projectId = :projectId AND s.id IN :ids "
+            + "AND s.status IN (com.conductor.knowledge.KnowledgeSourceStatus.PENDING, "
+            + "com.conductor.knowledge.KnowledgeSourceStatus.PROCESSING)")
+    int markSkipped(@Param("projectId") String projectId, @Param("ids") Collection<String> ids,
+                     @Param("reason") String reason);
+
     // ---- retention (KnowledgeRetentionService) ----
 
     /** Oldest-first batch of sources old enough for their retention action and not yet purged --

@@ -128,6 +128,90 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
     }
 
     @Test
+    void provisionSeedsRootCurationPage() {
+        provisioner.provision(projectId);
+
+        Optional<KnowledgePage> curationPage = pageRepository.findByProjectIdAndPath(projectId, "_curation.md");
+        assertThat(curationPage).isPresent();
+        assertThat(curationPage.get().getPageType()).isEqualTo("schema");
+    }
+
+    @Test
+    void reprovisioningDoesNotDuplicateOrOverwriteRootCurationPage() {
+        provisioner.provision(projectId);
+        KnowledgePage curationPage = pageRepository.findByProjectIdAndPath(projectId, "_curation.md").orElseThrow();
+        curationPage.setBody(curationPage.getBody() + "\n\n- Never file a raw log dump. (added by a human)");
+        pageRepository.save(curationPage);
+
+        provisioner.provision(projectId);
+
+        KnowledgePage reloaded = pageRepository.findByProjectIdAndPath(projectId, "_curation.md").orElseThrow();
+        assertThat(reloaded.getVersion()).isEqualTo(1); // never rewritten by re-provisioning
+        assertThat(reloaded.getBody()).contains("added by a human"); // the human edit survives
+    }
+
+    @Test
+    void provisionSeedsOneCurationPagePerActiveDomainWithPlaceholdersSubstituted() {
+        provisioner.provision(projectId);
+
+        List<KnowledgeDomain> domains = domainRepository.findByProjectIdOrderBySlugAsc(projectId);
+        assertThat(domains).hasSize(5);
+        for (KnowledgeDomain domain : domains) {
+            String path = domain.getSlug() + "/_curation.md";
+            Optional<KnowledgePage> curationPage = pageRepository.findByProjectIdAndPath(projectId, path);
+            assertThat(curationPage).as("curation page for domain " + domain.getSlug()).isPresent();
+            assertThat(curationPage.get().getPageType()).isEqualTo("schema");
+            assertThat(curationPage.get().getBody()).contains(domain.getDisplayName());
+            assertThat(curationPage.get().getBody()).doesNotContain("%DOMAIN_");
+        }
+    }
+
+    @Test
+    void reprovisioningDoesNotDuplicateOrOverwriteDomainCurationPages() {
+        provisioner.provision(projectId);
+        KnowledgePage engineeringCuration = pageRepository
+                .findByProjectIdAndPath(projectId, "engineering/_curation.md").orElseThrow();
+        engineeringCuration.setBody(engineeringCuration.getBody() + "\n\n- Skip flaky-test reruns.");
+        pageRepository.save(engineeringCuration);
+
+        provisioner.provision(projectId);
+
+        KnowledgePage reloaded = pageRepository.findByProjectIdAndPath(projectId, "engineering/_curation.md")
+                .orElseThrow();
+        assertThat(reloaded.getVersion()).isEqualTo(1);
+        assertThat(reloaded.getBody()).contains("Skip flaky-test reruns.");
+
+        // Still exactly 5 domain curation pages -- no duplicates from the second provision() call.
+        for (String slug : List.of("engineering", "product", "marketing", "finance", "people")) {
+            assertThat(pageRepository.findByProjectIdAndPath(projectId, slug + "/_curation.md")).isPresent();
+        }
+    }
+
+    @Test
+    void provisionSeedsACurationPageForARegistryDomainNotInDomainSeeds() {
+        // Simulate a librarian-raised gap-report domain approved via KnowledgeDomainService, i.e. a
+        // registry row that exists but is not in KnowledgeWorkflowProvisioner's hardcoded DOMAIN_SEEDS
+        // list -- the whole point of driving curation seeding off the live registry, not DOMAIN_SEEDS.
+        provisioner.provision(projectId);
+
+        KnowledgeDomain legal = new KnowledgeDomain();
+        legal.setProjectId(projectId);
+        legal.setSlug("legal");
+        legal.setDisplayName("Legal");
+        legal.setPathPrefix("legal/");
+        legal.setSchemaPagePath("legal/_schema.md");
+        legal.setSourceTypePatterns(List.of());
+        legal.setState(KnowledgeDomainState.ACTIVE);
+        domainRepository.save(legal);
+
+        provisioner.provision(projectId);
+
+        Optional<KnowledgePage> legalCuration = pageRepository.findByProjectIdAndPath(projectId, "legal/_curation.md");
+        assertThat(legalCuration).isPresent();
+        assertThat(legalCuration.get().getBody()).contains("Legal");
+    }
+
+    @Test
     void provisionSeedsDomainRegistryAndSchemaPages() {
         provisioner.provision(projectId);
 
@@ -429,5 +513,125 @@ class KnowledgeWorkflowProvisionerIntegrationTest extends AbstractNoneWebIntegra
         Optional<KnowledgePage> schemaPage = pageRepository.findByProjectIdAndPath(projectId, "_schema.md");
         assertThat(schemaPage).isPresent();
         assertThat(schemaPage.get().getVersion()).isEqualTo(1);
+    }
+
+    // ---- system-prompt refresh (backfillSystemPromptIfUnmodified) ----
+
+    /**
+     * The exact {@code librarian-system-prompt.md} shipped at commit {@code 8d388838} ("Domain-aware
+     * Knowledge Center", #288), kept as a test fixture rather than inlined so this test proves something
+     * real: that {@code HISTORICAL_LIBRARIAN_PROMPT_HASHES} actually contains the digest of a genuinely
+     * shipped prompt, not a digest computed from whatever the current file happens to be.
+     *
+     * <p><b>Maintenance rule this fixture enforces:</b> every future rewrite of the prompt must append the
+     * outgoing version's hash to that set. If someone rewrites the prompt and forgets, this test still
+     * passes (it pins v2, which stays historical forever) -- but
+     * {@link #promptFixtureStillHashesToTheDocumentedV2Digest} pins the digest itself, and the set's own
+     * javadoc carries the rule. The genuinely load-bearing guard is that a *stale-prompt* agent gets
+     * upgraded, which is what {@link #legacyPromptIsRefreshedToCurrentAndStamped} asserts.
+     */
+    private static final String V2_PROMPT_RESOURCE = "/knowledge/librarian-system-prompt-v2.md";
+    private static final String V2_PROMPT_SHA256 =
+            "427d5376ecd1191fe5496e17e77ac3ed2ab9d37f79fa0fbaf7264221dcbab286";
+
+    private String readV2Prompt() {
+        try (var in = getClass().getResourceAsStream(V2_PROMPT_RESOURCE)) {
+            assertThat(in).as("missing test fixture " + V2_PROMPT_RESOURCE).isNotNull();
+            return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String sha256Hex(String content) {
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            return java.util.HexFormat.of()
+                    .formatHex(digest.digest(content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private Agent librarian() {
+        return agentRepository.findByProjectIdAndSlug(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG)
+                .orElseThrow();
+    }
+
+    /** Guards the fixture against accidental reformatting -- if this fails, the fixture was edited and no
+     *  longer represents what shipped, which would make the refresh tests below meaningless. */
+    @Test
+    void promptFixtureStillHashesToTheDocumentedV2Digest() {
+        assertThat(sha256Hex(readV2Prompt())).isEqualTo(V2_PROMPT_SHA256);
+    }
+
+    @Test
+    void freshlySeededLibrarianCarriesSeededPromptHash() {
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
+
+        Agent librarian = librarian();
+        assertThat(librarian.getConfigJson())
+                .contains(KnowledgeWorkflowProvisioner.SEEDED_PROMPT_HASH_CONFIG_KEY)
+                .contains(sha256Hex(librarian.getSystemPrompt()));
+    }
+
+    /**
+     * The whole point of the mechanism: a project provisioned back when v2 shipped must actually receive
+     * the current prompt, because {@code seedLibrarianAgent} returns early for an existing agent and would
+     * otherwise leave it on v2 forever.
+     */
+    @Test
+    void legacyPromptIsRefreshedToCurrentAndStamped() {
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
+        Agent librarian = librarian();
+        String currentPrompt = librarian.getSystemPrompt();
+        String v2 = readV2Prompt();
+        assertThat(v2).as("v2 must differ from current, or this test proves nothing").isNotEqualTo(currentPrompt);
+
+        // Rewind this project's librarian to the v2 prompt, and strip the stamp, exactly as a project
+        // provisioned before stamping existed would look.
+        librarian.setSystemPrompt(v2);
+        librarian.setConfigJson("{\"maxToolTurns\":40,\"runtime\":\"claude-code\"}");
+        agentRepository.save(librarian);
+
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
+
+        Agent refreshed = librarian();
+        assertThat(refreshed.getSystemPrompt()).isEqualTo(currentPrompt);
+        assertThat(refreshed.getConfigJson()).contains(sha256Hex(currentPrompt));
+        // The unrelated config keys must survive the stamp rewrite.
+        assertThat(refreshed.getConfigJson()).contains("maxToolTurns").contains("claude-code");
+    }
+
+    /** The documented promise ("the system prompt is editable under Automation -> Agents") must hold:
+     *  once edited, the prompt is the operator's forever. */
+    @Test
+    void operatorEditedPromptIsLeftByteIdentical() {
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
+        Agent librarian = librarian();
+        String operatorPrompt = "You are our librarian. Only ever file engineering decisions. Nothing else.";
+        librarian.setSystemPrompt(operatorPrompt);
+        agentRepository.save(librarian);
+
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
+
+        assertThat(librarian().getSystemPrompt()).isEqualTo(operatorPrompt);
+    }
+
+    /** An agent already on the current prompt but with no stamp (seeded before stamping shipped) gets
+     *  stamped without its prompt being rewritten. */
+    @Test
+    void currentPromptWithoutStampIsStampedNotRewritten() {
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
+        Agent librarian = librarian();
+        String currentPrompt = librarian.getSystemPrompt();
+        librarian.setConfigJson("{\"maxToolTurns\":40}");
+        agentRepository.save(librarian);
+
+        projectSettingsService.updateSettings(projectId, null, null, null, null, true, null, adminUser);
+
+        Agent after = librarian();
+        assertThat(after.getSystemPrompt()).isEqualTo(currentPrompt);
+        assertThat(after.getConfigJson()).contains(sha256Hex(currentPrompt));
     }
 }

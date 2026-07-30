@@ -31,8 +31,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
@@ -82,7 +84,7 @@ class KnowledgeControllerTest {
     @Test
     void batchWrite_happyPath_returns200WithResults() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any()))
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any(), any()))
                 .thenReturn(List.of(new PageWriteResult("dir/page.md", 1, "abc123")));
 
         String body = """
@@ -103,7 +105,7 @@ class KnowledgeControllerTest {
     @Test
     void batchWrite_conflict_returns409WithConflictsArray() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any()))
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any(), any()))
                 .thenThrow(new KnowledgeConflictException(List.of(
                         new KnowledgeConflictException.Conflict("dir/page.md", 3, "---\ntype: doc\n---\n\nold"))));
 
@@ -125,7 +127,7 @@ class KnowledgeControllerTest {
     @Test
     void batchWrite_invalidFrontmatter_returns422() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any()))
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any(), any()))
                 .thenThrow(new FrontmatterException("Document is empty -- every page needs a frontmatter 'type'"));
 
         String body = """
@@ -152,6 +154,146 @@ class KnowledgeControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void batchWrite_acceptsAndForwardsSkipped() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), anyList(), any()))
+                .thenReturn(List.of());
+
+        String body = """
+                {"writes":[],"skipped":[{"sourceId":"src-1","reason":"not material"}]}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/batch-write")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.results.length()").value(0));
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<com.conductor.knowledge.page.SkippedSource>> skippedCaptor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(pageService)
+                .batchWrite(eq(PROJECT_ID), anyList(), any(), skippedCaptor.capture(), any());
+        assertThat(skippedCaptor.getValue()).containsExactly(
+                new com.conductor.knowledge.page.SkippedSource("src-1", "not material"));
+    }
+
+    @Test
+    void batchWrite_sourceIdInBothListsReturns400() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), anyList(), any()))
+                .thenThrow(new com.conductor.exception.BusinessException(
+                        "Source src-1 appears in both sourceIds and skipped"));
+
+        String body = """
+                {"writes":[],"sourceIds":["src-1"],"skipped":[{"sourceId":"src-1","reason":"not material"}]}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/batch-write")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ---- dismissKnowledgePage ("Not worth filing") ----
+
+    @Test
+    void dismiss_happyPath_returns200WithResponseBody() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.dismissPage(eq(PROJECT_ID), eq("engineering/work-items/cx-14.md"), eq(1),
+                eq("Not worth filing."), anyString(), any()))
+                .thenReturn(new KnowledgePageService.DismissResult(
+                        "engineering/work-items/cx-14.md", 2, "engineering/_curation.md", 3));
+
+        String body = """
+                {"path":"engineering/work-items/cx-14.md","baseVersion":1,"reason":"Not worth filing."}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/dismiss")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.path").value("engineering/work-items/cx-14.md"))
+                .andExpect(jsonPath("$.version").value(2))
+                .andExpect(jsonPath("$.curationPagePath").value("engineering/_curation.md"))
+                .andExpect(jsonPath("$.curationPageVersion").value(3));
+    }
+
+    @Test
+    void dismiss_blankReason_returns400() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.dismissPage(eq(PROJECT_ID), anyString(), any(), anyString(), anyString(), any()))
+                .thenThrow(new com.conductor.exception.BusinessException("dismiss requires a non-blank reason"));
+
+        String body = """
+                {"path":"notes/a.md","baseVersion":1,"reason":"   "}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/dismiss")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void dismiss_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+
+        String body = """
+                {"path":"notes/a.md","baseVersion":1,"reason":"Not worth filing."}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/dismiss")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void dismiss_unknownPath_returns404() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.dismissPage(eq(PROJECT_ID), anyString(), any(), anyString(), anyString(), any()))
+                .thenThrow(new jakarta.persistence.EntityNotFoundException(
+                        "No live knowledge page at path: notes/missing.md"));
+
+        String body = """
+                {"path":"notes/missing.md","baseVersion":1,"reason":"Not worth filing."}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/dismiss")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void dismiss_conflict_returns409WithConflictsArray() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.dismissPage(eq(PROJECT_ID), anyString(), any(), anyString(), anyString(), any()))
+                .thenThrow(new KnowledgeConflictException(
+                        "This page changed since you opened it — reload and try again.",
+                        List.of(new KnowledgeConflictException.Conflict("notes/a.md", 3, "---\ntype: note\n---\n\nold"))));
+
+        String body = """
+                {"path":"notes/a.md","baseVersion":1,"reason":"Not worth filing."}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/dismiss")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.conflicts.length()").value(1))
+                .andExpect(jsonPath("$.conflicts[0].path").value("notes/a.md"));
     }
 
     // ---- submitKnowledgeSource ----
@@ -210,7 +352,7 @@ class KnowledgeControllerTest {
         when(ingestionService.getSources(eq(PROJECT_ID), any()))
                 .thenReturn(List.of(new KnowledgeSourceView("src-1", PROJECT_ID, "manual_note", null, null,
                         null, "hello", false, null, null, null, null,
-                        com.conductor.knowledge.KnowledgeSourceStatus.PENDING, 0, null, null, null)));
+                        com.conductor.knowledge.KnowledgeSourceStatus.PENDING, 0, null, null, null, null)));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources?ids=src-1")
                         .header("Authorization", "Bearer valid-token"))
@@ -219,13 +361,36 @@ class KnowledgeControllerTest {
                 .andExpect(jsonPath("$[0].id").value("src-1"));
     }
 
+    /**
+     * The generated OpenAPI {@code KnowledgeSourceStatus} enum and the domain
+     * {@code com.conductor.knowledge.KnowledgeSourceStatus} enum are two separate types bridged by
+     * name via {@code valueOf} in {@link KnowledgeController#listKnowledgeSources} -- adding SKIPPED
+     * to only one of them (e.g. the domain enum but not the OpenAPI spec) would 400 or 500 here rather
+     * than compile-fail, since the bridge is a runtime name lookup, not a shared type.
+     */
+    @Test
+    void listSources_statusSkipped_roundTripsToDomainEnum() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(ingestionService.listSources(eq(PROJECT_ID), eq(com.conductor.knowledge.KnowledgeSourceStatus.SKIPPED), isNull()))
+                .thenReturn(List.of(new KnowledgeSourceView("src-1", PROJECT_ID, "manual_note", null, null,
+                        null, null, false, null, null, null, null,
+                        com.conductor.knowledge.KnowledgeSourceStatus.SKIPPED, 0, null, "not material", null, null)));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources?status=SKIPPED")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].status").value("SKIPPED"))
+                .andExpect(jsonPath("$[0].skipReason").value("not material"));
+    }
+
     // ---- getKnowledgeSourceCounts ----
 
     @Test
     void sourceCounts_happyPath_returnsCountsPerStatus() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.getSourceCounts(PROJECT_ID))
-                .thenReturn(new KnowledgeSourceCountsView(3, 1, 42, 2));
+                .thenReturn(new KnowledgeSourceCountsView(3, 1, 42, 4, 2));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
                         .header("Authorization", "Bearer valid-token"))
@@ -233,6 +398,7 @@ class KnowledgeControllerTest {
                 .andExpect(jsonPath("$.pending").value(3))
                 .andExpect(jsonPath("$.processing").value(1))
                 .andExpect(jsonPath("$.processed").value(42))
+                .andExpect(jsonPath("$.skipped").value(4))
                 .andExpect(jsonPath("$.dead").value(2));
     }
 
@@ -240,7 +406,7 @@ class KnowledgeControllerTest {
     void sourceCounts_zeroDefaultsWhenProjectHasNoSources() throws Exception {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.getSourceCounts(PROJECT_ID))
-                .thenReturn(new KnowledgeSourceCountsView(0, 0, 0, 0));
+                .thenReturn(new KnowledgeSourceCountsView(0, 0, 0, 0, 0));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
                         .header("Authorization", "Bearer valid-token"))
@@ -248,6 +414,7 @@ class KnowledgeControllerTest {
                 .andExpect(jsonPath("$.pending").value(0))
                 .andExpect(jsonPath("$.processing").value(0))
                 .andExpect(jsonPath("$.processed").value(0))
+                .andExpect(jsonPath("$.skipped").value(0))
                 .andExpect(jsonPath("$.dead").value(0));
     }
 
@@ -308,7 +475,7 @@ class KnowledgeControllerTest {
         engineering.setState(com.conductor.knowledge.domain.KnowledgeDomainState.ACTIVE);
         when(domainService.list(PROJECT_ID)).thenReturn(List.of(engineering));
         when(ingestionService.getDomainCounts(PROJECT_ID))
-                .thenReturn(java.util.Map.of("engineering", new KnowledgeSourceCountsView(2, 1, 5, 0)));
+                .thenReturn(java.util.Map.of("engineering", new KnowledgeSourceCountsView(2, 1, 5, 0, 0)));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains")
                         .header("Authorization", "Bearer valid-token"))
@@ -475,7 +642,7 @@ class KnowledgeControllerTest {
         when(runTokenService.parseMcpToken("eyJ.mcp.matching"))
                 .thenReturn(Optional.of(new RunTokenService.McpTokenClaims(PROJECT_ID, "run-1")));
         when(ingestionService.getSourceCounts(PROJECT_ID))
-                .thenReturn(new KnowledgeSourceCountsView(1, 0, 0, 0));
+                .thenReturn(new KnowledgeSourceCountsView(1, 0, 0, 0, 0));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
                         .header("Authorization", "Bearer eyJ.mcp.matching"))

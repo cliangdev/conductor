@@ -66,7 +66,7 @@ class PipelineHealthServiceTest {
         when(connectorFeedRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of());
         when(connectorFeedDigestRepository.countByProjectIdGroupByStatus(PROJECT_ID)).thenReturn(List.of());
         when(knowledgeIngestionService.getSourceCounts(PROJECT_ID))
-                .thenReturn(new KnowledgeSourceCountsView(0, 0, 0, 0));
+                .thenReturn(new KnowledgeSourceCountsView(0, 0, 0, 0, 0));
         when(workflowDefinitionRepository.findByProjectIdAndName(PROJECT_ID,
                 KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME)).thenReturn(Optional.empty());
         when(knowledgePageRevisionRepository.countByPage_ProjectIdAndCreatedAtAfter(anyString(), any()))
@@ -95,6 +95,23 @@ class PipelineHealthServiceTest {
         assertThat(digests.counts()).containsEntry("submitted", 3L);
         assertThat(digests.counts()).containsEntry("pending", 0L);
         assertThat(digests.counts()).containsEntry("dead", 0L);
+    }
+
+    /** Mirrors the DIGESTS stage's own skipped-bucket guarantee (see the class javadoc) -- INBOX must
+     *  always report a {@code skipped} count, present and zero when the project has none. */
+    @Test
+    void inboxStageAlwaysReportsSkippedBucket() {
+        PipelineStageHealthView inbox = service.getHealth(PROJECT_ID).get(3);
+
+        assertThat(inbox.counts()).containsEntry("skipped", 0L);
+
+        when(knowledgeIngestionService.getSourceCounts(PROJECT_ID))
+                .thenReturn(new KnowledgeSourceCountsView(1, 2, 3, 4, 5));
+        PipelineStageHealthView withSkipped = service.getHealth(PROJECT_ID).get(3);
+
+        assertThat(withSkipped.counts()).containsEntry("skipped", 4L);
+        assertThat(withSkipped.counts()).containsEntry("processed", 3L);
+        assertThat(withSkipped.counts()).containsEntry("dead", 5L);
     }
 
     @Test

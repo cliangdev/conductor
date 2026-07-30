@@ -4832,9 +4832,9 @@ paths:
       tags: [knowledge]
       summary: Inbox status counts for a project
       description: >-
-        Cheap summary of the ingestion inbox by status (pending/processing/processed/dead) — for the
-        UI's inbox badge/summary without a full listSources per status. Statuses with no rows are
-        reported as 0, not omitted.
+        Cheap summary of the ingestion inbox by status (pending/processing/processed/skipped/dead) —
+        for the UI's inbox badge/summary without a full listSources per status. Statuses with no rows
+        are reported as 0, not omitted.
       operationId: getKnowledgeSourceCounts
       security:
         - bearerAuth: []
@@ -5055,10 +5055,12 @@ paths:
       description: >-
         Applies every write atomically with optimistic concurrency (`baseVersion`): any conflict across
         the whole batch aborts it entirely (nothing written) — see the 409 response. On success, rebuilds
-        each written page's link graph and, if `sourceIds` is supplied, marks those ingestion sources
-        PROCESSED in the same transaction so a crash never leaves a source silently re-processed or a
-        write silently lost. The write's `actor`/origin provenance is derived server-side from the
-        caller's auth, never accepted from the client.
+        each written page's link graph and, if `sourceIds`/`skipped` are supplied, marks those ingestion
+        sources PROCESSED/SKIPPED (respectively) in the same transaction so a crash never leaves a source
+        silently re-processed or a write silently lost. `writes` may be empty when `sourceIds`/`skipped`
+        cover the batch, to settle sources with no page change. A source id must appear in at most one of
+        `sourceIds`/`skipped` — both is a 400. The write's `actor`/origin provenance is derived
+        server-side from the caller's auth, never accepted from the client.
       operationId: batchWriteKnowledgePages
       security:
         - bearerAuth: []
@@ -5082,7 +5084,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/KnowledgePageBatchWriteResponse'
         '400':
-          description: Invalid path, or a duplicate path within the batch
+          description: >-
+            Invalid path, a duplicate path within the batch, a `skipped` entry with a blank/null
+            sourceId or reason, or a source id present in both `sourceIds` and `skipped`.
           content:
             application/json:
               schema:
@@ -5102,6 +5106,69 @@ paths:
             no live page) alongside the standard problem fields — re-read the conflicting paths and retry.
           content:
             application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{projectId}/knowledge/pages/dismiss:
+    post:
+      tags: [knowledge]
+      summary: '"Not worth filing": delete a page and record why on its governing curation policy'
+      description: >-
+        Soft-deletes the page at `path` and, in the same transaction, appends a dated rule recording
+        `reason` to the `_curation.md` page that governs it (root, or the owning area's) -- the page the
+        librarian reads before every batch, so the next similar source isn't refiled. One endpoint
+        rather than two client-side `batch-write` calls because the two halves must not come apart: a
+        deleted page with no recorded reason is one the librarian will cheerfully recreate from the next
+        similar source. Membership-gated (a member can already delete any page via `batch-write`;
+        admin-gating the reason-recording path would only push people toward the rawer one).
+      operationId: dismissKnowledgePage
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgePageDismissRequest'
+      responses:
+        '200':
+          description: Page dismissed and the curation rule recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgePageDismissResponse'
+        '400':
+          description: Blank reason, invalid path, or an attempt to dismiss a _schema.md/_curation.md policy page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No live page at that path
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            The page's baseVersion is stale -- it changed since the caller last read it. The response
+            body carries a `conflicts` extension alongside the standard problem fields.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Malformed frontmatter on the existing curation page
+          content:
+            application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
@@ -7830,7 +7897,7 @@ components:
 
     KnowledgeSourceStatus:
       type: string
-      enum: [PENDING, PROCESSING, PROCESSED, DEAD]
+      enum: [PENDING, PROCESSING, PROCESSED, SKIPPED, DEAD]
 
     KnowledgeOrigin:
       type: object
@@ -7945,6 +8012,12 @@ components:
         errorMessage:
           type: string
           nullable: true
+        skipReason:
+          type: string
+          nullable: true
+          description: >-
+            Set when status is SKIPPED -- why the librarian judged this source not worth a page. Null
+            for every other status.
         purgedAt:
           type: string
           format: date-time
@@ -7964,6 +8037,7 @@ components:
         - pending
         - processing
         - processed
+        - skipped
         - dead
       properties:
         pending:
@@ -7973,6 +8047,9 @@ components:
           type: integer
           format: int64
         processed:
+          type: integer
+          format: int64
+        skipped:
           type: integer
           format: int64
         dead:
@@ -8224,6 +8301,18 @@ components:
           type: boolean
           default: false
 
+    KnowledgeSkippedSource:
+      type: object
+      required:
+        - sourceId
+        - reason
+      properties:
+        sourceId:
+          type: string
+        reason:
+          type: string
+          description: Why this source was reviewed and deliberately not filed. Required -- shown to a human in the Inbox.
+
     KnowledgePageBatchWriteRequest:
       type: object
       required:
@@ -8239,6 +8328,15 @@ components:
           items:
             type: string
           description: Ingestion sources this batch was derived from. Marked PROCESSED in the same transaction on success.
+        skipped:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/KnowledgeSkippedSource'
+          description: >-
+            Ingestion sources this batch reviewed and deliberately did not file. Marked SKIPPED with the
+            given reason in the same transaction on success. A source id must appear in at most one of
+            `sourceIds`/`skipped` -- both is a 400.
 
     KnowledgePageWriteResult:
       type: object
@@ -8263,6 +8361,45 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/KnowledgePageWriteResult'
+
+    KnowledgePageDismissRequest:
+      type: object
+      required:
+        - path
+        - baseVersion
+        - reason
+      properties:
+        path:
+          type: string
+          description: Bundle-relative path of the page being dismissed.
+        baseVersion:
+          type: integer
+          description: The version the caller last observed. A stale value is a 409.
+        reason:
+          type: string
+          description: >-
+            Why this page shouldn't exist. Required -- appended as a dated rule on the governing
+            _curation.md.
+
+    KnowledgePageDismissResponse:
+      type: object
+      required:
+        - path
+        - version
+        - curationPagePath
+        - curationPageVersion
+      properties:
+        path:
+          type: string
+        version:
+          type: integer
+          description: The dismissed page's new (tombstone) version.
+        curationPagePath:
+          type: string
+          description: Path of the _curation.md page the dismissal reason was recorded on.
+        curationPageVersion:
+          type: integer
+          description: The curation page's new version after the rule was appended.
 
     KnowledgePageView:
       type: object

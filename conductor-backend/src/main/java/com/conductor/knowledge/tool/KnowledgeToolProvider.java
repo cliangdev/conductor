@@ -16,6 +16,7 @@ import com.conductor.knowledge.page.PageView;
 import com.conductor.knowledge.page.PageWrite;
 import com.conductor.knowledge.page.PageWriteResult;
 import com.conductor.knowledge.page.SearchHit;
+import com.conductor.knowledge.page.SkippedSource;
 import com.conductor.service.ProjectSettingsService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -243,10 +244,15 @@ public class KnowledgeToolProvider implements AgentToolProvider {
 
         @Override
         public String description() {
-            return "Atomic batch create/update/delete of wiki pages. `writes` may be empty when "
-                    + "`sourceIds` is set, to ack a batch that needs no page changes. A stale write "
-                    + "(baseVersion mismatch) returns {conflict: true, conflicts: [...]} instead of "
-                    + "throwing — merge and retry once.";
+            return "Atomic batch create/update/delete of wiki pages, plus settling the ingestion "
+                    + "sources this batch reviewed. `sourceIds` are sources you filed into a page "
+                    + "(marked PROCESSED); `skipped` (with a required reason each) are sources you "
+                    + "reviewed and deliberately did not file (marked SKIPPED — the reason is shown to "
+                    + "a human in the Inbox). Both may be set in one call; a source id belongs to "
+                    + "exactly one — the same id in both is rejected. `writes` may be empty when "
+                    + "`sourceIds`/`skipped` cover the batch, to settle sources with no page change. A "
+                    + "stale write (baseVersion mismatch) returns {conflict: true, conflicts: [...]} "
+                    + "instead of throwing — merge and retry once. Verify with read_knowledge_sources.";
         }
 
         @Override
@@ -258,10 +264,19 @@ public class KnowledgeToolProvider implements AgentToolProvider {
             writeItemProps.put("delete", Map.of("type", "boolean"));
             Map<String, Object> writeItemSchema = objectSchema(writeItemProps, List.of("path"));
 
+            Map<String, Object> skippedItemProps = new LinkedHashMap<>();
+            skippedItemProps.put("sourceId", Map.of("type", "string"));
+            skippedItemProps.put("reason", Map.of("type", "string",
+                    "description", "Why this source wasn't filed — required, shown to a human in the Inbox."));
+            Map<String, Object> skippedItemSchema = objectSchema(skippedItemProps, List.of("sourceId", "reason"));
+
             Map<String, Object> properties = new LinkedHashMap<>();
             properties.put("writes", Map.of("type", "array", "items", writeItemSchema));
             properties.put("sourceIds", stringArraySchema("Ingestion source ids this batch resolves; "
                     + "atomically marks them PROCESSED."));
+            properties.put("skipped", Map.of("type", "array", "items", skippedItemSchema, "description",
+                    "Ingestion sources this batch reviewed and deliberately did not file; atomically "
+                            + "marks them SKIPPED with the given reason."));
             return objectSchema(properties, List.of("writes"));
         }
 
@@ -282,8 +297,17 @@ public class KnowledgeToolProvider implements AgentToolProvider {
                 }
                 List<String> sourceIds = stringList(arguments.get("sourceIds"));
 
+                List<Object> rawSkipped = arguments.get("skipped") instanceof List<?> l
+                        ? (List<Object>) l : List.of();
+                List<SkippedSource> skipped = new ArrayList<>();
+                for (Object raw : rawSkipped) {
+                    if (!(raw instanceof Map<?, ?> m)) continue;
+                    skipped.add(new SkippedSource(stringArg(m.get("sourceId")), stringArg(m.get("reason"))));
+                }
+
                 Actor actor = new Actor("agent", context.agentId(), null);
-                List<PageWriteResult> results = pageService.batchWrite(context.projectId(), writes, sourceIds, actor);
+                List<PageWriteResult> results =
+                        pageService.batchWrite(context.projectId(), writes, sourceIds, skipped, actor);
 
                 Map<String, Object> response = new LinkedHashMap<>();
                 response.put("results", results);

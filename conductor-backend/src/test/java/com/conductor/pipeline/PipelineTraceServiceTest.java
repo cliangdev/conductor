@@ -135,6 +135,23 @@ class PipelineTraceServiceTest {
         assertThat(nodes).extracting(PipelineTraceNodeView::stage).containsExactly("INBOX");
     }
 
+    /** A SKIPPED source is a librarian decision, not a broken pipeline -- the trace node must read as
+     *  live status, not a degraded placeholder (that's reserved for retention having hard-deleted it). */
+    @Test
+    void sourceAnchorSkippedStatusIsADecisionNotDegraded() {
+        KnowledgeSource source = source("src-4", Map.of());
+        source.setStatus(KnowledgeSourceStatus.SKIPPED);
+        source.setSkipReason("not material");
+        when(knowledgeSourceRepository.findById("src-4")).thenReturn(Optional.of(source));
+        when(knowledgePageRevisionRepository.findPagesBySourceId("src-4")).thenReturn(List.of());
+
+        List<PipelineTraceNodeView> nodes = service.trace(PROJECT_ID, null, "src-4", null, null);
+
+        assertThat(nodes).extracting(PipelineTraceNodeView::stage).containsExactly("INBOX");
+        assertThat(nodes.get(0).status()).isEqualTo("SKIPPED");
+        assertThat(nodes.get(0).degraded()).isFalse();
+    }
+
     @Test
     void webhookEventAnchorUsesTheProjectScopedLookupNotTheGlobalOne() {
         WebhookEvent webhookEvent = new WebhookEvent();

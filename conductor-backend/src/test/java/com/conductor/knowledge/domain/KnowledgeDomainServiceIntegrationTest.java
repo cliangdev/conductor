@@ -11,6 +11,7 @@ import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSource;
 import com.conductor.knowledge.KnowledgeSourceRepository;
 import com.conductor.knowledge.KnowledgeSubmission;
+import com.conductor.knowledge.KnowledgeWorkflowProvisioner;
 import com.conductor.knowledge.SourceReceipt;
 import com.conductor.knowledge.page.KnowledgePage;
 import com.conductor.knowledge.page.KnowledgePageRepository;
@@ -175,6 +176,33 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
     }
 
     @Test
+    void approvingSuggestedDomainSeedsSkeletonCurationPage() {
+        createDomain("legal", "Legal", KnowledgeDomainState.SUGGESTED);
+
+        domainService.update(projectId, "legal", null, null, null, KnowledgeDomainState.ACTIVE);
+
+        Optional<KnowledgePage> page = pageRepository.findByProjectIdAndPath(projectId, "legal/_curation.md");
+        assertThat(page).isPresent();
+        assertThat(page.get().getPageType()).isEqualTo("schema");
+        assertThat(page.get().getBody()).contains("Legal") // %DOMAIN_DISPLAY% placeholder replaced
+                .contains("legal/"); // %DOMAIN_SLUG% placeholder replaced
+    }
+
+    @Test
+    void approvingSuggestedDomainWithExistingCurationPageDoesNotOverwriteIt() {
+        createDomain("legal", "Legal", KnowledgeDomainState.SUGGESTED);
+        String customContent = "---\ntype: schema\ntitle: Custom curation\n---\n\nAlready written by someone.";
+        pageService.batchWrite(projectId, List.of(new PageWrite("legal/_curation.md", customContent, null, false)),
+                List.of(), new Actor("user", "u1", null));
+
+        domainService.update(projectId, "legal", null, null, null, KnowledgeDomainState.ACTIVE);
+
+        KnowledgePage page = pageRepository.findByProjectIdAndPath(projectId, "legal/_curation.md").orElseThrow();
+        assertThat(page.getVersion()).isEqualTo(1);
+        assertThat(page.getBody()).contains("Already written by someone.");
+    }
+
+    @Test
     void approvingSuggestedDomainWithExistingSchemaPageDoesNotOverwriteIt() {
         createDomain("legal", "Legal", KnowledgeDomainState.SUGGESTED);
         String customContent = "---\ntype: schema\ntitle: Custom\n---\n\nAlready written by someone.";
@@ -195,6 +223,7 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         domainService.update(projectId, "legal", "Legal Affairs", null, null, null);
 
         assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_schema.md")).isEmpty();
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_curation.md")).isEmpty();
     }
 
     @Test
@@ -204,6 +233,7 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         domainService.update(projectId, "legal", null, null, null, KnowledgeDomainState.ACTIVE);
 
         assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_schema.md")).isPresent();
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "legal/_curation.md")).isPresent();
     }
 
     // ---- applyPatch atomicity (PATCH endpoint's entry point) ----
@@ -330,6 +360,90 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
     void createSpecialistThrowsNotFoundForUnknownDomain() {
         assertThatThrownBy(() -> domainService.createSpecialist(projectId, "nonexistent"))
                 .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    void createSpecialistSeedsNeitherSchemaNorCurationPage() {
+        // Pins the deliberate decision recorded in createSpecialist's inline comment: this method never
+        // transitions state and requires an already-ACTIVE domain, so any domain it can target already
+        // got both pages from provision() or the SUGGESTED->ACTIVE approval branch -- a seed here would
+        // be dead code, and this domain (created directly as ACTIVE, bypassing both of those paths) has
+        // neither page to prove it.
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "engineering/_schema.md")).isEmpty();
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "engineering/_curation.md")).isEmpty();
+
+        domainService.createSpecialist(projectId, "engineering");
+
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "engineering/_schema.md")).isEmpty();
+        assertThat(pageRepository.findByProjectIdAndPath(projectId, "engineering/_curation.md")).isEmpty();
+    }
+
+    // ---- specialist prompt stamping / refresh ----
+
+    @Test
+    void createSpecialistStampsSeededPromptHash() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+
+        domainService.createSpecialist(projectId, "engineering");
+
+        Agent agent = agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow();
+        assertThat(agent.getConfigJson())
+                .contains(KnowledgeWorkflowProvisioner.SEEDED_PROMPT_HASH_CONFIG_KEY)
+                .contains(sha256Hex(agent.getSystemPrompt()));
+    }
+
+    /**
+     * Re-running this admin-triggered, already-idempotent endpoint upgrades a specialist still carrying
+     * exactly the prompt this service last seeded. Unlike the librarian there is no historical-hash set to
+     * fall back on -- a specialist's stored prompt is the shared template with the domain already
+     * substituted, so only its own stamp can identify it.
+     */
+    @Test
+    void createSpecialistRefreshesAnUnmodifiedPrompt() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+        domainService.createSpecialist(projectId, "engineering");
+        Agent agent = agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow();
+        String seededPrompt = agent.getSystemPrompt();
+
+        // Simulate a shipped template change by rewinding the stored prompt while leaving the stamp
+        // pointing at what it currently holds -- i.e. "still exactly what we last seeded".
+        String stalePrompt = seededPrompt.replace("Steps:", "Steps (older wording):");
+        agent.setSystemPrompt(stalePrompt);
+        agent.setConfigJson("{\"maxToolTurns\":40,\"runtime\":\"claude-code\",\""
+                + KnowledgeWorkflowProvisioner.SEEDED_PROMPT_HASH_CONFIG_KEY + "\":\"" + sha256Hex(stalePrompt) + "\"}");
+        agentRepository.save(agent);
+
+        domainService.createSpecialist(projectId, "engineering");
+
+        Agent refreshed = agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow();
+        assertThat(refreshed.getSystemPrompt()).isEqualTo(seededPrompt);
+        assertThat(refreshed.getConfigJson()).contains(sha256Hex(seededPrompt));
+    }
+
+    @Test
+    void createSpecialistLeavesAnOperatorEditedPromptAlone() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+        domainService.createSpecialist(projectId, "engineering");
+        Agent agent = agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow();
+        String operatorPrompt = "Only file architecture decisions for the engineering area. Nothing else.";
+        agent.setSystemPrompt(operatorPrompt);
+        agentRepository.save(agent);
+
+        domainService.createSpecialist(projectId, "engineering");
+
+        assertThat(agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow()
+                .getSystemPrompt()).isEqualTo(operatorPrompt);
+    }
+
+    private static String sha256Hex(String content) {
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            return java.util.HexFormat.of()
+                    .formatHex(digest.digest(content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     // ---- end to end: gap report -> approval -> routing ----

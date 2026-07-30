@@ -120,12 +120,13 @@ export function retryDeadKnowledgeSources(projectId: string, token: string): Pro
 
 // ── Ingestion inbox (sources) ───────────────────────────────────────────────
 
-export type KnowledgeSourceStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'DEAD'
+export type KnowledgeSourceStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'SKIPPED' | 'DEAD'
 
 export interface KnowledgeSourceCounts {
   pending: number
   processing: number
   processed: number
+  skipped: number
   dead: number
 }
 
@@ -155,6 +156,9 @@ export interface KnowledgeSourceDto {
   status: KnowledgeSourceStatus
   attempts: number
   errorMessage?: string | null
+  /** Set when status is SKIPPED — why the librarian judged this source not worth a page. Null for
+   *  every other status. */
+  skipReason?: string | null
   /** Set once retention has compacted this source's payload; null means it's still intact. */
   purgedAt?: string | null
   /** The domain lane this source was routed to at submit time. Null is the unclassified/generalist lane. */
@@ -172,6 +176,33 @@ export function listKnowledgeSources(
   if (opts?.domain) params.set('domain', opts.domain)
   return apiGet<KnowledgeSourceDto[]>(
     `/api/v1/projects/${projectId}/knowledge/sources?${params.toString()}`,
+    token,
+  )
+}
+
+export interface KnowledgePageDismissResult {
+  path: string
+  /** The dismissed page's new (tombstone) version. */
+  version: number
+  /** Path of the `_curation.md` page the dismissal reason was recorded on — name it in the success toast. */
+  curationPagePath: string
+  curationPageVersion: number
+}
+
+/**
+ * "Not worth filing": deletes the page and records the reason as a dated rule on the `_curation.md`
+ * that governs it, atomically (see docs/knowledge.md#curation). `baseVersion` is the version last read
+ * for this page — a stale value 409s with a ready-to-show message ("This page changed since you opened
+ * it — reload and try again"), so callers don't need to special-case the conflict body.
+ */
+export function dismissKnowledgePage(
+  projectId: string,
+  body: { path: string; baseVersion: number; reason: string },
+  token: string,
+): Promise<KnowledgePageDismissResult> {
+  return apiPost<KnowledgePageDismissResult>(
+    `/api/v1/projects/${projectId}/knowledge/pages/dismiss`,
+    body,
     token,
   )
 }

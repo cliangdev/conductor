@@ -51,4 +51,13 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
 
     @Query("SELECT COUNT(i) FROM WorkItem i WHERE i.workflow = :slug AND i.workflowVersion = :version")
     long countByWorkflowSlugAndVersion(@Param("slug") String slug, @Param("version") int version);
+
+    /**
+     * Single Work Item with its {@code project} and {@code assignee} eagerly resolved -- both are
+     * {@code FetchType.LAZY}, so a naive {@code findById} would cost 2 extra selects (or throw
+     * {@code LazyInitializationException} once the loading session closes) the moment a caller reads
+     * either. Backs {@link com.conductor.service.WorkItemSnapshotService}, which needs both up front.
+     */
+    @Query("SELECT i FROM WorkItem i LEFT JOIN FETCH i.project LEFT JOIN FETCH i.assignee WHERE i.id = :workItemId")
+    Optional<WorkItem> findByIdWithProjectAndAssignee(@Param("workItemId") String workItemId);
 }

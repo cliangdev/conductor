@@ -8,6 +8,11 @@ description: Frontmatter contract, path layout, and linking conventions for this
 
 This page is the librarian's style guide. Read it before writing any page.
 
+> **Before deciding how to write a page, decide whether to write one.** Read
+> [`/_curation.md`](/_curation.md) — the project's curation policy — and the relevant domain's
+> `<domain>/_curation.md`. Not filing a source is a normal, correct outcome; report it in
+> `write_knowledge_pages`'s `skipped` with a one-line reason.
+
 ## Frontmatter contract
 
 Every page is Markdown with a leading YAML frontmatter block (`---` ... `---`).

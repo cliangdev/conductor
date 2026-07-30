@@ -18,7 +18,7 @@ import java.util.List;
 /**
  * Hourly retention sweep for the ingestion inbox ({@code knowledge_sources}). Once a source's payload
  * has served its purpose, keeping the raw content around indefinitely is pure bloat -- the compounded
- * wiki pages are the durable record, not the inbox. Two independent sweeps, each bounded to one batch
+ * wiki pages are the durable record, not the inbox. Three independent sweeps, each bounded to one batch
  * per tick so a large backlog never holds a long transaction or spikes load:
  *
  * <ul>
@@ -27,19 +27,24 @@ import java.util.List;
  *       {@code purgedAt}. The row itself (id, type, ref, metadata, status, timestamps) is kept --
  *       {@code knowledge_revision_sources} still references it by id, and the wiki's "Log" view
  *       surfaces source refs by id, so only the (potentially large) payload content is reclaimed.</li>
- *   <li><b>Delete</b> -- DEAD sources older than {@link #deleteDeadAfterDays} (default 90): hard-deleted
- *       entirely. A DEAD source exhausted every retry ({@code KnowledgeIngestScheduler}'s sweep) without
- *       ever being marked PROCESSED, so it normally has no downstream references -- but a librarian run
- *       that outlived the stale window can link a revision to a source <em>after</em> the sweep
- *       dead-lettered it ({@code markProcessed} only moves PENDING/PROCESSING rows, so the status stays
- *       DEAD). {@code knowledge_revision_sources}' {@code ON DELETE CASCADE} would silently erase that
- *       provenance, so each row is checked ({@code isReferencedByRevision}) and a referenced one is
- *       compacted into a tombstone instead of deleted.</li>
+ *   <li><b>Delete DEAD</b> -- DEAD sources older than {@link #deleteDeadAfterDays} (default 90):
+ *       hard-deleted entirely. A DEAD source exhausted every retry ({@code KnowledgeIngestScheduler}'s
+ *       sweep) without ever being marked PROCESSED, so it normally has no downstream references -- but
+ *       a librarian run that outlived the stale window can link a revision to a source <em>after</em>
+ *       the sweep dead-lettered it ({@code markProcessed} only moves PENDING/PROCESSING rows, so the
+ *       status stays DEAD). {@code knowledge_revision_sources}' {@code ON DELETE CASCADE} would silently
+ *       erase that provenance, so each row is checked ({@code isReferencedByRevision}) and a referenced
+ *       one is compacted into a tombstone instead of deleted.</li>
+ *   <li><b>Delete SKIPPED</b> -- SKIPPED sources older than {@link #deleteSkippedAfterDays} (default
+ *       90): same hard-delete-or-tombstone treatment as DEAD. A skip produced no page, so unlike
+ *       PROCESSED it is never referenced by {@code knowledge_revision_sources} in the ordinary case --
+ *       but the same defensive reference check applies (kept purely as a hedge; not expected to trigger
+ *       in practice, since a skip decision writes no page).</li>
  * </ul>
  *
- * <p>Both passes delete the offloaded GCS object <b>before</b> touching the row. If that delete throws,
- * the row is skipped entirely for this tick (its {@code REQUIRES_NEW} transaction rolls back -- no
- * field nulled, no row deleted) and retried on the next hourly tick: never null {@code payload_uri}
+ * <p>All three passes delete the offloaded GCS object <b>before</b> touching the row. If that delete
+ * throws, the row is skipped entirely for this tick (its {@code REQUIRES_NEW} transaction rolls back --
+ * no field nulled, no row deleted) and retried on the next hourly tick: never null {@code payload_uri}
  * (or delete the row) unless the object it points at is confirmed gone, or the object becomes an
  * unreferenced, uncleanable orphan in the bucket forever.
  */
@@ -55,6 +60,7 @@ public class KnowledgeRetentionService {
     private final StorageService storageService;
     private final int compactAfterDays;
     private final int deleteDeadAfterDays;
+    private final int deleteSkippedAfterDays;
 
     /** Self-reference so the {@code REQUIRES_NEW} per-row helpers run through the Spring proxy --
      *  mirrors {@code KnowledgeIngestScheduler#self}; calling them via plain {@code this} would bypass
@@ -67,11 +73,13 @@ public class KnowledgeRetentionService {
             KnowledgeSourceRepository repository,
             StorageService storageService,
             @Value("${conductor.knowledge.retention.processed-days:30}") int compactAfterDays,
-            @Value("${conductor.knowledge.retention.dead-days:90}") int deleteDeadAfterDays) {
+            @Value("${conductor.knowledge.retention.dead-days:90}") int deleteDeadAfterDays,
+            @Value("${conductor.knowledge.retention.skipped-days:90}") int deleteSkippedAfterDays) {
         this.repository = repository;
         this.storageService = storageService;
         this.compactAfterDays = compactAfterDays;
         this.deleteDeadAfterDays = deleteDeadAfterDays;
+        this.deleteSkippedAfterDays = deleteSkippedAfterDays;
     }
 
     @Scheduled(fixedDelay = 3_600_000)
@@ -82,9 +90,14 @@ public class KnowledgeRetentionService {
             log.error("Knowledge retention compaction sweep failed: {}", e.getMessage(), e);
         }
         try {
-            deleteDead();
+            deleteTerminalUnfiled(KnowledgeSourceStatus.DEAD, deleteDeadAfterDays);
         } catch (Exception e) {
-            log.error("Knowledge retention deletion sweep failed: {}", e.getMessage(), e);
+            log.error("Knowledge retention deletion sweep failed (DEAD): {}", e.getMessage(), e);
+        }
+        try {
+            deleteTerminalUnfiled(KnowledgeSourceStatus.SKIPPED, deleteSkippedAfterDays);
+        } catch (Exception e) {
+            log.error("Knowledge retention deletion sweep failed (SKIPPED): {}", e.getMessage(), e);
         }
     }
 
@@ -139,44 +152,52 @@ public class KnowledgeRetentionService {
         storageService.delete(payloadUri);
     }
 
-    // ---- delete: DEAD, older than deleteDeadAfterDays ----
+    // ---- delete: a terminal status that never produced a filed page (DEAD or SKIPPED), older than
+    // its own window ----
 
-    private void deleteDead() {
-        OffsetDateTime cutoff = OffsetDateTime.now().minusDays(deleteDeadAfterDays);
-        // PurgedAtIsNull: a referenced DEAD source gets compacted into a tombstone instead of deleted
-        // (see deleteInNewTx) -- the purgedAt stamp takes it out of this query so it can't clog the
+    /**
+     * Shared sweep for the two terminal-but-unfiled statuses: DEAD (exhausted retries, never got a
+     * verdict) and SKIPPED (got a verdict, and the verdict was "not worth a page"). Neither leaves a
+     * page behind, so both get the same hard-delete-after-a-window treatment -- unlike PROCESSED,
+     * which is compacted (payload cleared) but its row kept forever as the wiki's provenance record.
+     */
+    private void deleteTerminalUnfiled(KnowledgeSourceStatus status, int afterDays) {
+        OffsetDateTime cutoff = OffsetDateTime.now().minusDays(afterDays);
+        // PurgedAtIsNull: a referenced row gets compacted into a tombstone instead of deleted (see
+        // deleteInNewTx) -- the purgedAt stamp takes it out of this query so it can't clog the
         // oldest-first batch on every subsequent tick.
         List<KnowledgeSource> candidates = repository
                 .findByStatusAndPurgedAtIsNullAndReceivedAtBeforeOrderByReceivedAtAsc(
-                        KnowledgeSourceStatus.DEAD, cutoff, PageRequest.of(0, BATCH_SIZE));
+                        status, cutoff, PageRequest.of(0, BATCH_SIZE));
         int deleted = 0;
         for (KnowledgeSource source : candidates) {
             try {
-                self.deleteInNewTx(source.getId());
+                self.deleteInNewTx(source.getId(), status);
                 deleted++;
             } catch (Exception e) {
-                log.warn("Failed to delete dead knowledge source {} (will retry next tick): {}",
-                        source.getId(), e.getMessage());
+                log.warn("Failed to delete {} knowledge source {} (will retry next tick): {}",
+                        status, source.getId(), e.getMessage());
             }
         }
         if (deleted > 0) {
-            log.info("Deleted {} dead knowledge source(s) past {} days", deleted, deleteDeadAfterDays);
+            log.info("Deleted {} {} knowledge source(s) past {} days", deleted, status, afterDays);
         }
     }
 
     /** Same GCS-first, skip-on-failure rule as {@link #compactInNewTx} -- never delete a row whose
-     *  offloaded object might still be sitting in the bucket unreferenced. */
+     *  offloaded object might still be sitting in the bucket unreferenced. {@code expected} guards
+     *  against a row that raced its way out of the status this sweep claimed it under. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void deleteInNewTx(String sourceId) {
+    public void deleteInNewTx(String sourceId, KnowledgeSourceStatus expected) {
         repository.findById(sourceId).ifPresent(source -> {
-            if (source.getStatus() != KnowledgeSourceStatus.DEAD || source.getPurgedAt() != null) {
-                return; // raced with something moving it out of DEAD, or already tombstoned
+            if (source.getStatus() != expected || source.getPurgedAt() != null) {
+                return; // raced with something moving it out of the expected status, or already tombstoned
             }
             if (repository.isReferencedByRevision(source.getId())) {
                 // A wedged librarian run linked a revision to this source after the stale sweep
-                // dead-lettered it. Hard-deleting would cascade away that provenance row -- the exact
-                // property compaction exists to protect -- so compact it instead; the tombstone row
-                // (purgedAt set) stops matching the compact query and simply stays.
+                // dead-lettered/skipped it. Hard-deleting would cascade away that provenance row --
+                // the exact property compaction exists to protect -- so compact it instead; the
+                // tombstone row (purgedAt set) stops matching the compact query and simply stays.
                 deleteOffloadedPayloadOrThrow(source);
                 source.setPayload(null);
                 source.setPayloadUri(null);

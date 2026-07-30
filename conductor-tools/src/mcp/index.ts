@@ -42,6 +42,7 @@ import {
   listKnowledgeDomains,
   suggestKnowledgeDomain,
   type KnowledgePageWrite,
+  type KnowledgeSkippedSource,
 } from './tools/knowledge.js'
 
 const TOOLS = [
@@ -526,7 +527,7 @@ const TOOLS = [
   },
   {
     name: 'write_knowledge_pages',
-    description: "Create, update, or delete wiki pages atomically. Updating an existing page requires its current version as baseVersion (read_knowledge_pages first) — a stale write returns a structured {conflict: true, conflicts: [{path, currentVersion, currentContent}]} result instead of throwing; merge and retry once. Optionally pass sourceIds to mark those knowledge-inbox sources PROCESSED atomically with the write — pass writes: [] with sourceIds to ack a batch that warrants no wiki change. Verify with read_knowledge_pages.",
+    description: "Create, update, or delete wiki pages atomically, plus settle the ingestion sources this batch reviewed. Updating an existing page requires its current version as baseVersion (read_knowledge_pages first) — a stale write returns a structured {conflict: true, conflicts: [{path, currentVersion, currentContent}]} result instead of throwing; merge and retry once. sourceIds are sources you filed into a page (marked PROCESSED); skipped (with a required reason each) are sources you reviewed and deliberately did not file (marked SKIPPED — the reason is shown to a human in the Inbox). Both may be set in one call; a source id belongs to exactly one — the same id in both is rejected. writes may be empty when sourceIds/skipped cover the batch, to settle sources with no page change. Verify with read_knowledge_sources.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -542,9 +543,21 @@ const TOOLS = [
             },
             required: ['path'],
           },
-          description: 'Pages to write or delete; may be empty when sourceIds is provided (no wiki change needed for this batch)',
+          description: 'Pages to write or delete; may be empty when sourceIds/skipped cover the batch (no wiki change needed)',
         },
         sourceIds: { type: 'array', items: { type: 'string' }, description: 'Knowledge-inbox source IDs to mark PROCESSED atomically with this write (optional)' },
+        skipped: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              sourceId: { type: 'string' },
+              reason: { type: 'string', description: "Why this source wasn't filed — required, shown to a human in the Inbox" },
+            },
+            required: ['sourceId', 'reason'],
+          },
+          description: 'Knowledge-inbox sources this batch reviewed and deliberately did not file; marked SKIPPED with the given reason atomically with this write (optional)',
+        },
       },
       required: ['writes'],
     },
@@ -1034,6 +1047,7 @@ export async function runMcpServer(): Promise<void> {
             {
               writes: (params['writes'] as KnowledgePageWrite[] | undefined) ?? [],
               sourceIds: params['sourceIds'] as string[] | undefined,
+              skipped: params['skipped'] as KnowledgeSkippedSource[] | undefined,
             },
             config
           )

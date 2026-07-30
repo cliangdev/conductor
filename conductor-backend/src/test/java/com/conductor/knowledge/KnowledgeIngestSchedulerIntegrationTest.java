@@ -420,6 +420,55 @@ class KnowledgeIngestSchedulerIntegrationTest {
         assertThat(reload(id2).getNextAttemptAt()).isEqualTo(reload(id1).getNextAttemptAt());
     }
 
+    // ---- SKIPPED: pinning behavior we deliberately did NOT change ----
+
+    @Test
+    void skippedSourceIsNeverClaimedByDuePendingClaim() {
+        String projectId = newProject(true);
+        provisioner.provision(projectId);
+        String skippedId = submitPending(projectId, "note://skipped");
+        KnowledgeSource skipped = reload(skippedId);
+        skipped.setStatus(KnowledgeSourceStatus.SKIPPED);
+        skipped.setSkipReason("not material");
+        sourceRepository.save(skipped);
+
+        scheduler.poll();
+
+        KnowledgeSource reloaded = reload(skippedId);
+        assertThat(reloaded.getStatus()).isEqualTo(KnowledgeSourceStatus.SKIPPED);
+        assertThat(reloaded.getProcessingRunId()).isNull();
+    }
+
+    @Test
+    void sourceFlippedToSkippedWhileProcessing_isNotDeadLetteredBySweep() {
+        String projectId = newProject(true);
+        provisioner.provision(projectId);
+        WorkflowDefinition librarian = workflowRepository
+                .findByProjectIdAndName(projectId, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME)
+                .orElseThrow();
+
+        WorkflowRun failedRun = new WorkflowRun();
+        failedRun.setWorkflow(librarian);
+        failedRun.setTriggerType("workflow_dispatch");
+        failedRun.setStatus(WorkflowRunStatus.FAILED);
+        workflowRunRepository.save(failedRun);
+
+        // Simulates a librarian run that skipped the source (a real verdict) in the same window the
+        // sweep would otherwise treat its now-failed run as a stale claim to resurrect/dead-letter.
+        String id = submitPending(projectId, "note://skipped-while-processing");
+        markProcessing(id, failedRun.getId(), 0);
+        KnowledgeSource skipped = reload(id);
+        skipped.setStatus(KnowledgeSourceStatus.SKIPPED);
+        skipped.setSkipReason("librarian judged it not material");
+        sourceRepository.save(skipped);
+
+        scheduler.poll();
+
+        KnowledgeSource reloaded = reload(id);
+        assertThat(reloaded.getStatus()).isEqualTo(KnowledgeSourceStatus.SKIPPED);
+        assertThat(reloaded.getAttempts()).isZero();
+    }
+
     private void markProcessing(String sourceId, String runId, int attempts) {
         KnowledgeSource source = reload(sourceId);
         source.setStatus(KnowledgeSourceStatus.PROCESSING);

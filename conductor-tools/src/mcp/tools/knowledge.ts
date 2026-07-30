@@ -21,6 +21,11 @@ export interface KnowledgePageConflict {
   currentContent: string
 }
 
+export interface KnowledgeSkippedSource {
+  sourceId: string
+  reason: string
+}
+
 export async function submitKnowledgeSource(
   params: {
     sourceType: string
@@ -182,11 +187,12 @@ export async function suggestKnowledgeDomain(
 }
 
 export async function writeKnowledgePages(
-  params: { writes: KnowledgePageWrite[]; sourceIds?: string[] },
+  params: { writes: KnowledgePageWrite[]; sourceIds?: string[]; skipped?: KnowledgeSkippedSource[] },
   config: Config
 ): Promise<Record<string, unknown>> {
   const body: Record<string, unknown> = { writes: params.writes }
   if (params.sourceIds !== undefined) body['sourceIds'] = params.sourceIds
+  if (params.skipped !== undefined) body['skipped'] = params.skipped
 
   try {
     return await apiPost<Record<string, unknown>>(

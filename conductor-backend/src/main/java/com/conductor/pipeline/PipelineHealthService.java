@@ -150,6 +150,9 @@ public class PipelineHealthService {
         counts.put("pending", view.pending());
         counts.put("processing", view.processing());
         counts.put("processed", view.processed());
+        // A skipped bucket is always reported on its own, never folded into "processed" -- mirrors
+        // the DIGESTS stage's own skipped/submitted split just above (see docs/knowledge.md).
+        counts.put("skipped", view.skipped());
         counts.put("dead", view.dead());
         return new PipelineStageHealthView("INBOX", "Knowledge inbox", counts);
     }

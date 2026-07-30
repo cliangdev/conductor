@@ -160,7 +160,7 @@ public class KnowledgeIngestionService {
      * status.
      */
     public KnowledgeSourceCountsView getSourceCounts(String projectId) {
-        long pending = 0, processing = 0, processed = 0, dead = 0;
+        long pending = 0, processing = 0, processed = 0, skipped = 0, dead = 0;
         for (Object[] row : repository.countByProjectIdGroupByStatus(projectId)) {
             KnowledgeSourceStatus status = (KnowledgeSourceStatus) row[0];
             long count = (Long) row[1];
@@ -168,10 +168,11 @@ public class KnowledgeIngestionService {
                 case PENDING -> pending = count;
                 case PROCESSING -> processing = count;
                 case PROCESSED -> processed = count;
+                case SKIPPED -> skipped = count;
                 case DEAD -> dead = count;
             }
         }
-        return new KnowledgeSourceCountsView(pending, processing, processed, dead);
+        return new KnowledgeSourceCountsView(pending, processing, processed, skipped, dead);
     }
 
     /**
@@ -181,21 +182,22 @@ public class KnowledgeIngestionService {
      * {@code KnowledgeController}) supplies the zero default.
      */
     public Map<String, KnowledgeSourceCountsView> getDomainCounts(String projectId) {
-        Map<String, long[]> byDomain = new HashMap<>(); // [pending, processing, processed, dead]
+        Map<String, long[]> byDomain = new HashMap<>(); // [pending, processing, processed, skipped, dead]
         for (Object[] row : repository.countByProjectIdGroupByDomainAndStatus(projectId)) {
             String domain = (String) row[0];
             KnowledgeSourceStatus status = (KnowledgeSourceStatus) row[1];
             long count = (Long) row[2];
-            long[] counts = byDomain.computeIfAbsent(domain, d -> new long[4]);
+            long[] counts = byDomain.computeIfAbsent(domain, d -> new long[5]);
             switch (status) {
                 case PENDING -> counts[0] = count;
                 case PROCESSING -> counts[1] = count;
                 case PROCESSED -> counts[2] = count;
-                case DEAD -> counts[3] = count;
+                case SKIPPED -> counts[3] = count;
+                case DEAD -> counts[4] = count;
             }
         }
         Map<String, KnowledgeSourceCountsView> result = new HashMap<>();
-        byDomain.forEach((domain, c) -> result.put(domain, new KnowledgeSourceCountsView(c[0], c[1], c[2], c[3])));
+        byDomain.forEach((domain, c) -> result.put(domain, new KnowledgeSourceCountsView(c[0], c[1], c[2], c[3], c[4])));
         return result;
     }
 
@@ -220,7 +222,7 @@ public class KnowledgeIngestionService {
                 s.getId(), s.getProjectId(), s.getSourceType(), s.getSourceRef(), s.getTitle(),
                 s.getContentType(), payload, offloaded, s.getMetadata(), toOrigin(s.getOrigin()),
                 s.getOccurredAt(), s.getReceivedAt(), s.getStatus(), s.getAttempts(), s.getErrorMessage(),
-                s.getPurgedAt(), s.getDomain());
+                s.getSkipReason(), s.getPurgedAt(), s.getDomain());
     }
 
     private void validate(KnowledgeSubmission submission) {
