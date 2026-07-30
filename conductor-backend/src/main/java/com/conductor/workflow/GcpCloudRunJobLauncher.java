@@ -8,6 +8,7 @@ import com.google.cloud.run.v2.ExecutionName;
 import com.google.cloud.run.v2.ExecutionsClient;
 import com.google.cloud.run.v2.JobName;
 import com.google.cloud.run.v2.JobsClient;
+import com.google.cloud.run.v2.ListExecutionsRequest;
 import com.google.cloud.run.v2.RunJobRequest;
 import com.google.cloud.run.v2.Task;
 import com.google.cloud.run.v2.TasksClient;
@@ -62,6 +63,11 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
     /** Total metadata wait budget ({@link #METADATA_ATTEMPT_TIMEOUT_SECONDS} * this) before falling back
      *  to the unconfirmed-launch path rather than giving up outright. */
     private static final int METADATA_MAX_ATTEMPTS = 3;
+    /** Env var carrying the per-step unique id {@link #findExecutionByWorkerJobId} matches on. Set by
+     *  {@code ClaudeCodeContainerRunner.buildEnv}; Cloud Run echoes it onto the created Execution. */
+    static final String WORKER_JOB_ID_ENV = "CONDUCTOR_WORKER_JOB_ID";
+    /** How many of the job's most recent executions {@link #findExecutionByWorkerJobId} scans per attempt. */
+    private static final int RECENT_EXECUTIONS_PAGE_SIZE = 50;
 
     private final CloudRunClientFactory clientFactory;
 
@@ -171,6 +177,36 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
             log.warn("Failed to resolve Cloud Run execution name for operation {}: {}", operationName, e.getMessage());
         }
         return Optional.empty();
+    }
+
+    @Override
+    public Optional<String> findExecutionByWorkerJobId(CloudRunTarget target, String workerJobId) {
+        try {
+            ExecutionsClient executionsClient = clientFactory.forTarget(target).executions();
+            JobName parent = JobName.of(target.gcpProjectId(), target.region(), target.jobName());
+            // Bounded to the most recent page: the execution we're hunting was created seconds ago, so
+            // paging through a busy job's entire history would only add latency to a call we make on a
+            // 15s loop. Cloud Run returns executions newest-first.
+            ListExecutionsRequest request = ListExecutionsRequest.newBuilder()
+                    .setParent(parent.toString())
+                    .setPageSize(RECENT_EXECUTIONS_PAGE_SIZE)
+                    .build();
+            for (Execution execution : executionsClient.listExecutions(request).getPage().getValues()) {
+                if (carriesWorkerJobId(execution, workerJobId)) {
+                    return Optional.of(execution.getName());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to search Cloud Run executions of job {} for workerJobId {}: {}",
+                    target.jobName(), workerJobId, e.getMessage());
+        }
+        return Optional.empty();
+    }
+
+    private static boolean carriesWorkerJobId(Execution execution, String workerJobId) {
+        return execution.getTemplate().getContainersList().stream()
+                .flatMap(container -> container.getEnvList().stream())
+                .anyMatch(env -> WORKER_JOB_ID_ENV.equals(env.getName()) && workerJobId.equals(env.getValue()));
     }
 
     @Override

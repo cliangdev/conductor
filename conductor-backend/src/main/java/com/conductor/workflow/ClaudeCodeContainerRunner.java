@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Runs a single headless Claude Code container execution to completion: resolves the {@code runs-on}
@@ -89,6 +90,10 @@ public class ClaudeCodeContainerRunner {
     private static final int DEFAULT_TIMEOUT_MINUTES = 30;
     private static final int MAX_TIMEOUT_MINUTES = 120;
     private static final int POLL_INTERVAL_SECONDS = 10;
+    /** How long to keep looking for an execution belonging to a launch Cloud Run never acknowledged.
+     *  Sized well past the 41s lag observed in production between giving up and the execution appearing. */
+    private static final int RECONCILE_WINDOW_SECONDS = 180;
+    private static final int RECONCILE_POLL_SECONDS = 15;
     private static final List<String> CONTAINER_COMMAND = List.of("conductor-claude-entrypoint");
 
     private final CloudRunJobLauncher launcher;
@@ -260,12 +265,28 @@ public class ClaudeCodeContainerRunner {
             launch = launcher.startExecution(target, task);
         } catch (CloudRunJobLauncher.LaunchUnconfirmedException e) {
             // Genuinely inconclusive, not a confirmed failure (see the exception's javadoc): no
-            // operationName was ever obtained, so unlike every other branch here there is nothing to
-            // persist and poll/resume on. Surfaced as its own errorReason so a user isn't told the launch
-            // definitively failed when the container may in fact be running to completion, orphaned.
+            // operationName was ever obtained, so there is nothing to poll/resume by. But the request may
+            // still land after we stop waiting — observed 41s late in production — and the execution it
+            // creates carries this step's workerJobId in its env, so search for it before concluding
+            // anything. Finding it converts a guess into a fact and recovers the step outright.
             log.warn("Cloud Run did not acknowledge the RunJob request for claude-code step {}: {}", stepId, e.getMessage());
-            appendLauncherLine(stepRun, projectId, logBuilder, "✗ " + e.getMessage());
-            return StepResult.failed(logBuilder.toString(), "CLOUD_RUN_LAUNCH_UNCONFIRMED").withWorkerJobId(workerJobId);
+            appendLauncherLine(stepRun, projectId, logBuilder, "⚠ " + e.getMessage());
+            appendLauncherLine(stepRun, projectId, logBuilder,
+                    "→ Searching Cloud Run for an execution matching this step before giving up");
+            Optional<String> reconciled = findLateExecution(target, workerJobId, stepId);
+            if (reconciled.isEmpty()) {
+                appendLauncherLine(stepRun, projectId, logBuilder,
+                        "✗ No matching Cloud Run execution appeared within "
+                                + RECONCILE_WINDOW_SECONDS + "s — treating the launch as unconfirmed");
+                return StepResult.failed(logBuilder.toString(), "CLOUD_RUN_LAUNCH_UNCONFIRMED").withWorkerJobId(workerJobId);
+            }
+            String executionName = reconciled.get();
+            appendLauncherLine(stepRun, projectId, logBuilder,
+                    "← Recovered unacknowledged launch: " + executionName);
+            stepRun.setExecutionName(executionName);
+            stepRunRepository.save(stepRun);
+            return pollUntilTerminal(target, executionName, null, runId, jobRun.getId(), workerJobId, stepDef,
+                    timeoutMinutes, logBuilder, stepRun, projectId);
         } catch (Exception e) {
             log.warn("Failed to start Cloud Run execution for claude-code step {}: {}", stepId, e.getMessage());
             appendLauncherLine(stepRun, projectId, logBuilder, "✗ " + e.getMessage());
@@ -288,6 +309,31 @@ public class ClaudeCodeContainerRunner {
 
         return pollUntilTerminal(target, launch.executionName().orElse(null), launch.operationName(),
                 runId, jobRun.getId(), workerJobId, stepDef, timeoutMinutes, logBuilder, stepRun, projectId);
+    }
+
+    /**
+     * Polls Cloud Run for an execution carrying this step's {@code workerJobId}, over a window sized to
+     * outlast the observed lag between giving up on the RunJob acknowledgement and the execution
+     * actually appearing (41s in the production case this was written for). Returns empty when the
+     * launch really never happened — the only case in which failing the step is honest.
+     */
+    private Optional<String> findLateExecution(CloudRunTarget target, String workerJobId, String stepId) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(RECONCILE_WINDOW_SECONDS);
+        do {
+            Optional<String> found = launcher.findExecutionByWorkerJobId(target, workerJobId);
+            if (found.isPresent()) {
+                log.info("Recovered unacknowledged Cloud Run launch for claude-code step {}: execution {} "
+                        + "matched workerJobId {}", stepId, found.get(), workerJobId);
+                return found;
+            }
+            try {
+                TimeUnit.SECONDS.sleep(RECONCILE_POLL_SECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return Optional.empty();
+            }
+        } while (System.nanoTime() < deadline);
+        return Optional.empty();
     }
 
     /**

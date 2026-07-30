@@ -43,13 +43,12 @@ public final class StepFailureExplanations {
                             + "(e.g. image pull failure, OOM kill) — the target itself resolved fine; something went wrong running on it.",
                     "Check the step log and Cloud Run execution logs for the launch failure; confirm the runtime target's image and resource limits.")),
             Map.entry("CLOUD_RUN_LAUNCH_UNCONFIRMED", new Explanation(
-                    "Cloud Run never acknowledged the launch request within the retry budget — this is inconclusive, not a "
-                            + "confirmed failure: under control-plane or client load, the request can still go through even "
-                            + "though Conductor gave up waiting, in which case a container may be running (or may have already "
-                            + "finished) unobserved, with no result reported back.",
+                    "Cloud Run never acknowledged the launch request within the retry budget, and no execution belonging to "
+                            + "this step appeared in the 3 minutes afterwards. A late-landing request is searched for by the "
+                            + "step's own id, so an orphaned container would normally have been found and adopted — not finding "
+                            + "one is good evidence nothing started, though it remains short of proof.",
                     "Re-run the step. If this recurs often, it points to Cloud Run launch capacity/latency rather than this "
-                            + "step's own config — check the Cloud Run console around this step's start time for a stray execution, "
-                            + "and consider flagging it to whoever operates this Conductor deployment.")),
+                            + "step's own config — flag it to whoever operates this Conductor deployment.")),
             Map.entry("CLAUDE_INVALID_RUNS_ON", new Explanation(
                     "The job's runs-on doesn't resolve to a container-capable target.",
                     "Set runs-on: cloud-run (or a named runtime target, or self-hosted) on the job containing this claude-code step.")),

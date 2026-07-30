@@ -38,4 +38,9 @@ public class LocalNoopCloudRunJobLauncher implements CloudRunJobLauncher {
     public Optional<String> tryResolveExecutionName(CloudRunTarget target, String operationName) {
         throw new UnsupportedOperationException(MESSAGE);
     }
+
+    @Override
+    public Optional<String> findExecutionByWorkerJobId(CloudRunTarget target, String workerJobId) {
+        throw new UnsupportedOperationException(MESSAGE);
+    }
 }

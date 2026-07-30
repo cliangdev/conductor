@@ -218,12 +218,23 @@ public class WorkflowRunLogBroker {
             List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(jobRun.getId());
             for (WorkflowStepRun step : steps) {
                 if (workerJobId.equals(step.getWorkerJobId())) {
-                    if (step.getStatus().isTerminal()) {
+                    if (step.getStatus().isTerminal() && !isInconclusive(step)) {
                         // A late daemon backstop post (e.g. after the container already self-reported)
                         // must not flip an already-terminal, container-reported result.
                         log.info("recordStepCompleted: step {} (workerJobId={}) already terminal ({}), "
                                 + "ignoring late report", step.getId(), workerJobId, step.getStatus());
                         return;
+                    }
+                    if (step.getStatus().isTerminal()) {
+                        // The one terminal state that is an admission of ignorance rather than a result:
+                        // we stopped waiting for Cloud Run to acknowledge the launch and guessed failure.
+                        // This report is the container itself telling us what really happened, so it wins.
+                        // Only the step is corrected — the job and run settled long ago, and silently
+                        // re-opening them would skip the dependent-job propagation a real success does.
+                        log.warn("recordStepCompleted: adopting late report ({}) for step {} (workerJobId={}) "
+                                        + "previously marked {}/{} — the container outlived our launch wait. "
+                                        + "Job and run status are left as settled.",
+                                status, step.getId(), workerJobId, step.getStatus(), step.getErrorReason());
                     }
                     step.setStatus(status);
                     step.setErrorReason(errorReason);
@@ -248,6 +259,19 @@ public class WorkflowRunLogBroker {
         }
         log.warn("recordStepCompleted: no step run found for workerJobId {} in run {}", workerJobId, runId);
     }
+
+    /**
+     * True when a step's terminal state records that we never established what happened, as opposed to
+     * an observed outcome. Today that is only {@code CLOUD_RUN_LAUNCH_UNCONFIRMED}: Cloud Run never
+     * acknowledged the RunJob request, so the step was failed on a guess while a real container could
+     * still have been running. A report arriving afterwards is evidence, and evidence beats a guess.
+     */
+    private static boolean isInconclusive(WorkflowStepRun step) {
+        return step.getErrorReason() != null
+                && step.getErrorReason().startsWith(INCONCLUSIVE_LAUNCH_REASON);
+    }
+
+    static final String INCONCLUSIVE_LAUNCH_REASON = "CLOUD_RUN_LAUNCH_UNCONFIRMED";
 
     /**
      * Applies the step's declared {@code outputs:} dot-path mapping (same as
