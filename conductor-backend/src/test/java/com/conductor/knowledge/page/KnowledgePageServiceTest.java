@@ -3,6 +3,7 @@ package com.conductor.knowledge.page;
 import com.conductor.exception.BusinessException;
 import com.conductor.knowledge.Actor;
 import com.conductor.knowledge.KnowledgeSourceRepository;
+import com.conductor.knowledge.domain.KnowledgeDomainRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class KnowledgePageServiceTest {
     private KnowledgePageRevisionRepository revisionRepository;
     private KnowledgeLinkRepository linkRepository;
     private KnowledgeSourceRepository sourceRepository;
+    private KnowledgeDomainRepository domainRepository;
     private KnowledgePageService service;
 
     @BeforeEach
@@ -47,8 +49,9 @@ class KnowledgePageServiceTest {
         revisionRepository = mock(KnowledgePageRevisionRepository.class);
         linkRepository = mock(KnowledgeLinkRepository.class);
         sourceRepository = mock(KnowledgeSourceRepository.class);
+        domainRepository = mock(KnowledgeDomainRepository.class);
         service = new KnowledgePageService(pageRepository, revisionRepository, linkRepository, sourceRepository,
-                new FrontmatterParser(), new ObjectMapper());
+                domainRepository, new FrontmatterParser(), new ObjectMapper());
 
         when(pageRepository.save(any(KnowledgePage.class))).thenAnswer(inv -> inv.getArgument(0));
         when(revisionRepository.save(any(KnowledgePageRevision.class))).thenAnswer(inv -> {

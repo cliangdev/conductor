@@ -9,6 +9,8 @@ import com.conductor.generated.model.KnowledgeDomainDto;
 import com.conductor.generated.model.KnowledgeOrigin;
 import com.conductor.generated.model.KnowledgePageBatchWriteRequest;
 import com.conductor.generated.model.KnowledgePageBatchWriteResponse;
+import com.conductor.generated.model.KnowledgePageDismissRequest;
+import com.conductor.generated.model.KnowledgePageDismissResponse;
 import com.conductor.generated.model.KnowledgePageRevisionView;
 import com.conductor.generated.model.KnowledgePageView;
 import com.conductor.generated.model.KnowledgePageWrite;
@@ -180,6 +182,21 @@ public class KnowledgeController implements KnowledgeApi {
     }
 
     @Override
+    public ResponseEntity<KnowledgePageDismissResponse> dismissKnowledgePage(
+            String projectId, KnowledgePageDismissRequest request) {
+        Caller caller = requireProjectAccess(projectId);
+        KnowledgePageService.DismissResult result = pageService.dismissPage(projectId, request.getPath(),
+                request.getBaseVersion(), request.getReason(), caller.label(), caller.actor());
+
+        KnowledgePageDismissResponse response = new KnowledgePageDismissResponse();
+        response.setPath(result.path());
+        response.setVersion(result.version());
+        response.setCurationPagePath(result.curationPath());
+        response.setCurationPageVersion(result.curationVersion());
+        return ResponseEntity.ok(response);
+    }
+
+    @Override
     public ResponseEntity<List<KnowledgePageView>> getKnowledgePages(String projectId, String paths) {
         requireProjectAccess(projectId);
         List<PageView> pages = pageService.getPages(projectId, splitCsv(paths));
@@ -213,8 +230,11 @@ public class KnowledgeController implements KnowledgeApi {
     /**
      * Result of {@link #requireProjectAccess}: the caller's project membership has already been
      * verified, and {@code actor}/{@code origin} carry its identity for provenance on writes.
+     * {@code label} is a human-readable name for the caller -- a raw user id or "agent"/projectId is
+     * useless in human-facing text, so {@link #dismissKnowledgePage} uses it in the Markdown bullet it
+     * appends to {@code _curation.md}.
      */
-    private record Caller(Actor actor, KnowledgeSubmission.Origin origin) {
+    private record Caller(Actor actor, KnowledgeSubmission.Origin origin, String label) {
     }
 
     /**
@@ -233,13 +253,25 @@ public class KnowledgeController implements KnowledgeApi {
                 throw new ForbiddenException("Not a member of this project");
             }
             return new Caller(new Actor("user", user.getId(), null),
-                    new KnowledgeSubmission.Origin("USER", user.getId()));
+                    new KnowledgeSubmission.Origin("USER", user.getId()), displayLabel(user));
         }
         if (auth instanceof ProjectScopedPrincipal scoped && projectId.equals(scoped.getProjectId())) {
             return new Caller(new Actor("agent", projectId, null),
-                    new KnowledgeSubmission.Origin("API_KEY", projectId));
+                    new KnowledgeSubmission.Origin("API_KEY", projectId), "API key");
         }
         throw new ForbiddenException("Not a member of this project");
+    }
+
+    /** Best available human-readable name for {@code user}: displayName, then name, then email --
+     *  mirrors the fallback order the frontend uses when rendering a user elsewhere in the app. */
+    private String displayLabel(User user) {
+        if (user.getDisplayName() != null && !user.getDisplayName().isBlank()) {
+            return user.getDisplayName();
+        }
+        if (user.getName() != null && !user.getName().isBlank()) {
+            return user.getName();
+        }
+        return user.getEmail();
     }
 
     /** Domain-registry mutation gate: ADMIN only, {@link User} principals only -- the registry is an

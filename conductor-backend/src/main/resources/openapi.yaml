@@ -5109,6 +5109,69 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /projects/{projectId}/knowledge/pages/dismiss:
+    post:
+      tags: [knowledge]
+      summary: '"Not worth filing": delete a page and record why on its governing curation policy'
+      description: >-
+        Soft-deletes the page at `path` and, in the same transaction, appends a dated rule recording
+        `reason` to the `_curation.md` page that governs it (root, or the owning area's) -- the page the
+        librarian reads before every batch, so the next similar source isn't refiled. One endpoint
+        rather than two client-side `batch-write` calls because the two halves must not come apart: a
+        deleted page with no recorded reason is one the librarian will cheerfully recreate from the next
+        similar source. Membership-gated (a member can already delete any page via `batch-write`;
+        admin-gating the reason-recording path would only push people toward the rawer one).
+      operationId: dismissKnowledgePage
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgePageDismissRequest'
+      responses:
+        '200':
+          description: Page dismissed and the curation rule recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgePageDismissResponse'
+        '400':
+          description: Blank reason, invalid path, or an attempt to dismiss a _schema.md/_curation.md policy page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No live page at that path
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            The page's baseVersion is stale -- it changed since the caller last read it. The response
+            body carries a `conflicts` extension alongside the standard problem fields.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Malformed frontmatter on the existing curation page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /projects/{projectId}/knowledge/pages:
     get:
       tags: [knowledge]
@@ -8298,6 +8361,45 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/KnowledgePageWriteResult'
+
+    KnowledgePageDismissRequest:
+      type: object
+      required:
+        - path
+        - baseVersion
+        - reason
+      properties:
+        path:
+          type: string
+          description: Bundle-relative path of the page being dismissed.
+        baseVersion:
+          type: integer
+          description: The version the caller last observed. A stale value is a 409.
+        reason:
+          type: string
+          description: >-
+            Why this page shouldn't exist. Required -- appended as a dated rule on the governing
+            _curation.md.
+
+    KnowledgePageDismissResponse:
+      type: object
+      required:
+        - path
+        - version
+        - curationPagePath
+        - curationPageVersion
+      properties:
+        path:
+          type: string
+        version:
+          type: integer
+          description: The dismissed page's new (tombstone) version.
+        curationPagePath:
+          type: string
+          description: Path of the _curation.md page the dismissal reason was recorded on.
+        curationPageVersion:
+          type: integer
+          description: The curation page's new version after the rule was appended.
 
     KnowledgePageView:
       type: object

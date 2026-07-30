@@ -2,18 +2,27 @@ package com.conductor.knowledge.page;
 
 import com.conductor.exception.BusinessException;
 import com.conductor.knowledge.Actor;
+import com.conductor.knowledge.KnowledgeCurationPaths;
 import com.conductor.knowledge.KnowledgeSourceRepository;
+import com.conductor.knowledge.domain.KnowledgeDomain;
+import com.conductor.knowledge.domain.KnowledgeDomainRepository;
+import com.conductor.knowledge.domain.KnowledgeDomainState;
+import com.conductor.knowledge.domain.KnowledgeDomainTemplates;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -43,16 +52,26 @@ public class KnowledgePageService {
     static final String VIRTUAL_LOG = "log.md";
     private static final int MAX_PATH_LENGTH = 512;
     private static final int LOG_REVISION_LIMIT = 100;
-    private static final int MAX_SKIP_REASON_LENGTH = 2000;
+    private static final int MAX_REASON_LENGTH = 2000;
+    /** Mirrors {@code KnowledgeWorkflowProvisioner#SCHEMA_PAGE_PATH} -- the root {@code _schema.md} filename,
+     *  also valid as a domain-relative filename ({@code <slug>/_schema.md}). */
+    private static final String SCHEMA_FILE_NAME = "_schema.md";
+    /** Same classpath resources {@code KnowledgeWorkflowProvisioner} seeds from -- used here only to
+     *  self-heal a missing curation page at dismiss time (see {@link #dismissPage}). */
+    private static final String CURATION_RESOURCE = "/knowledge/_curation.md";
+    private static final String DOMAIN_CURATION_SKELETON_RESOURCE = "/knowledge/domains/_curation-skeleton.md";
 
     private static final Pattern PATH_PATTERN = Pattern.compile("^[a-z0-9_][a-z0-9_/.-]*\\.md$");
     private static final Pattern MARKDOWN_LINK = Pattern.compile("\\[[^\\]]*]\\(([^)]+)\\)");
     private static final Pattern URI_SCHEME = Pattern.compile("^[a-zA-Z][a-zA-Z0-9+.-]*://");
+    private static final Pattern DO_NOT_FILE_HEADING = Pattern.compile("(?m)^## Do-not-file rules\\s*$");
+    private static final Pattern HEADING_LINE = Pattern.compile("(?m)^## ");
 
     private final KnowledgePageRepository pageRepository;
     private final KnowledgePageRevisionRepository revisionRepository;
     private final KnowledgeLinkRepository linkRepository;
     private final KnowledgeSourceRepository sourceRepository;
+    private final KnowledgeDomainRepository domainRepository;
     private final FrontmatterParser frontmatterParser;
     private final ObjectMapper objectMapper;
 
@@ -60,12 +79,14 @@ public class KnowledgePageService {
                                 KnowledgePageRevisionRepository revisionRepository,
                                 KnowledgeLinkRepository linkRepository,
                                 KnowledgeSourceRepository sourceRepository,
+                                KnowledgeDomainRepository domainRepository,
                                 FrontmatterParser frontmatterParser,
                                 ObjectMapper objectMapper) {
         this.pageRepository = pageRepository;
         this.revisionRepository = revisionRepository;
         this.linkRepository = linkRepository;
         this.sourceRepository = sourceRepository;
+        this.domainRepository = domainRepository;
         this.frontmatterParser = frontmatterParser;
         this.objectMapper = objectMapper;
     }
@@ -178,6 +199,156 @@ public class KnowledgePageService {
         return batchWrite(projectId, writes, sourceIds, List.of(), actor);
     }
 
+    /** Result of {@link #dismissPage}: the dismissed page's new (tombstone) version, and the curation
+     *  page the reason was recorded on plus its new version. */
+    public record DismissResult(String path, int version, String curationPath, int curationVersion) {
+    }
+
+    /**
+     * "Not worth filing": soft-deletes {@code path} and, in the same {@link #batchWrite} call, appends a
+     * dated rule recording {@code reason} to the {@code _curation.md} page that governs it ({@link
+     * KnowledgeCurationPaths#forPage}) -- the page the librarian reads before every batch, so the same
+     * class of source isn't refiled next time. One endpoint/method rather than two client-side {@code
+     * batchWrite} calls, because the two halves must not come apart: a deleted page with no recorded
+     * reason is one the librarian will cheerfully recreate from the next similar source. This still
+     * produces two revisions (one per page, each with its own version lineage) -- that is correct and
+     * unavoidable, never "simplify" it to a single revision row; what atomicity buys is a shared
+     * actor/timestamp and no half-states, not fewer revisions.
+     *
+     * <p>The curation page is self-healed if missing: a project that predates curation seeding (or whose
+     * seed failed) still gets a rule recorded, built from the same classpath template {@code
+     * KnowledgeWorkflowProvisioner} seeds from ({@link #CURATION_RESOURCE} at root, {@link
+     * #DOMAIN_CURATION_SKELETON_RESOURCE} rendered via {@link KnowledgeDomainTemplates} per domain).
+     *
+     * <p><b>Conflict handling: no retry, deliberately.</b> The curation page's version is read inside
+     * this same transaction, with nothing awaited between that read and the write -- the identical
+     * read-then-write-in-one-transaction window every {@link #batchWrite} caller already accepts ({@code
+     * knowledge_pages.version} is app-managed, not a JPA {@code @Version}, so nothing would detect a
+     * concurrent writer between the read and the write regardless of how this method is structured). A
+     * retry loop here would need {@code REQUIRES_NEW} to escape this method's rollback-marked
+     * transaction after a conflict, which breaks the atomicity this endpoint exists for. So the only
+     * realistic 409 is the caller's own stale {@code baseVersion} on {@code path} -- the curation page
+     * conflicting too would require a second human dismissing into the very same area in the very same
+     * instant. The conflict is rethrown with a caller-friendly message (still carrying the original
+     * {@code conflicts} extension) so the frontend needs no special-casing of which of the batch's two
+     * writes actually lost the race.
+     */
+    @Transactional
+    public DismissResult dismissPage(String projectId, String path, Integer baseVersion, String reason,
+                                     String dismissedByLabel, Actor actor) {
+        String normalizedPath = normalizePath(path);
+        if (isPolicyPage(normalizedPath)) {
+            throw new BusinessException("Policy pages are edited, not dismissed: " + normalizedPath);
+        }
+        String normalizedReason = normalizeReason("dismiss", reason);
+
+        pageRepository.findByProjectIdAndPathAndDeletedFalse(projectId, normalizedPath)
+                .orElseThrow(() -> new EntityNotFoundException("No live knowledge page at path: " + normalizedPath));
+
+        List<KnowledgeDomain> activeDomains =
+                domainRepository.findByProjectIdAndStateOrderBySlugAsc(projectId, KnowledgeDomainState.ACTIVE);
+        String curationPath = KnowledgeCurationPaths.forPage(normalizedPath, activeDomains);
+
+        KnowledgePage curationPage = pageRepository.findByProjectIdAndPathAndDeletedFalse(projectId, curationPath).orElse(null);
+        Map<String, Object> curationFrontmatter;
+        String curationBody;
+        Integer curationBaseVersion;
+        if (curationPage != null) {
+            curationFrontmatter = curationPage.getFrontmatter();
+            curationBody = curationPage.getBody();
+            curationBaseVersion = curationPage.getVersion();
+        } else {
+            FrontmatterParser.Parsed templateParsed = frontmatterParser.parse(curationTemplateContent(curationPath, activeDomains));
+            curationFrontmatter = templateParsed.frontmatter();
+            curationBody = templateParsed.body();
+            curationBaseVersion = null;
+        }
+
+        String ruleLine = buildDoNotFileRule(normalizedPath, normalizedReason, dismissedByLabel);
+        String curationContent = frontmatterParser.render(curationFrontmatter, appendDoNotFileRule(curationBody, ruleLine));
+
+        List<PageWrite> writes = List.of(
+                new PageWrite(normalizedPath, null, baseVersion, true),
+                new PageWrite(curationPath, curationContent, curationBaseVersion, false));
+
+        List<PageWriteResult> results;
+        try {
+            results = batchWrite(projectId, writes, List.of(), actor);
+        } catch (KnowledgeConflictException e) {
+            throw new KnowledgeConflictException(
+                    "This page changed since you opened it — reload and try again.", e.conflicts());
+        }
+
+        PageWriteResult pageResult = results.get(0);
+        PageWriteResult curationResult = results.get(1);
+        return new DismissResult(pageResult.path(), pageResult.version(), curationResult.path(), curationResult.version());
+    }
+
+    /** True for the root {@code _curation.md}, any {@code <slug>/_curation.md}, the root {@code
+     *  _schema.md}, or any {@code <slug>/_schema.md} -- {@link #dismissPage} rejects all of these:
+     *  they're human/librarian-edited policy pages, not filed content, so "not worth filing" doesn't
+     *  apply to them. */
+    private boolean isPolicyPage(String normalizedPath) {
+        return normalizedPath.equals(KnowledgeCurationPaths.ROOT)
+                || normalizedPath.endsWith("/" + KnowledgeCurationPaths.FILE_NAME)
+                || normalizedPath.equals(SCHEMA_FILE_NAME)
+                || normalizedPath.endsWith("/" + SCHEMA_FILE_NAME);
+    }
+
+    /** The classpath template document for a missing curation page at {@code curationPath} -- the root
+     *  resource verbatim, or the domain skeleton rendered for whichever active domain owns this prefix. */
+    private String curationTemplateContent(String curationPath, List<KnowledgeDomain> activeDomains) {
+        if (curationPath.equals(KnowledgeCurationPaths.ROOT)) {
+            return readClasspathResource(CURATION_RESOURCE);
+        }
+        KnowledgeDomain domain = activeDomains.stream()
+                .filter(d -> KnowledgeCurationPaths.forDomain(d).equals(curationPath))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "No active domain matches curation path: " + curationPath));
+        return KnowledgeDomainTemplates.render(readClasspathResource(DOMAIN_CURATION_SKELETON_RESOURCE), domain);
+    }
+
+    private String readClasspathResource(String classpathPath) {
+        try (InputStream in = getClass().getResourceAsStream(classpathPath)) {
+            if (in == null) {
+                throw new IllegalStateException("Missing classpath resource: " + classpathPath);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read classpath resource: " + classpathPath, e);
+        }
+    }
+
+    /** One dated, attributed do-not-file bullet, e.g. {@code - **2026-07-29** — `a/b.md` — reason —
+     *  dismissed by Casey Liang}. Date is UTC -- a page has no timezone of its own. */
+    private String buildDoNotFileRule(String path, String reason, String dismissedByLabel) {
+        String date = LocalDate.now(ZoneOffset.UTC).toString();
+        return "- **" + date + "** — `" + path + "` — " + reason + " — dismissed by " + dismissedByLabel;
+    }
+
+    /**
+     * Appends {@code ruleLine} to the end of {@code body}'s {@code ## Do-not-file rules} section --
+     * immediately before the next {@code ## } heading if there is one, otherwise at the end of the body
+     * (true for every seeded curation page today, where that section is always last). Appends the
+     * heading itself, freshly, if the section is missing entirely -- e.g. an operator deleted it from a
+     * page they otherwise kept.
+     */
+    private String appendDoNotFileRule(String body, String ruleLine) {
+        String content = body == null ? "" : body;
+        Matcher heading = DO_NOT_FILE_HEADING.matcher(content);
+        if (!heading.find()) {
+            return content.stripTrailing() + "\n\n## Do-not-file rules\n\n" + ruleLine + "\n";
+        }
+        Matcher nextHeading = HEADING_LINE.matcher(content);
+        if (nextHeading.find(heading.end())) {
+            String before = content.substring(0, nextHeading.start()).stripTrailing();
+            String after = content.substring(nextHeading.start());
+            return before + "\n" + ruleLine + "\n\n" + after;
+        }
+        return content.stripTrailing() + "\n" + ruleLine + "\n";
+    }
+
     /** Marks {@code sourceIds} PROCESSED and {@code skipped} SKIPPED -- called on both the empty-writes
      *  ack path and the normal write path, so a batch that is entirely skips with no page writes still
      *  settles its sources instead of silently marking nothing. */
@@ -246,28 +417,30 @@ public class KnowledgePageService {
             if (!seen.add(sourceId)) {
                 continue;
             }
-            normalized.add(new SkippedSource(sourceId, normalizeSkipReason(sourceId, skip.reason())));
+            normalized.add(new SkippedSource(sourceId, normalizeReason("skipped entry for source " + sourceId, skip.reason())));
         }
         return normalized;
     }
 
     /**
-     * Collapses whitespace and trims -- a later commit renders {@code skip_reason} as a single Markdown
-     * bullet in the Inbox, and an embedded newline/tab would break that list -- then truncates to {@value
-     * #MAX_SKIP_REASON_LENGTH} chars with a warning ({@code skip_reason} is TEXT so the DB won't
-     * complain, but a model dumping page-sized content into it poisons the UI). Throws on a blank reason:
-     * the reason is the entire point of a skip. Named/shaped for a sibling "not worth filing" dismissal
-     * path to reuse verbatim.
+     * Collapses whitespace and trims -- a reason is rendered as a single Markdown bullet (a skip
+     * reason in the Inbox, a do-not-file rule on {@code _curation.md} for {@link #dismissPage}), and an
+     * embedded newline/tab would break that -- then truncates to {@value #MAX_REASON_LENGTH} chars with
+     * a warning (the backing column is TEXT so the DB won't complain, but a model or a human pasting
+     * page-sized content into it poisons the UI). Throws on a blank reason: the reason is the entire
+     * point of both callers. {@code context} identifies the caller in the exception message only (e.g.
+     * {@code "skipped entry for source <id>"}, {@code "dismiss"}) -- shared verbatim by {@link
+     * #validateAndNormalizeSkips} and {@link #dismissPage} rather than forked, since the shape is
+     * identical.
      */
-    private String normalizeSkipReason(String sourceId, String rawReason) {
+    private String normalizeReason(String context, String rawReason) {
         if (rawReason == null || rawReason.isBlank()) {
-            throw new BusinessException("skipped entry for source " + sourceId + " requires a non-blank reason");
+            throw new BusinessException(context + " requires a non-blank reason");
         }
         String normalized = rawReason.replaceAll("\\s+", " ").trim();
-        if (normalized.length() > MAX_SKIP_REASON_LENGTH) {
-            log.warn("Skip reason for source {} truncated from {} to {} characters",
-                    sourceId, normalized.length(), MAX_SKIP_REASON_LENGTH);
-            normalized = normalized.substring(0, MAX_SKIP_REASON_LENGTH);
+        if (normalized.length() > MAX_REASON_LENGTH) {
+            log.warn("Reason for {} truncated from {} to {} characters", context, normalized.length(), MAX_REASON_LENGTH);
+            normalized = normalized.substring(0, MAX_REASON_LENGTH);
         }
         return normalized;
     }

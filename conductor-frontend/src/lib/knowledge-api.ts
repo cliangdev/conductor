@@ -180,6 +180,33 @@ export function listKnowledgeSources(
   )
 }
 
+export interface KnowledgePageDismissResult {
+  path: string
+  /** The dismissed page's new (tombstone) version. */
+  version: number
+  /** Path of the `_curation.md` page the dismissal reason was recorded on — name it in the success toast. */
+  curationPagePath: string
+  curationPageVersion: number
+}
+
+/**
+ * "Not worth filing": deletes the page and records the reason as a dated rule on the `_curation.md`
+ * that governs it, atomically (see docs/knowledge.md#curation). `baseVersion` is the version last read
+ * for this page — a stale value 409s with a ready-to-show message ("This page changed since you opened
+ * it — reload and try again"), so callers don't need to special-case the conflict body.
+ */
+export function dismissKnowledgePage(
+  projectId: string,
+  body: { path: string; baseVersion: number; reason: string },
+  token: string,
+): Promise<KnowledgePageDismissResult> {
+  return apiPost<KnowledgePageDismissResult>(
+    `/api/v1/projects/${projectId}/knowledge/pages/dismiss`,
+    body,
+    token,
+  )
+}
+
 export function listKnowledgeRevisions(
   projectId: string,
   path: string,

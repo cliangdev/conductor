@@ -34,6 +34,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
@@ -197,6 +198,102 @@ class KnowledgeControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ---- dismissKnowledgePage ("Not worth filing") ----
+
+    @Test
+    void dismiss_happyPath_returns200WithResponseBody() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.dismissPage(eq(PROJECT_ID), eq("engineering/work-items/cx-14.md"), eq(1),
+                eq("Not worth filing."), anyString(), any()))
+                .thenReturn(new KnowledgePageService.DismissResult(
+                        "engineering/work-items/cx-14.md", 2, "engineering/_curation.md", 3));
+
+        String body = """
+                {"path":"engineering/work-items/cx-14.md","baseVersion":1,"reason":"Not worth filing."}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/dismiss")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.path").value("engineering/work-items/cx-14.md"))
+                .andExpect(jsonPath("$.version").value(2))
+                .andExpect(jsonPath("$.curationPagePath").value("engineering/_curation.md"))
+                .andExpect(jsonPath("$.curationPageVersion").value(3));
+    }
+
+    @Test
+    void dismiss_blankReason_returns400() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.dismissPage(eq(PROJECT_ID), anyString(), any(), anyString(), anyString(), any()))
+                .thenThrow(new com.conductor.exception.BusinessException("dismiss requires a non-blank reason"));
+
+        String body = """
+                {"path":"notes/a.md","baseVersion":1,"reason":"   "}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/dismiss")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void dismiss_nonMember_returns403() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+
+        String body = """
+                {"path":"notes/a.md","baseVersion":1,"reason":"Not worth filing."}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/dismiss")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void dismiss_unknownPath_returns404() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.dismissPage(eq(PROJECT_ID), anyString(), any(), anyString(), anyString(), any()))
+                .thenThrow(new jakarta.persistence.EntityNotFoundException(
+                        "No live knowledge page at path: notes/missing.md"));
+
+        String body = """
+                {"path":"notes/missing.md","baseVersion":1,"reason":"Not worth filing."}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/dismiss")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void dismiss_conflict_returns409WithConflictsArray() throws Exception {
+        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(pageService.dismissPage(eq(PROJECT_ID), anyString(), any(), anyString(), anyString(), any()))
+                .thenThrow(new KnowledgeConflictException(
+                        "This page changed since you opened it — reload and try again.",
+                        List.of(new KnowledgeConflictException.Conflict("notes/a.md", 3, "---\ntype: note\n---\n\nold"))));
+
+        String body = """
+                {"path":"notes/a.md","baseVersion":1,"reason":"Not worth filing."}
+                """;
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/pages/dismiss")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.conflicts.length()").value(1))
+                .andExpect(jsonPath("$.conflicts[0].path").value("notes/a.md"));
     }
 
     // ---- submitKnowledgeSource ----
