@@ -11,6 +11,7 @@ import com.conductor.knowledge.KnowledgeIngestionService;
 import com.conductor.knowledge.KnowledgeSource;
 import com.conductor.knowledge.KnowledgeSourceRepository;
 import com.conductor.knowledge.KnowledgeSubmission;
+import com.conductor.knowledge.KnowledgeWorkflowProvisioner;
 import com.conductor.knowledge.SourceReceipt;
 import com.conductor.knowledge.page.KnowledgePage;
 import com.conductor.knowledge.page.KnowledgePageRepository;
@@ -376,6 +377,73 @@ class KnowledgeDomainServiceIntegrationTest extends AbstractNoneWebIntegrationTe
 
         assertThat(pageRepository.findByProjectIdAndPath(projectId, "engineering/_schema.md")).isEmpty();
         assertThat(pageRepository.findByProjectIdAndPath(projectId, "engineering/_curation.md")).isEmpty();
+    }
+
+    // ---- specialist prompt stamping / refresh ----
+
+    @Test
+    void createSpecialistStampsSeededPromptHash() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+
+        domainService.createSpecialist(projectId, "engineering");
+
+        Agent agent = agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow();
+        assertThat(agent.getConfigJson())
+                .contains(KnowledgeWorkflowProvisioner.SEEDED_PROMPT_HASH_CONFIG_KEY)
+                .contains(sha256Hex(agent.getSystemPrompt()));
+    }
+
+    /**
+     * Re-running this admin-triggered, already-idempotent endpoint upgrades a specialist still carrying
+     * exactly the prompt this service last seeded. Unlike the librarian there is no historical-hash set to
+     * fall back on -- a specialist's stored prompt is the shared template with the domain already
+     * substituted, so only its own stamp can identify it.
+     */
+    @Test
+    void createSpecialistRefreshesAnUnmodifiedPrompt() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+        domainService.createSpecialist(projectId, "engineering");
+        Agent agent = agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow();
+        String seededPrompt = agent.getSystemPrompt();
+
+        // Simulate a shipped template change by rewinding the stored prompt while leaving the stamp
+        // pointing at what it currently holds -- i.e. "still exactly what we last seeded".
+        String stalePrompt = seededPrompt.replace("Steps:", "Steps (older wording):");
+        agent.setSystemPrompt(stalePrompt);
+        agent.setConfigJson("{\"maxToolTurns\":40,\"runtime\":\"claude-code\",\""
+                + KnowledgeWorkflowProvisioner.SEEDED_PROMPT_HASH_CONFIG_KEY + "\":\"" + sha256Hex(stalePrompt) + "\"}");
+        agentRepository.save(agent);
+
+        domainService.createSpecialist(projectId, "engineering");
+
+        Agent refreshed = agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow();
+        assertThat(refreshed.getSystemPrompt()).isEqualTo(seededPrompt);
+        assertThat(refreshed.getConfigJson()).contains(sha256Hex(seededPrompt));
+    }
+
+    @Test
+    void createSpecialistLeavesAnOperatorEditedPromptAlone() {
+        createDomain("engineering", "Engineering", KnowledgeDomainState.ACTIVE);
+        domainService.createSpecialist(projectId, "engineering");
+        Agent agent = agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow();
+        String operatorPrompt = "Only file architecture decisions for the engineering area. Nothing else.";
+        agent.setSystemPrompt(operatorPrompt);
+        agentRepository.save(agent);
+
+        domainService.createSpecialist(projectId, "engineering");
+
+        assertThat(agentRepository.findByProjectIdAndSlug(projectId, "knowledge-engineering").orElseThrow()
+                .getSystemPrompt()).isEqualTo(operatorPrompt);
+    }
+
+    private static String sha256Hex(String content) {
+        try {
+            var digest = java.security.MessageDigest.getInstance("SHA-256");
+            return java.util.HexFormat.of()
+                    .formatHex(digest.digest(content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     // ---- end to end: gap report -> approval -> routing ----

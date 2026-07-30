@@ -25,6 +25,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -240,19 +244,25 @@ public class KnowledgeDomainService {
         // KnowledgeDomainResolver/LibrarianDispatchService), so any domain reachable here already went
         // ACTIVE through provision() or the approval branch and already has both pages.
         String agentSlug = specialistAgentSlug(slug);
-        if (!agentRepository.existsByProjectIdAndSlug(projectId, agentSlug)) {
+        Optional<Agent> existing = agentRepository.findByProjectIdAndSlug(projectId, agentSlug);
+        if (existing.isPresent()) {
+            refreshSpecialistPromptIfUnmodified(existing.get(), domain);
+        } else {
             Agent agent = new Agent();
             agent.setProjectId(projectId);
             agent.setName("Knowledge Specialist — " + domain.getDisplayName());
             agent.setSlug(agentSlug);
             agent.setDescription("Files knowledge-inbox sources for the " + domain.getDisplayName() + " domain.");
             agent.setProvider(SPECIALIST_AGENT_PROVIDER);
-            agent.setSystemPrompt(readSpecialistSystemPrompt(domain));
+            String systemPrompt = readSpecialistSystemPrompt(domain);
+            agent.setSystemPrompt(systemPrompt);
             // Pinned to claude-code, same as the generalist librarian (see KnowledgeWorkflowProvisioner)
             // -- a specialist's filing task is the same Claude Code tool-calling loop, just domain-scoped.
+            // seededPromptHash fingerprints the *rendered* prompt -- see refreshSpecialistPromptIfUnmodified.
             agent.setConfigJson(writeJson(Map.of(
                     "maxToolTurns", KnowledgeWorkflowProvisioner.LIBRARIAN_MAX_TOOL_TURNS,
-                    "runtime", AgentRuntimeResolver.RUNTIME_CLAUDE_CODE)));
+                    "runtime", AgentRuntimeResolver.RUNTIME_CLAUDE_CODE,
+                    KnowledgeWorkflowProvisioner.SEEDED_PROMPT_HASH_CONFIG_KEY, sha256Hex(systemPrompt))));
             agent.setToolIds(writeJson(KnowledgeWorkflowProvisioner.LIBRARIAN_TOOL_IDS));
             agent.setState("ACTIVE");
             agent.setAvatarEmoji(AgentAvatarDefaults.defaultEmoji(agentSlug));
@@ -261,6 +271,83 @@ public class KnowledgeDomainService {
             log.info("Created specialist agent '{}' for domain '{}' in project {}", agentSlug, slug, projectId);
         }
         return updateOwningAgent(projectId, slug, agentSlug);
+    }
+
+    /**
+     * Refreshes an existing specialist's {@code systemPrompt} to the currently-rendered
+     * {@code specialist-system-prompt.md}, but only while the stored prompt still matches the
+     * {@value KnowledgeWorkflowProvisioner#SEEDED_PROMPT_HASH_CONFIG_KEY} this method (or
+     * {@link #createSpecialist}) last stamped -- i.e. only while nobody has edited it. An operator edit
+     * makes the prompt permanently theirs, same contract as the librarian's
+     * {@code backfillSystemPromptIfUnmodified}.
+     *
+     * <p><b>Stamp-forward only, deliberately.</b> Unlike the librarian, a specialist cannot fall back to a
+     * set of historical shipped digests, because its stored prompt is the shared template with
+     * {@code %DOMAIN_SLUG%}/{@code %DOMAIN_DISPLAY%} already substituted per domain -- one shipped
+     * template hashes to a different value for every domain, so no fixed set could recognize it. A
+     * specialist created before stamping existed therefore has no stamp and is left alone forever, which
+     * is an accepted gap rather than an oversight: specialists are user-initiated and few, their prompt is
+     * editable under Automation -&gt; Agents, and re-running this admin-triggered endpoint is the documented
+     * way to get the current template. Building an archived-rendered-template mechanism to cover them
+     * would cost far more than the gap is worth.
+     *
+     * <p>Runs on every {@link #createSpecialist} call, which is safe because that endpoint is already
+     * idempotent by design (it re-assigns rather than duplicating).
+     */
+    private void refreshSpecialistPromptIfUnmodified(Agent agent, KnowledgeDomain domain) {
+        String storedPrompt = agent.getSystemPrompt();
+        if (storedPrompt == null) {
+            return;
+        }
+        String currentPrompt = readSpecialistSystemPrompt(domain);
+        String currentHash = sha256Hex(currentPrompt);
+        Map<String, Object> config = readConfig(agent);
+        Object stamp = config.get(KnowledgeWorkflowProvisioner.SEEDED_PROMPT_HASH_CONFIG_KEY);
+        if (currentPrompt.equals(storedPrompt)) {
+            if (!currentHash.equals(stamp)) {
+                agent.setConfigJson(writeJson(withPromptHash(config, currentHash)));
+                agentRepository.save(agent);
+            }
+            return;
+        }
+        if (!sha256Hex(storedPrompt).equals(stamp)) {
+            log.debug("Leaving operator-edited system prompt alone for specialist '{}' in project {}",
+                    agent.getSlug(), agent.getProjectId());
+            return;
+        }
+        agent.setSystemPrompt(currentPrompt);
+        agent.setConfigJson(writeJson(withPromptHash(config, currentHash)));
+        agentRepository.save(agent);
+        log.info("Refreshed system prompt for specialist '{}' in project {} (stored prompt matched the "
+                + "hash this service last seeded)", agent.getSlug(), agent.getProjectId());
+    }
+
+    private Map<String, Object> withPromptHash(Map<String, Object> config, String hash) {
+        Map<String, Object> updated = new LinkedHashMap<>(config);
+        updated.put(KnowledgeWorkflowProvisioner.SEEDED_PROMPT_HASH_CONFIG_KEY, hash);
+        return updated;
+    }
+
+    private Map<String, Object> readConfig(Agent agent) {
+        try {
+            return objectMapper.readValue(agent.getConfigJson(),
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+        } catch (Exception e) {
+            return new LinkedHashMap<>();
+        }
+    }
+
+    /** Fingerprints a rendered specialist prompt -- see {@link #refreshSpecialistPromptIfUnmodified}.
+     *  Same three-line digest as {@code KnowledgeWorkflowProvisioner}'s private helper; neither is
+     *  reachable from the other's package and extracting a shared utility for two callers is
+     *  disproportionate. */
+    private static String sha256Hex(String content) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(content.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        }
     }
 
     private String specialistAgentSlug(String slug) {

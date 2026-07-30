@@ -37,9 +37,10 @@ jobs:
                `git clone --depth 1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ inputs.repo }}.git repo`
                (if GITHUB_TOKEN is unset this still works for a public repo — the token segment is just
                empty). `cd repo` and run `git rev-parse HEAD` to capture the commit SHA you're reading.
-            2. Read `_schema.md` via read_knowledge_pages(["_schema.md"]) for the frontmatter contract
-               and linking/create-vs-edit heuristics. It delegates page-type taxonomy to each domain's
-               own schema — in the same call also read `engineering/_schema.md` and
+            2. Read `_schema.md` via read_knowledge_pages(["_schema.md", "_curation.md"]) for the
+               frontmatter contract and linking/create-vs-edit heuristics, plus the project's curation
+               policy — the bar a page must clear to be worth writing. It delegates page-type taxonomy
+               to each domain's own schema — in the same call also read `engineering/_schema.md` and
                `product/_schema.md` for the actual `architecture`/`integration`/`feature` page-type
                taxonomy, path layout, and body templates. Follow those exactly; don't invent a type or
                template not defined there. Also read `index.md` to see what pages already exist — this
@@ -79,6 +80,10 @@ jobs:
                call returns `{conflict: true}` for a page, re-read it and retry once with the returned
                currentVersion. Cross-link related pages with bundle-absolute links (`/dir/page.md`).
                Prefer several focused pages over one giant page.
+
+               Apply `_curation.md`'s bar to every candidate page. A bootstrap that produces 40 pages
+               a new teammate would actually read beats one that produces 200 including 160 stubs — a
+               stub page is worse than no page, because it looks answered.
 
             Return a short JSON summary: {"sourceId": "...", "pagesWritten": <int>}.
           output_schema:
