@@ -60,9 +60,9 @@ public class WorkflowExecutionEngine {
      *
      * Production ran the fallback: every concurrent job spawned a fresh unbounded {@code Thread-NN},
      * all contending for one core, starving the gax executors behind Cloud Run launches and Hikari's
-     * housekeeper alike. Note the deploy's {@code --cpu=2} does NOT lift us onto the common pool — this
-     * pool is what bounds the fan-out, so don't delete it on the assumption that more vCPUs made the
-     * default safe.
+     * housekeeper alike. The deploy runs 1 vCPU, so the fallback is still what would apply — this pool
+     * is what bounds the fan-out. Don't delete it on the assumption that a bigger {@code --cpu} made the
+     * default safe; that would take 3 vCPU, and even then an unbounded default is not what we want.
      */
     private final ExecutorService jobExecutor;
 
