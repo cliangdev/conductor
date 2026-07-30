@@ -46,15 +46,36 @@ public class WorkflowExecutionEngine {
     private final WorkflowRunFailureNotifier runFailureNotifier;
 
     /**
-     * Jobs run here rather than on {@code CompletableFuture}'s default pool. That default is
-     * {@code ForkJoinPool.commonPool()} only when its parallelism ({@code availableProcessors() - 1})
-     * is at least 1 — on a 1-vCPU container it is 0, and the JDK silently substitutes a
-     * thread-per-task executor. Production ran that way: every concurrent job spawned a fresh
-     * unbounded {@code Thread-NN}, all contending for one core, which starved the gax executors
-     * behind Cloud Run launches and Hikari's housekeeper alike. A bounded, named pool gives the
-     * fan-out a ceiling and makes its threads identifiable in a stack dump.
+     * Jobs run here rather than on {@code CompletableFuture}'s default pool. That default is only
+     * {@code ForkJoinPool.commonPool()} when the pool's parallelism is greater than 1
+     * ({@code CompletableFuture.USE_COMMON_POOL}); parallelism is {@code max(1, processors - 1)}, so
+     * the common pool is bypassed entirely below **3** available processors and the JDK silently
+     * substitutes a thread-per-task executor. Measured, not inferred:
+     *
+     * <pre>
+     *   ActiveProcessorCount=1 → parallelism 1 → Thread-0
+     *   ActiveProcessorCount=2 → parallelism 1 → Thread-0
+     *   ActiveProcessorCount=3 → parallelism 2 → ForkJoinPool.commonPool-worker-1
+     * </pre>
+     *
+     * Production ran the fallback: every concurrent job spawned a fresh unbounded {@code Thread-NN},
+     * all contending for one core, starving the gax executors behind Cloud Run launches and Hikari's
+     * housekeeper alike. Note the deploy's {@code --cpu=2} does NOT lift us onto the common pool — this
+     * pool is what bounds the fan-out, so don't delete it on the assumption that more vCPUs made the
+     * default safe.
      */
     private final ExecutorService jobExecutor;
+
+    /** Pool capacity, so {@link #pollQueueOnce} never claims more than it can start — see {@link #inFlightJobs}. */
+    private final int jobPoolSize;
+
+    /**
+     * Jobs submitted to {@link #jobExecutor} but not yet finished. Claiming a queue row is a durable
+     * side effect that only {@link #recoverOrphanedClaims} can undo, so the poll claims strictly what
+     * it has a free thread for rather than letting rows pile up in the executor's unbounded queue where
+     * a restart would strand them.
+     */
+    private final AtomicInteger inFlightJobs = new AtomicInteger();
 
     // Adaptive poll backoff (in 500ms ticks). Busy (work found last poll) → every tick (500ms).
     // Idle → exponentially back off up to MAX_BACKOFF_TICKS * 500ms = 5s between DB queries.
@@ -79,6 +100,7 @@ public class WorkflowExecutionEngine {
                                    WorkflowRunFailureNotifier runFailureNotifier,
                                    @Value("${conductor.workflow.job-executor.pool-size:16}") int jobPoolSize) {
         this.jobExecutor = Executors.newFixedThreadPool(jobPoolSize, namedThreadFactory());
+        this.jobPoolSize = jobPoolSize;
         this.queueRepository = queueRepository;
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
@@ -141,7 +163,14 @@ public class WorkflowExecutionEngine {
      */
     @Transactional
     public boolean pollQueueOnce() {
-        List<WorkflowJobQueue> entries = queueRepository.claimAllReadyJobs();
+        int capacity = jobPoolSize - inFlightJobs.get();
+        if (capacity <= 0) {
+            // Every thread is busy. Leaving the rows unclaimed keeps them visible to the next tick (and
+            // to another instance) instead of parking them in an executor queue only a restart-time
+            // sweep could rescue.
+            return false;
+        }
+        List<WorkflowJobQueue> entries = queueRepository.claimReadyJobs(capacity);
         if (entries.isEmpty()) return false;
         log.info("Claimed {} job(s) from queue", entries.size());
         List<String> ids = entries.stream().map(WorkflowJobQueue::getId).collect(Collectors.toList());
@@ -150,6 +179,7 @@ public class WorkflowExecutionEngine {
             String runId = queued.getRun().getId();
             String jobId = queued.getJobId();
             log.info("Dispatching job {} for run {}", jobId, runId);
+            inFlightJobs.incrementAndGet();
             CompletableFuture.runAsync(() -> {
                 MDC.put("runId", runId);
                 MDC.put("jobId", jobId);
@@ -165,6 +195,7 @@ public class WorkflowExecutionEngine {
                     // left stranded in RUNNING with no further automatic recovery at this point.
                     log.error("Error processing job {} — job may be stranded in RUNNING: {}", jobId, e.getMessage(), e);
                 } finally {
+                    inFlightJobs.decrementAndGet();
                     MDC.remove("runId");
                     MDC.remove("jobId");
                 }
@@ -277,6 +308,28 @@ public class WorkflowExecutionEngine {
     @EventListener(ApplicationReadyEvent.class)
     public void recoverStuckJobsOnStartup() {
         self.recoverStuckJobs();
+        self.recoverOrphanedClaims();
+    }
+
+    /**
+     * On startup: re-open queue rows that were claimed but whose job never got as far as creating a
+     * {@code WorkflowJobRun}. {@link #recoverStuckJobs} can't see these — it looks for RUNNING job runs,
+     * and the whole point is that none was ever written. Without this they are invisible to every query
+     * in the system and their runs sit in RUNNING until the 24h {@link #cleanupStuckRuns} sweep fails
+     * them.
+     *
+     * <p>Clearing {@code claimedAt} is enough to make them claimable again; it deliberately does not
+     * insert a second queue row, which would risk running the job twice.
+     */
+    @Transactional
+    public void recoverOrphanedClaims() {
+        List<WorkflowJobQueue> orphaned = queueRepository.findClaimedWithoutJobRun();
+        for (WorkflowJobQueue queued : orphaned) {
+            log.warn("Re-opening queue row for job {} of run {} — claimed but no job run was ever created "
+                    + "(instance died between claiming and starting it)", queued.getJobId(), queued.getRun().getId());
+            queued.setClaimedAt(null);
+            queueRepository.save(queued);
+        }
     }
 
     /**

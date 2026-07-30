@@ -2,6 +2,8 @@ package com.conductor.notification;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ChannelGroupTest {
@@ -33,8 +35,16 @@ class ChannelGroupTest {
 
     @Test
     void everyChannelGroupHasADistinctLabel() {
-        assertThat(ChannelGroup.ISSUES.getLabel()).isEqualTo("Issues");
-        assertThat(ChannelGroup.MEMBERS.getLabel()).isEqualTo("Members");
-        assertThat(ChannelGroup.WORKFLOWS.getLabel()).isEqualTo("Workflows");
+        assertThat(Arrays.stream(ChannelGroup.values()).map(ChannelGroup::getLabel))
+                .doesNotContainNull()
+                .doesNotHaveDuplicates()
+                .hasSize(ChannelGroup.values().length);
+    }
+
+    /** No event type may sit in two groups, or {@code forEventType} would resolve it arbitrarily. */
+    @Test
+    void noEventTypeBelongsToMoreThanOneGroup() {
+        assertThat(Arrays.stream(ChannelGroup.values()).flatMap(g -> g.getEventTypes().stream()))
+                .doesNotHaveDuplicates();
     }
 }

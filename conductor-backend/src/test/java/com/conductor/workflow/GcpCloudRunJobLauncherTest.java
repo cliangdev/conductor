@@ -262,9 +262,10 @@ class GcpCloudRunJobLauncherTest {
     void findExecutionByWorkerJobId_matchingEnvVar_returnsExecutionName() throws Exception {
         stubListExecutions(executionWithWorkerJobId("conductor-byo-test-cond-mcpg5", "worker-42"));
 
-        Optional<String> result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
+        CloudRunJobLauncher.ExecutionSearch result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
 
-        assertThat(result).contains("conductor-byo-test-cond-mcpg5");
+        assertThat(result.executionName()).contains("conductor-byo-test-cond-mcpg5");
+        assertThat(result.reachedApi()).isTrue();
     }
 
     @Test
@@ -275,9 +276,9 @@ class GcpCloudRunJobLauncherTest {
         Execution match = executionWithWorkerJobId("exec-match", "worker-42");
         stubListExecutions(decoy, match);
 
-        Optional<String> result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
+        CloudRunJobLauncher.ExecutionSearch result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
 
-        assertThat(result).contains("exec-match");
+        assertThat(result.executionName()).contains("exec-match");
     }
 
     @Test
@@ -285,9 +286,10 @@ class GcpCloudRunJobLauncherTest {
         stubListExecutions(executionWithWorkerJobId("exec-decoy-1", "worker-other-step"),
                 executionWithWorkerJobId("exec-decoy-2", "yet-another-step"));
 
-        Optional<String> result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
+        CloudRunJobLauncher.ExecutionSearch result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
 
-        assertThat(result).isEmpty();
+        assertThat(result.executionName()).isEmpty();
+        assertThat(result.reachedApi()).isTrue();
     }
 
     @Test
@@ -295,9 +297,10 @@ class GcpCloudRunJobLauncherTest {
         Execution noTemplate = Execution.newBuilder().setName("exec-bare").build();
         stubListExecutions(noTemplate);
 
-        Optional<String> result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
+        CloudRunJobLauncher.ExecutionSearch result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
 
-        assertThat(result).isEmpty();
+        assertThat(result.executionName()).isEmpty();
+        assertThat(result.reachedApi()).isTrue();
     }
 
     @Test
@@ -305,8 +308,11 @@ class GcpCloudRunJobLauncherTest {
         when(clientFactory.forTarget(TARGET)).thenReturn(new CloudRunClientFactory.Clients(jobsClient, executionsClient, null));
         when(executionsClient.listExecutions(any(ListExecutionsRequest.class))).thenThrow(new RuntimeException("transient failure"));
 
-        Optional<String> result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
+        CloudRunJobLauncher.ExecutionSearch result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
 
-        assertThat(result).isEmpty();
+        // Unreachable is NOT the same as "Cloud Run says there is no such execution" -- the caller
+        // must be able to tell them apart, since only the latter is evidence the launch never happened.
+        assertThat(result.executionName()).isEmpty();
+        assertThat(result.reachedApi()).isFalse();
     }
 }

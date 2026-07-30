@@ -24,22 +24,32 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * The single seam every run-settlement path funnels through to notify on a FAILED run. Four independent
+ * The single seam every run-settlement path funnels through to notify on a FAILED run. Five independent
  * places terminalize a {@code WorkflowRun} to FAILED today -- {@code
  * WorkflowExecutionEngine#checkRunCompletion} (the normal all-jobs-terminal path), {@code
  * WorkflowExecutionEngine#cleanupStuckRuns} (the daily 24h sweep), {@code
  * WorkflowRunLogBroker#checkAndCompleteRun} (the self-hosted daemon's per-job failure callback), {@code
  * WorkflowTriggerService#createRun}'s zero-jobs-enqueued fail-fast, and {@code
  * WorkflowController#updateWorkflowRunStatus} (the legacy whole-run daemon report) -- and each is
- * expected to call {@link #notifyFailed} immediately after persisting the FAILED status. Routing all of
- * them through one method means a future sixth completion path can't silently forget to notify.
+ * expected to call {@link #notifyFailed} immediately after persisting the FAILED status. One method to
+ * call makes a sixth path easy to wire correctly -- it does not make forgetting impossible, since
+ * nothing detects a new settlement path that simply never calls this.
  *
  * <h2>Call once, right after persisting FAILED</h2>
- * Every existing call site already guards the FAILED transition itself (an {@code isTerminal()} /
- * already-FAILED early-return, or a run created and failed exactly once), so "once per run" falls out of
- * those guards rather than needing a second one here -- see each call site's own comment for its guard.
- * {@link #notifyFailed} is additionally defensive: it no-ops unless {@code run.getStatus()} is FAILED, so
- * a misplaced call (e.g. for a CANCELLED run) can't accidentally notify.
+ * Each call site guards its own FAILED transition (an {@code isTerminal()} / already-FAILED
+ * early-return, or a run created and failed exactly once). {@link #notifyFailed} is additionally
+ * defensive: it no-ops unless {@code run.getStatus()} is FAILED, so a misplaced call (e.g. for a
+ * CANCELLED run) can't accidentally notify.
+ *
+ * <p><b>Those guards are not airtight, and this can double-notify.</b> {@code checkRunCompletion} and
+ * {@code checkAndCompleteRun} both do an unlocked read-status / check-terminal / write, neither takes
+ * {@code WorkflowRunRepository#findByIdForUpdate}, and they use different completion predicates
+ * ({@code anyFailed || allDone} vs. all-jobs-terminal), so on a mixed self-hosted + cloud-run workflow
+ * both can be eligible at once. A daemon failure callback landing on a Tomcat thread at the same moment
+ * a cloud-run job settles on a {@code workflow-job-N} thread can therefore produce two alerts for one
+ * run. The same race already double-counts {@code WorkflowFailureCircuitBreaker#recordOutcome} and
+ * predates this class; serializing those two paths on the run row is the real fix and is deliberately
+ * left out of the change that introduced this notifier.
  *
  * <h2>Publish-after-commit</h2>
  * See {@link SafeSignalPublish} for why the actual publish is deferred to {@code afterCommit} and

@@ -60,10 +60,31 @@ public interface CloudRunJobLauncher {
      * execution {@code conductor-byo-test-cond-mcpg5} at 18:01:55 — 41s later — and that execution's
      * template carried the very {@code CONDUCTOR_WORKER_JOB_ID} the step was waiting on.
      *
-     * <p>Never throws — returns {@link Optional#empty()} on any error, and on the launch genuinely
-     * never having happened.
+     * <p>Never throws. {@link ExecutionSearch#reachedApi()} distinguishes the two ways this comes back
+     * empty — "Cloud Run answered and has no such execution" versus "Cloud Run couldn't be asked" — which
+     * are the difference between evidence that nothing launched and no evidence at all. Callers must not
+     * report the second as the first.
      */
-    Optional<String> findExecutionByWorkerJobId(CloudRunTarget target, String workerJobId);
+    ExecutionSearch findExecutionByWorkerJobId(CloudRunTarget target, String workerJobId);
+
+    /**
+     * @param reachedApi     whether the listing call actually completed. False means the search proved
+     *                       nothing — the launch may still have happened, unobserved.
+     * @param executionName  the matching execution, if one was found.
+     */
+    record ExecutionSearch(boolean reachedApi, Optional<String> executionName) {
+        public static ExecutionSearch found(String executionName) {
+            return new ExecutionSearch(true, Optional.of(executionName));
+        }
+
+        public static ExecutionSearch notFound() {
+            return new ExecutionSearch(true, Optional.empty());
+        }
+
+        public static ExecutionSearch unreachable() {
+            return new ExecutionSearch(false, Optional.empty());
+        }
+    }
 
     /** Polls the current state of a previously started execution on the given target. */
     ExecutionState pollExecution(CloudRunTarget target, String executionName);

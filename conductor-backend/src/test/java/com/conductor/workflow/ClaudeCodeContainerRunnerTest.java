@@ -221,7 +221,7 @@ class ClaudeCodeContainerRunnerTest {
                 .thenThrow(new CloudRunJobLauncher.LaunchUnconfirmedException("Cloud Run did not acknowledge the request"));
         // Found on the very first reconciliation attempt.
         when(launcher.findExecutionByWorkerJobId(any(CloudRunTarget.class), anyString()))
-                .thenReturn(Optional.of("exec-recovered"));
+                .thenReturn(CloudRunJobLauncher.ExecutionSearch.found("exec-recovered"));
         when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-recovered")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
 
@@ -248,7 +248,7 @@ class ClaudeCodeContainerRunnerTest {
                 .thenThrow(new CloudRunJobLauncher.LaunchUnconfirmedException("Cloud Run did not acknowledge the request"));
         // Never finds a match, across the whole retry budget.
         when(launcher.findExecutionByWorkerJobId(any(CloudRunTarget.class), anyString()))
-                .thenReturn(Optional.empty());
+                .thenReturn(CloudRunJobLauncher.ExecutionSearch.notFound());
 
         StepResult result = runner.run(context(Map.of()), invocation(List.of(), Map.of()));
 
@@ -276,7 +276,9 @@ class ClaudeCodeContainerRunnerTest {
                 .thenThrow(new CloudRunJobLauncher.LaunchUnconfirmedException("Cloud Run did not acknowledge the request"));
         // Empty on the first two attempts, then a match on the third.
         when(launcher.findExecutionByWorkerJobId(any(CloudRunTarget.class), anyString()))
-                .thenReturn(Optional.empty(), Optional.empty(), Optional.of("exec-recovered-late"));
+                .thenReturn(CloudRunJobLauncher.ExecutionSearch.notFound(),
+                        CloudRunJobLauncher.ExecutionSearch.notFound(),
+                        CloudRunJobLauncher.ExecutionSearch.found("exec-recovered-late"));
         when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-recovered-late")))
                 .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
 

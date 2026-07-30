@@ -180,7 +180,7 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
     }
 
     @Override
-    public Optional<String> findExecutionByWorkerJobId(CloudRunTarget target, String workerJobId) {
+    public ExecutionSearch findExecutionByWorkerJobId(CloudRunTarget target, String workerJobId) {
         try {
             ExecutionsClient executionsClient = clientFactory.forTarget(target).executions();
             JobName parent = JobName.of(target.gcpProjectId(), target.region(), target.jobName());
@@ -193,14 +193,15 @@ public class GcpCloudRunJobLauncher implements CloudRunJobLauncher {
                     .build();
             for (Execution execution : executionsClient.listExecutions(request).getPage().getValues()) {
                 if (carriesWorkerJobId(execution, workerJobId)) {
-                    return Optional.of(execution.getName());
+                    return ExecutionSearch.found(execution.getName());
                 }
             }
+            return ExecutionSearch.notFound();
         } catch (Exception e) {
             log.warn("Failed to search Cloud Run executions of job {} for workerJobId {}: {}",
                     target.jobName(), workerJobId, e.getMessage());
+            return ExecutionSearch.unreachable();
         }
-        return Optional.empty();
     }
 
     private static boolean carriesWorkerJobId(Execution execution, String workerJobId) {

@@ -72,10 +72,13 @@ class SafeSignalPublishTest {
         try {
             SafeSignalPublish.afterCommit(signalBus, signal, log);
 
-            // Rollback never invokes afterCommit() -- simulated here by simply never triggering it and
-            // discarding the registered synchronizations, mirroring what Spring's transaction
-            // interceptor does on a rollback.
-            TransactionSynchronizationManager.clearSynchronization();
+            // Drive the real rollback lifecycle rather than just declining to call afterCommit(): on a
+            // rollback Spring invokes afterCompletion(STATUS_ROLLED_BACK) and never afterCommit().
+            // Asserting against an untouched synchronization would hold no matter what the class did.
+            for (TransactionSynchronization synchronization : TransactionSynchronizationManager.getSynchronizations()) {
+                synchronization.beforeCompletion();
+                synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+            }
 
             verify(signalBus, never()).publish(any());
         } finally {
