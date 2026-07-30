@@ -87,14 +87,19 @@ public class WorkflowFailureCircuitBreaker {
             workflow.setAutoPausedRunId(run.getId());
             log.warn("Auto-pausing workflow {} ('{}') after {} consecutive failed runs -- tripped by run {}",
                     workflow.getId(), workflow.getName(), failures, run.getId());
-            signalBus.publish(Signal.of(SignalTypes.CONDUCTOR_WORKFLOW_AUTO_PAUSED,
+            // Deferred/guarded rather than a bare signalBus.publish() -- this fires from inside the same
+            // @Transactional run-settlement method as WorkflowRunFailureNotifier, and now that
+            // WORKFLOW_AUTO_PAUSED sits in a ChannelGroup (deliverable, not a silent no-op), a
+            // notification-delivery failure here must not roll back the FAILED write either. See
+            // SafeSignalPublish's javadoc.
+            SafeSignalPublish.afterCommit(signalBus, Signal.of(SignalTypes.CONDUCTOR_WORKFLOW_AUTO_PAUSED,
                     workflow.getProject().getId(), workflow.getId(), Instant.now(),
                     Map.of(
                             "workflowId", workflow.getId(),
                             "workflowName", workflow.getName(),
                             "consecutiveFailures", String.valueOf(failures),
                             "runId", run.getId()),
-                    new SignalOrigin("workflow", workflow.getId())));
+                    new SignalOrigin("workflow", workflow.getId())), log);
         }
         workflowRepository.save(workflow);
     }

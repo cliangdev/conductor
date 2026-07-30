@@ -48,8 +48,8 @@ public class NotificationDeliveryService {
     /**
      * Sends the event to the project's channel for its {@link ChannelGroup}, if one is configured and
      * enabled and has opted into this event type. A no-op for the event types that belong to no
-     * channel group ({@code ASSET_ADDED}, {@code WORKFLOW_AUTO_PAUSED}, {@code GITHUB_PULL_REQUEST}) --
-     * those flow through the dispatcher for their side effects only, never as a chat message.
+     * channel group ({@code ASSET_ADDED}, {@code GITHUB_PULL_REQUEST}) -- those flow through the
+     * dispatcher for their side effects only, never as a chat message.
      */
     public void deliver(NotificationMessage event) {
         Optional<ChannelGroup> groupOpt = ChannelGroup.forEventType(event.getEventType());

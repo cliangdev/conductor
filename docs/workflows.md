@@ -20,10 +20,12 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Conductor-hosted](#conductor-hosted)
   - [Self-hosted](#self-hosted)
   - [Cloud Run](#cloud-run)
+    - [Launch reconciliation](#launch-reconciliation)
   - [Runtime targets (bring your own Cloud Run)](#runtime-targets-bring-your-own-cloud-run)
 - [Queued and waiting work](#queued-and-waiting-work)
 - [Cancelling a run](#cancelling-a-run)
 - [Auto-pause on repeated failures](#auto-pause-on-repeated-failures)
+- [Failure notifications](#failure-notifications)
 - [System-managed workflows](#system-managed-workflows)
 - [Self-hosted setup](#self-hosted-setup)
   - [Prerequisites](#prerequisites)
@@ -624,7 +626,7 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 | `CLAUDE_CREDENTIAL_ERROR` | A declared `credentials:`/`env:` entry couldn't be resolved — no active connection for the named connector, the connector doesn't support CREDENTIAL, or a malformed entry. |
 | `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` | No Claude Code subscription OAuth token is configured for this runtime — self-hosted: the daemon host; cloud-run/runtime targets: the project's Claude Code credential. See "Auth & runtime targets" below. |
 | `CLAUDE_LAUNCH_ERROR` | The Cloud Run execution failed to launch, or ended without the container ever reporting a result (e.g. image pull failure, OOM kill) — the target itself resolved fine; something went wrong running on it. |
-| `CLOUD_RUN_LAUNCH_UNCONFIRMED` | Cloud Run never acknowledged the RunJob request within the launcher's retry budget (~60s of retried 20s waits) — genuinely inconclusive, not a confirmed failure. Under control-plane or client-side load the request can still go through even though the wait was given up on, so a container may be running (or may have already finished) unobserved, with no result ever reported back. Distinct from `CLAUDE_LAUNCH_ERROR`, which does reflect a confirmed failure. |
+| `CLOUD_RUN_LAUNCH_UNCONFIRMED` | Cloud Run never acknowledged the RunJob request within the launcher's retry budget (~60s of retried 20s waits), **and** the [launch reconciliation](#launch-reconciliation) search that follows it found no execution belonging to this step within 3 minutes. Still short of proof that nothing started, but no longer the bare guess it used to be. Distinct from `CLAUDE_LAUNCH_ERROR`, which does reflect a confirmed failure. |
 | `RUNTIME_TARGET_NOT_FOUND` | `runs-on` names a [runtime target](#runtime-targets-bring-your-own-cloud-run) that no longer exists in the project. |
 | `RUNTIME_TARGET_NOT_READY` | The resolved target isn't usable: a named target that exists but isn't `ACTIVE` (fix under **Integrations → Google Cloud** and retry), a project-designated `cloud-run` target in the same state (fix under **Settings → AI Providers → Runtime**), or — on `runs-on: cloud-run` with no designation and a blank builtin `GCP_CLOUDRUN_PROJECT_ID` — no runtime configured at all (this used to surface as an opaque `CLAUDE_LAUNCH_ERROR`; see [Cloud Run](#cloud-run)'s resolution order). |
 
@@ -1186,6 +1188,31 @@ The backend needs these env vars to target it — all optional once at least one
 | `GCP_CLOUDRUN_REGION` | Region the Job resource was created in. |
 | `GCP_CLOUDRUN_CLAUDE_JOB_NAME` | Name of the pre-created Job resource (`conductor-claude-code` above). |
 
+#### Launch reconciliation
+
+Cloud Run's `RunJob` API has no idempotency key, so Conductor can never simply retry a launch it is
+unsure about — a blind retry risks a second real container. That makes "did the launch happen?" a
+question worth answering precisely.
+
+Starting an execution has two completion points: Cloud Run *acknowledging* the request, and the
+resulting `Execution` resource *materializing*. Conductor waits up to 3×20s for the acknowledgement.
+Exhausting that budget is genuinely inconclusive — the request can still land afterwards. It has: in
+one production case the acknowledgement wait was abandoned and Cloud Run created the execution 41
+seconds later, which then ran the job to completion and reported a result nobody was listening for.
+
+So instead of guessing, Conductor looks. Every execution it launches carries a per-step unique
+`CONDUCTOR_WORKER_JOB_ID` in its container environment, and Cloud Run echoes container-env overrides
+onto the `Execution` it creates. After an unacknowledged launch, Conductor polls `ListExecutions` for
+up to 3 minutes looking for that id. Finding it recovers the step outright: the execution name is
+persisted and polled to completion exactly as a normal launch would be. Only when nothing turns up
+does the step fail with `CLOUD_RUN_LAUNCH_UNCONFIRMED`.
+
+As a last line of defence, a container that reports its own result after its step was already failed
+as `CLOUD_RUN_LAUNCH_UNCONFIRMED` has that report **adopted** rather than discarded — that status is
+an admission of ignorance, and a report from the container is evidence that outranks it. The step's
+result and outputs are corrected; the job and run are left as settled, since re-opening them would
+skip the dependent-job propagation a genuine success performs.
+
 ### Runtime targets (bring your own Cloud Run)
 
 A **runtime target** is a named, project-owned place jobs can run — your own GCP project instead of Conductor's. Reference it by name:
@@ -1377,6 +1404,20 @@ already carries (see each step type's failure-modes table):
 - Deliberately undecided: whether the "doctor" is a builtin system agent, a workflow, or a plain
   synchronous tool call — that's a call for whoever builds this, informed by real explanation/remediation
   data once Phase 2's taxonomy has seen production use.
+
+## Failure notifications
+
+A run that settles to `FAILED` — from any of the completion paths above (all-jobs-terminal, the 24h
+stuck-run sweep, a self-hosted daemon's job-failure callback, a zero-jobs-enqueued dispatch, or the
+legacy whole-run daemon report) — posts once to Discord if the project has a **Workflows** notification
+channel configured (**Settings → Notifications → Add Channel**). The alert includes the workflow name,
+the failing job/step and its `errorReason` when one is resolvable, the same human-readable
+explanation/remediation text shown on the run detail page, and a link straight to the run. A `CANCELLED`
+run never notifies.
+
+The auto-pause trip (previous section) posts to the same **Workflows** channel as its own event — before
+this, an auto-pause never produced a Discord message at all, since it belonged to no notification
+channel.
 
 ## System-managed workflows
 

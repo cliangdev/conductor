@@ -338,6 +338,66 @@ class DiscordProviderTest {
         assertThat(result).contains("ADMIN");
     }
 
+    // --- WORKFLOW_RUN_FAILED ---
+
+    @Test
+    void formatWorkflowRunFailedContainsWorkflowNameStepAndErrorReason() {
+        NotificationMessage event = NotificationMessage.of(
+                EventType.WORKFLOW_RUN_FAILED, PROJECT_ID,
+                Map.of("runId", "run-1", "workflowId", "wf-1", "workflowName", "Nightly Sync",
+                        "stepId", "push_image", "errorReason", "CLAUDE_TIMEOUT",
+                        "summary", "The step exceeded its timeout_minutes.",
+                        "remediation", "Increase timeout_minutes.",
+                        "runUrl", "http://localhost:3000/app/projects/proj-1/workflows/wf-1/runs/run-1"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Nightly Sync run failed");
+        assertThat(result).contains("push_image");
+        assertThat(result).contains("CLAUDE_TIMEOUT");
+        assertThat(result).contains("The step exceeded its timeout_minutes.");
+        assertThat(result).contains("Increase timeout_minutes.");
+        assertThat(result).contains("http://localhost:3000/app/projects/proj-1/workflows/wf-1/runs/run-1");
+    }
+
+    @Test
+    void formatWorkflowRunFailedUsesRedColor() {
+        NotificationMessage event = NotificationMessage.of(
+                EventType.WORKFLOW_RUN_FAILED, PROJECT_ID,
+                Map.of("runId", "run-1", "workflowId", "wf-1", "workflowName", "Nightly Sync"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"color\":" + 0xED4245);
+    }
+
+    @Test
+    void formatWorkflowRunFailedWithoutAResolvableStepUsesGenericFallbackMessage() {
+        // The 24h stuck-run sweep and the zero-jobs-enqueued path have no single failing step to
+        // point at -- the embed must still render sensibly rather than an empty description.
+        NotificationMessage event = NotificationMessage.of(
+                EventType.WORKFLOW_RUN_FAILED, PROJECT_ID,
+                Map.of("runId", "run-1", "workflowId", "wf-1", "workflowName", "Nightly Sync"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Nightly Sync run failed");
+        assertThat(result).contains("The run did not complete successfully.");
+    }
+
+    @Test
+    void formatWorkflowRunFailedLinksToTheRunUrlFromMetadata_notTheIssuesLink() {
+        NotificationMessage event = NotificationMessage.of(
+                EventType.WORKFLOW_RUN_FAILED, PROJECT_ID,
+                Map.of("runId", "run-1", "workflowId", "wf-1", "workflowName", "Nightly Sync",
+                        "runUrl", "http://localhost:3000/app/projects/proj-1/workflows/wf-1/runs/run-1"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("\"url\":\"http://localhost:3000/app/projects/proj-1/workflows/wf-1/runs/run-1\"");
+        assertThat(result).doesNotContain("/issues/");
+    }
+
     // --- Embed envelope / escaping / transport ---
 
     @Test

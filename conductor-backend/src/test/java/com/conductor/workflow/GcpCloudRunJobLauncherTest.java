@@ -1,11 +1,22 @@
 package com.conductor.workflow;
 
 import com.google.api.core.ApiFuture;
+import com.google.api.core.ApiFutures;
 import com.google.api.gax.longrunning.OperationFuture;
 import com.google.api.gax.longrunning.OperationSnapshot;
+import com.google.api.gax.rpc.ApiCallContext;
+import com.google.api.gax.rpc.PageContext;
+import com.google.api.gax.rpc.PagedListDescriptor;
+import com.google.api.gax.rpc.UnaryCallable;
+import com.google.cloud.run.v2.Container;
+import com.google.cloud.run.v2.EnvVar;
 import com.google.cloud.run.v2.Execution;
+import com.google.cloud.run.v2.ExecutionsClient;
 import com.google.cloud.run.v2.JobsClient;
+import com.google.cloud.run.v2.ListExecutionsRequest;
+import com.google.cloud.run.v2.ListExecutionsResponse;
 import com.google.cloud.run.v2.RunJobRequest;
+import com.google.cloud.run.v2.TaskTemplate;
 import com.google.longrunning.Operation;
 import com.google.longrunning.OperationsClient;
 import com.google.protobuf.Any;
@@ -15,6 +26,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
@@ -40,6 +52,7 @@ class GcpCloudRunJobLauncherTest {
 
     @Mock private CloudRunClientFactory clientFactory;
     @Mock private JobsClient jobsClient;
+    @Mock private ExecutionsClient executionsClient;
     @Mock private OperationFuture<Execution, Execution> operationFuture;
     @Mock private ApiFuture<OperationSnapshot> initialFuture;
     @Mock private OperationSnapshot snapshot;
@@ -191,5 +204,115 @@ class GcpCloudRunJobLauncherTest {
         Optional<String> resolved = launcher.tryResolveExecutionName(TARGET, "op-1");
 
         assertThat(resolved).isEmpty();
+    }
+
+    /** Builds a fake {@link Execution} whose sole container carries {@code CONDUCTOR_WORKER_JOB_ID}. */
+    private static Execution executionWithWorkerJobId(String executionName, String workerJobId) {
+        Container container = Container.newBuilder()
+                .addEnv(EnvVar.newBuilder().setName(GcpCloudRunJobLauncher.WORKER_JOB_ID_ENV).setValue(workerJobId))
+                .build();
+        TaskTemplate template = TaskTemplate.newBuilder().addContainers(container).build();
+        return Execution.newBuilder().setName(executionName).setTemplate(template).build();
+    }
+
+    /**
+     * {@link ExecutionsClient#listExecutions(com.google.cloud.run.v2.JobName)} is a thin GAPIC
+     * convenience wrapper whose bytecode itself calls {@code listExecutions(ListExecutionsRequest)} —
+     * confirmed via javap ({@code invokevirtual ...listExecutions:(ListExecutionsRequest;)...}) — so
+     * that's the overload that actually needs stubbing here, not the {@code JobName}-taking one the
+     * production code calls syntactically.
+     */
+    private void stubListExecutions(Execution... executions) throws Exception {
+        when(clientFactory.forTarget(TARGET)).thenReturn(new CloudRunClientFactory.Clients(jobsClient, executionsClient, null));
+        when(executionsClient.listExecutions(any(ListExecutionsRequest.class))).thenReturn(realPagedResponse(executions));
+    }
+
+    /**
+     * A mocked {@code ExecutionsClient.ListExecutionsPagedResponse} doesn't work here: its
+     * {@code iterateAll()} is inherited (not overridden) from gax's {@code AbstractPagedListResponse},
+     * and empirically Mockito's inline mock maker does not intercept that inherited call when it's
+     * reached via {@code GcpCloudRunJobLauncher}'s {@code listExecutions(parent).iterateAll()} call
+     * site — the real {@code getPage()}-backed implementation runs instead and NPEs. Building a genuine
+     * paged response via the public {@code createAsync} factory (backed by a fake single-page
+     * {@link UnaryCallable}) sidesteps the whole issue.
+     */
+    private static ExecutionsClient.ListExecutionsPagedResponse realPagedResponse(Execution... executions) throws Exception {
+        ListExecutionsResponse response = ListExecutionsResponse.newBuilder().addAllExecutions(List.of(executions)).build();
+        UnaryCallable<ListExecutionsRequest, ListExecutionsResponse> callable = new UnaryCallable<>() {
+            @Override
+            public ApiFuture<ListExecutionsResponse> futureCall(ListExecutionsRequest request, ApiCallContext context) {
+                return ApiFutures.immediateFuture(response);
+            }
+        };
+        PagedListDescriptor<ListExecutionsRequest, ListExecutionsResponse, Execution> descriptor =
+                new PagedListDescriptor<>() {
+                    @Override public String emptyToken() { return ""; }
+                    @Override public ListExecutionsRequest injectToken(ListExecutionsRequest req, String token) { return req; }
+                    @Override public ListExecutionsRequest injectPageSize(ListExecutionsRequest req, int size) { return req; }
+                    @Override public Integer extractPageSize(ListExecutionsRequest req) { return req.getPageSize(); }
+                    @Override public String extractNextToken(ListExecutionsResponse resp) { return resp.getNextPageToken(); }
+                    @Override public Iterable<Execution> extractResources(ListExecutionsResponse resp) { return resp.getExecutionsList(); }
+                };
+        PageContext<ListExecutionsRequest, ListExecutionsResponse, Execution> pageContext = PageContext.create(
+                callable, descriptor, ListExecutionsRequest.newBuilder().build(), mock(ApiCallContext.class));
+        return ExecutionsClient.ListExecutionsPagedResponse.createAsync(pageContext, ApiFutures.immediateFuture(response)).get();
+    }
+
+    @Test
+    void findExecutionByWorkerJobId_matchingEnvVar_returnsExecutionName() throws Exception {
+        stubListExecutions(executionWithWorkerJobId("conductor-byo-test-cond-mcpg5", "worker-42"));
+
+        CloudRunJobLauncher.ExecutionSearch result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
+
+        assertThat(result.executionName()).contains("conductor-byo-test-cond-mcpg5");
+        assertThat(result.reachedApi()).isTrue();
+    }
+
+    @Test
+    void findExecutionByWorkerJobId_decoyFromAnotherStepIsNotMatched_onlyTheExactWorkerJobIdIs() throws Exception {
+        // Proves the key actually discriminates: a decoy execution carrying a DIFFERENT
+        // CONDUCTOR_WORKER_JOB_ID must not be picked, even though it's iterated first.
+        Execution decoy = executionWithWorkerJobId("exec-decoy", "worker-other-step");
+        Execution match = executionWithWorkerJobId("exec-match", "worker-42");
+        stubListExecutions(decoy, match);
+
+        CloudRunJobLauncher.ExecutionSearch result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
+
+        assertThat(result.executionName()).contains("exec-match");
+    }
+
+    @Test
+    void findExecutionByWorkerJobId_onlyDecoysPresent_returnsEmpty() throws Exception {
+        stubListExecutions(executionWithWorkerJobId("exec-decoy-1", "worker-other-step"),
+                executionWithWorkerJobId("exec-decoy-2", "yet-another-step"));
+
+        CloudRunJobLauncher.ExecutionSearch result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
+
+        assertThat(result.executionName()).isEmpty();
+        assertThat(result.reachedApi()).isTrue();
+    }
+
+    @Test
+    void findExecutionByWorkerJobId_executionWithNoContainersOrEnv_isSkippedWithoutThrowing() throws Exception {
+        Execution noTemplate = Execution.newBuilder().setName("exec-bare").build();
+        stubListExecutions(noTemplate);
+
+        CloudRunJobLauncher.ExecutionSearch result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
+
+        assertThat(result.executionName()).isEmpty();
+        assertThat(result.reachedApi()).isTrue();
+    }
+
+    @Test
+    void findExecutionByWorkerJobId_clientThrows_returnsEmptyWithoutThrowing() {
+        when(clientFactory.forTarget(TARGET)).thenReturn(new CloudRunClientFactory.Clients(jobsClient, executionsClient, null));
+        when(executionsClient.listExecutions(any(ListExecutionsRequest.class))).thenThrow(new RuntimeException("transient failure"));
+
+        CloudRunJobLauncher.ExecutionSearch result = launcher.findExecutionByWorkerJobId(TARGET, "worker-42");
+
+        // Unreachable is NOT the same as "Cloud Run says there is no such execution" -- the caller
+        // must be able to tell them apart, since only the latter is evidence the launch never happened.
+        assertThat(result.executionName()).isEmpty();
+        assertThat(result.reachedApi()).isFalse();
     }
 }

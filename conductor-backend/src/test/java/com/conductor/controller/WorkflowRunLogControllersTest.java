@@ -87,6 +87,10 @@ class WorkflowRunLogControllersTest {
     @MockitoBean
     private com.conductor.service.WorkflowArtifactService artifactService;
 
+    /** Imported {@link WorkflowRunLogBroker} collaborator — this slice must mock every one of them. */
+    @MockitoBean
+    private com.conductor.workflow.WorkflowRunFailureNotifier runFailureNotifier;
+
     private User testUser;
     private WorkflowRun testRun;
 

@@ -84,7 +84,7 @@ class NotificationMessageContractTest {
     }
 
     /**
-     * These ten strings are persisted, not just in-process constants: they live in the
+     * These eleven strings are persisted, not just in-process constants: they live in the
      * {@code notification_channel_config.event_type} and {@code notification_group_config_event.event_type}
      * columns, and are hardcoded in {@code conductor-frontend/src/hooks/useNotifications.ts}. Renaming or
      * removing one is therefore a DB migration (precedent: {@code V81__rename_issue_event_vocabulary.sql}),
@@ -102,6 +102,7 @@ class NotificationMessageContractTest {
                 "MEMBER_ROLE_CHANGED",
                 "ASSET_ADDED",
                 "WORKFLOW_AUTO_PAUSED",
+                "WORKFLOW_RUN_FAILED",
                 "GITHUB_PULL_REQUEST"
         );
     }

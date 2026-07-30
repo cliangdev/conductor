@@ -26,6 +26,7 @@ class WorkflowExecutionEngineParallelTest {
     @Mock WorkflowDefinitionRepository workflowRepository;
     @Mock WorkflowJobOrchestrator orchestrator;
     @Mock WorkflowFailureCircuitBreaker circuitBreaker;
+    @Mock WorkflowRunFailureNotifier runFailureNotifier;
 
     WorkflowExecutionEngine engine;
 
@@ -34,7 +35,7 @@ class WorkflowExecutionEngineParallelTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
-                circuitBreaker);
+                circuitBreaker, runFailureNotifier, 4);
         // In unit tests there is no Spring context to inject @Lazy @Autowired self,
         // so we wire it manually to avoid NPE in the async CompletableFuture dispatch.
         ReflectionTestUtils.setField(engine, "self", engine);
@@ -56,7 +57,7 @@ class WorkflowExecutionEngineParallelTest {
         WorkflowJobQueue entry1 = makeQueueEntry("run-1", "job-a");
         WorkflowJobQueue entry2 = makeQueueEntry("run-1", "job-b");
 
-        when(queueRepository.claimAllReadyJobs()).thenReturn(List.of(entry1, entry2));
+        when(queueRepository.claimReadyJobs(anyInt())).thenReturn(List.of(entry1, entry2));
 
         engine.pollQueue();
 
@@ -67,7 +68,7 @@ class WorkflowExecutionEngineParallelTest {
 
     @Test
     void pollQueue_doesNothingWhenQueueEmpty() {
-        when(queueRepository.claimAllReadyJobs()).thenReturn(List.of());
+        when(queueRepository.claimReadyJobs(anyInt())).thenReturn(List.of());
 
         engine.pollQueue();
 
@@ -79,7 +80,7 @@ class WorkflowExecutionEngineParallelTest {
         WorkflowJobQueue entry1 = makeQueueEntry("run-1", "job-a");
         WorkflowJobQueue entry2 = makeQueueEntry("run-1", "job-b");
 
-        when(queueRepository.claimAllReadyJobs()).thenReturn(List.of(entry1, entry2));
+        when(queueRepository.claimReadyJobs(anyInt())).thenReturn(List.of(entry1, entry2));
         doNothing().when(orchestrator).executeJob(anyString(), anyString());
 
         engine.pollQueue();
@@ -92,7 +93,7 @@ class WorkflowExecutionEngineParallelTest {
 
     @Test
     void pollQueue_backsOffExponentiallyWhenQueueStaysEmpty() {
-        when(queueRepository.claimAllReadyJobs()).thenReturn(List.of());
+        when(queueRepository.claimReadyJobs(anyInt())).thenReturn(List.of());
 
         // Tick #1 — does the DB query, finds nothing, bumps backoff to 2 ticks
         engine.pollQueue();
@@ -108,13 +109,13 @@ class WorkflowExecutionEngineParallelTest {
         engine.pollQueue();
 
         // 7 scheduled ticks, only 3 should have actually hit the DB (#1, #3, #7)
-        verify(queueRepository, times(3)).claimAllReadyJobs();
+        verify(queueRepository, times(3)).claimReadyJobs(anyInt());
     }
 
     @Test
     void pollQueue_resetsBackoffWhenWorkAppears() {
         WorkflowJobQueue entry = makeQueueEntry("run-1", "job-a");
-        when(queueRepository.claimAllReadyJobs())
+        when(queueRepository.claimReadyJobs(anyInt()))
                 .thenReturn(List.of())         // tick #1 — empty, backoff → 2
                 .thenReturn(List.of(entry))    // tick #3 — has work, backoff → 1
                 .thenReturn(List.of(entry));   // tick #4 — still has work
@@ -125,6 +126,61 @@ class WorkflowExecutionEngineParallelTest {
         engine.pollQueue();  // #3 — queries (work found), resets backoff, skip=0
         engine.pollQueue();  // #4 — queries again immediately (no skip)
 
-        verify(queueRepository, times(3)).claimAllReadyJobs();
+        verify(queueRepository, times(3)).claimReadyJobs(anyInt());
+    }
+
+    @Test
+    void pollQueueOnce_claimsNoMoreThanTheJobExecutorHasFreeThreads() {
+        // Claiming is a durable side effect that only the startup sweep can undo, so the poll must ask
+        // for exactly its free capacity -- not "everything ready". Pool size here is 4 (see setUp).
+        when(queueRepository.claimReadyJobs(anyInt())).thenReturn(List.of());
+
+        engine.pollQueueOnce();
+
+        ArgumentCaptor<Integer> limit = ArgumentCaptor.forClass(Integer.class);
+        verify(queueRepository).claimReadyJobs(limit.capture());
+        assertThat(limit.getValue()).isEqualTo(4);
+    }
+
+    @Test
+    void pollQueueOnce_claimsNothingWhileEveryExecutorThreadIsBusy() {
+        // Jobs block for minutes on remote polling, so a saturated pool is normal, not exceptional.
+        // Rows must stay unclaimed and visible to the next tick (and to another instance) rather than
+        // being parked in the executor's queue where a restart would strand them.
+        ReflectionTestUtils.setField(engine, "inFlightJobs", new java.util.concurrent.atomic.AtomicInteger(4));
+
+        assertThat(engine.pollQueueOnce()).isFalse();
+
+        verify(queueRepository, never()).claimReadyJobs(anyInt());
+    }
+
+    @Test
+    void recoverOrphanedClaims_reopensClaimedRowsThatNeverProducedAJobRun() {
+        // The instance died between marking the row claimed and creating its workflow_job_runs row.
+        // Nothing else in the system can see such a row again, so startup must clear the claim.
+        WorkflowJobQueue orphaned = makeQueueEntry("run-1", "job-a");
+        orphaned.setClaimedAt(java.time.OffsetDateTime.now());
+        when(queueRepository.findClaimedWithoutJobRun()).thenReturn(List.of(orphaned));
+
+        engine.recoverOrphanedClaims();
+
+        ArgumentCaptor<WorkflowJobQueue> saved = ArgumentCaptor.forClass(WorkflowJobQueue.class);
+        verify(queueRepository).save(saved.capture());
+        assertThat(saved.getValue().getClaimedAt())
+                .as("cleared claim is what makes the row claimable by claimReadyJobs again")
+                .isNull();
+    }
+
+    @Test
+    void recoverOrphanedClaims_doesNotEnqueueASecondQueueRow() {
+        // Re-opening the existing row is deliberate: inserting a fresh one alongside it would let the
+        // same job run twice.
+        WorkflowJobQueue orphaned = makeQueueEntry("run-1", "job-a");
+        orphaned.setClaimedAt(java.time.OffsetDateTime.now());
+        when(queueRepository.findClaimedWithoutJobRun()).thenReturn(List.of(orphaned));
+
+        engine.recoverOrphanedClaims();
+
+        verify(queueRepository, never()).findByRunIdAndJobIdAndClaimedAtIsNull(anyString(), anyString());
     }
 }

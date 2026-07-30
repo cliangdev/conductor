@@ -31,6 +31,7 @@ import com.conductor.workflow.StepExecutionContext;
 import com.conductor.workflow.StepResult;
 import com.conductor.workflow.WorkflowExecutionBackend;
 import com.conductor.workflow.WorkflowFailureCircuitBreaker;
+import com.conductor.workflow.WorkflowRunFailureNotifier;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowRunCancellationService;
 import com.conductor.workflow.WorkflowRunQueryService;
@@ -139,6 +140,7 @@ class WorkflowControllerTest {
     @MockitoBean private WorkflowDefinitionLifecycleService lifecycleService;
     @MockitoBean private WorkflowViewService workflowViewService;
     @MockitoBean private WorkflowFailureCircuitBreaker circuitBreaker;
+    @MockitoBean private WorkflowRunFailureNotifier runFailureNotifier;
     @MockitoBean private WorkflowRunCancellationService runCancellationService;
 
     // Security-filter collaborators
@@ -466,6 +468,7 @@ class WorkflowControllerTest {
 
         verify(workflowJobOrchestrator).completeRemoteJob("run-1", "deploy", WorkflowJobStatus.FAILED, null);
         verify(circuitBreaker).recordOutcome(run);
+        verify(runFailureNotifier).notifyFailed(run);
         assertThat(run.getStatus()).isEqualTo(WorkflowRunStatus.FAILED);
     }
 
@@ -492,6 +495,7 @@ class WorkflowControllerTest {
         controller.updateWorkflowRunStatus("run-1", request);
 
         verify(circuitBreaker, org.mockito.Mockito.never()).recordOutcome(any());
+        verify(runFailureNotifier, org.mockito.Mockito.never()).notifyFailed(any());
     }
 
     private WorkflowRun runWithStatus(String id, WorkflowRunStatus status) {

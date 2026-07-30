@@ -16,8 +16,26 @@ public interface WorkflowJobQueueRepository extends JpaRepository<WorkflowJobQue
     @Query(value = "SELECT * FROM workflow_job_queue WHERE claimed_at IS NULL ORDER BY created_at LIMIT 1 FOR UPDATE SKIP LOCKED", nativeQuery = true)
     Optional<WorkflowJobQueue> claimNextJob();
 
-    @Query(value = "SELECT * FROM workflow_job_queue WHERE claimed_at IS NULL ORDER BY created_at FOR UPDATE SKIP LOCKED", nativeQuery = true)
-    List<WorkflowJobQueue> claimAllReadyJobs();
+    /**
+     * Claims at most {@code limit} ready rows. The bound is load-bearing, not a tuning knob: a claimed
+     * row is only ever re-driven by {@code WorkflowExecutionEngine#recoverOrphanedClaims} at startup, so
+     * claiming more than the job executor can start right now widens the window in which a restart
+     * strands work. Callers pass their free executor capacity — see {@code pollQueueOnce}.
+     */
+    @Query(value = "SELECT * FROM workflow_job_queue WHERE claimed_at IS NULL ORDER BY created_at LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
+    List<WorkflowJobQueue> claimReadyJobs(@Param("limit") int limit);
+
+    /**
+     * Claimed rows whose job never reached {@code planJobExecution} — that method is what creates the
+     * {@code workflow_job_runs} row, and it runs on the worker thread, so a claim marked in the poll
+     * transaction and then lost to a restart leaves a row that no query would ever return again:
+     * {@link #claimReadyJobs} filters on {@code claimed_at IS NULL}, and the stuck-job sweep looks for
+     * RUNNING {@code workflow_job_runs} that in this case don't exist. Used at startup to re-open them.
+     */
+    @Query(value = "SELECT q.* FROM workflow_job_queue q WHERE q.claimed_at IS NOT NULL "
+            + "AND NOT EXISTS (SELECT 1 FROM workflow_job_runs jr "
+            + "WHERE jr.run_id = q.run_id AND jr.job_id = q.job_id)", nativeQuery = true)
+    List<WorkflowJobQueue> findClaimedWithoutJobRun();
 
     @Modifying
     @Query(value = "UPDATE workflow_job_queue SET claimed_at = NOW() WHERE id = :id", nativeQuery = true)

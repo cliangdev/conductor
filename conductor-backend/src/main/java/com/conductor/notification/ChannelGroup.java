@@ -17,6 +17,11 @@ public enum ChannelGroup {
     MEMBERS("Members", List.of(
             EventType.MEMBER_JOINED,
             EventType.MEMBER_ROLE_CHANGED
+    )),
+
+    WORKFLOWS("Workflows", List.of(
+            EventType.WORKFLOW_RUN_FAILED,
+            EventType.WORKFLOW_AUTO_PAUSED
     ));
 
     private final String label;

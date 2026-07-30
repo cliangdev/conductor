@@ -49,6 +49,43 @@ public interface CloudRunJobLauncher {
         }
     }
 
+    /**
+     * Best-effort search for an execution of {@code target}'s job whose container environment carries
+     * the given {@code CONDUCTOR_WORKER_JOB_ID}. This is how a {@link LaunchUnconfirmedException} gets
+     * resolved after the fact: Cloud Run echoes a RunJobRequest's container-env overrides onto the
+     * {@link Execution} it creates, and that env carries a per-step unique worker job id, so a launch we
+     * stopped waiting for can still be identified with certainty rather than guessed at by timestamp.
+     *
+     * <p>Verified against a live orphan: run {@code 329aeaa8} gave up at 18:01:14, Cloud Run created
+     * execution {@code conductor-byo-test-cond-mcpg5} at 18:01:55 — 41s later — and that execution's
+     * template carried the very {@code CONDUCTOR_WORKER_JOB_ID} the step was waiting on.
+     *
+     * <p>Never throws. {@link ExecutionSearch#reachedApi()} distinguishes the two ways this comes back
+     * empty — "Cloud Run answered and has no such execution" versus "Cloud Run couldn't be asked" — which
+     * are the difference between evidence that nothing launched and no evidence at all. Callers must not
+     * report the second as the first.
+     */
+    ExecutionSearch findExecutionByWorkerJobId(CloudRunTarget target, String workerJobId);
+
+    /**
+     * @param reachedApi     whether the listing call actually completed. False means the search proved
+     *                       nothing — the launch may still have happened, unobserved.
+     * @param executionName  the matching execution, if one was found.
+     */
+    record ExecutionSearch(boolean reachedApi, Optional<String> executionName) {
+        public static ExecutionSearch found(String executionName) {
+            return new ExecutionSearch(true, Optional.of(executionName));
+        }
+
+        public static ExecutionSearch notFound() {
+            return new ExecutionSearch(true, Optional.empty());
+        }
+
+        public static ExecutionSearch unreachable() {
+            return new ExecutionSearch(false, Optional.empty());
+        }
+    }
+
     /** Polls the current state of a previously started execution on the given target. */
     ExecutionState pollExecution(CloudRunTarget target, String executionName);
 

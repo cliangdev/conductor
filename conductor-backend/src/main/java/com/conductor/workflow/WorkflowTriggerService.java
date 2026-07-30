@@ -43,6 +43,7 @@ public class WorkflowTriggerService {
     private final ObjectMapper objectMapper;
     private final WorkflowYamlParser yamlParser;
     private final WorkflowFailureCircuitBreaker circuitBreaker;
+    private final WorkflowRunFailureNotifier runFailureNotifier;
 
     public WorkflowTriggerService(WorkflowDefinitionRepository workflowRepository,
                                    WorkflowRunRepository workflowRunRepository,
@@ -50,7 +51,8 @@ public class WorkflowTriggerService {
                                    WorkflowScheduleRepository scheduleRepository,
                                    ObjectMapper objectMapper,
                                    WorkflowYamlParser yamlParser,
-                                   WorkflowFailureCircuitBreaker circuitBreaker) {
+                                   WorkflowFailureCircuitBreaker circuitBreaker,
+                                   WorkflowRunFailureNotifier runFailureNotifier) {
         this.workflowRepository = workflowRepository;
         this.workflowRunRepository = workflowRunRepository;
         this.executionEngine = executionEngine;
@@ -58,6 +60,7 @@ public class WorkflowTriggerService {
         this.objectMapper = objectMapper;
         this.yamlParser = yamlParser;
         this.circuitBreaker = circuitBreaker;
+        this.runFailureNotifier = runFailureNotifier;
     }
 
     /**
@@ -265,6 +268,7 @@ public class WorkflowTriggerService {
             saved.setCompletedAt(java.time.OffsetDateTime.now());
             saved = workflowRunRepository.save(saved);
             circuitBreaker.recordOutcome(saved);
+            runFailureNotifier.notifyFailed(saved);
         }
 
         return saved;

@@ -25,6 +25,7 @@ public final class SignalTypes {
     public static final String CONDUCTOR_WORK_ITEM_ASSET_ADDED = "conductor.work_item.asset_added";
 
     public static final String CONDUCTOR_WORKFLOW_AUTO_PAUSED = "conductor.workflow.auto_paused";
+    public static final String CONDUCTOR_WORKFLOW_RUN_FAILED = "conductor.workflow.run_failed";
 
     public static final String CONDUCTOR_PROJECT_MEMBER_JOINED = "conductor.project.member_joined";
     public static final String CONDUCTOR_PROJECT_MEMBER_ROLE_CHANGED = "conductor.project.member_role_changed";
