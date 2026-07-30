@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Runs a single headless Claude Code container execution to completion: resolves the {@code runs-on}
@@ -319,23 +318,22 @@ public class ClaudeCodeContainerRunner {
      * outlast the observed lag between giving up on the RunJob acknowledgement and the execution
      * actually appearing (41s in the production case this was written for). Returns empty when the
      * launch really never happened — the only case in which failing the step is honest.
+     *
+     * <p>Bounded by iteration count rather than wall clock, and sleeping via {@link #sleepSeconds}, so
+     * the not-found path is unit-testable with that hook overridden — the same shape
+     * {@link #pollUntilTerminal} uses for its own timeout path.
      */
     private Optional<String> findLateExecution(CloudRunTarget target, String workerJobId, String stepId) {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(RECONCILE_WINDOW_SECONDS);
-        do {
+        int attempts = Math.max(1, RECONCILE_WINDOW_SECONDS / RECONCILE_POLL_SECONDS);
+        for (int i = 0; i < attempts; i++) {
             Optional<String> found = launcher.findExecutionByWorkerJobId(target, workerJobId);
             if (found.isPresent()) {
                 log.info("Recovered unacknowledged Cloud Run launch for claude-code step {}: execution {} "
                         + "matched workerJobId {}", stepId, found.get(), workerJobId);
                 return found;
             }
-            try {
-                TimeUnit.SECONDS.sleep(RECONCILE_POLL_SECONDS);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return Optional.empty();
-            }
-        } while (System.nanoTime() < deadline);
+            sleepSeconds(RECONCILE_POLL_SECONDS);
+        }
         return Optional.empty();
     }
 

@@ -43,6 +43,7 @@ public class WorkflowExecutionEngine {
     private final WorkflowJobOrchestrator orchestrator;
     private final WorkflowYamlParser yamlParser;
     private final WorkflowFailureCircuitBreaker circuitBreaker;
+    private final WorkflowRunFailureNotifier runFailureNotifier;
 
     /**
      * Jobs run here rather than on {@code CompletableFuture}'s default pool. That default is
@@ -75,6 +76,7 @@ public class WorkflowExecutionEngine {
                                    WorkflowJobOrchestrator orchestrator,
                                    WorkflowYamlParser yamlParser,
                                    WorkflowFailureCircuitBreaker circuitBreaker,
+                                   WorkflowRunFailureNotifier runFailureNotifier,
                                    @Value("${conductor.workflow.job-executor.pool-size:16}") int jobPoolSize) {
         this.jobExecutor = Executors.newFixedThreadPool(jobPoolSize, namedThreadFactory());
         this.queueRepository = queueRepository;
@@ -85,6 +87,7 @@ public class WorkflowExecutionEngine {
         this.orchestrator = orchestrator;
         this.yamlParser = yamlParser;
         this.circuitBreaker = circuitBreaker;
+        this.runFailureNotifier = runFailureNotifier;
     }
 
     private static ThreadFactory namedThreadFactory() {
@@ -202,6 +205,7 @@ public class WorkflowExecutionEngine {
                 run.setCompletedAt(OffsetDateTime.now());
                 runRepository.save(run);
                 log.info("Marked stuck run {} as FAILED", run.getId());
+                runFailureNotifier.notifyFailed(run);
             }
         }
 
@@ -334,6 +338,7 @@ public class WorkflowExecutionEngine {
         runRepository.save(run);
         log.info("Run {} completed with status {}", run.getId(), run.getStatus());
         circuitBreaker.recordOutcome(run);
+        runFailureNotifier.notifyFailed(run);
     }
 
     private WorkflowSpec parseYaml(String yaml) {

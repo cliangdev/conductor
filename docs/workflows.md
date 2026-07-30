@@ -25,6 +25,7 @@ Workflows let you automate work that happens around your Conductor project — r
 - [Queued and waiting work](#queued-and-waiting-work)
 - [Cancelling a run](#cancelling-a-run)
 - [Auto-pause on repeated failures](#auto-pause-on-repeated-failures)
+- [Failure notifications](#failure-notifications)
 - [System-managed workflows](#system-managed-workflows)
 - [Self-hosted setup](#self-hosted-setup)
   - [Prerequisites](#prerequisites)
@@ -1403,6 +1404,20 @@ already carries (see each step type's failure-modes table):
 - Deliberately undecided: whether the "doctor" is a builtin system agent, a workflow, or a plain
   synchronous tool call — that's a call for whoever builds this, informed by real explanation/remediation
   data once Phase 2's taxonomy has seen production use.
+
+## Failure notifications
+
+A run that settles to `FAILED` — from any of the completion paths above (all-jobs-terminal, the 24h
+stuck-run sweep, a self-hosted daemon's job-failure callback, a zero-jobs-enqueued dispatch, or the
+legacy whole-run daemon report) — posts once to Discord if the project has a **Workflows** notification
+channel configured (**Settings → Notifications → Add Channel**). The alert includes the workflow name,
+the failing job/step and its `errorReason` when one is resolvable, the same human-readable
+explanation/remediation text shown on the run detail page, and a link straight to the run. A `CANCELLED`
+run never notifies.
+
+The auto-pause trip (previous section) posts to the same **Workflows** channel as its own event — before
+this, an auto-pause never produced a Discord message at all, since it belonged to no notification
+channel.
 
 ## System-managed workflows
 

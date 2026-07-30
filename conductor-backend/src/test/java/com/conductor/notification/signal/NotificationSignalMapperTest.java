@@ -84,16 +84,16 @@ class NotificationSignalMapperTest {
     }
 
     @Test
-    void mappingIsABijectionOverAllTenEventTypesAndSignalTypes() {
+    void mappingIsABijectionOverAllElevenEventTypesAndSignalTypes() {
         Set<String> mappedSignalTypes = Arrays.stream(EventType.values())
                 .map(type -> mapper.toSignal(NotificationMessage.of(type, PROJECT_ID, Map.of())))
                 .map(Signal::type)
                 .collect(Collectors.toSet());
 
-        assertThat(EventType.values()).hasSize(10);
+        assertThat(EventType.values()).hasSize(11);
         // Every EventType maps to a distinct SignalTypes constant -- no two collapse onto the same
         // signal type, and every produced signal type maps straight back to its origin EventType.
-        assertThat(mappedSignalTypes).hasSize(10).containsExactlyInAnyOrder(
+        assertThat(mappedSignalTypes).hasSize(11).containsExactlyInAnyOrder(
                 SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED,
                 SignalTypes.CONDUCTOR_WORK_ITEM_REVIEWER_ASSIGNED,
                 SignalTypes.CONDUCTOR_WORK_ITEM_REVIEW_SUBMITTED,
@@ -103,6 +103,7 @@ class NotificationSignalMapperTest {
                 SignalTypes.CONDUCTOR_PROJECT_MEMBER_ROLE_CHANGED,
                 SignalTypes.CONDUCTOR_WORK_ITEM_ASSET_ADDED,
                 SignalTypes.CONDUCTOR_WORKFLOW_AUTO_PAUSED,
+                SignalTypes.CONDUCTOR_WORKFLOW_RUN_FAILED,
                 SignalTypes.GITHUB_PULL_REQUEST);
     }
 

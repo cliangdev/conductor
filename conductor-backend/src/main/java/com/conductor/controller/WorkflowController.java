@@ -52,6 +52,7 @@ import com.conductor.workflow.StepFailureExplanations;
 import com.conductor.workflow.WorkflowFailureCircuitBreaker;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowRunCancellationService;
+import com.conductor.workflow.WorkflowRunFailureNotifier;
 import com.conductor.workflow.WorkflowRunQueryService;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
@@ -104,6 +105,7 @@ public class WorkflowController implements WorkflowsApi {
     private final ObjectMapper objectMapper;
     private final WorkflowYamlParser yamlParser;
     private final WorkflowFailureCircuitBreaker circuitBreaker;
+    private final WorkflowRunFailureNotifier runFailureNotifier;
     private final StepSchemaRegistry stepSchemaRegistry;
     private final WorkflowRunCancellationService runCancellationService;
     private final WorkflowRunQueryService runQueryService;
@@ -123,6 +125,7 @@ public class WorkflowController implements WorkflowsApi {
                                ObjectMapper objectMapper,
                                WorkflowYamlParser yamlParser,
                                WorkflowFailureCircuitBreaker circuitBreaker,
+                               WorkflowRunFailureNotifier runFailureNotifier,
                                StepSchemaRegistry stepSchemaRegistry,
                                WorkflowRunCancellationService runCancellationService,
                                WorkflowRunQueryService runQueryService) {
@@ -143,6 +146,7 @@ public class WorkflowController implements WorkflowsApi {
         this.objectMapper = objectMapper;
         this.yamlParser = yamlParser;
         this.circuitBreaker = circuitBreaker;
+        this.runFailureNotifier = runFailureNotifier;
         this.stepSchemaRegistry = stepSchemaRegistry;
     }
 
@@ -341,6 +345,7 @@ public class WorkflowController implements WorkflowsApi {
         if (!alreadyFinalizedByJobCompletion
                 && (newStatus == WorkflowRunStatus.SUCCESS || newStatus == WorkflowRunStatus.FAILED)) {
             circuitBreaker.recordOutcome(run);
+            runFailureNotifier.notifyFailed(run);
         }
         return ResponseEntity.ok(toRunDto(run));
     }

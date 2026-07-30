@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -41,13 +42,14 @@ class WorkflowRunLogBrokerTest {
     private final WorkflowJobRunRepository jobRunRepository = mock(WorkflowJobRunRepository.class);
     private final WorkflowStepRunRepository stepRunRepository = mock(WorkflowStepRunRepository.class);
     private final LogRedactionService logRedactionService = mock(LogRedactionService.class);
+    private final WorkflowRunFailureNotifier runFailureNotifier = mock(WorkflowRunFailureNotifier.class);
 
     private WorkflowRunLogBroker broker;
 
     @BeforeEach
     void setUp() {
         broker = new WorkflowRunLogBroker(runRepository, jobRunRepository, stepRunRepository, new ObjectMapper(),
-                logRedactionService, new com.conductor.workflow.model.WorkflowYamlParser());
+                logRedactionService, new com.conductor.workflow.model.WorkflowYamlParser(), runFailureNotifier);
     }
 
     private WorkflowJobRun jobRunWithStep(WorkflowStepRun step) {
@@ -135,6 +137,112 @@ class WorkflowRunLogBrokerTest {
         assertThat(step.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
         assertThat(step.getOutputJson()).isEqualTo("{\"summary\":\"original\"}");
         assertThat(step.getErrorReason()).isNull();
+        verify(stepRunRepository, never()).save(step);
+    }
+
+    /**
+     * The Cloud Run launch-reconciliation fix's core behavior change: a step failed on a genuine
+     * guess (Cloud Run never acknowledged the RunJob request, see
+     * {@code CloudRunJobLauncher.LaunchUnconfirmedException}) is NOT the same as an observed terminal
+     * result — a late self-report from the container that actually ran must be adopted, correcting
+     * status/errorReason/outputs/completedAt. Job and run status are deliberately left untouched (see
+     * production comment on {@code WorkflowRunLogBroker#recordStepCompleted}).
+     */
+    @Test
+    void recordStepCompleted_adoptsLateSuccessReport_whenPriorFailureWasLaunchUnconfirmed() {
+        WorkflowStepRun step = new WorkflowStepRun();
+        step.setId("step-1");
+        step.setWorkerJobId("jobrun-1:0");
+        step.setStatus(WorkflowStepStatus.FAILED);
+        step.setErrorReason("CLOUD_RUN_LAUNCH_UNCONFIRMED");
+        WorkflowJobRun jobRun = jobRunWithStep(step);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        broker.recordStepCompleted("run-1", "jobrun-1:0", WorkflowStepStatus.SUCCESS, 0, null,
+                Map.of("summary", "recovered"));
+
+        assertThat(step.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        assertThat(step.getErrorReason()).isNull();
+        assertThat(step.getOutputJson()).contains("recovered");
+        assertThat(step.getCompletedAt()).isNotNull();
+        verify(stepRunRepository).save(step);
+    }
+
+    /** Same as above, but the late report is itself a failure — still adopted (errorReason corrected). */
+    @Test
+    void recordStepCompleted_adoptsLateFailureReport_whenPriorFailureWasLaunchUnconfirmed() {
+        WorkflowStepRun step = new WorkflowStepRun();
+        step.setId("step-1");
+        step.setWorkerJobId("jobrun-1:0");
+        step.setStatus(WorkflowStepStatus.FAILED);
+        step.setErrorReason("CLOUD_RUN_LAUNCH_UNCONFIRMED");
+        WorkflowJobRun jobRun = jobRunWithStep(step);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        broker.recordStepCompleted("run-1", "jobrun-1:0", WorkflowStepStatus.FAILED, 1, "CLAUDE_AGENT_ERROR", Map.of());
+
+        assertThat(step.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(step.getErrorReason()).isEqualTo("CLAUDE_AGENT_ERROR");
+        verify(stepRunRepository).save(step);
+    }
+
+    /**
+     * The real persisted form is {@code "CLOUD_RUN_LAUNCH_UNCONFIRMED"} possibly followed by
+     * {@code ": <detail>"} (see {@code ClaudeCodeContainerRunner}'s {@code StepResult.failed(log,
+     * "CLOUD_RUN_LAUNCH_UNCONFIRMED")} call, which carries no detail suffix today, but the broker's
+     * {@code isInconclusive} check is a {@code startsWith}, not an exact match, precisely so a future
+     * detail suffix wouldn't quietly break adoption).
+     */
+    @Test
+    void recordStepCompleted_adoptsLateReport_whenErrorReasonHasUnconfirmedPrefixPlusDetail() {
+        WorkflowStepRun step = new WorkflowStepRun();
+        step.setId("step-1");
+        step.setWorkerJobId("jobrun-1:0");
+        step.setStatus(WorkflowStepStatus.FAILED);
+        step.setErrorReason("CLOUD_RUN_LAUNCH_UNCONFIRMED: no matching execution found within 180s");
+        WorkflowJobRun jobRun = jobRunWithStep(step);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        broker.recordStepCompleted("run-1", "jobrun-1:0", WorkflowStepStatus.SUCCESS, 0, null, Map.of("summary", "late"));
+
+        assertThat(step.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        assertThat(step.getErrorReason()).isNull();
+        verify(stepRunRepository).save(step);
+    }
+
+    /** An ordinary (non-inconclusive) terminal FAILED step still ignores a late report — unchanged behavior. */
+    @Test
+    void recordStepCompleted_ignoresLateReport_whenPriorFailureWasAnOrdinaryReason() {
+        WorkflowStepRun step = new WorkflowStepRun();
+        step.setId("step-1");
+        step.setWorkerJobId("jobrun-1:0");
+        step.setStatus(WorkflowStepStatus.FAILED);
+        step.setErrorReason("CLAUDE_TIMEOUT");
+        WorkflowJobRun jobRun = jobRunWithStep(step);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        broker.recordStepCompleted("run-1", "jobrun-1:0", WorkflowStepStatus.SUCCESS, 0, null, Map.of("summary", "late"));
+
+        assertThat(step.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(step.getErrorReason()).isEqualTo("CLAUDE_TIMEOUT");
+        verify(stepRunRepository, never()).save(step);
+    }
+
+    /** A terminal SUCCESS step (the common case) still ignores a late report — unchanged behavior. */
+    @Test
+    void recordStepCompleted_ignoresLateReport_whenPriorStatusWasSuccess() {
+        WorkflowStepRun step = new WorkflowStepRun();
+        step.setId("step-1");
+        step.setWorkerJobId("jobrun-1:0");
+        step.setStatus(WorkflowStepStatus.SUCCESS);
+        step.setOutputJson("{\"summary\":\"original\"}");
+        WorkflowJobRun jobRun = jobRunWithStep(step);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        broker.recordStepCompleted("run-1", "jobrun-1:0", WorkflowStepStatus.FAILED, 1, "CLOUD_RUN_LAUNCH_UNCONFIRMED", Map.of());
+
+        assertThat(step.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        assertThat(step.getOutputJson()).isEqualTo("{\"summary\":\"original\"}");
         verify(stepRunRepository, never()).save(step);
     }
 
@@ -334,5 +442,49 @@ class WorkflowRunLogBrokerTest {
         assertThat(jobRun.getStatus()).isEqualTo(WorkflowJobStatus.FAILED);
         verify(stepRunRepository).save(step);
         verify(jobRunRepository).save(jobRun);
+    }
+
+    @Test
+    void recordJobFailed_rollsUpToRun_marksRunFailedAndNotifiesExactlyOnce() {
+        WorkflowStepRun step = new WorkflowStepRun();
+        step.setId("step-1");
+        step.setWorkerJobId("jobrun-1:0");
+        WorkflowJobRun jobRun = jobRunWithStep(step);
+        jobRun.setStatus(WorkflowJobStatus.RUNNING);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        WorkflowRun run = new WorkflowRun();
+        run.setId("run-1");
+        run.setStatus(com.conductor.entity.WorkflowRunStatus.RUNNING);
+        when(runRepository.findByIdWithWorkflow("run-1")).thenReturn(Optional.of(run));
+
+        broker.recordJobFailed("run-1", "jobrun-1:0", "Container exited with code 1");
+
+        assertThat(run.getStatus()).isEqualTo(com.conductor.entity.WorkflowRunStatus.FAILED);
+        verify(runRepository).save(run);
+        verify(runFailureNotifier).notifyFailed(run);
+    }
+
+    @Test
+    void recordJobFailed_runAlreadyTerminal_neverNotifiesAgain() {
+        WorkflowStepRun step = new WorkflowStepRun();
+        step.setId("step-1");
+        step.setWorkerJobId("jobrun-1:0");
+        WorkflowJobRun jobRun = jobRunWithStep(step);
+        jobRun.setStatus(WorkflowJobStatus.RUNNING);
+        when(jobRunRepository.findByRunId("run-1")).thenReturn(List.of(jobRun));
+
+        // Some other completion path (e.g. WorkflowExecutionEngine#checkRunCompletion) already
+        // finalized this run -- checkAndCompleteRun's own terminal guard must skip straight past
+        // notifying again.
+        WorkflowRun run = new WorkflowRun();
+        run.setId("run-1");
+        run.setStatus(com.conductor.entity.WorkflowRunStatus.FAILED);
+        when(runRepository.findByIdWithWorkflow("run-1")).thenReturn(Optional.of(run));
+
+        broker.recordJobFailed("run-1", "jobrun-1:0", "Container exited with code 1");
+
+        verify(runRepository, never()).save(any());
+        verify(runFailureNotifier, never()).notifyFailed(any());
     }
 }

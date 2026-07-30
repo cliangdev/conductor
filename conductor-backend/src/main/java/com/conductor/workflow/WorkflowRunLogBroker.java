@@ -58,6 +58,7 @@ public class WorkflowRunLogBroker {
     private final ObjectMapper objectMapper;
     private final LogRedactionService logRedactionService;
     private final WorkflowYamlParser yamlParser;
+    private final WorkflowRunFailureNotifier runFailureNotifier;
 
     private final ConcurrentHashMap<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, List<String>> runLogs = new ConcurrentHashMap<>();
@@ -67,13 +68,15 @@ public class WorkflowRunLogBroker {
                                 WorkflowStepRunRepository stepRunRepository,
                                 ObjectMapper objectMapper,
                                 LogRedactionService logRedactionService,
-                                WorkflowYamlParser yamlParser) {
+                                WorkflowYamlParser yamlParser,
+                                WorkflowRunFailureNotifier runFailureNotifier) {
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
         this.stepRunRepository = stepRunRepository;
         this.objectMapper = objectMapper;
         this.logRedactionService = logRedactionService;
         this.yamlParser = yamlParser;
+        this.runFailureNotifier = runFailureNotifier;
     }
 
     /**
@@ -387,6 +390,7 @@ public class WorkflowRunLogBroker {
             run.setStatus(anyFailed ? WorkflowRunStatus.FAILED : WorkflowRunStatus.SUCCESS);
             run.setCompletedAt(OffsetDateTime.now());
             runRepository.save(run);
+            runFailureNotifier.notifyFailed(run);
 
             SseEmitter emitter = activeEmitters.remove(runId);
             if (emitter != null) {

@@ -66,6 +66,7 @@ public class NotificationSignalMapper {
             case MEMBER_ROLE_CHANGED -> SignalTypes.CONDUCTOR_PROJECT_MEMBER_ROLE_CHANGED;
             case ASSET_ADDED -> SignalTypes.CONDUCTOR_WORK_ITEM_ASSET_ADDED;
             case WORKFLOW_AUTO_PAUSED -> SignalTypes.CONDUCTOR_WORKFLOW_AUTO_PAUSED;
+            case WORKFLOW_RUN_FAILED -> SignalTypes.CONDUCTOR_WORKFLOW_RUN_FAILED;
             case GITHUB_PULL_REQUEST -> SignalTypes.GITHUB_PULL_REQUEST;
         };
     }
@@ -92,7 +93,7 @@ public class NotificationSignalMapper {
      * Inverse of {@link #toSignalType}, derived from it rather than hand-duplicated as a second case
      * table -- a second table could silently drift out of sync with the first (e.g. after someone edits
      * one switch and forgets the other), which would break the round-trip identity this mapper exists to
-     * guarantee. Ten constants is cheap enough to scan linearly per call.
+     * guarantee. Eleven constants is cheap enough to scan linearly per call.
      */
     private static EventType toEventType(String signalType) {
         for (EventType eventType : EventType.values()) {
