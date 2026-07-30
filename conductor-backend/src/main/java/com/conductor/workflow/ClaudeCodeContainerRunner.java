@@ -285,8 +285,11 @@ public class ClaudeCodeContainerRunner {
                     "← Recovered unacknowledged launch: " + executionName);
             stepRun.setExecutionName(executionName);
             stepRunRepository.save(stepRun);
+            // The launch wait and the search that followed it can together burn four minutes, and the
+            // container has been running for most of that. Poll on what's left of the step's budget, as
+            // the resume branches above do — not a fresh copy of it.
             return pollUntilTerminal(target, executionName, null, runId, jobRun.getId(), workerJobId, stepDef,
-                    timeoutMinutes, logBuilder, stepRun, projectId);
+                    remainingTimeoutMinutes(stepRun, timeoutMinutes), logBuilder, stepRun, projectId);
         } catch (Exception e) {
             log.warn("Failed to start Cloud Run execution for claude-code step {}: {}", stepId, e.getMessage());
             appendLauncherLine(stepRun, projectId, logBuilder, "✗ " + e.getMessage());
