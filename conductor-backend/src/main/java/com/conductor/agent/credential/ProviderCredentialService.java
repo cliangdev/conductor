@@ -87,8 +87,18 @@ public class ProviderCredentialService {
         return repository.existsByProjectIdAndProvider(projectId, provider);
     }
 
-    /** Resolve and decrypt the API key for a project + provider, if present. */
-    @Transactional(readOnly = true)
+    /**
+     * Resolve and decrypt the API key for a project + provider, if present.
+     *
+     * <p>Deliberately NOT {@code @Transactional}: {@link ProviderCredentialCrypto#decryptApiKey} is a
+     * KMS round trip, and holding a JDBC connection across it leaves the Postgres session idle in a
+     * transaction for the duration. Production hit exactly that — a stalled KMS call outlived the
+     * server's {@code idle_in_transaction_session_timeout}, the session was killed, and the rollback
+     * that followed threw {@code JpaSystemException: Unable to rollback against JDBC Connection},
+     * which Spring then substituted for the real KMS error on the way out. The row load below gets
+     * its own short transaction from the repository; the decrypt happens after it closes. Mirrors
+     * {@code ConnectionService.toContext}/{@code decrypt}, non-transactional for the same reason.
+     */
     public Optional<String> resolveApiKey(String projectId, String provider) {
         return repository.findByProjectIdAndProvider(projectId, provider)
                 .map(crypto::decryptApiKey);

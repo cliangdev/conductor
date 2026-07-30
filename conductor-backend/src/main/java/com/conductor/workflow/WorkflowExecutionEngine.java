@@ -6,9 +6,12 @@ import com.conductor.workflow.model.JobSpec;
 import com.conductor.workflow.model.WorkflowSpec;
 import com.conductor.workflow.model.WorkflowYamlException;
 import com.conductor.workflow.model.WorkflowYamlParser;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
@@ -21,6 +24,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 @Service
@@ -36,6 +43,17 @@ public class WorkflowExecutionEngine {
     private final WorkflowJobOrchestrator orchestrator;
     private final WorkflowYamlParser yamlParser;
     private final WorkflowFailureCircuitBreaker circuitBreaker;
+
+    /**
+     * Jobs run here rather than on {@code CompletableFuture}'s default pool. That default is
+     * {@code ForkJoinPool.commonPool()} only when its parallelism ({@code availableProcessors() - 1})
+     * is at least 1 — on a 1-vCPU container it is 0, and the JDK silently substitutes a
+     * thread-per-task executor. Production ran that way: every concurrent job spawned a fresh
+     * unbounded {@code Thread-NN}, all contending for one core, which starved the gax executors
+     * behind Cloud Run launches and Hikari's housekeeper alike. A bounded, named pool gives the
+     * fan-out a ceiling and makes its threads identifiable in a stack dump.
+     */
+    private final ExecutorService jobExecutor;
 
     // Adaptive poll backoff (in 500ms ticks). Busy (work found last poll) → every tick (500ms).
     // Idle → exponentially back off up to MAX_BACKOFF_TICKS * 500ms = 5s between DB queries.
@@ -56,7 +74,9 @@ public class WorkflowExecutionEngine {
                                    WorkflowDefinitionRepository workflowRepository,
                                    WorkflowJobOrchestrator orchestrator,
                                    WorkflowYamlParser yamlParser,
-                                   WorkflowFailureCircuitBreaker circuitBreaker) {
+                                   WorkflowFailureCircuitBreaker circuitBreaker,
+                                   @Value("${conductor.workflow.job-executor.pool-size:16}") int jobPoolSize) {
+        this.jobExecutor = Executors.newFixedThreadPool(jobPoolSize, namedThreadFactory());
         this.queueRepository = queueRepository;
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
@@ -65,6 +85,20 @@ public class WorkflowExecutionEngine {
         this.orchestrator = orchestrator;
         this.yamlParser = yamlParser;
         this.circuitBreaker = circuitBreaker;
+    }
+
+    private static ThreadFactory namedThreadFactory() {
+        AtomicInteger seq = new AtomicInteger();
+        return r -> {
+            Thread t = new Thread(r, "workflow-job-" + seq.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        };
+    }
+
+    @PreDestroy
+    void shutdownJobExecutor() {
+        jobExecutor.shutdown();
     }
 
     /**
@@ -114,6 +148,8 @@ public class WorkflowExecutionEngine {
             String jobId = queued.getJobId();
             log.info("Dispatching job {} for run {}", jobId, runId);
             CompletableFuture.runAsync(() -> {
+                MDC.put("runId", runId);
+                MDC.put("jobId", jobId);
                 try {
                     self.processJob(runId, jobId);
                     // After processJob transaction commits, check completion in a fresh transaction
@@ -125,8 +161,11 @@ public class WorkflowExecutionEngine {
                     // path itself throws (e.g. completeRemoteJob failing) — log loudly since a job is
                     // left stranded in RUNNING with no further automatic recovery at this point.
                     log.error("Error processing job {} — job may be stranded in RUNNING: {}", jobId, e.getMessage(), e);
+                } finally {
+                    MDC.remove("runId");
+                    MDC.remove("jobId");
                 }
-            });
+            }, jobExecutor);
         }
         return true;
     }

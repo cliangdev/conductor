@@ -34,7 +34,7 @@ class WorkflowExecutionEngineParallelTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
-                circuitBreaker);
+                circuitBreaker, 4);
         // In unit tests there is no Spring context to inject @Lazy @Autowired self,
         // so we wire it manually to avoid NPE in the async CompletableFuture dispatch.
         ReflectionTestUtils.setField(engine, "self", engine);

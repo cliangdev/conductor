@@ -45,7 +45,7 @@ class WorkflowExecutionEngineEnqueueTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
-                circuitBreaker);
+                circuitBreaker, 4);
     }
 
     @Test
