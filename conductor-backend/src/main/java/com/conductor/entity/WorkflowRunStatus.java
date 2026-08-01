@@ -1,6 +1,8 @@
 package com.conductor.entity;
 
+import java.util.Arrays;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public enum WorkflowRunStatus {
     PENDING,
@@ -27,4 +29,12 @@ public enum WorkflowRunStatus {
     public boolean isTerminal() {
         return this == SUCCESS || this == FAILED || this == CANCELLED;
     }
+
+    /**
+     * Derived from {@link #isTerminal()} rather than listed again, so a JPQL query parameterized on
+     * this set (e.g. {@code WorkflowRunRepository#findQueuedByWorkflowId}) can't quietly fall out of
+     * sync with what "terminal" means here.
+     */
+    public static final Set<WorkflowRunStatus> TERMINAL_STATUSES =
+            Arrays.stream(values()).filter(WorkflowRunStatus::isTerminal).collect(Collectors.toUnmodifiableSet());
 }

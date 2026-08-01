@@ -1,6 +1,6 @@
 package com.conductor.notification;
 
 public interface NotificationProvider {
-    String format(NotificationEvent event);
+    String format(NotificationMessage event);
     void send(String webhookUrl, String formattedMessage);
 }

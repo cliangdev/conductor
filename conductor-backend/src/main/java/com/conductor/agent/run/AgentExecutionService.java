@@ -156,12 +156,17 @@ public class AgentExecutionService {
         // Seed the conversation.
         transcript.add(ChatMessage.user(buildFirstUserMessage(request)));
 
+        // The in-process "api" runtime drives its own request loop, so unlike the claude-code runtime
+        // (where a null maxToolTurns means "let the CLI run unbounded") it always needs a concrete
+        // bound here to guard against runaway provider calls.
+        int effectiveMaxTurns = cfg.maxToolTurns() != null ? Math.max(1, cfg.maxToolTurns()) : DEFAULT_MAX_TOOL_TURNS;
+
         String finalText = "";
         AgentRun.Status status = AgentRun.Status.FAILED;
-        String errorReason = "Agent exceeded maxToolTurns (" + cfg.maxToolTurns() + ") without finishing";
+        String errorReason = "Agent exceeded maxToolTurns (" + effectiveMaxTurns + ") without finishing";
 
         try {
-            for (int turn = 0; turn < cfg.maxToolTurns(); turn++) {
+            for (int turn = 0; turn < effectiveMaxTurns; turn++) {
                 ChatRequest req = new ChatRequest(
                         agent.getModel(), agent.getSystemPrompt(), transcript, toolDefs,
                         cfg.maxTokens(), cfg.temperature());
@@ -286,12 +291,12 @@ public class AgentExecutionService {
 
     private AgentConfig parseConfig(String configJson) {
         Map<String, Object> cfg = parseObject(configJson);
-        Integer maxToolTurns = asInt(cfg.get("maxToolTurns"), DEFAULT_MAX_TOOL_TURNS);
+        Integer maxToolTurns = asIntOrNull(cfg.get("maxToolTurns"));
         Integer maxTokens = asInt(cfg.get("maxTokens"), DEFAULT_MAX_TOKENS);
         Double temperature = asDouble(cfg.get("temperature"));
         Object runtimeVal = cfg.get("runtime");
         String runtime = runtimeVal instanceof String s && !s.isBlank() ? s : null;
-        return new AgentConfig(Math.max(1, maxToolTurns), maxTokens, temperature, runtime);
+        return new AgentConfig(maxToolTurns, maxTokens, temperature, runtime);
     }
 
     private List<String> parseToolIds(String toolIdsJson) {
@@ -336,11 +341,17 @@ public class AgentExecutionService {
     }
 
     private Integer asInt(Object v, int fallback) {
+        Integer parsed = asIntOrNull(v);
+        return parsed != null ? parsed : fallback;
+    }
+
+    /** Unset/blank/unparseable stays {@code null} — callers decide whether that means "unbounded" or apply their own default. */
+    private Integer asIntOrNull(Object v) {
         if (v instanceof Number n) return n.intValue();
         if (v instanceof String s) {
             try { return Integer.parseInt(s.trim()); } catch (NumberFormatException ignored) {}
         }
-        return fallback;
+        return null;
     }
 
     private Double asDouble(Object v) {
@@ -376,8 +387,12 @@ public class AgentExecutionService {
         }
     }
 
-    /** Parsed generation guardrails from {@code Agent.configJson}. */
-    private record AgentConfig(int maxToolTurns, int maxTokens, Double temperature, String runtime) {}
+    /**
+     * Parsed generation guardrails from {@code Agent.configJson}. {@code maxToolTurns} is {@code null}
+     * when unset — the "api" runtime's ReAct loop falls back to {@link #DEFAULT_MAX_TOOL_TURNS}, while
+     * the {@code claude-code} runtime passes {@code null} straight through so the CLI runs unbounded.
+     */
+    private record AgentConfig(Integer maxToolTurns, int maxTokens, Double temperature, String runtime) {}
 
     /**
      * Engine-agnostic view of a resolved {@link Agent} — the shape the workflow {@code agent} step's

@@ -46,6 +46,11 @@ tags:
     description: >-
       Knowledge Center: the ingestion inbox (knowledge sources) and the OKF wiki bundle (knowledge pages)
       an LLM librarian curates from them.
+  - name: pipeline
+    description: >-
+      Read-only observability over the source-to-wiki-page pipeline (webhooks, connector feeds/digests,
+      the ingestion inbox, librarian runs, and the pages they produce) — a query-side view across those
+      bounded contexts, not a new mutation surface. See issue #342.
 
 paths:
   /health:
@@ -3043,6 +3048,36 @@ paths:
           schema:
             type: integer
             default: 50
+        - name: status
+          in: query
+          required: false
+          explode: true
+          style: form
+          description: >-
+            Filter to runs in any of the given statuses (repeat the param, e.g.
+            `?status=PENDING&status=RUNNING`). Omit to return runs in all statuses. An unrecognized
+            status value is rejected with 400. Mutually exclusive with `state` — supplying both is
+            rejected with 400.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: state
+          in: query
+          required: false
+          description: >-
+            Derived, UI-facing alternative to `status`: "queued" matches a run that hasn't started
+            (PENDING/PENDING_LOCAL_PICKUP) OR is RUNNING at the run level purely because it's blocked
+            on a self-hosted job no daemon has claimed yet; "running" matches a run that's actually
+            executing (RUNNING/CANCELLING) with no such unclaimed job. The two are mutually exclusive,
+            but not exhaustive over every non-terminal run: LOCAL_PICKUP_TIMEOUT is non-terminal and
+            matches neither (a timed-out run has no unclaimed AWAITING_PICKUP job and isn't
+            PENDING/PENDING_LOCAL_PICKUP or RUNNING/CANCELLING) — use `status` or the unfiltered list to
+            see it. An unrecognized value is rejected with 400; supplying both `state` and `status` is
+            rejected with 400.
+          schema:
+            type: string
+            enum: [queued, running]
       responses:
         "200":
           description: List of runs
@@ -3052,6 +3087,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/WorkflowRunDto"
+        "400":
+          description: Unrecognized status/state value, or both status and state given
 
   /projects/{projectId}/workflows/{workflowId}/schedule-skips:
     get:
@@ -3161,6 +3198,44 @@ paths:
           description: Run not found
         "409":
           description: Run has already finished
+
+  /projects/{projectId}/workflows/{workflowId}/runs/cancel-queued:
+    post:
+      tags: [workflows]
+      summary: Cancel all queued runs for a workflow
+      description: >
+        Drains the queued backlog without touching in-flight work: cancels every run that's either
+        PENDING, or blocked on a self-hosted job no daemon has claimed yet (with no other job on it
+        that's RUNNING or already claimed) — via the same path as a single-run cancel. This set is a
+        strict subset of what the UI counts as "Queued": the UI's queued view also includes a run
+        blocked on an unclaimed job even when another job on that same run is genuinely in flight, but
+        this endpoint excludes it. A run with any genuinely in-flight job (RUNNING, or a claimed
+        AWAITING_PICKUP) is left untouched even if it also happens to have an unclaimed job elsewhere.
+        A no-op returning cancelledCount 0 if nothing qualifies.
+      operationId: cancelQueuedWorkflowRuns
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Queued runs cancelled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelQueuedRunsResponse"
+        "404":
+          description: Workflow not found
 
   /projects/{projectId}/daemon/events:
     get:
@@ -3725,6 +3800,123 @@ paths:
           description: Unauthenticated
         '403':
           $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/integrations/{connectorId}/feeds:
+    get:
+      tags: [integrations]
+      summary: List this connector's declared feeds for the project
+      description: >
+        Every connector_feed row provisioned for the project's connection(s) to this connector,
+        enriched with the connector's own declared label/description (from its IngestSpec) so the UI
+        can render something meaningful without a second call.
+      operationId: listConnectorFeeds
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ConnectorFeedDto'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/integrations/{connectorId}/feeds/{feedId}:
+    patch:
+      tags: [integrations]
+      summary: Update a connector feed's enabled state and/or cadence
+      description: >
+        Partial update of `enabled` and `intervalMinutes` only. Cursor and status are platform-owned
+        scheduling state and are never client-editable through this endpoint.
+      operationId: updateConnectorFeed
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: feedId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateConnectorFeedRequest'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorFeedDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /projects/{projectId}/integrations/{connectorId}/feeds/{feedId}/runs:
+    post:
+      tags: [integrations]
+      summary: Trigger a manual "sync now" run of a connector feed
+      description: >
+        Sets the feed's next scheduled pull to now and returns 202 — the pull itself runs
+        asynchronously off the existing scheduler, never inline, so this never blocks on an outbound
+        HTTP call to the third-party service.
+      operationId: runConnectorFeedNow
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: connectorId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: feedId
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '202':
+          description: Accepted — the feed is due immediately, next scheduler tick will pull it
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectorFeedDto'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /projects/{projectId}/integrations/{connectorId}/oauth/authorize:
     post:
@@ -4773,9 +4965,9 @@ paths:
       tags: [knowledge]
       summary: Inbox status counts for a project
       description: >-
-        Cheap summary of the ingestion inbox by status (pending/processing/processed/dead) — for the
-        UI's inbox badge/summary without a full listSources per status. Statuses with no rows are
-        reported as 0, not omitted.
+        Cheap summary of the ingestion inbox by status (pending/processing/processed/skipped/dead) —
+        for the UI's inbox badge/summary without a full listSources per status. Statuses with no rows
+        are reported as 0, not omitted.
       operationId: getKnowledgeSourceCounts
       security:
         - bearerAuth: []
@@ -4996,10 +5188,12 @@ paths:
       description: >-
         Applies every write atomically with optimistic concurrency (`baseVersion`): any conflict across
         the whole batch aborts it entirely (nothing written) — see the 409 response. On success, rebuilds
-        each written page's link graph and, if `sourceIds` is supplied, marks those ingestion sources
-        PROCESSED in the same transaction so a crash never leaves a source silently re-processed or a
-        write silently lost. The write's `actor`/origin provenance is derived server-side from the
-        caller's auth, never accepted from the client.
+        each written page's link graph and, if `sourceIds`/`skipped` are supplied, marks those ingestion
+        sources PROCESSED/SKIPPED (respectively) in the same transaction so a crash never leaves a source
+        silently re-processed or a write silently lost. `writes` may be empty when `sourceIds`/`skipped`
+        cover the batch, to settle sources with no page change. A source id must appear in at most one of
+        `sourceIds`/`skipped` — both is a 400. The write's `actor`/origin provenance is derived
+        server-side from the caller's auth, never accepted from the client.
       operationId: batchWriteKnowledgePages
       security:
         - bearerAuth: []
@@ -5023,7 +5217,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/KnowledgePageBatchWriteResponse'
         '400':
-          description: Invalid path, or a duplicate path within the batch
+          description: >-
+            Invalid path, a duplicate path within the batch, a `skipped` entry with a blank/null
+            sourceId or reason, or a source id present in both `sourceIds` and `skipped`.
           content:
             application/json:
               schema:
@@ -5043,6 +5239,69 @@ paths:
             no live page) alongside the standard problem fields — re-read the conflicting paths and retry.
           content:
             application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{projectId}/knowledge/pages/dismiss:
+    post:
+      tags: [knowledge]
+      summary: '"Not worth filing": delete a page and record why on its governing curation policy'
+      description: >-
+        Soft-deletes the page at `path` and, in the same transaction, appends a dated rule recording
+        `reason` to the `_curation.md` page that governs it (root, or the owning area's) -- the page the
+        librarian reads before every batch, so the next similar source isn't refiled. One endpoint
+        rather than two client-side `batch-write` calls because the two halves must not come apart: a
+        deleted page with no recorded reason is one the librarian will cheerfully recreate from the next
+        similar source. Membership-gated (a member can already delete any page via `batch-write`;
+        admin-gating the reason-recording path would only push people toward the rawer one).
+      operationId: dismissKnowledgePage
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgePageDismissRequest'
+      responses:
+        '200':
+          description: Page dismissed and the curation rule recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgePageDismissResponse'
+        '400':
+          description: Blank reason, invalid path, or an attempt to dismiss a _schema.md/_curation.md policy page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: No live page at that path
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: >-
+            The page's baseVersion is stale -- it changed since the caller last read it. The response
+            body carries a `conflicts` extension alongside the standard problem fields.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Malformed frontmatter on the existing curation page
+          content:
+            application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
@@ -5180,6 +5439,83 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/KnowledgePageRevisionView'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/knowledge/pipeline/health:
+    get:
+      tags: [pipeline]
+      summary: Live per-stage health for the source-to-wiki-page pipeline
+      description: >-
+        One entry per fixed pipeline stage (webhooks, feeds, digests, inbox, librarian runs, pages
+        written), each with status-keyed counts for a recent window. Read-only, membership-gated like
+        the rest of the knowledge surface — no admin requirement. The digests stage always reports a
+        `skipped` bucket on its own (never folded into another bucket) so a quiet-by-design period
+        (nothing material happened) reads as healthy, not broken — see issue #342.
+      operationId: getPipelineHealth
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Per-stage health snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineHealthDto'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/knowledge/pipeline/trace:
+    get:
+      tags: [pipeline]
+      summary: Walk one item's trace across the pipeline
+      description: >-
+        Given exactly one typed anchor (`pageId`, `sourceId`, `feedId`, or `webhookEventId`), returns
+        the ordered chain of pipeline stages that produced it (or that it produced), backward and/or
+        forward as applicable. A step whose underlying record has since been hard-deleted by
+        retention (a `DEAD` source past its retention window) is reported as a terminal `degraded`
+        placeholder node rather than a 404 for the whole trace. Exactly one anchor parameter must be
+        supplied — zero or more than one is a 400.
+      operationId: getPipelineTrace
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: pageId
+          in: query
+          required: false
+          schema: {type: string}
+        - name: sourceId
+          in: query
+          required: false
+          schema: {type: string}
+        - name: feedId
+          in: query
+          required: false
+          schema: {type: string}
+        - name: webhookEventId
+          in: query
+          required: false
+          schema: {type: string}
+      responses:
+        '200':
+          description: The trace, oldest step first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineTraceDto'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
 
@@ -5323,6 +5659,14 @@ components:
           type: array
           items:
             type: string
+        ingest:
+          type: array
+          description: >-
+            The connector's declared Knowledge Center feeds (its IngestSpec entries) — the
+            registry-driven source of what's provisionable, independent of whether any project has
+            connected yet. See GET .../feeds for a project's already-provisioned feed instances.
+          items:
+            $ref: '#/components/schemas/ConnectorCatalogIngestDto'
 
     ConnectorCatalogConfigFieldDto:
       type: object
@@ -5337,6 +5681,71 @@ components:
           type: boolean
         secret:
           type: boolean
+
+    ConnectorCatalogIngestDto:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+        isMetricFeed:
+          type: boolean
+
+    ConnectorFeedDto:
+      type: object
+      properties:
+        id:
+          type: string
+        ingestId:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+        intervalMinutes:
+          type: integer
+        status:
+          type: string
+          enum: [ACTIVE, PAUSED, SETUP_REQUIRED, DEAD]
+        lastRunAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastSuccessAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastError:
+          type: string
+          nullable: true
+        consecutiveFailures:
+          type: integer
+        nextRunAt:
+          type: string
+          format: date-time
+        isMetricFeed:
+          type: boolean
+
+    UpdateConnectorFeedRequest:
+      type: object
+      description: >-
+        Partial update — only the fields present are changed. Cursor/status/nextRunAt are
+        platform-owned scheduling state and are deliberately not part of this request shape.
+      properties:
+        enabled:
+          type: boolean
+          nullable: true
+        intervalMinutes:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 44640
 
     IntegrationToolItem:
       type: object
@@ -6392,6 +6801,11 @@ components:
         area:
           type: string
           description: Nav-grouping slug; single-Workflow Areas render flat. (COND-18)
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: Free-text grouping label. "default" and "system" are reserved.
         schemaVersion:
           type: integer
           description: Version of the workflow-definition schema this definition targets. (COND-18)
@@ -6444,6 +6858,11 @@ components:
         area:
           type: string
           description: Nav-grouping slug (e.g. "marketing", "engineering")
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: Free-text grouping label. "default" and "system" are reserved.
         yaml:
           type: string
           description: YAML automation workflow definition
@@ -6461,6 +6880,13 @@ components:
         area:
           type: string
           description: Nav-grouping slug (e.g. "marketing", "engineering")
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: >-
+            Free-text grouping label. Omit (or send null) to leave unchanged.
+            "default" and "system" are reserved.
         yaml:
           type: string
           description: YAML automation workflow definition
@@ -6576,6 +7002,26 @@ components:
           type: object
           readOnly: true
           description: The run's trigger payload (event fields, and `inputs` for a manual dispatch).
+        waitReason:
+          type: string
+          readOnly: true
+          nullable: true
+          description: >-
+            Why this run isn't making progress yet — a free-form code (only "AWAITING_RUNNER" today)
+            rather than an enum, so a future wait condition doesn't need an API change.
+            "AWAITING_RUNNER" means the run has at least one job in AWAITING_PICKUP that no self-hosted
+            daemon has claimed yet — not merely dispatched: a self-hosted job stays AWAITING_PICKUP for
+            its entire execution once claimed, so an unclaimed check is what actually distinguishes
+            "waiting for a runner" from "running on one". Null once every AWAITING_PICKUP job on the
+            run has been claimed, and for a run with no wait condition at all, including every terminal
+            run.
+
+    CancelQueuedRunsResponse:
+      type: object
+      properties:
+        cancelledCount:
+          type: integer
+          description: Number of PENDING runs that were cancelled.
 
     WorkflowRunDetailDto:
       type: object
@@ -7356,6 +7802,11 @@ components:
           description: >-
             Always present -- the server derives a deterministic default from the agent's slug when
             none is explicitly set.
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: Free-text grouping label. "default" and "system" are reserved.
         isDefault:
           type: boolean
           description: >-
@@ -7408,6 +7859,11 @@ components:
           type: string
           enum: [gray, blue, amber, violet, teal, green, rose, slate]
           description: Optional. A deterministic default is derived from the slug when omitted.
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: Optional free-text grouping label. "default" and "system" are reserved.
 
     UpdateAgentRequest:
       type: object
@@ -7446,6 +7902,13 @@ components:
           type: string
           enum: [gray, blue, amber, violet, teal, green, rose, slate]
           description: Optional. Omit to leave unchanged.
+        tag:
+          type: string
+          nullable: true
+          maxLength: 64
+          description: >-
+            Free-text grouping label. Omit (or send null) to leave unchanged.
+            "default" and "system" are reserved.
 
     SetProviderCredentialRequest:
       type: object
@@ -7589,7 +8052,7 @@ components:
 
     KnowledgeSourceStatus:
       type: string
-      enum: [PENDING, PROCESSING, PROCESSED, DEAD]
+      enum: [PENDING, PROCESSING, PROCESSED, SKIPPED, DEAD]
 
     KnowledgeOrigin:
       type: object
@@ -7704,6 +8167,12 @@ components:
         errorMessage:
           type: string
           nullable: true
+        skipReason:
+          type: string
+          nullable: true
+          description: >-
+            Set when status is SKIPPED -- why the librarian judged this source not worth a page. Null
+            for every other status.
         purgedAt:
           type: string
           format: date-time
@@ -7723,6 +8192,7 @@ components:
         - pending
         - processing
         - processed
+        - skipped
         - dead
       properties:
         pending:
@@ -7732,6 +8202,9 @@ components:
           type: integer
           format: int64
         processed:
+          type: integer
+          format: int64
+        skipped:
           type: integer
           format: int64
         dead:
@@ -7747,6 +8220,105 @@ components:
         retried:
           type: integer
           description: Number of sources moved from DEAD to PENDING.
+
+    PipelineStage:
+      type: string
+      enum: [WEBHOOKS, FEEDS, DIGESTS, INBOX, LIBRARIAN_RUNS, PAGES_WRITTEN]
+      description: A fixed stage in the source-to-wiki-page pipeline (issue #342).
+
+    PipelineStageHealth:
+      type: object
+      required:
+        - stage
+        - label
+        - counts
+      properties:
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        label:
+          type: string
+          description: Human-readable stage name for display.
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: >-
+            Status-keyed counts for this stage. Bucket names vary per stage (e.g. the DIGESTS stage
+            always includes a `skipped` bucket) — a plain map keeps this additive as stages gain new
+            buckets, without a schema change per bucket.
+
+    PipelineStageEdge:
+      type: object
+      required:
+        - from
+        - to
+      properties:
+        from:
+          $ref: '#/components/schemas/PipelineStage'
+        to:
+          $ref: '#/components/schemas/PipelineStage'
+      description: >-
+        A directed edge in the pipeline's actual data-flow graph (issue #342 correction) — data-driven,
+        not positional. Consumers must not infer an edge from two stages being adjacent in any list.
+
+    PipelineHealthDto:
+      type: object
+      required:
+        - stages
+        - edges
+      properties:
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PipelineStageHealth'
+        edges:
+          type: array
+          items:
+            $ref: '#/components/schemas/PipelineStageEdge'
+          description: The pipeline's directed stage graph. See PipelineTopology.EDGES on the backend.
+
+    PipelineTraceNode:
+      type: object
+      required:
+        - stage
+        - id
+        - degraded
+      properties:
+        stage:
+          $ref: '#/components/schemas/PipelineStage'
+        id:
+          type: string
+        status:
+          type: string
+          nullable: true
+        occurredAt:
+          type: string
+          format: date-time
+          nullable: true
+        label:
+          type: string
+          nullable: true
+        link:
+          type: string
+          nullable: true
+          description: Frontend-routable path for this node, or null if not linkable.
+        degraded:
+          type: boolean
+          description: >-
+            True when the underlying record no longer exists (purged by retention) and this is a
+            terminal placeholder rather than a resolved node.
+
+    PipelineTraceDto:
+      type: object
+      required:
+        - nodes
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/PipelineTraceNode'
+          description: Ordered oldest-step-first.
 
     KnowledgeDomainState:
       type: string
@@ -7884,6 +8456,18 @@ components:
           type: boolean
           default: false
 
+    KnowledgeSkippedSource:
+      type: object
+      required:
+        - sourceId
+        - reason
+      properties:
+        sourceId:
+          type: string
+        reason:
+          type: string
+          description: Why this source was reviewed and deliberately not filed. Required -- shown to a human in the Inbox.
+
     KnowledgePageBatchWriteRequest:
       type: object
       required:
@@ -7899,6 +8483,15 @@ components:
           items:
             type: string
           description: Ingestion sources this batch was derived from. Marked PROCESSED in the same transaction on success.
+        skipped:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/KnowledgeSkippedSource'
+          description: >-
+            Ingestion sources this batch reviewed and deliberately did not file. Marked SKIPPED with the
+            given reason in the same transaction on success. A source id must appear in at most one of
+            `sourceIds`/`skipped` -- both is a 400.
 
     KnowledgePageWriteResult:
       type: object
@@ -7923,6 +8516,45 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/KnowledgePageWriteResult'
+
+    KnowledgePageDismissRequest:
+      type: object
+      required:
+        - path
+        - baseVersion
+        - reason
+      properties:
+        path:
+          type: string
+          description: Bundle-relative path of the page being dismissed.
+        baseVersion:
+          type: integer
+          description: The version the caller last observed. A stale value is a 409.
+        reason:
+          type: string
+          description: >-
+            Why this page shouldn't exist. Required -- appended as a dated rule on the governing
+            _curation.md.
+
+    KnowledgePageDismissResponse:
+      type: object
+      required:
+        - path
+        - version
+        - curationPagePath
+        - curationPageVersion
+      properties:
+        path:
+          type: string
+        version:
+          type: integer
+          description: The dismissed page's new (tombstone) version.
+        curationPagePath:
+          type: string
+          description: Path of the _curation.md page the dismissal reason was recorded on.
+        curationPageVersion:
+          type: integer
+          description: The curation page's new version after the rule was appended.
 
     KnowledgePageView:
       type: object

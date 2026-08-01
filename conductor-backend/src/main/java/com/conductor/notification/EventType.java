@@ -74,6 +74,18 @@ public enum EventType {
     WORKFLOW_AUTO_PAUSED("Workflow auto-paused after repeated failures"),
 
     /**
+     * A workflow run reached a terminal FAILED status -- fired once per run, from every path that can
+     * settle a run to FAILED (the normal all-jobs-terminal path, the 24h stuck-run sweep, the legacy
+     * whole-run daemon callback, a zero-jobs-enqueued dispatch, ...). Never fired for CANCELLED.
+     *
+     * <p>Required metadata keys: {@code runId}, {@code workflowId}, {@code workflowName}, {@code runUrl}
+     * <p>Optional metadata keys (present when a specific failing step could be resolved): {@code jobId},
+     * {@code stepId}, {@code errorReason}, {@code summary}, {@code remediation} (the latter two from
+     * {@code StepFailureExplanations.explain(errorReason)})
+     */
+    WORKFLOW_RUN_FAILED("Workflow run failed"),
+
+    /**
      * A GitHub pull request was opened, labeled, synchronized (new commits pushed), or reopened.
      * Explicitly excludes a merge (handled separately by the issue-completion path in {@code
      * GitHubConnector.handleEvent}) and a closed-without-merge PR (an abandoned PR shouldn't trigger

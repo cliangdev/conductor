@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import { statusHue, humanizeId, type StatusHue } from '@/lib/workflows'
+import { statusHue, statusLabel, type StatusHue } from '@/lib/workflows'
 
 export type { StatusHue }
 export { statusHue }
@@ -98,7 +98,7 @@ function StatusBadge({ status, category, label, className }: StatusBadgeProps) {
       )}
     >
       <span className={cn('h-1.5 w-1.5 rounded-full', classes.dot)} />
-      {label ?? humanizeId(status)}
+      {label ?? statusLabel(status)}
     </span>
   )
 }

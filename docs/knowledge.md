@@ -11,10 +11,13 @@ creates and edits them; humans and other agents read them.
 - [The ingestion envelope](#the-ingestion-envelope)
 - [Producers](#producers)
 - [The pipeline](#the-pipeline)
+- [Metrics digests](#metrics-digests)
 - [Page model](#page-model)
+- [Curation](#curation)
 - [System workflows](#system-workflows)
 - [Domains](#domains)
 - [Retention](#retention)
+- [Pipeline & tracing](#pipeline--tracing)
 - [MCP tools](#mcp-tools)
 - [REST endpoints](#rest-endpoints)
 - [Frontend surfaces](#frontend-surfaces)
@@ -28,9 +31,10 @@ Three layers, each with a different mutability:
 
 | Layer | Mutability | What it is |
 |---|---|---|
-| Sources inbox (`knowledge_sources`) | Immutable, append-only | Raw inbound material — a Work Item status change, a merged PR, a manual note. Never edited, only claimed, marked processed, and eventually [retired by retention](#retention) once it's served its purpose. |
+| Sources inbox (`knowledge_sources`) | Append-only *in content* | Raw inbound material — a completed Work Item, a merged PR, a manual note. A source's payload is never rewritten. Its **status** does change (`PENDING → PROCESSING → PROCESSED` / `SKIPPED` / `DEAD`), and a `skip_reason` annotation is written when the librarian declines to file it; [retention](#retention) later compacts the payload or removes the row. |
 | Wiki pages (`knowledge_pages`) | Agent-owned, versioned | Markdown + YAML frontmatter, one file per page, `path` is identity. The librarian creates and edits these; the format is referred to in code as **OKF** (Markdown body + YAML frontmatter — no separate spec, just the convention this codebase follows). |
 | `_schema.md` | Agent-authored style guide | A wiki page like any other, but read by the librarian as its own instructions: frontmatter contract, page-type taxonomy, path layout, per-type body templates (stable section structure per type; `architecture` pages are diagram-first with a C4-style Mermaid flowchart), create-vs-edit heuristics. Seeded on enable, then it's just another page an operator or the librarian can evolve. |
+| `_curation.md` | Human-authored veto list | Also a page like any other (`type: schema`, so the reading tree hides it), but read by the librarian as a **filter**: the bar a source must clear to deserve a page at all, the categories never worth filing, and binding do-not-file rules. Where `_schema.md` says *how* to write a page, this says *whether to*. Grown by humans — including automatically by the [**Not worth filing**](#curation) action on a page. See [Curation](#curation). |
 
 This is deliberately **not RAG** (retrieval over raw source chunks at query time). Sources are filed once,
 at ingestion time, into durable, editable pages that get more accurate as the librarian revises them —
@@ -47,7 +51,7 @@ Every unit of inbound material — regardless of producer — is a `KnowledgeSub
 | Field | Required | Description |
 |---|---|---|
 | `projectId` | yes | Target project. |
-| `sourceType` | yes | Free-form producer tag, e.g. `conductor.work_item.status_changed`, `github.pr_merged`, `codebase.snapshot`. |
+| `sourceType` | yes | Free-form producer tag, e.g. `conductor.work_item.completed`, `github.pr_merged`, `codebase.snapshot`. |
 | `sourceRef` | one of `payload`/`sourceRef` | By-reference pointer (e.g. `github:owner/repo#123`) the librarian or a later adapter resolves. |
 | `payload` | one of `payload`/`sourceRef` | By-value inline content (e.g. a JSON blob of the event). |
 | `title`, `contentType`, `occurredAt`, `metadata` | no | Descriptive metadata carried through to the librarian's read. |
@@ -81,7 +85,7 @@ Configurable from the frontend at **Manage → Ingest cadence** (`knowledge/mana
 |---|---|---|
 | REST `POST /knowledge/sources` | caller-supplied | Any authenticated caller (user, project API key, or a run-scoped workflow MCP token) submits directly. |
 | MCP `submit_knowledge_source` | caller-supplied | Same endpoint, called from Claude Code or a workflow's `claude-code` step. |
-| Work Item status-change event tap (`KnowledgeEventTap`) | `conductor.work_item.status_changed` | Fourth consumer wired into `NotificationDispatcher.dispatch`, alongside workflow/lifecycle triggers. Its own try/catch — an ingestion failure never blocks notification delivery or trigger evaluation. |
+| Completed Work Item (`KnowledgeSignalSink`) | `conductor.work_item.completed` | A `SignalSubscriber` at `SignalDispatchOrder.KNOWLEDGE` on the `conductor.work_item.status_changed` signal. Submits **once per Work Item**, when it reaches a **terminal** status *and* actually produced something — see [the significance gate](#curation) below. The payload is the whole item (description, document bodies, comments, assets, review verdicts), not just the status pair. Fail-soft: its own try/catch, so an ingestion failure never blocks notification delivery or trigger evaluation. |
 | GitHub `pr_merged` adapter (`GitHubConnector`) | `github.pr_merged` | On a merged PR webhook, submits it as a source regardless of whether it references a Conductor Work Item — this is about the codebase, not one issue. |
 
 ---
@@ -96,10 +100,11 @@ flowchart LR
     Librarian["knowledge-librarian run<br/>(agent: resolved per lane)"]
     Pages[("knowledge_pages +<br/>revisions · links")]
 
-    Producers -- "submit (PENDING, domain resolved)" --> Inbox
+    Producers -- "submit (PENDING, domain resolved)<br/>content-free material never gets here" --> Inbox
     Sched -- "claim lane → PROCESSING" --> Inbox
     Sched -- "dispatch batch per lane" --> Librarian
-    Librarian -- "write_knowledge_pages<br/>(atomically marks PROCESSED)" --> Pages
+    Librarian -- "write_knowledge_pages sourceIds<br/>(atomically marks PROCESSED)" --> Pages
+    Librarian -. "write_knowledge_pages skipped<br/>→ SKIPPED + reason" .-> Inbox
     Sched -. "stale/failed → PENDING (backoff)<br/>5 attempts → DEAD" .-> Inbox
 ```
 
@@ -143,13 +148,16 @@ for the generalist/unclassified lane; the concurrency unit is `(project, lane)`,
    workflow still works unchanged).
 4. **Librarian files the batch.** The dispatched agent step reads `_schema.md` (and, if `Domain` is
    non-empty, that domain's own `<domain>/_schema.md`) and `index.md` for orientation, reads the batch's
-   sources, drafts page content, and writes every resulting page in **one** `write_knowledge_pages` call
-   passing `sourceIds` — which atomically marks the batch `PROCESSED` in the same transaction as the page
-   writes (`KnowledgeSourceRepository.markProcessed`, `flushAutomatically` + `clearAutomatically`, so a
-   crash between the write and the mark can never happen). If no source in the batch warrants a wiki
-   change, the librarian still calls `write_knowledge_pages` with `writes: []` and `sourceIds` set to the
-   full batch — an explicit "no wiki change needed" ack, so the batch is marked `PROCESSED` instead of
-   rotting through the stale-processing sweep into `DEAD`.
+   sources, drafts page content, and writes every resulting page in **one** `write_knowledge_pages` call.
+   That call also settles every source in the batch, in the same transaction as the page writes: each id
+   goes in either `sourceIds` (filed → `PROCESSED`, via `markProcessed`) or `skipped`
+   (`[{sourceId, reason}]`, deliberately not filed → `SKIPPED` with the reason, via `markSkipped`). Both
+   use `flushAutomatically` + `clearAutomatically`, so a crash between the write and the mark can never
+   happen, and both guard on `status IN (PENDING, PROCESSING)` so a late-arriving decision can never
+   overwrite the other one. Every id must land in exactly one list — never both, never neither; a batch
+   where nothing was worth filing is `writes: []` plus a fully-populated `skipped`. Either way the batch
+   is settled rather than rotting through the stale-processing sweep into `DEAD`. See
+   [Curation](#curation) for the bar the librarian applies.
 5. **Sweep.** Every tick, any source still `PROCESSING` whose run is missing, terminally
    failed/cancelled/timed-out, or has simply run longer than 30 minutes is resurrected: attempts++, back to
    `PENDING` with exponential backoff (`60s * 2^attempts`), or — at 5 attempts — `DEAD` with an error
@@ -159,10 +167,99 @@ for the generalist/unclassified lane; the concurrency unit is `(project, lane)`,
    system-workflow YAML in place) before retrying; if that still fails, the claimed batch is released
    straight back to `PENDING` instead of being dispatched into a stale or missing target.
 
-Source lifecycle: `PENDING → PROCESSING → PROCESSED` (success) or `PENDING → PROCESSING → PENDING`
-(retried, backoff) `→ … → DEAD` (exhausted). `DEAD` isn't necessarily final — an admin can reset a
-project's dead sources back to `PENDING` via [`POST /sources/retry`](#rest-endpoints) after fixing
-the underlying cause.
+Source lifecycle: `PENDING → PROCESSING → PROCESSED` (filed) or `→ SKIPPED` (read and deliberately
+not filed, with a reason) — **both terminal, both intentional; a skip is not a failure.** The failure
+path is `PENDING → PROCESSING → PENDING` (retried, backoff) `→ … → DEAD` (exhausted). `DEAD` isn't
+necessarily final — an admin can reset a project's dead sources back to `PENDING` via
+[`POST /sources/retry`](#rest-endpoints) after fixing the underlying cause. `SKIPPED` is deliberately
+**not** resettable that way: it was a judgment the librarian reached, not a failure to recover from.
+
+---
+
+## Metrics digests
+
+A second, parallel producer feeds the same wiki: a connector can declare a scheduled **feed**
+(`ingest[]` in its tool-spec JSON — see
+[`docs/integrations-adding-a-connector.md`](integrations-adding-a-connector.md#connector-feeds-metrics-digests))
+that pulls a metric series on a cadence and, when something material happened, narrates it into a
+knowledge source. This is not the source-inbox pipeline above with a different trigger — it's a
+distinct pre-pipeline that decides *whether a source should exist at all*, then hands its output to
+that exact same inbox → librarian machinery once it does.
+
+```mermaid
+flowchart LR
+    Sched["ConnectorFeedScheduler<br/>60s poll · claims due feeds"]
+    Pull["FeedPullService<br/>pull via SnapshotIngestAdapter<br/>or a connector's own IngestConnector"]
+    Digest["MetricsDigestService<br/>aggregate → detect"]
+    Row[("connector_feed_digest<br/>PENDING (material) or SKIPPED")]
+    Narrator["metrics-narrator run<br/>agent step, zero tools"]
+    Submit["DigestSubmissionService<br/>submits the narrative"]
+    Inbox[("knowledge_sources<br/>same inbox as any other producer")]
+
+    Sched -- "claim due feed" --> Pull
+    Pull -- "one snapshot/window item" --> Digest
+    Digest -- "material?" --> Row
+    Row -- "PENDING → dispatch" --> Narrator
+    Narrator -- "title + prose" --> Submit
+    Submit -- "submit()" --> Inbox
+    Inbox -. "filed by the librarian,<br/>same as any other source" .-> Pages[("knowledge_pages")]
+```
+
+**Four stages**, each owned by a different class:
+
+1. **Aggregate** (`MetricsAggregator`) — projects the connector's raw snapshot/window down to the
+   `MetricSpec`/`DimensionSpec` series the feed's `DigestSpec` declares (e.g. clicks, impressions, CTR,
+   top queries).
+2. **Detect statistically** (`MetricsChangeDetector`) — compares each metric against a rolling EWMA
+   baseline persisted on `connector_feed.last_stats` (α ≈ 0.3, ~6-period memory), not just the prior
+   period, so a big-but-normal move on a volatile series doesn't read as material. A metric clears the
+   gate only if **all three** noise gates pass:
+   - **Absolute** — `abs(value − last) >= minAbsolute` (kills small-base nonsense like 2→4).
+   - **Relative** — `abs(value − last) / max(abs(last), 1) >= minRelative` (kills large-base jitter like
+     4210→4290).
+   - **Statistical** — `abs(value − ewma) / sqrt(ewmVar) >= zThreshold` (kills large-but-normal moves on a
+     volatile series; skipped as passing below 4 periods of history or while variance is still zero — a
+     `lowConfidence` flag on the change record marks this case for the narrator to hedge on).
+
+   Dimension breakdowns (top queries, top pages, …) get the analogous top-N-vs-baseline mover check
+   (entered/exited/rank-moved/rose/fell), independent of the metric gates.
+3. **Structure** (`DigestPayloadBuilder`) — renders the change-detector's result into the JSON payload
+   the narrator reads: which metrics/movers are material, their deltas, direction (`UP_IS_GOOD` vs.
+   `DOWN_IS_GOOD` — a falling metric isn't automatically bad news), and the `lowConfidence` flag. This is
+   the *only* thing the narrator ever sees — never the raw pulled snapshot.
+4. **Narrate** (`metrics-narrator` system workflow) — a single `agent` step turns that JSON into prose
+   (title + narrative + optional significance). **The agent has zero tools.** It cannot call
+   `write_knowledge_pages` or `submit_knowledge_source` itself — it is a pure text function from digest
+   JSON to prose, nothing more. `DigestSubmissionService` reads its output and submits it as a
+   `KnowledgeSubmission` into the ordinary inbox — **the platform submits, never the agent.** From there
+   it's just another `knowledge_sources` row: the same [pipeline](#the-pipeline) claims it into a lane
+   (by the feed's `suggestedDomain`) and the librarian files it onto the page named by the `DigestSpec`'s
+   `pagePath`, same as any other source.
+
+**The novelty gate.** A period is material overall only if at least one metric or one dimension mover
+cleared its gates — the change-detector's core design decision. Without it, a stable weekly feed would
+file ~52 near-identical "clicks were N" pages a year. A non-material period still updates the EWMA
+baseline and advances the feed's cursor (so history keeps accumulating and nothing is silently
+skipped) — it just records a `SKIPPED` digest row and dispatches no narrator run.
+
+**The quarterly steady-state valve.** The one escape from total silence: `DigestSpec.maxQuietPeriods`
+(default 13 — a quarter of weekly periods) counts consecutive non-material periods, and once that
+streak is reached the detector forces exactly one emission (`reason: "steady_state"`) and resets the
+counter. Otherwise a genuinely flat metric goes silent forever and a reader can't tell "stable" from
+"the feed is broken."
+
+**A newly enabled feed files nothing on its own** — it needs either a material period or the
+steady-state valve to fire before its first knowledge source ever appears. This is expected, not a
+bug: silence is the correct behavior for "nothing changed," and it's also why feed health has its own
+surface (below) rather than being inferred from wiki activity.
+
+**Feed health is visible independent of wiki output.** Because "no source filed yet" is the *normal*
+state for a freshly enabled or genuinely stable feed, feed health (enabled/cadence, last run, last
+success, consecutive failures, last error) is surfaced directly on the connector's own detail page — a
+Feeds panel backed by `GET .../integrations/{connectorId}/feeds` (see
+[`docs/integrations-adding-a-connector.md`](integrations-adding-a-connector.md#connector-feeds-metrics-digests))
+— instead of making an operator infer "is this feed even running?" from whether pages have recently
+changed.
 
 ---
 
@@ -194,7 +291,59 @@ the underlying cause.
   grouped by day, with source refs) are generated on read, never stored — the librarian's two orientation
   reads. Both report `version: 0`.
 - **Reserved paths.** `index.md`, `log.md` cannot be written to (400). A leading underscore is otherwise a
-  normal path character (`_schema.md` is a real, editable page, not special-cased beyond being seeded).
+  normal path character (`_schema.md` and `_curation.md` are real, editable pages, not special-cased beyond
+  being seeded). Both carry `type: schema`, so `filterContentPages` keeps them out of the reading tree.
+
+---
+
+## Curation
+
+The pipeline's failure mode isn't dropping things — it's filing everything. A librarian handed a
+content-free source will still produce a page, because to a model "write nothing" reads as failing the
+task. The result is a wiki that technically covers everything and is worth reading nowhere.
+
+Three mechanisms push back, at three different altitudes.
+
+**1. Producer-side filtering — material that never enters the inbox.** A Work Item is ingested once,
+when it reaches a **terminal** status, and only if it actually produced something: a document, a
+comment, an asset, a review, or a non-blank description. An item created and closed with nothing done
+is dropped at the sink with a log line and no row. This is deliberately *not* a `SKIPPED` source —
+`SKIPPED` means "entered the inbox, was read, was declined", and writing a row per closed chore would
+recreate the noise the filter exists to remove. See [Producers](#producers).
+
+**2. Agent-side declining — a first-class outcome.** `write_knowledge_pages` takes `skipped`
+(`[{sourceId, reason}]`) alongside `sourceIds`. Every source in a batch must land in exactly one of
+them: filed (`PROCESSED`) or deliberately not filed (`SKIPPED`, with the reason stored on
+`knowledge_sources.skip_reason` and surfaced in the Inbox as *Not filed*). This makes skipping
+something the librarian can **succeed at** rather than an omission, and it supports a mixed batch —
+file 2 of 10, skip 8 — which the older `writes: []` all-or-nothing ack could not express.
+
+**3. Human-authored policy — `_curation.md`.** A root page plus one per [domain](#domains), seeded
+like `_schema.md` and read by the librarian on every batch. It states the bar ("file only what a
+teammate joining in six months would be worse off without"), the categories never worth filing, and a
+`## Do-not-file rules` section of binding rules. The domain page wins where it and the root disagree.
+
+Its path is **derived**, not stored: `<pathPrefix>_curation.md` (`KnowledgeCurationPaths`).
+`knowledge_domains` carries a `schema_page_path` column but deliberately no curation counterpart — the
+convention is stable, and a column would need backfilling, keeping in sync on every rename, and
+mirroring into `KnowledgeDomainDto`/`list_knowledge_domains` for no gain.
+
+**The feedback loop.** [**Not worth filing**](#frontend-surfaces) on a page (`POST /pages/dismiss`)
+deletes it *and* appends a dated, attributed rule to the governing `_curation.md`, in one transaction:
+
+```markdown
+## Do-not-file rules
+- **2026-07-29** — `engineering/work-items/cx-14.md` — Work item created and closed the same day with
+  nothing done; a ticket that never moved isn't a durable fact. — dismissed by Casey Liang
+```
+
+One endpoint rather than two client-side `batch-write` calls, because the two halves must not come
+apart: a deleted page with no recorded reason is a page the librarian will cheerfully recreate from the
+next similar source. It still produces two revisions (one per page) — what atomicity buys is a shared
+actor and timestamp and no half-states, not a single revision row.
+
+Rules are meant to be read as describing a **class** of sources, not just the one page that triggered
+them, and the page is human-owned — edit, generalize, or delete any rule freely.
 
 ---
 
@@ -227,7 +376,22 @@ procedure from `knowledge/librarian-system-prompt.md` as its system prompt, boun
 `knowledge:*` tools — see [MCP tools](#mcp-tools) — with `configJson: {"maxToolTurns": 40}`) the same way
 it seeds the workflow YAML. The system prompt, model, and tool bindings are all editable afterward under
 **Automation → Agents**, same as any other agent — evolving the librarian's behavior no longer requires a
-backend change. Its **runtime** (which engine actually executes a run) is decoupled from this definition
+backend change.
+
+**How a shipped prompt improvement reaches existing projects.** `seedLibrarianAgent` returns early for an
+agent that already exists, so historically an edit to `librarian-system-prompt.md` reached only
+newly-provisioned projects. Provisioning now refreshes a seeded prompt in place — but **only while it is
+byte-identical to a version Conductor shipped**, checked against a SHA-256 of the stored prompt (a
+`seededPromptHash` stamp in `configJson`, plus a set of every historical shipped digest for agents seeded
+before the stamp existed). The first time an operator edits the prompt it becomes permanently theirs and is
+never overwritten. This is the same "system-owned unless customized" contract as the system-workflow YAML
+refresh, but deliberately conservative in the operator's favor — and it keeps the editability promise above
+true. Two known gaps: editing an agent's config through the UI replaces `configJson` wholesale and drops the
+stamp, which fails *safe* (the prompt is then treated as operator-owned); and **specialist** agents are
+stamped going forward only, never backfilled, because their stored prompt is the template with
+`%DOMAIN_*%` already substituted, so no shipped-template digest can ever match it.
+
+Its **runtime** (which engine actually executes a run) is decoupled from this definition
 entirely and resolves fresh on every dispatch — see
 [Runtimes](workflows.md#agent--run-an-ai-agent) in the workflows doc: an explicit `runtime` key in the
 agent's `configJson` pins it, otherwise it auto-detects from the project's credentials (a Claude Code
@@ -279,7 +443,16 @@ dispatches and busy-checks each lane independently.
 `schemaPagePath`, `sourceTypePatterns`, `owningAgentSlug` (nullable — the specialist agent dispatch
 resolves to, if assigned; un-FK'd, since agents are deletable and dispatch just falls back), `state`
 (`ACTIVE`/`SUGGESTED`/`DISMISSED` — see gap reports below), `suggestionReason`, and live
-`pendingCount`/`processingCount`/`processedCount` from the ingestion inbox. `PATCH /knowledge/domains/{slug}`
+`pendingCount`/`processingCount`/`processedCount` from the ingestion inbox (the DTO deliberately reports
+neither `deadCount` nor `skippedCount` — the panel answers "how much is this lane chewing on", not a full
+status census).
+
+Every domain also has a **curation page** at `<pathPrefix>_curation.md` (see [Curation](#curation)) —
+**derived, not a registry column**, unlike the stored `schemaPagePath` beside it. The convention is stable,
+and a column would need backfilling, keeping in sync on every rename, and mirroring into the DTO and
+`list_knowledge_domains` for no gain.
+
+`PATCH /knowledge/domains/{slug}`
 (ADMIN-only) edits `displayName`/`description`/`sourceTypePatterns`/`state` with standard partial-PATCH
 semantics (omit a field to leave it unchanged); `owningAgentSlug` assignment/clearing is a discriminated
 pair (`owningAgentSlug` to assign, `clearOwningAgent: true` to clear) rather than a plain nullable field,
@@ -307,10 +480,16 @@ becomes a wiki path segment); any later call for the same slug, in any state, re
 unchanged instead of erroring or resetting it. A `DISMISSED` result is the signal to stop re-suggesting
 that slug. Membership-gated, not admin-only — raising a report is cheap and safe; only **approving** one
 is privileged: the admin `PATCH .../domains/{slug}` transitioning `state` to `ACTIVE` also seeds a
-generic skeleton `<slug>/_schema.md` page (from `_suggested-skeleton.md`) if one isn't already there, so
-the domain has somewhere for the librarian to file into immediately — the skeleton explicitly tells
-whoever edits it next (librarian or human) to define the domain's actual page-type taxonomy. Dismissing
+generic skeleton `<slug>/_schema.md` page (from `_suggested-skeleton.md`) and a skeleton
+`<slug>/_curation.md` (from `_curation-skeleton.md`) if they aren't already there, so the domain has
+somewhere for the librarian to file into immediately and a place for its own skip rules to accumulate —
+both skeletons explicitly tell whoever edits them next (librarian or human) what to fill in. Dismissing
 is the same PATCH with `state: DISMISSED`.
+
+Note that domain curation pages are seeded from the **live registry**, not the hardcoded seed list, so an
+approved gap-report domain gets one on the next `provision()` — which runs on every enabled settings save
+and just-in-time before dispatch. (The domain *schema* seeding predates this and still iterates the seed
+list, which is why the approval path above has to seed the schema page itself.)
 
 Both the librarian and any specialist are instructed (system prompts) to never invent a new top-level
 directory — call `suggest_knowledge_domain` once when sources repeatedly fit no existing domain, and file
@@ -328,7 +507,7 @@ around indefinitely is pure bloat -- the compounded wiki pages are the durable r
 | Sweep | Scope | Effect |
 |---|---|---|
 | **Compact** | `PROCESSED` sources older than `processed-days` (default **30**) | Deletes any offloaded GCS object (`payload_uri`) *first*; only once that succeeds does it null the inline `payload` column and `payload_uri`, then stamp `purged_at`. The row itself -- id, type, ref, metadata, status, timestamps -- is kept, since `knowledge_revision_sources` still references it by id and the wiki's [Log view](#page-model) surfaces source refs by id. Only the (potentially large) payload content is reclaimed. |
-| **Delete** | `DEAD` sources older than `dead-days` (default **90**) | Same GCS-first rule, then hard-deletes the row entirely. A `DEAD` source exhausted every retry ([the pipeline](#the-pipeline)'s sweep) without ever being marked `PROCESSED`, so it normally has no downstream references — but a librarian run that outlived the stale window can still link a revision to a source *after* it was dead-lettered, so each row is checked first and a provenance-referenced `DEAD` source is compacted into a tombstone (payload purged, row kept) instead of deleted. |
+| **Delete** | `DEAD` sources older than `dead-days` (default **90**), and `SKIPPED` sources older than `skipped-days` (default **90**) | Same GCS-first rule, then hard-deletes the row entirely. These are the two *terminal-but-unfiled* statuses: a `DEAD` source exhausted every retry ([the pipeline](#the-pipeline)'s sweep) without ever getting a verdict, and a `SKIPPED` source got a verdict of "not worth a page". Neither leaves a wiki page behind, so neither is normally referenced by `knowledge_revision_sources` — which is exactly why they can be deleted while `PROCESSED` rows are kept forever. The reference check still runs defensively (a librarian run that outlived the stale window can link a revision to a source *after* it was dead-lettered), and a provenance-referenced row is compacted into a tombstone (payload purged, row kept) instead of deleted. Note a `SKIPPED` source keeps its payload for the full window rather than being compacted at 30 days — that's what lets a human still answer "what was this, and why wasn't it filed?" |
 
 Each pass processes at most one batch (100 rows) per tick and commits each row's compaction/deletion in
 its own transaction, so a large backlog never holds a long-running transaction or blocks the hourly tick.
@@ -343,11 +522,86 @@ in the bucket with nothing left to ever reference or clean it up.
 |---|---|---|
 | `conductor.knowledge.retention.processed-days` | `KNOWLEDGE_RETENTION_PROCESSED_DAYS` | `30` |
 | `conductor.knowledge.retention.dead-days` | `KNOWLEDGE_RETENTION_DEAD_DAYS` | `90` |
+| `conductor.knowledge.retention.skipped-days` | `KNOWLEDGE_RETENTION_SKIPPED_DAYS` | `90` |
 
 **Visibility.** `purgedAt` is exposed on every source read surface -- the `GET /sources` REST endpoint's
 `KnowledgeSourceDto`, and the `read_knowledge_sources` MCP tool / agent tool's result -- so a caller can
 tell whether a `PROCESSED` source's payload is still available (`purgedAt: null`) or has already been
 compacted (`purgedAt` set; `payload`/`payloadOffloaded` will read back empty).
+
+---
+
+## Pipeline & tracing
+
+The path from a third-party source to a wiki page crosses six components — webhook, connector
+feed/digest, the ingestion inbox, a librarian workflow run, and the wiki page it produces. Most of
+that is already traceable via real FKs (`connector_feed_digest.knowledge_source_id`,
+`knowledge_source.processing_run_id`, `knowledge_revision_sources`). The one gap was the signal bus
+(`com.conductor.signal`): in-process, synchronous, non-durable, no table — so nothing recorded which
+signal caused which downstream row when the causal chain ran *through* a `Signal` rather than a
+direct FK (e.g. a webhook → `GitHubConnector` → published `Signal` → a subscriber writing a
+`knowledge_sources` row, or a `Signal` firing a `workflow_runs` row directly via workflow
+automation). This section covers how that gap is closed and the two read-only endpoints built on
+top of it.
+
+**Trace id propagation.** `Signal` carries a `traceId`. `InProcessSignalBus.publish()` assigns one
+(`TraceIds.newId()`) whenever a publisher doesn't already have one on hand, so every signal a
+subscriber sees carries one. A webhook's own `webhook_event.trace_id` (stamped at receipt, before
+dispatch) threads through `InboundEvent` into any `Signal` a connector publishes in response — the
+one real schema addition. Downstream, the trace id rides on existing jsonb columns with zero further
+schema change: `KnowledgeSignalSink` stamps it into `knowledge_sources.metadata`, and
+`WorkflowTriggerService` stamps it as a top-level `workflow_runs.event_payload` field (the same
+convention `LibrarianDispatchService` already uses for `sourceIds`/`agentSlug`). No new table, no
+signal-bus durability change — deliberately deferred until a concrete incident proves per-signal
+history is needed (a bounded `signal_trace` table would be write amplification on the hot
+`patchWorkItem` path and re-opens the "third event system" question `webhook_event` was designed to
+avoid).
+
+**Structured logs.** `InProcessSignalBus.publish()` puts `traceId` into SLF4J MDC for the duration of
+dispatch (cleared in a `finally`) — Spring Boot's structured console encoder
+(`logging.structured.format.console=logstash`) picks up MDC keys automatically, so every log line
+emitted during that dispatch carries `traceId` with no new dependency. Log volume is kept
+proportional to signal throughput, not signal×subscriber count: **one INFO line per signal**
+(`signal.dispatched type=… traceId=… subscribers=… swallowed=…`), with per-subscriber outcome detail
+(`ran`/`swallowed`) at **DEBUG** — full drill-down available on demand (e.g.
+`logging.level.com.conductor.signal=DEBUG`) without paying its log-volume cost by default. This is
+the concrete lever for keeping GCP Cloud Logging cost bounded: the default log level only ever
+produces one line per signal.
+
+**Live health.** `GET /projects/{projectId}/knowledge/pipeline/health` returns one entry per fixed
+stage (`WEBHOOKS`, `FEEDS`, `DIGESTS`, `INBOX`, `LIBRARIAN_RUNS`, `PAGES_WRITTEN`), each with
+status-keyed counts for a recent window — composed read-only from repositories that already exist
+for their own bounded context (`PipelineHealthService`, package `com.conductor.pipeline`, a sibling
+to `knowledge`/`integration`/`workflow` since it reads across all of them). The response also carries
+an `edges` array (`PipelineTopology.EDGES`) describing the pipeline's *actual* shape — a branching
+DAG, not a straight line: `WEBHOOKS` and `FEEDS` are independent producer paths that both feed
+`INBOX` (`FEEDS` by way of `DIGESTS` first), which then continues through `LIBRARIAN_RUNS` to
+`PAGES_WRITTEN`. The backend is the single source of truth for this shape — the frontend's Pipeline
+tab renders whatever `edges` it's given rather than hand-assuming stage order, and
+`PipelineTopologyToolSpecTest` fails loudly if a future non-metric connector feed makes the one edge
+`PipelineTopology` deliberately omits (a `FEEDS -> INBOX` bypass, dormant today) reachable. The
+`DIGESTS` and `INBOX` stages both always report a `skipped` bucket on its own, never folded into
+another bucket — a quiet week (nothing material happened, see
+[Metrics digests](#metrics-digests)'s novelty gate) and a batch the librarian deliberately declined
+(see [Curation](#curation)) are both meant to read as *working as intended*, not broken. This is why
+`skipped` is a separate count rather than rolled into `processed`: the two are indistinguishable in
+aggregate but mean opposite things about whether the wiki is getting better.
+
+**Per-item trace.** `GET /projects/{projectId}/knowledge/pipeline/trace` takes exactly one typed
+anchor (`pageId`, `sourceId`, `feedId`, or `webhookEventId`) and walks the existing FK chain plus the
+trace-id joins above (`PipelineTraceService`) to return an ordered, oldest-first list of
+`{stage, id, status, occurredAt, label, link, degraded}` nodes. **Retention interacts with this by
+design**: a `DEAD` or `SKIPPED` source hard-deleted after its window, or any other referenced row no
+longer resolving, yields a terminal node with `degraded: true` (label "purged by retention") instead of
+a 404 or an exception — historical traces going dangling is expected (see [Retention](#retention)), so
+the view degrades gracefully rather than erroring. A `PROCESSED` source whose payload was merely
+*compacted* (`purgedAt` set) is not degraded: the row, its status, and its `metadata` (including any
+`traceId`) all survive compaction, only the payload content is gone, which the trace never reads.
+A live `SKIPPED` source is likewise **not** degraded — being declined is a verdict the trace should
+show, not a gap in it.
+
+Both endpoints are read-only, membership-gated like the rest of the knowledge surface (no admin
+requirement), and add no new mutation surface.
 
 ---
 
@@ -362,7 +616,7 @@ and available to any Claude Code session with the Conductor MCP server configure
 | `read_knowledge_sources` | Fetch inbox sources by id, with offloaded payloads resolved inline. |
 | `search_knowledge` | Full-text search over pages — path, type, title, description, snippet, rank. Orientation before reading. |
 | `read_knowledge_pages` | Fetch full page content by path. `["index.md"]`/`["log.md"]` return the virtual orientation pages. Returned `version` feeds `baseVersion` on the next write. |
-| `write_knowledge_pages` | Atomic batch create/update/delete; `writes` may be empty when `sourceIds` is set, to ack a batch that needs no page changes. A stale write returns a structured `{conflict: true, conflicts: [...]}` result instead of throwing, per [MCP tool guidelines](mcp-tool-guidelines.md) — merge and retry once. |
+| `write_knowledge_pages` | Atomic batch create/update/delete, plus settlement of the batch's sources: `sourceIds` are the ones you filed (→ `PROCESSED`), `skipped` (`[{sourceId, reason}]`) the ones you reviewed and deliberately didn't (→ `SKIPPED` with the reason). Both may be set in one call; a source in both is a 400, and a blank reason is a 400. `writes` may be empty when either list is set. A stale write returns a structured `{conflict: true, conflicts: [...]}` result instead of throwing, per [MCP tool guidelines](mcp-tool-guidelines.md) — merge and retry once. Verify with `read_knowledge_sources`. |
 | `list_knowledge_domains` | List the domain registry — slug, displayName, description, pathPrefix, schemaPagePath, sourceTypePatterns, state, owningAgentSlug. Call before `suggest_knowledge_domain`. |
 | `suggest_knowledge_domain` | Raise a [gap report](#gap-reports) for a domain not yet in the registry. Claim-or-return on slug — idempotent; a `DISMISSED` result means don't call again for that slug. Verify with `list_knowledge_domains`. |
 
@@ -386,13 +640,14 @@ are `ProjectScopedPrincipal` — see [`docs/workflows.md`](workflows.md)):
 |---|---|---|
 | `POST` | `/sources` | Submit a source. `202` with `{sourceId, status}`. Optional `domain` requests an explicit lane. |
 | `GET` | `/sources` | List by `status` (default `PENDING`), optionally filtered by `domain` (exact match), or multi-get via `ids` (`ids` wins over both filters). |
-| `GET` | `/sources/counts` | Per-status inbox counts (`pending`/`processing`/`processed`/`dead`), zero-defaulted — the cheap summary the frontend's health chip and Activity badges poll instead of a full `listSources` per status. |
+| `GET` | `/sources/counts` | Per-status inbox counts (`pending`/`processing`/`processed`/`skipped`/`dead`), zero-defaulted — the cheap summary the frontend's health chip and Activity badges poll instead of a full `listSources` per status. |
 | `POST` | `/sources/retry` | Reset every `DEAD` source in the project back to `PENDING` (attempts 0, backoff/error cleared) for the scheduler to re-claim. ADMIN-only — an ops recovery action for after fixing the underlying cause (usually the librarian's credential). Returns `{retried}`. |
 | `GET` | `/domains` | List the [domain](#domains) registry, slug-ordered, each with live pending/processing/processed counts. Membership-gated, no admin requirement. |
 | `POST` | `/domains` | Raise a [gap report](#gap-reports). Claim-or-return on slug — `201` for a new SUGGESTED row, `200` for an existing one (any state). Membership-gated, not admin-only. |
-| `PATCH` | `/domains/{slug}` | Update a domain's metadata, owning agent, or state. ADMIN-only. Approving (`state: ACTIVE`) from SUGGESTED also seeds a skeleton schema page if absent. |
+| `PATCH` | `/domains/{slug}` | Update a domain's metadata, owning agent, or state. ADMIN-only. Approving (`state: ACTIVE`) from SUGGESTED also seeds a skeleton schema page and a skeleton `_curation.md` if absent. |
 | `POST` | `/domains/{slug}/specialist` | Create (or reassign) the `knowledge-<slug>` specialist agent and assign it as owning agent. ADMIN-only, idempotent, no body. |
-| `POST` | `/pages/batch-write` | Atomic create/update/delete batch. `200` on success; `409` with a `conflicts` extension on a concurrency race; `422` on malformed frontmatter. |
+| `POST` | `/pages/batch-write` | Atomic create/update/delete batch, plus source settlement via `sourceIds` (→ `PROCESSED`) and `skipped` (→ `SKIPPED` with a reason). `200` on success; `400` if a source id appears in both lists or a skip reason is blank; `409` with a `conflicts` extension on a concurrency race; `422` on malformed frontmatter. |
+| `POST` | `/pages/dismiss` | **Not worth filing**: soft-deletes a page a human judged shouldn't exist *and* appends the reason as a dated rule on the governing `_curation.md`, in one transaction — see [Curation](#curation). `{path, baseVersion, reason}`, reason required. Membership-gated (a member can already delete a page via `batch-write`; admin-gating the reason-recording path would only push people to the rawer one). `409` on a stale `baseVersion` — the page changed since it was opened. |
 | `GET` | `/pages?paths=` | Multi-get full page content by comma-separated paths. Unknown/deleted paths silently omitted. |
 | `GET` | `/index` | The generated virtual `index.md`. |
 | `GET` | `/search?q=` | Full-text search; optional `type`, `pathPrefix`, `limit` (default 20). |
@@ -406,7 +661,8 @@ The July 2026 redesign organizes the whole surface around the
 [audience-layers model](design-system.md#audience-layers-ia): the reading layer shows content only,
 pipeline health compresses to one chip, and configuration lives behind an admin-only Manage page.
 UI vocabulary is humanized everywhere: *area* (not domain), inbox statuses *Waiting / Filing /
-Filed / Needs attention* (never "dead"), *filing rules* (schema pages), *Assign specialist*.
+Filed / Not filed / Needs attention* (never "dead" or "skipped"), *filing rules* (schema pages),
+*Assign specialist*.
 
 - **Rail.** Search, **Home**, **Activity**, then the page tree — content pages only
   (`filterContentPages` drops `type: schema` pages; schema-only sections disappear). Pinned footer
@@ -428,12 +684,23 @@ Filed / Needs attention* (never "dead"), *filing rules* (schema pages), *Assign 
 - **Activity** (`knowledge/activity`, tab param). One destination for "what is the librarian
   doing": **Page changes** (rendered virtual `log.md`), **Inbox** (the status-filtered source
   browse, moved from `knowledge/sources` which now redirects here; red count badge when sources
-  need attention), and **Runs** (librarian run history). When sources are stuck, the Inbox shows an
-  attention banner pairing the diagnosis with its fixes — **Open AI Providers** and an admin-only
-  **Retry n sources** (`POST /sources/retry`).
+  need attention), **Runs** (librarian run history), and **Pipeline** (see
+  [Pipeline & tracing](#pipeline--tracing) — a stage-flow diagram, `PipelineFlowDiagram`, built on
+  the same `@xyflow/react` shell the workflow/lifecycle diagrams use; clicking a stage jumps to its
+  detail tab). When sources are stuck, the Inbox shows an attention banner pairing the diagnosis
+  with its fixes — **Open AI Providers** and an admin-only **Retry n sources**
+  (`POST /sources/retry`); each Inbox row also has a **Trace** action opening the per-item trace
+  drawer (`PipelineTracePanel`). The **Not filed** tab is where declined sources live, each showing
+  the librarian's reason inline — the surface that makes [curation](#curation) legible. The Inbox is
+  otherwise deliberately action-free: the pipeline owns a source's lifecycle, not the UI.
+- **Page detail** (`knowledge/page?path=`). Read-only rendering plus **History**, and **Not worth
+  filing** — the one human write (see [Curation](#curation)): a required reason, then the page is
+  removed and the reason recorded as a rule on the governing `_curation.md`, with the toast naming
+  which one. Membership-gated, no admin requirement.
 - **Manage** (`knowledge/manage`, admin-only). An **Ingest cadence** setting (15 min / hourly /
   daily presets, backed by `knowledgeIngestIntervalMinutes`) up top, then the area registry:
-  SUGGESTED areas as approval cards (Approve seeds the skeleton schema, Dismiss declines), then
+  SUGGESTED areas as approval cards (Approve seeds the skeleton schema *and* curation page, Dismiss
+  declines), then
   ACTIVE areas with routing patterns, owning agent ("Librarian" fallback), waiting counts,
   **Assign specialist** where unowned, and a **Filing rules** link to each area's schema page.
 - **Default agent chip.** The Agents list, an agent's detail header, and `AgentResponse.isDefault`
@@ -449,8 +716,10 @@ Deliberately deferred out of this phase:
 
 - **Lint workflow** — a scheduled pass that checks the wiki against `_schema.md`'s own conventions (broken
   links, missing recommended frontmatter, orphaned pages) and files findings back into the inbox.
-- **Human editing** — the frontend wiki browser is read-only; writing a page today means the librarian, or
-  a direct API/MCP call, not an in-app editor.
+- **Human editing** — *partially delivered.* The wiki browser still has no in-app editor; writing a page
+  means the librarian or a direct API/MCP call. The one write a human has in-app is removing a page with a
+  recorded reason (**Not worth filing** → [`POST /pages/dismiss`](#rest-endpoints), see
+  [Curation](#curation)).
 - **Review-gated edits** — a human-approval step before a librarian write lands, for higher-stakes pages.
 - **Embeddings / semantic search** — search is Postgres full-text (`tsvector`/GIN) only; no vector index.
 - **Pub/Sub-driven ingestion** — the scheduler is poll-based (30s); no push-triggered dispatch yet.

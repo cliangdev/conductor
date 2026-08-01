@@ -14,22 +14,77 @@ public interface CloudRunJobLauncher {
      * Starts a new execution of the target Cloud Run Job with the given container task's env overrides.
      *
      * <p>Cloud Run's RunJob call is itself a long-running operation with two separate points of
-     * completion: the operation being <i>created</i> (fast — a single RPC round trip, confirming Cloud
-     * Run accepted the request) and the operation's <i>metadata</i> resolving to the actual
-     * {@code Execution} (slower, genuinely async under cold-start/control-plane load). A timeout on the
-     * former means nothing was created — safe to treat as a definitive failure. A timeout on the latter
-     * does NOT mean the launch failed: the request was already accepted and a real container may already
-     * be running. {@link LaunchResult#executionName()} is empty in that case rather than this method
-     * throwing — see {@link LaunchResult} javadoc for how a caller should proceed.
+     * completion: the operation being <i>created</i> (normally a single fast RPC round trip, confirming
+     * Cloud Run accepted the request) and the operation's <i>metadata</i> resolving to the actual
+     * {@code Execution} (slower, genuinely async under cold-start/control-plane load). Repeated timeouts
+     * on the former are retried before giving up — a single timeout does NOT reliably mean nothing was
+     * created (live evidence: a client-side executor stall produced zero real RPC attempts in one 20s
+     * window, yet the request had gone through and the container ran to completion). A timeout on the
+     * latter does NOT mean the launch failed either: the request was already accepted (an operation name
+     * exists) and a real container may already be running. {@link LaunchResult#executionName()} is empty
+     * in that case rather than this method throwing — see {@link LaunchResult} javadoc for how a caller
+     * should proceed.
      *
      * @param target the Cloud Run Job to launch against (project, region, job name, owning connection)
      * @param task   the container task for this execution — {@code image}/{@code command} are ignored
      *               (see {@link ContainerTask} javadoc); only {@code env} and {@code timeoutMinutes} apply
      * @return the operation name, and the execution resource name if it resolved promptly
-     * @throws RuntimeException if Cloud Run never even accepted/created the request, or reported a
-     *         genuine failure creating it — nothing was started in either case
+     * @throws LaunchUnconfirmedException if Cloud Run never acknowledged the request within the
+     *         implementation's retry budget — genuinely inconclusive: the job may or may not have
+     *         started, and there is no operation name to track or resume it by
+     * @throws RuntimeException if Cloud Run reported a definitive failure creating the request — nothing
+     *         was started
      */
     LaunchResult startExecution(CloudRunTarget target, ContainerTask task);
+
+    /**
+     * Thrown when {@link #startExecution} exhausts its retry budget waiting for Cloud Run to acknowledge
+     * the request without ever obtaining an operation name. Unlike every other failure from this method,
+     * this one genuinely cannot rule out the job having launched anyway — surfaced distinctly so callers
+     * (and, ultimately, the user-facing errorReason) don't conflate it with a confirmed launch failure.
+     */
+    class LaunchUnconfirmedException extends RuntimeException {
+        public LaunchUnconfirmedException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Best-effort search for an execution of {@code target}'s job whose container environment carries
+     * the given {@code CONDUCTOR_WORKER_JOB_ID}. This is how a {@link LaunchUnconfirmedException} gets
+     * resolved after the fact: Cloud Run echoes a RunJobRequest's container-env overrides onto the
+     * {@link Execution} it creates, and that env carries a per-step unique worker job id, so a launch we
+     * stopped waiting for can still be identified with certainty rather than guessed at by timestamp.
+     *
+     * <p>Verified against a live orphan: run {@code 329aeaa8} gave up at 18:01:14, Cloud Run created
+     * execution {@code conductor-byo-test-cond-mcpg5} at 18:01:55 — 41s later — and that execution's
+     * template carried the very {@code CONDUCTOR_WORKER_JOB_ID} the step was waiting on.
+     *
+     * <p>Never throws. {@link ExecutionSearch#reachedApi()} distinguishes the two ways this comes back
+     * empty — "Cloud Run answered and has no such execution" versus "Cloud Run couldn't be asked" — which
+     * are the difference between evidence that nothing launched and no evidence at all. Callers must not
+     * report the second as the first.
+     */
+    ExecutionSearch findExecutionByWorkerJobId(CloudRunTarget target, String workerJobId);
+
+    /**
+     * @param reachedApi     whether the listing call actually completed. False means the search proved
+     *                       nothing — the launch may still have happened, unobserved.
+     * @param executionName  the matching execution, if one was found.
+     */
+    record ExecutionSearch(boolean reachedApi, Optional<String> executionName) {
+        public static ExecutionSearch found(String executionName) {
+            return new ExecutionSearch(true, Optional.of(executionName));
+        }
+
+        public static ExecutionSearch notFound() {
+            return new ExecutionSearch(true, Optional.empty());
+        }
+
+        public static ExecutionSearch unreachable() {
+            return new ExecutionSearch(false, Optional.empty());
+        }
+    }
 
     /** Polls the current state of a previously started execution on the given target. */
     ExecutionState pollExecution(CloudRunTarget target, String executionName);

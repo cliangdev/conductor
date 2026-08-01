@@ -31,6 +31,8 @@ export interface WorkflowDefinitionDto {
   state?: WorkflowState;
   /** Nav-grouping slug; single-Workflow Areas render flat. (COND-18) */
   area?: string;
+  /** Free-text grouping tag (e.g. "engineering"); "default"/"system" are reserved server-side. */
+  tag?: string | null;
   /** Work items bound to this workflow (any version); 0 (or absent) for automations. */
   workItemCount?: number;
   schemaVersion?: number;
@@ -65,13 +67,40 @@ export interface WorkflowCreateResponse {
   warnings?: WorkflowValidationWarning[];
 }
 
+export type WorkflowRunStatus =
+  | 'PENDING'
+  | 'PENDING_LOCAL_PICKUP'
+  | 'RUNNING'
+  | 'CANCELLING'
+  | 'SUCCESS'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'LOCAL_PICKUP_TIMEOUT';
+
 export interface WorkflowRunDto {
   id: string;
   workflowId: string;
   triggerType: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLING' | 'CANCELLED';
+  status: WorkflowRunStatus;
   startedAt: string;
   completedAt?: string;
+  /**
+   * Why this run isn't executing yet — a free-form code (only "AWAITING_RUNNER" today), meaning the
+   * run has ≥1 job in AWAITING_PICKUP with no daemon having claimed it yet (`claimedAt` still null).
+   * A self-hosted job stays `AWAITING_PICKUP` for its entire execution, so the unclaimed distinction
+   * is what actually separates "waiting for a runner" from "running on one". Null for a run with no
+   * wait condition, including every terminal run. Only populated by listWorkflowRuns.
+   */
+  waitReason?: string | null;
+}
+
+/** A cron tick that was dropped because `concurrency: single` already had a run in flight. */
+export interface WorkflowScheduleSkipDto {
+  id: string;
+  scheduleId: string;
+  skippedAt: string;
+  reason: string;
+  runId: string;
 }
 
 export interface WorkflowStepRunDto {
@@ -92,7 +121,20 @@ export interface WorkflowStepRunDto {
 export interface WorkflowJobRunDto {
   id: string;
   jobId: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'LOOP_EXHAUSTED' | 'CANCELLED';
+  /**
+   * `AWAITING_PICKUP` is a self-hosted job handed to the daemon. Note it stays `AWAITING_PICKUP` for
+   * the job's whole execution — nothing flips it to `RUNNING` — so it means "on a runner", not
+   * necessarily "waiting for one"; `WorkflowRunDto.waitReason` is what distinguishes those.
+   */
+  status:
+    | 'PENDING'
+    | 'RUNNING'
+    | 'AWAITING_PICKUP'
+    | 'SUCCESS'
+    | 'FAILED'
+    | 'SKIPPED'
+    | 'LOOP_EXHAUSTED'
+    | 'CANCELLED';
   iteration?: number;
   startedAt?: string;
   completedAt?: string;
@@ -104,7 +146,7 @@ export interface WorkflowRunDetailDto {
   workflowId: string;
   workflowYaml: string;
   triggerType: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLING' | 'CANCELLED';
+  status: WorkflowRunStatus;
   startedAt: string;
   completedAt?: string;
   jobs: WorkflowJobRunDto[];

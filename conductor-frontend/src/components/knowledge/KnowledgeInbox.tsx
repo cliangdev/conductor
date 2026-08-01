@@ -2,14 +2,20 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { InboxIcon } from 'lucide-react'
-import { listKnowledgeSources, type KnowledgeSourceDto, type KnowledgeSourceStatus } from '@/lib/knowledge-api'
+import { InboxIcon, Waypoints } from 'lucide-react'
+import {
+  listKnowledgeSources,
+  type KnowledgeSourceDto,
+  type KnowledgeSourceStatus,
+  type PipelineTraceAnchor,
+} from '@/lib/knowledge-api'
 import { apiErrorMessage } from '@/lib/api'
 import { Tabs, type TabItem } from '@/components/ui/tabs'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Alert } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
+import { PipelineTracePanel } from '@/components/knowledge/PipelineTracePanel'
 import { timeAgo } from '@/lib/format'
 
 // Matches KnowledgeRailFooter/KnowledgeAttentionBanner's own poll interval (KnowledgeIngestScheduler's
@@ -17,12 +23,13 @@ import { timeAgo } from '@/lib/format'
 // on its own, not just at whatever moment the tab happened to load.
 const SOURCES_POLL_INTERVAL_MS = 30_000
 
-const STATUSES: KnowledgeSourceStatus[] = ['PENDING', 'PROCESSING', 'PROCESSED', 'DEAD']
+const STATUSES: KnowledgeSourceStatus[] = ['PENDING', 'PROCESSING', 'PROCESSED', 'SKIPPED', 'DEAD']
 
 const STATUS_LABELS: Record<KnowledgeSourceStatus, string> = {
   PENDING: 'Waiting',
   PROCESSING: 'Filing',
   PROCESSED: 'Filed',
+  SKIPPED: 'Not filed',
   DEAD: 'Needs attention',
 }
 
@@ -30,11 +37,13 @@ function humanizeStatus(status: KnowledgeSourceStatus): string {
   return STATUS_LABELS[status]
 }
 
-/** Empty-state copy per status — DEAD gets bespoke phrasing since "no needs attention sources"
- *  reads awkwardly as a lowercased adjective-first sentence. */
+/** Empty-state copy per status — DEAD and SKIPPED get bespoke phrasing since their labels don't
+ *  read naturally as a lowercased adjective-first sentence ("no needs attention sources", "no not
+ *  filed sources"). */
 function emptyStateDescription(status: KnowledgeSourceStatus, domain: string | null): string {
   const location = domain ? `in the "${domain}" area` : 'in the inbox'
   if (status === 'DEAD') return `No sources need attention ${location}.`
+  if (status === 'SKIPPED') return `No sources were skipped ${location}.`
   return `No ${humanizeStatus(status).toLowerCase()} sources ${location}.`
 }
 
@@ -62,6 +71,7 @@ export function KnowledgeInbox({ projectId, token }: { projectId: string; token:
   const [sources, setSources] = useState<KnowledgeSourceDto[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [traceAnchor, setTraceAnchor] = useState<PipelineTraceAnchor | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -150,12 +160,33 @@ export function KnowledgeInbox({ projectId, token }: { projectId: string; token:
                 </Badge>
               )}
               <span className="truncate flex-1 text-foreground">{source.title ?? source.sourceRef ?? '—'}</span>
+              {source.skipReason && (
+                // Informational, not an error — a skip is a deliberate librarian judgment call, styled
+                // the same muted tone as the rest of the row's metadata rather than a warning color.
+                <span
+                  className="shrink-0 max-w-[200px] truncate text-foreground-subtle text-xs"
+                  title={source.skipReason}
+                >
+                  {source.skipReason}
+                </span>
+              )}
               {source.purgedAt && <span className="shrink-0 text-foreground-subtle text-xs">purged</span>}
               <span className="shrink-0 text-foreground-subtle">{timeAgo(source.receivedAt)}</span>
+              <button
+                type="button"
+                onClick={() => setTraceAnchor({ sourceId: source.id })}
+                className="shrink-0 text-foreground-subtle hover:text-foreground transition-colors rounded p-0.5"
+                aria-label="Trace this source through the pipeline"
+                title="Trace"
+              >
+                <Waypoints className="h-3.5 w-3.5" />
+              </button>
             </div>
           ))}
         </div>
       )}
+
+      <PipelineTracePanel projectId={projectId} token={token} anchor={traceAnchor} onClose={() => setTraceAnchor(null)} />
     </div>
   )
 }

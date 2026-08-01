@@ -467,7 +467,7 @@ public class ProjectDocsController implements ProjectDocsApi {
 
     /**
      * A byline is always present: a human's name, or the machine actor's label when there is no user.
-     * The {@code chk_*_attribution} constraints added in {@code V103} guarantee one of the two.
+     * The {@code chk_*_attribution} constraints added in {@code V109} guarantee one of the two.
      */
     private String displayName(User user, String label) {
         if (user == null) {

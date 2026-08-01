@@ -12,7 +12,7 @@ let searchParams = new URLSearchParams()
 // reference_vitest_rejected_promise_mock memory.
 let getKnowledgePagesBehavior: (paths: string[]) => Promise<KnowledgePageView[]> = () => Promise.resolve([])
 let getKnowledgeSourceCountsBehavior: () => Promise<KnowledgeSourceCounts> = () =>
-  Promise.resolve({ pending: 0, processing: 0, processed: 0, dead: 0 })
+  Promise.resolve({ pending: 0, processing: 0, processed: 0, skipped: 0, dead: 0 })
 let listKnowledgeSourcesBehavior: (opts?: { status?: string; domain?: string }) => Promise<KnowledgeSourceDto[]> = () =>
   Promise.resolve([])
 let listWorkflowsBehavior: () => Promise<WorkflowDefinitionDto[]> = () => Promise.resolve([])
@@ -115,7 +115,7 @@ describe('Knowledge Activity page', () => {
     pathname = '/app/projects/proj-1/knowledge/activity'
     searchParams = new URLSearchParams()
     getKnowledgePagesBehavior = () => Promise.resolve([])
-    getKnowledgeSourceCountsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 0, dead: 0 })
+    getKnowledgeSourceCountsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 0, skipped: 0, dead: 0 })
     listKnowledgeSourcesBehavior = () => Promise.resolve([])
     listWorkflowsBehavior = () => Promise.resolve([])
     listWorkflowRunsBehavior = () => Promise.resolve([])
@@ -173,7 +173,7 @@ describe('Knowledge Activity page', () => {
   })
 
   it('shows a red count badge on the Inbox tab label when dead count is above zero', async () => {
-    getKnowledgeSourceCountsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 5, dead: 3 })
+    getKnowledgeSourceCountsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 5, skipped: 0, dead: 3 })
 
     render(<KnowledgeActivityPage />)
 
@@ -190,7 +190,7 @@ describe('Knowledge Activity page', () => {
 
   it('shows the attention banner on the Inbox tab when dead count is above zero', async () => {
     searchParams = new URLSearchParams({ tab: 'inbox' })
-    getKnowledgeSourceCountsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 5, dead: 2 })
+    getKnowledgeSourceCountsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 5, skipped: 0, dead: 2 })
     listWorkflowsBehavior = () => Promise.resolve([workflow()])
     listWorkflowRunsBehavior = () => Promise.resolve([run({ status: 'FAILED' })])
 
@@ -216,7 +216,7 @@ describe('Knowledge Activity page', () => {
     searchParams = new URLSearchParams({ tab: 'inbox' })
     let deadCount = 2
     getKnowledgeSourceCountsBehavior = () =>
-      Promise.resolve({ pending: 0, processing: 0, processed: 5, dead: deadCount })
+      Promise.resolve({ pending: 0, processing: 0, processed: 5, skipped: 0, dead: deadCount })
     retryDeadKnowledgeSourcesBehavior = () => {
       deadCount = 0
       return Promise.resolve({ retried: 2 })
@@ -236,7 +236,7 @@ describe('Knowledge Activity page', () => {
   it('hides the retry button for a non-admin', async () => {
     searchParams = new URLSearchParams({ tab: 'inbox' })
     canManage = false
-    getKnowledgeSourceCountsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 5, dead: 2 })
+    getKnowledgeSourceCountsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 5, skipped: 0, dead: 2 })
 
     render(<KnowledgeActivityPage />)
 

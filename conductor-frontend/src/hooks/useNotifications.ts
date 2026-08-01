@@ -60,6 +60,8 @@ export const EVENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   COMMENT_REPLY: 'Reply added to a comment',
   MEMBER_JOINED: 'New member joined the project',
   MEMBER_ROLE_CHANGED: 'Member role changed',
+  WORKFLOW_RUN_FAILED: 'Workflow run failed',
+  WORKFLOW_AUTO_PAUSED: 'Workflow auto-paused after repeated failures',
 }
 
 export const EVENT_TYPE_SUBTITLES: Record<string, string> = {
@@ -75,6 +77,8 @@ export const EVENT_TYPE_SUBTITLES: Record<string, string> = {
   COMMENT_REPLY: 'When someone replies to an existing comment',
   MEMBER_JOINED: 'When a new member accepts a project invitation',
   MEMBER_ROLE_CHANGED: "When a member's role is updated",
+  WORKFLOW_RUN_FAILED: 'When a workflow run reaches a terminal failed status',
+  WORKFLOW_AUTO_PAUSED: 'When a workflow is auto-disabled after too many consecutive failed runs',
 }
 
 export const ALL_EVENT_TYPES = Object.keys(EVENT_TYPE_DESCRIPTIONS)
@@ -100,6 +104,11 @@ export const CHANNEL_GROUPS: { value: string; label: string; eventTypes: string[
     value: 'MEMBERS',
     label: 'Members',
     eventTypes: ['MEMBER_JOINED', 'MEMBER_ROLE_CHANGED'],
+  },
+  {
+    value: 'WORKFLOWS',
+    label: 'Workflows',
+    eventTypes: ['WORKFLOW_RUN_FAILED', 'WORKFLOW_AUTO_PAUSED'],
   },
 ]
 

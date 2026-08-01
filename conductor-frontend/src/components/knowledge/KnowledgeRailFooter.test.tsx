@@ -8,7 +8,7 @@ let canManage = true
 // Plain (non-vi.fn) stubs so rejected-promise paths aren't flagged as unhandled — see
 // reference_vitest_rejected_promise_mock memory.
 let countsBehavior: () => Promise<KnowledgeSourceCounts> = () =>
-  Promise.resolve({ pending: 0, processing: 0, processed: 0, dead: 0 })
+  Promise.resolve({ pending: 0, processing: 0, processed: 0, skipped: 0, dead: 0 })
 let listWorkflowsBehavior: () => Promise<WorkflowDefinitionDto[]> = () => Promise.resolve([])
 let listWorkflowRunsBehavior: () => Promise<WorkflowRunDto[]> = () => Promise.resolve([])
 let listDomainsBehavior: () => Promise<KnowledgeDomainDto[]> = () => Promise.resolve([])
@@ -74,7 +74,7 @@ function domain(overrides: Partial<KnowledgeDomainDto> = {}): KnowledgeDomainDto
 describe('KnowledgeRailFooter', () => {
   beforeEach(() => {
     canManage = true
-    countsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 0, dead: 0 })
+    countsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 0, skipped: 0, dead: 0 })
     listWorkflowsBehavior = () => Promise.resolve([])
     listWorkflowRunsBehavior = () => Promise.resolve([])
     listDomainsBehavior = () => Promise.resolve([])
@@ -89,7 +89,7 @@ describe('KnowledgeRailFooter', () => {
   })
 
   it('shows "needs attention" when dead count is above zero, linking to the DEAD filter', async () => {
-    countsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 10, dead: 2 })
+    countsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 10, skipped: 0, dead: 2 })
 
     render(<KnowledgeRailFooter projectId="proj-1" token="tok" />)
 
@@ -109,7 +109,7 @@ describe('KnowledgeRailFooter', () => {
   })
 
   it('shows "filing N sources" when pending/processing are above zero and nothing needs attention', async () => {
-    countsBehavior = () => Promise.resolve({ pending: 2, processing: 3, processed: 10, dead: 0 })
+    countsBehavior = () => Promise.resolve({ pending: 2, processing: 3, processed: 10, skipped: 0, dead: 0 })
 
     render(<KnowledgeRailFooter projectId="proj-1" token="tok" />)
 
@@ -117,7 +117,7 @@ describe('KnowledgeRailFooter', () => {
   })
 
   it('prioritizes needs-attention over working when both conditions hold', async () => {
-    countsBehavior = () => Promise.resolve({ pending: 2, processing: 0, processed: 10, dead: 1 })
+    countsBehavior = () => Promise.resolve({ pending: 2, processing: 0, processed: 10, skipped: 0, dead: 1 })
 
     render(<KnowledgeRailFooter projectId="proj-1" token="tok" />)
 
@@ -188,7 +188,7 @@ describe('KnowledgeRailFooter', () => {
   })
 
   it('prioritizes "needs attention" over "waiting for sources" when both conditions hold', async () => {
-    countsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 0, dead: 1 })
+    countsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 0, skipped: 0, dead: 1 })
 
     render(<KnowledgeRailFooter projectId="proj-1" token="tok" hasContent={false} />)
 

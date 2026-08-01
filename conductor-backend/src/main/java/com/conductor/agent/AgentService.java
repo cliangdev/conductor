@@ -6,6 +6,7 @@ import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.validation.ReservedTags;
 import com.conductor.workflow.model.StepSpec;
 import com.conductor.workflow.model.WorkflowYamlException;
 import com.conductor.workflow.model.WorkflowYamlParser;
@@ -88,7 +89,8 @@ public class AgentService {
             List<String> toolIds,
             String state,
             String avatarEmoji,
-            String avatarColor) {
+            String avatarColor,
+            String tag) {
     }
 
     @Transactional(readOnly = true)
@@ -125,6 +127,7 @@ public class AgentService {
         agent.setState(validateState(input.state(), "DRAFT"));
         agent.setAvatarEmoji(blankToNull(input.avatarEmoji()));
         agent.setAvatarColor(validateColor(input.avatarColor()));
+        agent.setTag(validateTag(input.tag()));
         return repository.save(agent);
     }
 
@@ -172,6 +175,10 @@ public class AgentService {
         }
         if (input.avatarColor() != null) {
             agent.setAvatarColor(validateColor(input.avatarColor()));
+        }
+        if (input.tag() != null) {
+            // An explicit blank clears the tag (stored as null).
+            agent.setTag(validateTag(input.tag()));
         }
         return repository.save(agent);
     }
@@ -285,6 +292,18 @@ public class AgentService {
                     + " (expected one of " + AgentAvatarDefaults.COLOR_TOKENS + ")");
         }
         return color;
+    }
+
+    /** {@code null}/blank leaves the tag unset; anything else must not be a reserved value. */
+    private String validateTag(String tag) {
+        String normalized = blankToNull(tag);
+        if (normalized == null) {
+            return null;
+        }
+        if (ReservedTags.isReserved(normalized)) {
+            throw new BusinessException("Tag '" + tag + "' is reserved");
+        }
+        return normalized.trim();
     }
 
     /**

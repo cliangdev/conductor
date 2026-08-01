@@ -50,6 +50,8 @@ export interface StatechartDefinition {
   schemaVersion: 1
   id: string
   area: string
+  /** Optional free-text grouping tag; absent on definitions saved before tags existed. */
+  tag?: string
   version: number
   state: 'DRAFT' | 'PUBLISHED'
   noun: string

@@ -2,11 +2,12 @@ package com.conductor.workflow;
 
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowScheduleRepository;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalOrigin;
+import com.conductor.signal.SignalTypes;
 import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -40,13 +42,14 @@ class WorkflowTriggerServiceGitHubPullRequestTest {
     @Mock private WorkflowExecutionEngine executionEngine;
     @Mock private WorkflowScheduleRepository scheduleRepository;
     @Mock private WorkflowFailureCircuitBreaker circuitBreaker;
+    @Mock private WorkflowRunFailureNotifier runFailureNotifier;
 
     private WorkflowTriggerService service;
 
     @BeforeEach
     void setUp() {
         service = new WorkflowTriggerService(workflowRepository, workflowRunRepository, executionEngine,
-                scheduleRepository, new ObjectMapper(), new WorkflowYamlParser(), circuitBreaker);
+                scheduleRepository, new ObjectMapper(), new WorkflowYamlParser(), circuitBreaker, runFailureNotifier);
         lenient().when(workflowRunRepository.save(any(WorkflowRun.class))).thenAnswer(inv -> {
             WorkflowRun run = inv.getArgument(0);
             if (run.getId() == null) run.setId("run-1");
@@ -62,8 +65,9 @@ class WorkflowTriggerServiceGitHubPullRequestTest {
         return workflow;
     }
 
-    private NotificationEvent prEvent(Map<String, String> metadata) {
-        return NotificationEvent.of(EventType.GITHUB_PULL_REQUEST, PROJECT_ID, metadata);
+    private Signal prEvent(Map<String, String> metadata) {
+        return Signal.of(SignalTypes.GITHUB_PULL_REQUEST, PROJECT_ID, null, Instant.now(), Map.copyOf(metadata),
+                new SignalOrigin("test", null));
     }
 
     private static final String YAML_NO_FILTERS = """
@@ -102,10 +106,11 @@ class WorkflowTriggerServiceGitHubPullRequestTest {
 
     @Test
     void wrongEventType_noWorkflowsCreated() {
-        NotificationEvent event = NotificationEvent.of(EventType.WORK_ITEM_STATUS_CHANGED, PROJECT_ID,
-                Map.of("workItemId", "wi-1", "fromStatus", "TODO", "toStatus", "DONE"));
+        Signal signal = Signal.of(SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED, PROJECT_ID, null, Instant.now(),
+                Map.of("workItemId", "wi-1", "fromStatus", "TODO", "toStatus", "DONE"),
+                new SignalOrigin("test", null));
 
-        service.onGitHubPullRequest(event);
+        service.onGitHubPullRequest(signal);
 
         verify(workflowRepository, never()).findByProjectId(any());
         verify(workflowRunRepository, never()).save(any());

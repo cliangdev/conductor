@@ -123,6 +123,67 @@ export function listConnectionWebhookEvents(
   )
 }
 
+// ── Connector feeds (Knowledge Center ingestion — see docs/knowledge.md) ───
+
+export type ConnectorFeedStatus = 'ACTIVE' | 'PAUSED' | 'SETUP_REQUIRED' | 'DEAD'
+
+export interface ConnectorFeedDto {
+  id: string
+  ingestId: string
+  label: string
+  description?: string | null
+  enabled: boolean
+  intervalMinutes: number
+  status: ConnectorFeedStatus
+  lastRunAt?: string | null
+  lastSuccessAt?: string | null
+  lastError?: string | null
+  consecutiveFailures: number
+  nextRunAt: string
+  isMetricFeed: boolean
+}
+
+export function listConnectorFeeds(
+  projectId: string,
+  connectorId: string,
+  token: string,
+): Promise<ConnectorFeedDto[]> {
+  return apiGet<ConnectorFeedDto[]>(
+    `/api/v1/projects/${projectId}/integrations/${connectorId}/feeds`,
+    token,
+  )
+}
+
+/** Partial update — only `enabled`/`intervalMinutes` are settable; cursor/status/nextRunAt are
+ *  platform-owned scheduling state. */
+export function updateConnectorFeed(
+  projectId: string,
+  connectorId: string,
+  feedId: string,
+  body: { enabled?: boolean; intervalMinutes?: number },
+  token: string,
+): Promise<ConnectorFeedDto> {
+  return apiPatch<ConnectorFeedDto>(
+    `/api/v1/projects/${projectId}/integrations/${connectorId}/feeds/${feedId}`,
+    body,
+    token,
+  ) as Promise<ConnectorFeedDto>
+}
+
+/** "Sync now" — re-dues the feed for the next scheduler tick; never pulls inline. */
+export function runConnectorFeedNow(
+  projectId: string,
+  connectorId: string,
+  feedId: string,
+  token: string,
+): Promise<ConnectorFeedDto> {
+  return apiPost<ConnectorFeedDto>(
+    `/api/v1/projects/${projectId}/integrations/${connectorId}/feeds/${feedId}/runs`,
+    {},
+    token,
+  )
+}
+
 export interface ConnectorConfigField {
   key: string
   label: string
@@ -452,6 +513,8 @@ export interface Agent {
    *  project member. Deleting one is allowed — it is recreated the next time the owning feature
    *  self-heals. */
   isDefault: boolean
+  /** Free-text grouping tag (e.g. "engineering"); "default"/"system" are reserved server-side. */
+  tag?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -460,6 +523,7 @@ export interface CreateAgentBody {
   name: string
   slug?: string
   description?: string
+  tag?: string | null
   provider: string
   model?: string
   systemPrompt?: string

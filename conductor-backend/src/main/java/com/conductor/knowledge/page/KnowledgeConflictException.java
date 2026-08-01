@@ -19,6 +19,17 @@ public class KnowledgeConflictException extends RuntimeException {
         this.conflicts = conflicts;
     }
 
+    /**
+     * Same {@code conflicts} extension, caller-supplied message -- for a caller whose batch has a
+     * narrower, more predictable failure mode than "one or more of N writes conflicted" (e.g. {@code
+     * KnowledgePageService#dismissPage}'s two-write batch, where the realistic case is always the
+     * client's own stale page version) and wants the 409 detail to read accordingly.
+     */
+    public KnowledgeConflictException(String message, List<Conflict> conflicts) {
+        super(message);
+        this.conflicts = conflicts;
+    }
+
     public List<Conflict> conflicts() {
         return conflicts;
     }

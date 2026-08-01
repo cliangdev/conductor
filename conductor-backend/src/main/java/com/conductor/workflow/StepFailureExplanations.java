@@ -42,6 +42,15 @@ public final class StepFailureExplanations {
                     "The Cloud Run execution failed to launch, or ended without the container ever reporting a result "
                             + "(e.g. image pull failure, OOM kill) — the target itself resolved fine; something went wrong running on it.",
                     "Check the step log and Cloud Run execution logs for the launch failure; confirm the runtime target's image and resource limits.")),
+            Map.entry("CLOUD_RUN_LAUNCH_UNCONFIRMED", new Explanation(
+                    "Cloud Run never acknowledged the launch request within the retry budget, and the follow-up search for a "
+                            + "late-landing execution belonging to this step turned up nothing in the 3 minutes afterwards. "
+                            + "That search normally finds and adopts an orphaned container, so this is evidence nothing "
+                            + "started — but it is not proof: if the search itself couldn't reach Cloud Run, it looks the same "
+                            + "from here (the step log records which).",
+                    "Re-run the step. Check the Cloud Run console around this step's start time for a stray execution before "
+                            + "assuming nothing ran. If this recurs often it points to Cloud Run launch capacity/latency rather "
+                            + "than this step's own config — flag it to whoever operates this Conductor deployment.")),
             Map.entry("CLAUDE_INVALID_RUNS_ON", new Explanation(
                     "The job's runs-on doesn't resolve to a container-capable target.",
                     "Set runs-on: cloud-run (or a named runtime target, or self-hosted) on the job containing this claude-code step.")),

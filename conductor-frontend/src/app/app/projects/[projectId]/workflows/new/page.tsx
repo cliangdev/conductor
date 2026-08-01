@@ -29,17 +29,17 @@ export default function NewWorkflowPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSave = async (name: string, yaml: string) => {
+  const handleSave = async (name: string, tag: string, yaml: string) => {
     if (!accessToken) return;
     setSaving(true);
     setError(null);
     try {
       const created = await apiPost<WorkflowDefinitionDto>(
         `/api/v1/projects/${projectId}/workflows`,
-        { name, yaml },
+        { name, tag, yaml },
         accessToken
       );
-      router.push(`/app/projects/${projectId}/workflows/${created.id}/overview`);
+      router.push(`/app/projects/${projectId}/workflows/${created.id}/runs`);
     } catch (e: unknown) {
       setError(apiErrorMessage(e, 'Failed to save workflow'));
     } finally {

@@ -189,6 +189,109 @@ class ClaudeCodeContainerRunnerTest {
     }
 
     @Test
+    void launcherThrowsGenericException_failsWithClaudeLaunchError() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class)))
+                .thenThrow(new IllegalStateException("Cloud Run rejected the request"));
+
+        StepResult result = runner.run(context(Map.of()), invocation(List.of(), Map.of()));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).isEqualTo("CLAUDE_LAUNCH_ERROR");
+    }
+
+    /**
+     * {@code findLateExecution} polls up to {@code RECONCILE_WINDOW_SECONDS / RECONCILE_POLL_SECONDS}
+     * (180/15 = 12) times, sleeping via the same overridable {@link #sleepSeconds} hook
+     * {@code pollUntilTerminal} uses — the no-op override in {@link #setUp} makes every attempt free,
+     * so the found-immediately, found-on-a-later-attempt, and never-found paths are all covered below.
+     */
+    @Test
+    void launcherThrowsLaunchUnconfirmed_reconciliationFindsExecutionImmediately_recoversAndCompletes() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class)))
+                .thenThrow(new CloudRunJobLauncher.LaunchUnconfirmedException("Cloud Run did not acknowledge the request"));
+        // Found on the very first reconciliation attempt.
+        when(launcher.findExecutionByWorkerJobId(any(CloudRunTarget.class), anyString()))
+                .thenReturn(CloudRunJobLauncher.ExecutionSearch.found("exec-recovered"));
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-recovered")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+
+        StepResult result = runner.run(context(Map.of()), invocation(List.of(), Map.of()));
+
+        // The reconciled execution ran to completion successfully -- the step recovers outright rather
+        // than failing with CLOUD_RUN_LAUNCH_UNCONFIRMED, since Cloud Run's late acknowledgement was
+        // found and identified with certainty via the workerJobId env match.
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        ArgumentCaptor<WorkflowStepRun> stepRunCaptor = ArgumentCaptor.forClass(WorkflowStepRun.class);
+        verify(stepRunRepository, org.mockito.Mockito.atLeastOnce()).save(stepRunCaptor.capture());
+        assertThat(stepRunCaptor.getValue().getExecutionName()).isEqualTo("exec-recovered");
+        verify(launcher, org.mockito.Mockito.times(1)).findExecutionByWorkerJobId(any(CloudRunTarget.class), anyString());
+    }
+
+    @Test
+    void launcherThrowsLaunchUnconfirmed_reconciliationNeverFindsExecution_failsWithUnconfirmedReason() {
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class)))
+                .thenThrow(new CloudRunJobLauncher.LaunchUnconfirmedException("Cloud Run did not acknowledge the request"));
+        // Never finds a match, across the whole retry budget.
+        when(launcher.findExecutionByWorkerJobId(any(CloudRunTarget.class), anyString()))
+                .thenReturn(CloudRunJobLauncher.ExecutionSearch.notFound());
+
+        StepResult result = runner.run(context(Map.of()), invocation(List.of(), Map.of()));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.FAILED);
+        assertThat(result.getErrorReason()).isEqualTo("CLOUD_RUN_LAUNCH_UNCONFIRMED");
+        // Pins the retry budget itself (180s window / 15s poll = 12 attempts) -- a test that only
+        // asserted the failed outcome would also pass if the loop bailed out after a single attempt.
+        verify(launcher, org.mockito.Mockito.times(12)).findExecutionByWorkerJobId(any(CloudRunTarget.class), anyString());
+        // No execution was ever found, so nothing should be persisted as this step's execution name.
+        ArgumentCaptor<WorkflowStepRun> stepRunCaptor = ArgumentCaptor.forClass(WorkflowStepRun.class);
+        verify(stepRunRepository, org.mockito.Mockito.atLeastOnce()).save(stepRunCaptor.capture());
+        assertThat(stepRunCaptor.getAllValues()).allSatisfy(row -> assertThat(row.getExecutionName()).isNull());
+    }
+
+    @Test
+    void launcherThrowsLaunchUnconfirmed_reconciliationFindsExecutionOnLaterAttempt_recoversAndCompletes() {
+        // Mirrors the production incident this fix was written for: the execution appeared 41s after
+        // giving up, i.e. not on the first reconciliation poll.
+        when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
+        when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");
+        when(projectSettingsRepository.findByProjectId(anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndStepId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(stepRunRepository.findByJobRunIdAndWorkerJobId(eq(JOB_RUN_ID), anyString())).thenReturn(Optional.empty());
+        when(launcher.startExecution(any(CloudRunTarget.class), any(ContainerTask.class)))
+                .thenThrow(new CloudRunJobLauncher.LaunchUnconfirmedException("Cloud Run did not acknowledge the request"));
+        // Empty on the first two attempts, then a match on the third.
+        when(launcher.findExecutionByWorkerJobId(any(CloudRunTarget.class), anyString()))
+                .thenReturn(CloudRunJobLauncher.ExecutionSearch.notFound(),
+                        CloudRunJobLauncher.ExecutionSearch.notFound(),
+                        CloudRunJobLauncher.ExecutionSearch.found("exec-recovered-late"));
+        when(launcher.pollExecution(any(CloudRunTarget.class), eq("exec-recovered-late")))
+                .thenReturn(new CloudRunJobLauncher.ExecutionState(CloudRunJobLauncher.Status.SUCCEEDED, Optional.empty()));
+
+        StepResult result = runner.run(context(Map.of()), invocation(List.of(), Map.of()));
+
+        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
+        verify(launcher, org.mockito.Mockito.times(3)).findExecutionByWorkerJobId(any(CloudRunTarget.class), anyString());
+        ArgumentCaptor<WorkflowStepRun> stepRunCaptor = ArgumentCaptor.forClass(WorkflowStepRun.class);
+        verify(stepRunRepository, org.mockito.Mockito.atLeastOnce()).save(stepRunCaptor.capture());
+        assertThat(stepRunCaptor.getValue().getExecutionName()).isEqualTo("exec-recovered-late");
+    }
+
+    @Test
     void missingActiveConnection_failsStepClearly() {
         when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
         when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");

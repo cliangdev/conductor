@@ -7,8 +7,8 @@ import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.NotificationChannelRequest;
 import com.conductor.generated.model.NotificationTestResponse;
 import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
+import com.conductor.notification.NotificationDeliveryService;
+import com.conductor.notification.NotificationMessage;
 import com.conductor.notification.ProviderType;
 import com.conductor.repository.NotificationChannelConfigRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -27,15 +27,15 @@ public class NotificationChannelService {
     private static final Logger log = LoggerFactory.getLogger(NotificationChannelService.class);
 
     private final NotificationChannelConfigRepository channelConfigRepository;
-    private final NotificationDispatcher notificationDispatcher;
+    private final NotificationDeliveryService notificationDeliveryService;
     private final ProjectSecurityService projectSecurityService;
 
     public NotificationChannelService(
             NotificationChannelConfigRepository channelConfigRepository,
-            NotificationDispatcher notificationDispatcher,
+            NotificationDeliveryService notificationDeliveryService,
             ProjectSecurityService projectSecurityService) {
         this.channelConfigRepository = channelConfigRepository;
-        this.notificationDispatcher = notificationDispatcher;
+        this.notificationDeliveryService = notificationDeliveryService;
         this.projectSecurityService = projectSecurityService;
     }
 
@@ -106,12 +106,12 @@ public class NotificationChannelService {
         }
 
         try {
-            NotificationEvent event = NotificationEvent.of(
+            NotificationMessage event = NotificationMessage.of(
                     eventType,
                     projectId,
                     Map.of("test", "true", "description", "Test notification from Conductor")
             );
-            notificationDispatcher.dispatch(event);
+            notificationDeliveryService.deliver(event);
 
             NotificationTestResponse response = new NotificationTestResponse();
             response.setSuccess(true);

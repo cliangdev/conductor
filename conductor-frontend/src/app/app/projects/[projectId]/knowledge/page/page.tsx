@@ -3,9 +3,9 @@
 import { Suspense, useEffect, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { History } from 'lucide-react'
+import { Ban, History } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { getKnowledgePage, listKnowledgeRevisions } from '@/lib/knowledge-api'
+import { dismissKnowledgePage, getKnowledgePage, listKnowledgeRevisions } from '@/lib/knowledge-api'
 import type { KnowledgePageRevisionView, KnowledgePageView } from '@/lib/knowledge-api'
 import { apiErrorMessage } from '@/lib/api'
 import { timeAgo } from '@/lib/format'
@@ -14,6 +14,10 @@ import { KnowledgeHistoryPanel } from '@/components/knowledge/KnowledgeHistoryPa
 import { KnowledgeTypeIcon } from '@/components/knowledge/KnowledgeTypeIcon'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { Button } from '@/components/ui/button'
+import { ConfirmModal } from '@/components/ui/confirm-modal'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { useToast } from '@/components/ui/toast'
 import { KnowledgePageSkeleton } from '@/components/knowledge/KnowledgePageSkeleton'
 import { Alert } from '@/components/ui/alert'
 
@@ -28,6 +32,7 @@ function KnowledgePageContent() {
   const { projectId } = useParams<{ projectId: string }>()
   const { accessToken } = useAuth()
   const router = useRouter()
+  const { showToast } = useToast()
   const searchParams = useSearchParams()
   const path = searchParams.get('path') ?? ''
 
@@ -37,6 +42,9 @@ function KnowledgePageContent() {
   const [error, setError] = useState<string | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [showDismiss, setShowDismiss] = useState(false)
+  const [dismissReason, setDismissReason] = useState('')
+  const [dismissing, setDismissing] = useState(false)
 
   useEffect(() => {
     if (!accessToken || !path) return
@@ -75,6 +83,27 @@ function KnowledgePageContent() {
 
   function handleWikiLink(target: string) {
     router.push(`/app/projects/${projectId}/knowledge/page?path=${encodeURIComponent(target)}`)
+  }
+
+  async function handleDismiss() {
+    if (!accessToken || !page || dismissing) return
+    const reason = dismissReason.trim()
+    if (!reason) return
+    setDismissing(true)
+    try {
+      const result = await dismissKnowledgePage(
+        projectId,
+        { path: page.path, baseVersion: page.version, reason },
+        accessToken,
+      )
+      showToast(`Removed — rule added to ${result.curationPagePath}`)
+      // Navigate away rather than re-rendering in place: the page this view was showing no longer
+      // exists, so staying here would flash a not-found state.
+      router.push(`/app/projects/${projectId}/knowledge`)
+    } catch (err) {
+      showToast(apiErrorMessage(err, 'Failed to dismiss page'), 'error')
+      setDismissing(false)
+    }
   }
 
   if (!path) {
@@ -130,10 +159,16 @@ function KnowledgePageContent() {
                 {latestRevision && ` · revised ${timeAgo(latestRevision.createdAt)}`}
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => setShowHistory(true)} className="shrink-0">
-              <History className="h-3.5 w-3.5 mr-1.5" />
-              History
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button variant="ghost" size="sm" onClick={() => setShowDismiss(true)}>
+                <Ban className="h-3.5 w-3.5 mr-1.5" />
+                Not worth filing
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setShowHistory(true)}>
+                <History className="h-3.5 w-3.5 mr-1.5" />
+                History
+              </Button>
+            </div>
           </div>
         </div>
       </div>
@@ -159,6 +194,36 @@ function KnowledgePageContent() {
           />
         )}
       </div>
+
+      <ConfirmModal
+        open={showDismiss}
+        title="Not worth filing"
+        description="Removes this page and records why, so the librarian doesn't refile something like it."
+        confirmLabel="Remove page"
+        busyLabel="Removing…"
+        busy={dismissing}
+        confirmDisabled={!dismissReason.trim()}
+        onConfirm={handleDismiss}
+        onCancel={() => {
+          setShowDismiss(false)
+          setDismissReason('')
+        }}
+      >
+        <div className="space-y-1">
+          <Label htmlFor="dismiss-reason">Reason</Label>
+          <Textarea
+            id="dismiss-reason"
+            value={dismissReason}
+            onChange={(e) => setDismissReason(e.target.value)}
+            autoFocus
+            disabled={dismissing}
+            placeholder="Why doesn't this belong in the wiki?"
+          />
+          <p className="text-xs text-muted-foreground">
+            This becomes a rule the librarian reads before every future batch.
+          </p>
+        </div>
+      </ConfirmModal>
     </div>
   )
 }

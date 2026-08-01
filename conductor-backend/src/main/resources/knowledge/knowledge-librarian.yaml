@@ -39,12 +39,19 @@ jobs:
             Project id: ${{ event.projectId }}
             Domain: ${{ event.domain }} (empty = unclassified -- pick the right domain dir per source)
 
-            Return a short JSON summary: {"pagesWritten": <int>, "sourcesFiled": <int>}.
+            Every source id above must end up in exactly one of write_knowledge_pages' `sourceIds`
+            (filed) or `skipped` (reviewed, deliberately not filed, with a reason). Skipping is a
+            normal outcome -- see _curation.md for the bar.
+
+            Return a short JSON summary:
+            {"pagesWritten": <int>, "sourcesFiled": <int>, "sourcesSkipped": <int>}.
           output_schema:
             type: object
             properties:
               pagesWritten: { type: integer }
               sourcesFiled: { type: integer }
+              sourcesSkipped: { type: integer }
         outputs:
           pagesWritten: body.pagesWritten
           sourcesFiled: body.sourcesFiled
+          sourcesSkipped: body.sourcesSkipped

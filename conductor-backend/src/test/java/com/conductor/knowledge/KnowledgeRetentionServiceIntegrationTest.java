@@ -147,6 +147,19 @@ class KnowledgeRetentionServiceIntegrationTest extends AbstractNoneWebIntegratio
         assertThat(sourceRepository.findById(dead.getId())).isEmpty();
     }
 
+    /** SKIPPED gets the same terminal-unfiled hard-delete treatment as DEAD (default 90-day window). */
+    @Test
+    void deletesSkippedSourcePastNinetyDays() {
+        KnowledgeSource skipped = save(KnowledgeSourceStatus.SKIPPED,
+                OffsetDateTime.now().minusDays(91), null, null);
+        skipped.setSkipReason("not material");
+        sourceRepository.save(skipped);
+
+        retentionService.sweep();
+
+        assertThat(sourceRepository.findById(skipped.getId())).isEmpty();
+    }
+
     @Test
     void leavesRecentDeadSourceUntouched() {
         KnowledgeSource recentDead = save(KnowledgeSourceStatus.DEAD,

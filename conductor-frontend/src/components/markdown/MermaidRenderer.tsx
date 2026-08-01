@@ -6,9 +6,10 @@ import { cn } from '@/lib/utils'
 interface Props {
   chart: string
   className?: string
+  onRendered?: (svg: SVGSVGElement) => void
 }
 
-export function MermaidRenderer({ chart, className }: Props) {
+export function MermaidRenderer({ chart, className, onRendered }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
   const { resolvedTheme } = useTheme()
@@ -25,7 +26,11 @@ export function MermaidRenderer({ chart, className }: Props) {
       m.default
         .render(id, chart)
         .then(({ svg }) => {
-          if (!cancelled && ref.current) ref.current.innerHTML = svg
+          if (!cancelled && ref.current) {
+            ref.current.innerHTML = svg
+            const svgEl = ref.current.querySelector('svg')
+            if (svgEl) onRendered?.(svgEl as unknown as SVGSVGElement)
+          }
         })
         .catch((e: unknown) => {
           if (!cancelled) setError(String(e))
@@ -34,7 +39,7 @@ export function MermaidRenderer({ chart, className }: Props) {
     return () => {
       cancelled = true
     }
-  }, [chart, resolvedTheme])
+  }, [chart, resolvedTheme, onRendered])
 
   if (error) {
     return (

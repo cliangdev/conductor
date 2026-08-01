@@ -18,6 +18,10 @@ export interface ConfirmModalProps {
    *  pass false for confirmations that aren't destructive (e.g. disabling something reversibly). */
   destructive?: boolean
   busy?: boolean
+  /** Disables the confirm button independent of `busy` — for a caller whose confirmation needs more
+   *  than "not currently submitting" to be valid (e.g. a required reason field left blank). Defaults
+   *  to false so every existing caller (none of which pass this) is unaffected. */
+  confirmDisabled?: boolean
   onConfirm: () => void
   onCancel: () => void
 }
@@ -35,6 +39,7 @@ export function ConfirmModal({
   cancelLabel = 'Cancel',
   destructive = true,
   busy = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -55,7 +60,7 @@ export function ConfirmModal({
             variant={destructive ? 'destructive' : 'default'}
             size="sm"
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
           >
             {busy && busyLabel ? busyLabel : confirmLabel}
           </Button>

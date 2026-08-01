@@ -48,13 +48,14 @@ class WorkflowTriggerServiceTest {
     @Mock ObjectMapper objectMapper;
     @Mock WorkflowYamlParser yamlParser;
     @Mock WorkflowFailureCircuitBreaker circuitBreaker;
+    @Mock WorkflowRunFailureNotifier runFailureNotifier;
 
     WorkflowTriggerService service;
 
     @BeforeEach
     void setUp() {
         service = new WorkflowTriggerService(workflowRepository, workflowRunRepository, executionEngine,
-                scheduleRepository, objectMapper, yamlParser, circuitBreaker);
+                scheduleRepository, objectMapper, yamlParser, circuitBreaker, runFailureNotifier);
         // Echo back whatever run is saved, same shape createRun/the fail-fast branch rely on.
         when(workflowRunRepository.save(any(WorkflowRun.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -96,6 +97,7 @@ class WorkflowTriggerServiceTest {
         assertThat(run.getCompletedAt()).isNotNull();
         verify(executionEngine, never()).enqueueJob(any(), any());
         verify(circuitBreaker).recordOutcome(run);
+        verify(runFailureNotifier).notifyFailed(run);
     }
 
     @Test
@@ -109,6 +111,7 @@ class WorkflowTriggerServiceTest {
         assertThat(run.getCompletedAt()).isNotNull();
         verify(executionEngine, never()).enqueueJob(any(), any());
         verify(circuitBreaker).recordOutcome(run);
+        verify(runFailureNotifier).notifyFailed(run);
     }
 
     @Test
@@ -140,6 +143,7 @@ class WorkflowTriggerServiceTest {
         assertThat(run.getStatus()).isEqualTo(WorkflowRunStatus.PENDING);
         verify(executionEngine).enqueueJob(run.getId(), "bootstrap");
         verify(circuitBreaker, never()).recordOutcome(any());
+        verify(runFailureNotifier, never()).notifyFailed(any());
     }
 
     @Test

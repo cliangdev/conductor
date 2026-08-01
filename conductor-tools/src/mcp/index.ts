@@ -42,6 +42,7 @@ import {
   listKnowledgeDomains,
   suggestKnowledgeDomain,
   type KnowledgePageWrite,
+  type KnowledgeSkippedSource,
 } from './tools/knowledge.js'
 import {
   listProjectDocs,
@@ -430,13 +431,23 @@ const TOOLS = [
   },
   {
     name: 'list_workflow_runs',
-    description: 'List recent runs for a workflow (newest first): runId, status, triggerType, timings. Entry point for checking scheduled/event runs — get runId here, then get_workflow_run for step detail.',
+    description: 'List recent runs for a workflow (newest first): runId, status, triggerType, timings, and waitReason (set to AWAITING_RUNNER when a run is blocked on an unclaimed self-hosted job). Entry point for checking scheduled/event runs — get runId here, then get_workflow_run for step detail. Use state=queued to see waiting work; status= filters raw statuses.',
     inputSchema: {
       type: 'object',
       properties: {
         workflowId: { type: 'string', description: 'Workflow definition ID' },
         page: { type: 'number', description: 'Page number, 0-based (optional, default 0)' },
         size: { type: 'number', description: 'Page size (optional, default 50)' },
+        state: {
+          type: 'string',
+          enum: ['queued', 'running'],
+          description: 'Derived filter (optional). "queued" is the reliable way to find waiting work — a run blocked on an unclaimed self-hosted runner is RUNNING at the run level, so status=PENDING misses it. "running" is the complement: actually executing, with no such unclaimed job. Cannot be combined with status.',
+        },
+        status: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter to one or more raw run statuses (optional; omit for all). Cannot be combined with state.',
+        },
       },
       required: ['workflowId'],
     },
@@ -532,7 +543,7 @@ const TOOLS = [
   },
   {
     name: 'write_knowledge_pages',
-    description: "Create, update, or delete wiki pages atomically. Updating an existing page requires its current version as baseVersion (read_knowledge_pages first) — a stale write returns a structured {conflict: true, conflicts: [{path, currentVersion, currentContent}]} result instead of throwing; merge and retry once. Optionally pass sourceIds to mark those knowledge-inbox sources PROCESSED atomically with the write — pass writes: [] with sourceIds to ack a batch that warrants no wiki change. Verify with read_knowledge_pages.",
+    description: "Create, update, or delete wiki pages atomically, plus settle the ingestion sources this batch reviewed. Updating an existing page requires its current version as baseVersion (read_knowledge_pages first) — a stale write returns a structured {conflict: true, conflicts: [{path, currentVersion, currentContent}]} result instead of throwing; merge and retry once. sourceIds are sources you filed into a page (marked PROCESSED); skipped (with a required reason each) are sources you reviewed and deliberately did not file (marked SKIPPED — the reason is shown to a human in the Inbox). Both may be set in one call; a source id belongs to exactly one — the same id in both is rejected. writes may be empty when sourceIds/skipped cover the batch, to settle sources with no page change. Verify with read_knowledge_sources.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -548,9 +559,21 @@ const TOOLS = [
             },
             required: ['path'],
           },
-          description: 'Pages to write or delete; may be empty when sourceIds is provided (no wiki change needed for this batch)',
+          description: 'Pages to write or delete; may be empty when sourceIds/skipped cover the batch (no wiki change needed)',
         },
         sourceIds: { type: 'array', items: { type: 'string' }, description: 'Knowledge-inbox source IDs to mark PROCESSED atomically with this write (optional)' },
+        skipped: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              sourceId: { type: 'string' },
+              reason: { type: 'string', description: "Why this source wasn't filed — required, shown to a human in the Inbox" },
+            },
+            required: ['sourceId', 'reason'],
+          },
+          description: 'Knowledge-inbox sources this batch reviewed and deliberately did not file; marked SKIPPED with the given reason atomically with this write (optional)',
+        },
       },
       required: ['writes'],
     },
@@ -1028,6 +1051,8 @@ export async function runMcpServer(): Promise<void> {
                 workflowId: params['workflowId'] as string,
                 page: params['page'] as number | undefined,
                 size: params['size'] as number | undefined,
+                state: params['state'] as string | undefined,
+                status: params['status'] as string | string[] | undefined,
               },
               config
             )
@@ -1220,6 +1245,7 @@ export async function runMcpServer(): Promise<void> {
             {
               writes: (params['writes'] as KnowledgePageWrite[] | undefined) ?? [],
               sourceIds: params['sourceIds'] as string[] | undefined,
+              skipped: params['skipped'] as KnowledgeSkippedSource[] | undefined,
             },
             config
           )

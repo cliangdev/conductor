@@ -20,9 +20,12 @@ Workflows let you automate work that happens around your Conductor project — r
   - [Conductor-hosted](#conductor-hosted)
   - [Self-hosted](#self-hosted)
   - [Cloud Run](#cloud-run)
+    - [Launch reconciliation](#launch-reconciliation)
   - [Runtime targets (bring your own Cloud Run)](#runtime-targets-bring-your-own-cloud-run)
+- [Queued and waiting work](#queued-and-waiting-work)
 - [Cancelling a run](#cancelling-a-run)
 - [Auto-pause on repeated failures](#auto-pause-on-repeated-failures)
+- [Failure notifications](#failure-notifications)
 - [System-managed workflows](#system-managed-workflows)
 - [Self-hosted setup](#self-hosted-setup)
   - [Prerequisites](#prerequisites)
@@ -83,12 +86,14 @@ concurrency: single
 ```
 
 Enforced for scheduled runs (a due cron tick is skipped, not queued, while a run is already active — see
-[Schedule](#schedule)) and for manual dispatch (`POST .../dispatch` rejects with 409 while a run is already
-active, rather than letting a second run silently race the first). **Not** enforced for a workflow fired
-programmatically via `fireTrigger` outside those two paths — e.g. `knowledge-librarian`'s dispatches from
-`LibrarianDispatchService`, which intentionally run one per domain lane in parallel (see
-[System-managed workflows](#system-managed-workflows)) and serialize within a lane through their own
-mechanism instead of this flag.
+[Cron schedule](#cron-schedule)) and for manual dispatch (`POST .../dispatch` rejects with 409 while a run
+is already active, rather than letting a second run silently race the first). Neither case queues the
+skipped/rejected attempt for later — see [Queued and waiting work](#queued-and-waiting-work) for what
+`concurrency: single` does and doesn't do, and where a skipped schedule tick shows up. **Not** enforced
+for a workflow fired programmatically via `fireTrigger` outside those two paths — e.g.
+`knowledge-librarian`'s dispatches from `LibrarianDispatchService`, which intentionally run one per domain
+lane in parallel (see [System-managed workflows](#system-managed-workflows)) and serialize within a lane
+through their own mechanism instead of this flag.
 
 ---
 
@@ -499,8 +504,8 @@ The Knowledge Center's librarian and domain-specialist agents (seeded by `Knowle
 
 | Runtime | What it is | Guardrails |
 |---|---|---|
-| `api` | The in-process ReAct loop against the agent's model provider (e.g. Anthropic API key under provider `claude`) — same engine `agent: <slug>` always used before runtimes existed. | `maxToolTurns` ↔ the loop's tool-call cap; `maxTokens`/`temperature`/`model` are **api-only** (no Claude Code equivalent). The step's `timeout_minutes` is **not** applied here — the loop is bounded by `maxToolTurns`, not wall-clock. |
-| `claude-code` | A headless Claude Code container (subscription OAuth), same mechanics as a raw [`claude-code`](#claude-code--run-claude-code-headlessly) step. The agent's `systemPrompt` is prepended to the step's `task` as one prompt (the container has no separate system-prompt channel). | `maxToolTurns` ↔ `--max-turns`; the step's `timeout_minutes` bounds the container execution. The agent's `model`/`maxTokens`/`temperature` are ignored. Runs are tracked as workflow step runs only — no `agent_runs` history row is written on this runtime. |
+| `api` | The in-process ReAct loop against the agent's model provider (e.g. Anthropic API key under provider `claude`) — same engine `agent: <slug>` always used before runtimes existed. | `maxToolTurns` ↔ the loop's tool-call cap; unset/`null` falls back to a guardrail default of 8 (the loop always needs a concrete bound). `maxTokens`/`temperature`/`model` are **api-only** (no Claude Code equivalent). The step's `timeout_minutes` is **not** applied here — the loop is bounded by `maxToolTurns`, not wall-clock. |
+| `claude-code` | A headless Claude Code container (subscription OAuth), same mechanics as a raw [`claude-code`](#claude-code--run-claude-code-headlessly) step. The agent's `systemPrompt` is prepended to the step's `task` as one prompt (the container has no separate system-prompt channel). | `maxToolTurns` ↔ `--max-turns`; unset/`null` omits the flag entirely, so the CLI runs with **no turn cap** (unlike the `api` runtime, there's no default-8 substitution here). The step's `timeout_minutes` bounds the container execution. The agent's `model`/`maxTokens`/`temperature` are ignored. Runs are tracked as workflow step runs only — no `agent_runs` history row is written on this runtime. |
 
 **Tool mapping (claude-code runtime only).** Each of the agent's bound tool ids must map to a Claude Code `--allowedTools` name (typically an MCP tool the Conductor MCP server also exposes) — any bound tool with no such mapping fails the step immediately with `AGENT_TOOL_NOT_AVAILABLE_ON_CLAUDE_CODE: <toolId>` rather than silently running with fewer tools than configured. An agent with no tools runs with no `--allowedTools` restriction.
 
@@ -621,6 +626,7 @@ Declared `outputs:` dot-paths (`body.<field>`) extract from the structured answe
 | `CLAUDE_CREDENTIAL_ERROR` | A declared `credentials:`/`env:` entry couldn't be resolved — no active connection for the named connector, the connector doesn't support CREDENTIAL, or a malformed entry. |
 | `CLAUDE_SUBSCRIPTION_NOT_CONFIGURED` | No Claude Code subscription OAuth token is configured for this runtime — self-hosted: the daemon host; cloud-run/runtime targets: the project's Claude Code credential. See "Auth & runtime targets" below. |
 | `CLAUDE_LAUNCH_ERROR` | The Cloud Run execution failed to launch, or ended without the container ever reporting a result (e.g. image pull failure, OOM kill) — the target itself resolved fine; something went wrong running on it. |
+| `CLOUD_RUN_LAUNCH_UNCONFIRMED` | Cloud Run never acknowledged the RunJob request within the launcher's retry budget (~60s of retried 20s waits), **and** the [launch reconciliation](#launch-reconciliation) search that follows it found no execution belonging to this step within 3 minutes. Still short of proof that nothing started, but no longer the bare guess it used to be. Distinct from `CLAUDE_LAUNCH_ERROR`, which does reflect a confirmed failure. |
 | `RUNTIME_TARGET_NOT_FOUND` | `runs-on` names a [runtime target](#runtime-targets-bring-your-own-cloud-run) that no longer exists in the project. |
 | `RUNTIME_TARGET_NOT_READY` | The resolved target isn't usable: a named target that exists but isn't `ACTIVE` (fix under **Integrations → Google Cloud** and retry), a project-designated `cloud-run` target in the same state (fix under **Settings → AI Providers → Runtime**), or — on `runs-on: cloud-run` with no designation and a blank builtin `GCP_CLOUDRUN_PROJECT_ID` — no runtime configured at all (this used to surface as an opaque `CLAUDE_LAUNCH_ERROR`; see [Cloud Run](#cloud-run)'s resolution order). |
 
@@ -1182,6 +1188,31 @@ The backend needs these env vars to target it — all optional once at least one
 | `GCP_CLOUDRUN_REGION` | Region the Job resource was created in. |
 | `GCP_CLOUDRUN_CLAUDE_JOB_NAME` | Name of the pre-created Job resource (`conductor-claude-code` above). |
 
+#### Launch reconciliation
+
+Cloud Run's `RunJob` API has no idempotency key, so Conductor can never simply retry a launch it is
+unsure about — a blind retry risks a second real container. That makes "did the launch happen?" a
+question worth answering precisely.
+
+Starting an execution has two completion points: Cloud Run *acknowledging* the request, and the
+resulting `Execution` resource *materializing*. Conductor waits up to 3×20s for the acknowledgement.
+Exhausting that budget is genuinely inconclusive — the request can still land afterwards. It has: in
+one production case the acknowledgement wait was abandoned and Cloud Run created the execution 41
+seconds later, which then ran the job to completion and reported a result nobody was listening for.
+
+So instead of guessing, Conductor looks. Every execution it launches carries a per-step unique
+`CONDUCTOR_WORKER_JOB_ID` in its container environment, and Cloud Run echoes container-env overrides
+onto the `Execution` it creates. After an unacknowledged launch, Conductor polls `ListExecutions` for
+up to 3 minutes looking for that id. Finding it recovers the step outright: the execution name is
+persisted and polled to completion exactly as a normal launch would be. Only when nothing turns up
+does the step fail with `CLOUD_RUN_LAUNCH_UNCONFIRMED`.
+
+As a last line of defence, a container that reports its own result after its step was already failed
+as `CLOUD_RUN_LAUNCH_UNCONFIRMED` has that report **adopted** rather than discarded — that status is
+an admission of ignorance, and a report from the container is evidence that outranks it. The step's
+result and outputs are corrected; the job and run are left as settled, since re-opening them would
+skip the dependent-job propagation a genuine success performs.
+
 ### Runtime targets (bring your own Cloud Run)
 
 A **runtime target** is a named, project-owned place jobs can run — your own GCP project instead of Conductor's. Reference it by name:
@@ -1245,6 +1276,59 @@ Credential-wise a runtime-target job behaves like `cloud-run`: the project's Cla
 
 ---
 
+## Queued and waiting work
+
+Most of the time, `PENDING` isn't a queue you need to think about. The engine drains its internal job
+queue (`workflow_job_queue`) on a 500ms tick with adaptive backoff (idle ticks back off to as slow as
+5s) — a run normally clears `PENDING` in well under a second. A run stuck in `PENDING` for any real
+length of time is a symptom (engine trouble, a stuck upstream dependency), not a designed backlog.
+
+**Real waiting happens at the self-hosted boundary.** A job with `runs-on: self-hosted` is handed to your
+daemon and sits in `AWAITING_PICKUP` — and, importantly, **stays** `AWAITING_PICKUP` for the job's entire
+execution once claimed; nothing flips it to `RUNNING`. What actually changes at claim time is
+`WorkflowJobRun.claimedAt`, stamped the first time the daemon fetches the job's dispatch payload
+(`GET .../jobs/{jobId}/dispatch-payload`) — idempotently, so a retry/restart re-fetch doesn't move it.
+The daemon runs one job at a time by default (`maxConcurrentRuns`, see
+[Concurrency and capacity](#concurrency-and-capacity)), so a burst of self-hosted dispatches backs up at
+the daemon rather than on the server.
+
+Note also that the *run* itself flips `PENDING` → `RUNNING` the moment its first job dispatches — even a
+self-hosted job that's still sitting unclaimed in `AWAITING_PICKUP`. So a run genuinely waiting on a
+runner is `RUNNING` at the run level, not `PENDING`; a raw `?status=` filter can't tell "waiting for a
+runner" apart from "actually executing."
+
+`GET .../runs` surfaces the unclaimed case on the run as `waitReason: "AWAITING_RUNNER"` (populated by
+the list endpoint only, not by get/dispatch/cancel) — set only while at least one `AWAITING_PICKUP` job
+on the run has no `claimedAt` yet, and cleared the moment it's claimed — and the UI shows it as
+**"Waiting for runner."** If a self-hosted job is never claimed — daemon stopped, never upgraded,
+whatever — the daily `cleanupStuckRuns` sweep fails any job still `AWAITING_PICKUP` after 24h (reason
+`DAEMON_PICKUP_TIMEOUT`), so a dead daemon doesn't leave a run waiting forever. The schema also has a
+`LOCAL_PICKUP_TIMEOUT` run status, shown in the UI as "Never picked up" — an older, run-level timeout for
+a `PENDING_LOCAL_PICKUP` state that no current dispatch path actually enters; if you ever see a run end
+this way, treat it as the same class of problem as `DAEMON_PICKUP_TIMEOUT` above.
+
+**`concurrency: single` does not queue** (see [Workflow file format](#workflow-file-format)) — it's a
+skip/reject gate, not a wait line. A due cron tick while a run is already active is **skipped** and
+recorded in `workflow_schedule_skips` (`GET .../schedule-skips`), visible in the UI. A manual dispatch
+against an active `concurrency: single` workflow is **rejected with 409** instead of being held for
+later — neither case leaves anything queued to run once the active run finishes.
+
+**Checking what's queued.** `GET .../runs` takes a repeated `?status=` filter (e.g.
+`?status=PENDING&status=RUNNING`) for the raw run statuses; omit it to get every status, and an
+unrecognized value 400s. Because a runner-blocked run is `RUNNING` at the run level (see above), `status`
+alone can't express "queued" the way a human means it. A derived `?state=queued|running` filter covers
+that instead: `queued` matches `PENDING`/`PENDING_LOCAL_PICKUP` **or** any run with an unclaimed
+`AWAITING_PICKUP` job (regardless of its own run-level status); `running` matches
+`RUNNING`/`CANCELLING` **minus** that same unclaimed-job case. The two are mutually exclusive but not
+exhaustive over every non-terminal run — `LOCAL_PICKUP_TIMEOUT` is non-terminal and matches neither;
+use `status` or the unfiltered list to see it. `state` and `status` are mutually exclusive; supplying
+both 400s. The workflow's **Runs** tab uses `state`
+to offer its Queued / Running / All filters, and the `list_workflow_runs` MCP tool takes the same `state`
+parameter — callers should prefer it over `status=PENDING` for exactly the reason above — plus `status` as
+the raw escape hatch.
+
+---
+
 ## Cancelling a run
 
 A **Cancel run** button appears on the run detail page for any run that's `PENDING` or `RUNNING` (also available as the `cancel_workflow_run` MCP tool, or `POST .../runs/{runId}/cancel`). Cancellation is a request, not an instant stop: the run immediately flips to **`CANCELLING`** — no further jobs are dispatched, and any job that hadn't started yet is marked `CANCELLED` right away — while whatever step is actually in flight is torn down best-effort by its execution backend. The run settles to the terminal **`CANCELLED`** once nothing is left running, typically within one poll interval (a few seconds). Cancelling an already-`CANCELLING` run is a no-op; cancelling a run that's already finished (`SUCCESS`/`FAILED`/`CANCELLED`) fails with a 409.
@@ -1255,6 +1339,25 @@ What "torn down" means depends on where the in-flight step is running:
 - **Self-hosted worker VM** (`docker://` steps via `conductor-worker`): the container is `docker kill`ed then removed.
 - **Kestra** (`kestra` steps): the Kestra execution is killed via its Executions API.
 - **Self-hosted daemon** (`runs-on: self-hosted`, any step type, picked up by the `conductor` CLI's daemon): **soft-cancel only** — the job/step is marked `CANCELLED` and Conductor stops waiting on it, but the daemon isn't (yet) told to kill an already-running container. If one was in flight, it keeps running to completion in the background and its result is simply discarded. Hard-kill support for this path is a known follow-up.
+
+### Cancelling every queued run
+
+`POST .../runs/cancel-queued` cancels the queued backlog for a workflow in one call, returning
+`{ cancelledCount }`. It's a bulk convenience over the same per-run cancellation path above — same
+teardown semantics per execution backend, including the self-hosted soft-cancel limitation — not a
+different mechanism.
+
+A run qualifies when it's `PENDING`, **or** it has an unclaimed `AWAITING_PICKUP` job and no job that's
+either `RUNNING` or an already-claimed `AWAITING_PICKUP` (a claimed one is actively executing on a
+daemon). That's deliberately narrower than the UI's Queued *display* filter (`state=queued` above): a run
+with a genuinely in-flight job is never bulk-cancelled just because some other job on it also happens to
+be unclaimed — this endpoint only ever touches work that hasn't actually started.
+
+This is a separate verb from pausing intake: disabling a workflow (the `enabled` toggle — see
+[Auto-pause on repeated failures](#auto-pause-on-repeated-failures) for the automatic case) stops new
+runs from being created but does **not** cancel whatever is already queued or running. Use
+`cancel-queued` to drain an existing backlog and the `enabled` toggle to stop building a new one; use
+both together to actually stop a workflow.
 
 ---
 
@@ -1301,6 +1404,20 @@ already carries (see each step type's failure-modes table):
 - Deliberately undecided: whether the "doctor" is a builtin system agent, a workflow, or a plain
   synchronous tool call — that's a call for whoever builds this, informed by real explanation/remediation
   data once Phase 2's taxonomy has seen production use.
+
+## Failure notifications
+
+A run that settles to `FAILED` — from any of the completion paths above (all-jobs-terminal, the 24h
+stuck-run sweep, a self-hosted daemon's job-failure callback, a zero-jobs-enqueued dispatch, or the
+legacy whole-run daemon report) — posts once to Discord if the project has a **Workflows** notification
+channel configured (**Settings → Notifications → Add Channel**). The alert includes the workflow name,
+the failing job/step and its `errorReason` when one is resolvable, the same human-readable
+explanation/remediation text shown on the run detail page, and a link straight to the run. A `CANCELLED`
+run never notifies.
+
+The auto-pause trip (previous section) posts to the same **Workflows** channel as its own event — before
+this, an auto-pause never produced a Discord message at all, since it belonged to no notification
+channel.
 
 ## System-managed workflows
 

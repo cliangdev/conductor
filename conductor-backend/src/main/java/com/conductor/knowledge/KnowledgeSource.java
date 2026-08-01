@@ -95,6 +95,11 @@ public class KnowledgeSource {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
+    /** Set alongside {@code status = SKIPPED} -- why the librarian judged this source not worth a
+     *  page, e.g. "duplicate of existing page" or "not material". Null for every other status. */
+    @Column(name = "skip_reason", columnDefinition = "TEXT")
+    private String skipReason;
+
     /** Set by {@code KnowledgeRetentionService} when this row's payload has been compacted (inline
      *  {@code payload} nulled and any offloaded GCS object deleted) -- independent of a DEAD row's
      *  later hard deletion. Null means "not yet compacted". */
@@ -170,6 +175,9 @@ public class KnowledgeSource {
 
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+
+    public String getSkipReason() { return skipReason; }
+    public void setSkipReason(String skipReason) { this.skipReason = skipReason; }
 
     public OffsetDateTime getPurgedAt() { return purgedAt; }
     public void setPurgedAt(OffsetDateTime purgedAt) { this.purgedAt = purgedAt; }

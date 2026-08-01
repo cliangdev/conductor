@@ -120,12 +120,13 @@ export function retryDeadKnowledgeSources(projectId: string, token: string): Pro
 
 // ── Ingestion inbox (sources) ───────────────────────────────────────────────
 
-export type KnowledgeSourceStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'DEAD'
+export type KnowledgeSourceStatus = 'PENDING' | 'PROCESSING' | 'PROCESSED' | 'SKIPPED' | 'DEAD'
 
 export interface KnowledgeSourceCounts {
   pending: number
   processing: number
   processed: number
+  skipped: number
   dead: number
 }
 
@@ -155,6 +156,9 @@ export interface KnowledgeSourceDto {
   status: KnowledgeSourceStatus
   attempts: number
   errorMessage?: string | null
+  /** Set when status is SKIPPED — why the librarian judged this source not worth a page. Null for
+   *  every other status. */
+  skipReason?: string | null
   /** Set once retention has compacted this source's payload; null means it's still intact. */
   purgedAt?: string | null
   /** The domain lane this source was routed to at submit time. Null is the unclassified/generalist lane. */
@@ -172,6 +176,33 @@ export function listKnowledgeSources(
   if (opts?.domain) params.set('domain', opts.domain)
   return apiGet<KnowledgeSourceDto[]>(
     `/api/v1/projects/${projectId}/knowledge/sources?${params.toString()}`,
+    token,
+  )
+}
+
+export interface KnowledgePageDismissResult {
+  path: string
+  /** The dismissed page's new (tombstone) version. */
+  version: number
+  /** Path of the `_curation.md` page the dismissal reason was recorded on — name it in the success toast. */
+  curationPagePath: string
+  curationPageVersion: number
+}
+
+/**
+ * "Not worth filing": deletes the page and records the reason as a dated rule on the `_curation.md`
+ * that governs it, atomically (see docs/knowledge.md#curation). `baseVersion` is the version last read
+ * for this page — a stale value 409s with a ready-to-show message ("This page changed since you opened
+ * it — reload and try again"), so callers don't need to special-case the conflict body.
+ */
+export function dismissKnowledgePage(
+  projectId: string,
+  body: { path: string; baseVersion: number; reason: string },
+  token: string,
+): Promise<KnowledgePageDismissResult> {
+  return apiPost<KnowledgePageDismissResult>(
+    `/api/v1/projects/${projectId}/knowledge/pages/dismiss`,
+    body,
     token,
   )
 }
@@ -267,4 +298,69 @@ export function createKnowledgeDomain(
   token: string,
 ): Promise<KnowledgeDomainDto> {
   return apiPost<KnowledgeDomainDto>(`/api/v1/projects/${projectId}/knowledge/domains`, request, token)
+}
+
+// ── Pipeline (issue #342) ────────────────────────────────────────────────────
+// Read-only observability over the source-to-wiki-page pipeline: a live per-stage health snapshot,
+// and a per-item trace walk. See docs/knowledge.md#pipeline--tracing.
+
+export type PipelineStage = 'WEBHOOKS' | 'FEEDS' | 'DIGESTS' | 'INBOX' | 'LIBRARIAN_RUNS' | 'PAGES_WRITTEN'
+
+export interface PipelineStageHealth {
+  stage: PipelineStage
+  label: string
+  /** Status-keyed counts; bucket names vary per stage (e.g. DIGESTS always has a `skipped` key). */
+  counts: Record<string, number>
+}
+
+/**
+ * A directed edge in the pipeline's actual data-flow graph (issue #342 correction) — data-driven, not
+ * positional. WEBHOOKS and FEEDS are independent producer paths that both feed INBOX (FEEDS by way of
+ * DIGESTS first); a diagram must render this real branching shape from `edges`, never infer an edge
+ * from two stages being adjacent in some list. See `PipelineTopology` on the backend.
+ */
+export interface PipelineStageEdge {
+  from: PipelineStage
+  to: PipelineStage
+}
+
+export interface PipelineHealthDto {
+  stages: PipelineStageHealth[]
+  edges: PipelineStageEdge[]
+}
+
+export function getPipelineHealth(projectId: string, token: string): Promise<PipelineHealthDto> {
+  return apiGet<PipelineHealthDto>(`/api/v1/projects/${projectId}/knowledge/pipeline/health`, token)
+}
+
+export interface PipelineTraceNode {
+  stage: PipelineStage
+  id: string
+  status?: string | null
+  occurredAt?: string | null
+  label?: string | null
+  /** Frontend-routable path, or null/absent if this node isn't linkable. */
+  link?: string | null
+  /** True when the underlying record no longer exists (purged by retention) — a terminal placeholder. */
+  degraded: boolean
+}
+
+export interface PipelineTraceDto {
+  nodes: PipelineTraceNode[]
+}
+
+/** Exactly one anchor identifies the item to trace. */
+export type PipelineTraceAnchor =
+  | { pageId: string }
+  | { sourceId: string }
+  | { feedId: string }
+  | { webhookEventId: string }
+
+export function getPipelineTrace(
+  projectId: string,
+  anchor: PipelineTraceAnchor,
+  token: string,
+): Promise<PipelineTraceDto> {
+  const params = new URLSearchParams(anchor as Record<string, string>)
+  return apiGet<PipelineTraceDto>(`/api/v1/projects/${projectId}/knowledge/pipeline/trace?${params.toString()}`, token)
 }

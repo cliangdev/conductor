@@ -110,7 +110,8 @@ public class AgentController implements AgentsApi {
                 request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null,
                 request.getAvatarEmoji(),
-                request.getAvatarColor() != null ? request.getAvatarColor().getValue() : null);
+                request.getAvatarColor() != null ? request.getAvatarColor().getValue() : null,
+                request.getTag());
         Agent created = agentService.create(projectId, input);
         return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(created));
     }
@@ -129,7 +130,8 @@ public class AgentController implements AgentsApi {
                 request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null,
                 request.getAvatarEmoji(),
-                request.getAvatarColor() != null ? request.getAvatarColor().getValue() : null);
+                request.getAvatarColor() != null ? request.getAvatarColor().getValue() : null,
+                request.getTag());
         Agent updated = agentService.update(projectId, agentId, input);
         return ResponseEntity.ok(toResponse(updated));
     }
@@ -240,6 +242,7 @@ public class AgentController implements AgentsApi {
                         ? agent.getAvatarEmoji() : AgentAvatarDefaults.defaultEmoji(agent.getSlug()))
                 .avatarColor(AgentResponse.AvatarColorEnum.fromValue(agent.getAvatarColor() != null
                         ? agent.getAvatarColor() : AgentAvatarDefaults.defaultColor(agent.getSlug())))
+                .tag(agent.getTag())
                 .isDefault(DefaultAgentSlugs.isDefault(agent.getSlug()))
                 .createdAt(agent.getCreatedAt())
                 .updatedAt(agent.getUpdatedAt());
@@ -343,11 +346,11 @@ public class AgentController implements AgentsApi {
     // ---- access control ----
 
     /**
-     * Member-level gate: accepts either a {@link User} principal (checked via
-     * {@link ProjectSecurityService#isProjectMember}) or a project-scoped machine principal
-     * ({@link ProjectScopedPrincipal} -- a project API key or a run-scoped MCP token) whose
-     * {@code projectId} matches the requested project -- mirroring
-     * {@code KnowledgeController#requireProjectAccess}.
+     * Member-level gate: accepts either a {@link User} principal who is a project member, or a
+     * project-scoped machine principal ({@link ProjectScopedPrincipal} -- a project API key or a
+     * run-scoped MCP token) whose {@code projectId} matches the requested project. The rule itself
+     * lives in {@link ProjectSecurityService#requireProjectAccess}, shared with every other
+     * project-scoped controller.
      */
     private void requireMember(String projectId) {
         projectSecurityService.requireProjectAccess(projectId);

@@ -54,7 +54,7 @@ public class DiscordProvider implements NotificationProvider {
     }
 
     @Override
-    public String format(NotificationEvent event) {
+    public String format(NotificationMessage event) {
         Map<String, String> meta = event.getMetadata();
         String workItemId = meta.getOrDefault("workItemId", "");
         String workItemTitle = meta.getOrDefault("workItemTitle", workItemId);
@@ -129,6 +129,35 @@ public class DiscordProvider implements NotificationProvider {
                 title = "Member Role Changed";
                 description = memberName + " role changed to " + role;
                 link = frontendUrl + "/app/projects/" + projectId + "/members";
+            }
+            case WORKFLOW_RUN_FAILED -> {
+                String workflowName = meta.getOrDefault("workflowName", "Workflow");
+                String stepId = meta.getOrDefault("stepId", meta.getOrDefault("jobId", ""));
+                String errorReason = meta.getOrDefault("errorReason", "");
+                String summary = meta.getOrDefault("summary", "");
+                String remediation = meta.getOrDefault("remediation", "");
+
+                title = workflowName + " run failed";
+                StringBuilder desc = new StringBuilder();
+                if (!stepId.isBlank()) {
+                    desc.append("Failed at **").append(stepId).append("**");
+                    if (!errorReason.isBlank()) {
+                        desc.append(" (").append(errorReason).append(")");
+                    }
+                } else if (!errorReason.isBlank()) {
+                    desc.append(errorReason);
+                } else {
+                    desc.append("The run did not complete successfully.");
+                }
+                if (!summary.isBlank()) {
+                    desc.append("\n\n").append(summary);
+                }
+                if (!remediation.isBlank()) {
+                    desc.append("\n").append(remediation);
+                }
+                description = desc.toString();
+                link = meta.getOrDefault("runUrl", link);
+                color = COLOR_RED;
             }
             default -> {
                 title = event.getEventType().getDescription();

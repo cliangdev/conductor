@@ -4,19 +4,21 @@ import com.conductor.entity.Asset;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.service.view.AssetInput;
 import com.conductor.service.view.AssetPatch;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalOrigin;
+import com.conductor.signal.SignalTypes;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -32,18 +34,18 @@ public class AssetService {
     private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
     private final WorkflowDefinitionResolver resolver;
-    private final NotificationDispatcher notificationDispatcher;
+    private final SignalBus signalBus;
 
     public AssetService(AssetRepository assetRepository,
                         WorkItemRepository workItemRepository,
                         ProjectSecurityService projectSecurityService,
                         WorkflowDefinitionResolver resolver,
-                        NotificationDispatcher notificationDispatcher) {
+                        SignalBus signalBus) {
         this.assetRepository = assetRepository;
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.resolver = resolver;
-        this.notificationDispatcher = notificationDispatcher;
+        this.signalBus = signalBus;
     }
 
     @Transactional(readOnly = true)
@@ -68,8 +70,10 @@ public class AssetService {
         asset.setDone(Boolean.TRUE.equals(input.done()));
         assetRepository.save(asset);
 
-        notificationDispatcher.dispatch(NotificationEvent.of(EventType.ASSET_ADDED, projectId,
-                Map.of("workItemId", workItem.getId(), "workItemTitle", workItem.getTitle(), "assetType", asset.getType())));
+        signalBus.publish(Signal.of(SignalTypes.CONDUCTOR_WORK_ITEM_ASSET_ADDED, projectId, workItem.getId(),
+                Instant.now(),
+                Map.of("workItemId", workItem.getId(), "workItemTitle", workItem.getTitle(), "assetType", asset.getType()),
+                new SignalOrigin("work_item", workItem.getId())));
         return asset;
     }
 

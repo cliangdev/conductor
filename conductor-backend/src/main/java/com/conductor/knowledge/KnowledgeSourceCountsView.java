@@ -8,6 +8,7 @@ public record KnowledgeSourceCountsView(
         long pending,
         long processing,
         long processed,
+        long skipped,
         long dead
 ) {
 }

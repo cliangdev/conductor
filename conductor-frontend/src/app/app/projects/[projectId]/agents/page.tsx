@@ -7,20 +7,15 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowRightIcon, BotIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { usePermissions } from '@/contexts/PermissionsContext'
-import { listAgents, updateAgent, deleteAgent, apiErrorMessage, type Agent } from '@/lib/api'
+import { listAgents, type Agent } from '@/lib/api'
 import { DefaultAgentBadge } from '@/components/agents/DefaultAgentBadge'
 import { AgentAvatar } from '@/components/agents/AgentAvatar'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
-import { StatusBadge } from '@/components/ui/status-badge'
-import { Modal } from '@/components/ui/modal'
-import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
-import { RowActionsMenu } from '@/components/ui/RowActionsMenu'
+import { TagBadge } from '@/components/ui/TagBadge'
 import { Can } from '@/components/auth/Can'
-import { useToast } from '@/components/ui/toast'
 import { Card } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 
@@ -28,14 +23,9 @@ export default function AgentsPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const { accessToken } = useAuth()
   const router = useRouter()
-  const { showToast } = useToast()
-  const { can } = usePermissions()
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
-  const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null)
-  const [deleting, setDeleting] = useState(false)
 
-  const canManage = can('agent.manage')
   const base = `/app/projects/${projectId}/agents`
 
   useEffect(() => {
@@ -45,32 +35,6 @@ export default function AgentsPage() {
       .catch(console.error)
       .finally(() => setLoading(false))
   }, [projectId, accessToken])
-
-  async function handleToggleState(agent: Agent) {
-    if (!accessToken) return
-    const nextState = agent.state === 'ACTIVE' ? 'DRAFT' : 'ACTIVE'
-    try {
-      // State-only patch — must NOT include toolIds (would clear bindings).
-      const updated = await updateAgent(projectId, agent.id, { state: nextState }, accessToken)
-      setAgents((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))
-    } catch (e) {
-      showToast(apiErrorMessage(e, 'Failed to update agent.'), 'error')
-    }
-  }
-
-  async function handleDelete() {
-    if (!accessToken || !deleteTarget) return
-    setDeleting(true)
-    try {
-      await deleteAgent(projectId, deleteTarget.id, accessToken)
-      setAgents((prev) => prev.filter((a) => a.id !== deleteTarget.id))
-      setDeleteTarget(null)
-    } catch (e) {
-      showToast(apiErrorMessage(e, 'Failed to delete agent.'), 'error')
-    } finally {
-      setDeleting(false)
-    }
-  }
 
   const newAgentAction = (
     <Can do="agent.manage">
@@ -119,32 +83,11 @@ export default function AgentsPage() {
               onClick={() => router.push(`${base}/${agent.id}/overview`)}
               className="bg-card rounded-lg border border-border p-5 h-full flex flex-col gap-2 hover:border-primary/50 transition-colors cursor-pointer"
             >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <AgentAvatar emoji={agent.avatarEmoji} color={agent.avatarColor} size="sm" />
-                  <span className="font-medium text-foreground truncate">{agent.name}</span>
-                  {agent.isDefault && <DefaultAgentBadge />}
-                </div>
-                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                  {canManage ? (
-                    <Switch
-                      checked={agent.state === 'ACTIVE'}
-                      onCheckedChange={() => handleToggleState(agent)}
-                      aria-label={agent.state === 'ACTIVE' ? 'Set to draft' : 'Set to active'}
-                    />
-                  ) : (
-                    <StatusBadge
-                      status={agent.state === 'ACTIVE' ? 'approved' : 'draft'}
-                      label={agent.state === 'ACTIVE' ? 'Active' : 'Draft'}
-                    />
-                  )}
-                  {canManage && (
-                    <RowActionsMenu
-                      onEdit={() => router.push(`${base}/${agent.id}/settings`)}
-                      onDelete={() => setDeleteTarget(agent)}
-                    />
-                  )}
-                </div>
+              <div className="flex items-center gap-2 min-w-0">
+                <AgentAvatar emoji={agent.avatarEmoji} color={agent.avatarColor} size="sm" />
+                <span className="font-medium text-foreground truncate">{agent.name}</span>
+                {agent.isDefault && <DefaultAgentBadge />}
+                {agent.tag && <TagBadge tag={agent.tag} />}
               </div>
               {agent.description && (
                 <p className="text-sm text-muted-foreground line-clamp-2">{agent.description}</p>
@@ -158,30 +101,6 @@ export default function AgentsPage() {
           ))}
         </div>
       )}
-
-      <Modal
-        open={!!deleteTarget}
-        onOpenChange={(o) => { if (!o) setDeleteTarget(null) }}
-        title="Delete agent"
-      >
-        <p className="text-sm text-foreground">
-          Permanently delete <strong>{deleteTarget?.name}</strong>? This cannot be undone.
-        </p>
-        {deleteTarget?.isDefault && (
-          <p className="text-xs text-foreground-subtle mt-2">
-            This is a default agent seeded by Conductor — it will be recreated automatically the next
-            time it&apos;s needed.
-          </p>
-        )}
-        <div className="flex gap-3 mt-4">
-          <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
-            {deleting ? 'Deleting…' : 'Delete agent'}
-          </Button>
-          <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
-            Cancel
-          </Button>
-        </div>
-      </Modal>
     </PageContainer>
   )
 }

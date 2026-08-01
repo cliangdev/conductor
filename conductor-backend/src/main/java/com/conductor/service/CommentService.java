@@ -9,9 +9,6 @@ import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.CommentReplyRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
@@ -20,11 +17,16 @@ import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.service.view.CommentReplyView;
 import com.conductor.service.view.CommentWithRepliesView;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalOrigin;
+import com.conductor.signal.SignalTypes;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -39,7 +41,7 @@ public class CommentService {
     private final ProjectMemberRepository projectMemberRepository;
     private final ProjectSecurityService projectSecurityService;
     private final StorageService storageService;
-    private final NotificationDispatcher notificationDispatcher;
+    private final SignalBus signalBus;
     private final ProjectRepository projectRepository;
 
     public CommentService(
@@ -50,7 +52,7 @@ public class CommentService {
             ProjectMemberRepository projectMemberRepository,
             ProjectSecurityService projectSecurityService,
             StorageService storageService,
-            NotificationDispatcher notificationDispatcher,
+            SignalBus signalBus,
             ProjectRepository projectRepository) {
         this.commentRepository = commentRepository;
         this.commentReplyRepository = commentReplyRepository;
@@ -59,7 +61,7 @@ public class CommentService {
         this.projectMemberRepository = projectMemberRepository;
         this.projectSecurityService = projectSecurityService;
         this.storageService = storageService;
-        this.notificationDispatcher = notificationDispatcher;
+        this.signalBus = signalBus;
         this.projectRepository = projectRepository;
     }
 
@@ -91,15 +93,18 @@ public class CommentService {
 
         String excerpt = buildExcerpt(content);
         String authorLabel = caller.getName() != null ? caller.getName() : caller.getEmail();
-        notificationDispatcher.dispatch(NotificationEvent.of(
-                EventType.COMMENT_ADDED,
+        signalBus.publish(Signal.of(
+                SignalTypes.CONDUCTOR_WORK_ITEM_COMMENT_ADDED,
                 workItem.getProject().getId(),
+                workItem.getId(),
+                Instant.now(),
                 Map.of(
                         "workItemId", workItem.getId(),
                         "workItemTitle", workItem.getTitle(),
                         "commentAuthor", authorLabel,
                         "excerpt", excerpt
-                )));
+                ),
+                new SignalOrigin("comment", workItem.getId())));
 
         return comment;
     }
@@ -171,15 +176,18 @@ public class CommentService {
         WorkItem workItem = comment.getWorkItem();
         String excerpt = buildExcerpt(content);
         String authorLabel = caller.getName() != null ? caller.getName() : caller.getEmail();
-        notificationDispatcher.dispatch(NotificationEvent.of(
-                EventType.COMMENT_REPLY,
+        signalBus.publish(Signal.of(
+                SignalTypes.CONDUCTOR_WORK_ITEM_COMMENT_REPLIED,
                 workItem.getProject().getId(),
+                workItem.getId(),
+                Instant.now(),
                 Map.of(
                         "workItemId", workItem.getId(),
                         "workItemTitle", workItem.getTitle(),
                         "commentAuthor", authorLabel,
                         "excerpt", excerpt
-                )));
+                ),
+                new SignalOrigin("comment", workItem.getId())));
 
         return toCommentReplyView(reply);
     }

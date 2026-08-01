@@ -37,6 +37,7 @@ class WorkflowExecutionEngineEnqueueTest {
     @Mock WorkflowDefinitionRepository workflowRepository;
     @Mock WorkflowJobOrchestrator orchestrator;
     @Mock WorkflowFailureCircuitBreaker circuitBreaker;
+    @Mock WorkflowRunFailureNotifier runFailureNotifier;
 
     WorkflowExecutionEngine engine;
 
@@ -45,7 +46,7 @@ class WorkflowExecutionEngineEnqueueTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
-                circuitBreaker);
+                circuitBreaker, runFailureNotifier, 4);
     }
 
     @Test

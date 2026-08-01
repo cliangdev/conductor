@@ -8,5 +8,8 @@ public enum KnowledgeSourceStatus {
     PENDING,
     PROCESSING,
     PROCESSED,
+    /** Reached the inbox, was read, and was judged not worth a page -- distinct from PROCESSED
+     *  (filed) and DEAD (never got a verdict; exhausted retries without ever being looked at). */
+    SKIPPED,
     DEAD
 }

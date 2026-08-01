@@ -10,8 +10,9 @@ export interface TabItem {
   label: ReactNode
   /** When set, the tab renders as a link (route-based tabs); otherwise it's a button. */
   href?: string
-  /** Optional count pill rendered after the label (e.g. result counts). */
-  count?: number
+  /** Optional count pill rendered after the label (e.g. result counts). A string lets a caller show
+   *  an honest lower bound like "50+" when the real total isn't known. */
+  count?: number | string
 }
 
 /**

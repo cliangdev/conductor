@@ -9,6 +9,7 @@ import com.conductor.support.AbstractNoneWebIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -219,6 +220,71 @@ class KnowledgeIngestionServiceIntegrationTest extends AbstractNoneWebIntegratio
         assertThat(retried).isZero();
         assertThat(sourceRepository.findById(otherDead.getId()).orElseThrow().getStatus())
                 .isEqualTo(KnowledgeSourceStatus.DEAD);
+    }
+
+    // ---- SKIPPED (getSourceCounts, markSkipped) ----
+
+    @Test
+    void getSourceCountsReportsSkipped() {
+        newSourceWithStatus(projectId, KnowledgeSourceStatus.SKIPPED);
+        newSourceWithStatus(projectId, KnowledgeSourceStatus.SKIPPED);
+        newSourceWithStatus(projectId, KnowledgeSourceStatus.PENDING);
+
+        KnowledgeSourceCountsView counts = ingestionService.getSourceCounts(projectId);
+
+        assertThat(counts.skipped()).isEqualTo(2);
+        assertThat(counts.pending()).isEqualTo(1);
+    }
+
+    // markSkipped is a bulk @Modifying query (flushAutomatically = true) -- unlike the rest of this
+    // class it needs an actual transaction around the call for that flush to have something to flush
+    // into, so these three tests are individually @Transactional (auto-rolled-back) rather than
+    // relying on this class's own claim-or-load isolation.
+
+    @Test
+    @Transactional
+    void markSkippedMovesPendingToSkippedWithReason() {
+        KnowledgeSource pending = newSourceWithStatus(projectId, KnowledgeSourceStatus.PENDING);
+
+        int updated = sourceRepository.markSkipped(projectId, List.of(pending.getId()), "duplicate of existing page");
+
+        assertThat(updated).isEqualTo(1);
+        KnowledgeSource reloaded = sourceRepository.findById(pending.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(KnowledgeSourceStatus.SKIPPED);
+        assertThat(reloaded.getSkipReason()).isEqualTo("duplicate of existing page");
+    }
+
+    @Test
+    @Transactional
+    void markSkippedIsNoOpOnProcessedRow() {
+        KnowledgeSource processed = newSourceWithStatus(projectId, KnowledgeSourceStatus.PROCESSED);
+
+        int updated = sourceRepository.markSkipped(projectId, List.of(processed.getId()), "too late");
+
+        assertThat(updated).isZero();
+        KnowledgeSource reloaded = sourceRepository.findById(processed.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(KnowledgeSourceStatus.PROCESSED);
+        assertThat(reloaded.getSkipReason()).isNull();
+    }
+
+    @Test
+    @Transactional
+    void markSkippedIsNoOpOnDeadRow() {
+        KnowledgeSource dead = newSourceWithStatus(projectId, KnowledgeSourceStatus.DEAD);
+
+        int updated = sourceRepository.markSkipped(projectId, List.of(dead.getId()), "too late");
+
+        assertThat(updated).isZero();
+        KnowledgeSource reloaded = sourceRepository.findById(dead.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(KnowledgeSourceStatus.DEAD);
+        assertThat(reloaded.getSkipReason()).isNull();
+    }
+
+    @Test
+    void skippedSourceDoesNotMakeLaneLookBusy() {
+        newSourceWithStatus(projectId, KnowledgeSourceStatus.SKIPPED);
+
+        assertThat(sourceRepository.existsPendingOrProcessingInLane(projectId, null)).isFalse();
     }
 
     private KnowledgeSource newSourceWithStatus(String forProjectId, KnowledgeSourceStatus status) {

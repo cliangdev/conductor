@@ -83,8 +83,9 @@ public class RuntimeTargetController implements RuntimeTargetsApi {
     /**
      * Member-level gate: accepts either a {@link User} principal or a project-scoped machine
      * principal ({@link ProjectScopedPrincipal} -- a project API key or a run-scoped MCP token)
-     * whose {@code projectId} matches the requested project -- mirroring
-     * {@code KnowledgeController#requireProjectAccess}.
+     * whose {@code projectId} matches the requested project. The rule itself lives in
+     * {@link ProjectSecurityService#requireProjectAccess}, shared with every other project-scoped
+     * controller.
      */
     private void requireMember(String projectId) {
         projectSecurityService.requireProjectAccess(projectId);

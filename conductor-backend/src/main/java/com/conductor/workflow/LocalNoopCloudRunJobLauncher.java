@@ -38,4 +38,13 @@ public class LocalNoopCloudRunJobLauncher implements CloudRunJobLauncher {
     public Optional<String> tryResolveExecutionName(CloudRunTarget target, String operationName) {
         throw new UnsupportedOperationException(MESSAGE);
     }
+
+    /**
+     * The one method here that does NOT throw: its interface contract promises never to, so a caller is
+     * entitled to use it defensively. "No execution found" is also the truthful answer locally.
+     */
+    @Override
+    public ExecutionSearch findExecutionByWorkerJobId(CloudRunTarget target, String workerJobId) {
+        return ExecutionSearch.notFound();
+    }
 }

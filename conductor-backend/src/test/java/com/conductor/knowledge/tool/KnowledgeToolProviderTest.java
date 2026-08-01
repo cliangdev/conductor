@@ -177,7 +177,7 @@ class KnowledgeToolProviderTest {
         when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
         List<KnowledgeConflictException.Conflict> conflicts = List.of(
                 new KnowledgeConflictException.Conflict("dir/page.md", 3, "---\ntype: feature\n---\nold content"));
-        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), anyList(), any(Actor.class)))
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), anyList(), anyList(), any(Actor.class)))
                 .thenThrow(new KnowledgeConflictException(conflicts));
 
         Optional<AgentTool> tool = provider.resolve(PROJECT_ID, "knowledge:write_knowledge_pages");
@@ -201,7 +201,7 @@ class KnowledgeToolProviderTest {
     @Test
     void writeKnowledgePagesUsesAgentActorFromInvocationContext() throws Exception {
         when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
-        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), anyList(), any(Actor.class)))
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), anyList(), anyList(), any(Actor.class)))
                 .thenReturn(List.of());
 
         Optional<AgentTool> tool = provider.resolve(PROJECT_ID, "knowledge:write_knowledge_pages");
@@ -209,8 +209,64 @@ class KnowledgeToolProviderTest {
         tool.get().invoke(args, new ToolInvocationContext(PROJECT_ID, "librarian-agent-id", "run-1"));
 
         org.mockito.ArgumentCaptor<Actor> actorCaptor = org.mockito.ArgumentCaptor.forClass(Actor.class);
-        org.mockito.Mockito.verify(pageService).batchWrite(eq(PROJECT_ID), anyList(), anyList(), actorCaptor.capture());
+        org.mockito.Mockito.verify(pageService).batchWrite(eq(PROJECT_ID), anyList(), anyList(), anyList(), actorCaptor.capture());
         assertThat(actorCaptor.getValue().kind()).isEqualTo("agent");
         assertThat(actorCaptor.getValue().id()).isEqualTo("librarian-agent-id");
+    }
+
+    @Test
+    void writeKnowledgePagesSchemaDeclaresSkippedWithSourceIdAndReasonRequired() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+
+        Optional<AgentTool> tool = provider.resolve(PROJECT_ID, "knowledge:write_knowledge_pages");
+        Map<String, Object> schema = tool.get().inputSchema();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> properties = (Map<String, Object>) schema.get("properties");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> skipped = (Map<String, Object>) properties.get("skipped");
+        assertThat(skipped.get("type")).isEqualTo("array");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> items = (Map<String, Object>) skipped.get("items");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> itemProps = (Map<String, Object>) items.get("properties");
+        assertThat(itemProps).containsKeys("sourceId", "reason");
+        assertThat(items.get("required")).isEqualTo(List.of("sourceId", "reason"));
+    }
+
+    @Test
+    void writeKnowledgePagesForwardsSkippedEntriesToBatchWrite() throws Exception {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), anyList(), anyList(), any(Actor.class)))
+                .thenReturn(List.of());
+
+        Optional<AgentTool> tool = provider.resolve(PROJECT_ID, "knowledge:write_knowledge_pages");
+        Map<String, Object> args = Map.of("writes", List.of(),
+                "skipped", List.of(Map.of("sourceId", "src-1", "reason", "not material")));
+        ToolResult result = tool.get().invoke(args, new ToolInvocationContext(PROJECT_ID, "agent-1", "run-1"));
+
+        assertThat(result.ok()).isTrue();
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<com.conductor.knowledge.page.SkippedSource>> skippedCaptor =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.Mockito.verify(pageService)
+                .batchWrite(eq(PROJECT_ID), anyList(), anyList(), skippedCaptor.capture(), any(Actor.class));
+        assertThat(skippedCaptor.getValue()).containsExactly(
+                new com.conductor.knowledge.page.SkippedSource("src-1", "not material"));
+    }
+
+    @Test
+    void writeKnowledgePagesBlankSkipReasonReturnsToolErrorNotThrownException() {
+        when(projectSettingsService.isKnowledgeEnabled(PROJECT_ID)).thenReturn(true);
+        when(pageService.batchWrite(eq(PROJECT_ID), anyList(), anyList(), anyList(), any(Actor.class)))
+                .thenThrow(new com.conductor.exception.BusinessException(
+                        "skipped entry for source src-1 requires a non-blank reason"));
+
+        Optional<AgentTool> tool = provider.resolve(PROJECT_ID, "knowledge:write_knowledge_pages");
+        Map<String, Object> args = Map.of("writes", List.of(),
+                "skipped", List.of(Map.of("sourceId", "src-1", "reason", "")));
+        ToolResult result = tool.get().invoke(args, new ToolInvocationContext(PROJECT_ID, "agent-1", "run-1"));
+
+        assertThat(result.ok()).isFalse();
+        assertThat(result.payload()).contains("requires a non-blank reason");
     }
 }

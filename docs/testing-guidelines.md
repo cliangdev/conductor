@@ -37,6 +37,22 @@ project/issue/run you created in the test). The one exception: tests that
 job-queue scheduler claims *any* ready job, so a shared queue lets one context's
 scheduler execute another test's job (see the workflow E2E tests).
 
+`ConnectorFeedScheduler` is the same kind of exception, handled differently: it claims
+globally-scoped `connector_feed` rows the same way the job-queue scheduler claims jobs,
+*and* a claimed pull can enqueue a whole workflow run's worth of jobs on top. Rather than
+give every context this scheduler's blast radius, it's **off by default in the test
+profile** via `conductor.connector-feed.enabled=false` in
+`src/test/resources/application.properties` — a shared constant, not a per-class
+`@DynamicPropertySource` override, so it doesn't fragment the context cache (see
+"Protect the context cache" below). `ConnectorFeedRepositoryIT` (testing
+`ConnectorFeedRepository#claimDue` directly, without the scheduler bean) still needs its
+own private `@Container` because that query claims globally-scoped rows regardless of
+which bean issues it. `ConnectorFeedSchedulerIntegrationTest`, which does exercise the
+scheduler, additionally carries a class-level
+`@TestPropertySource(properties = "conductor.connector-feed.enabled=true")` to flip the
+flag back on for just that context — both tests already pay for a fresh context via their
+own `@Container`, so the property override doesn't cost anything extra.
+
 ## Protect the context cache
 
 Spring caches and reuses a context only when its configuration is identical. Each

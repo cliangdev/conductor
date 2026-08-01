@@ -6,7 +6,8 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.model.NotificationGroupRequest;
 import com.conductor.notification.ChannelGroup;
-import com.conductor.notification.NotificationDispatcher;
+import com.conductor.notification.NotificationDeliveryService;
+import com.conductor.notification.NotificationMessage;
 import com.conductor.notification.ProviderType;
 import com.conductor.repository.NotificationGroupConfigRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -27,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -36,7 +38,7 @@ class NotificationGroupServiceTest {
     private NotificationGroupConfigRepository groupConfigRepository;
 
     @Mock
-    private NotificationDispatcher notificationDispatcher;
+    private NotificationDeliveryService notificationDeliveryService;
 
     @Mock
     private ProjectSecurityService projectSecurityService;
@@ -165,7 +167,34 @@ class NotificationGroupServiceTest {
         var response = service.testGroup("proj-1", "ISSUES", adminUser);
 
         assertThat(response.getSuccess()).isTrue();
-        verify(notificationDispatcher).dispatch(any());
+        verify(notificationDeliveryService).deliver(any());
+    }
+
+    /**
+     * Inverts the old (buggy) characterization pinned by {@code
+     * NotificationDispatcherFanOutCharacterizationTest} and {@code
+     * KnowledgeEventTapTest#testShapedEventWithNoWorkItemId_currentlyAlsoSubmitsWithUnknownRef}: before
+     * the A5 refactor, {@code testGroup} published onto the {@code SignalBus}, so this synthetic {@code
+     * {test: true}} event -- which carries no {@code workItemId} -- also fanned out to workflow
+     * automation (a spurious {@code WorkflowRun}) and knowledge ingestion (a spurious submission with ref
+     * {@code conductor:unknown}). {@link NotificationGroupService} now depends on {@link
+     * NotificationDeliveryService} only -- it has no {@code SignalBus}, {@code WorkflowTriggerService}, or
+     * knowledge-ingestion collaborator to call even by mistake, so "the only thing that happens is a chat
+     * delivery attempt" is a structural guarantee, not just an unasserted one.
+     */
+    @Test
+    void testGroupDeliversDirectlyWithoutFanningOutToWorkflowsOrKnowledge() {
+        NotificationGroupConfig config = buildConfig(ChannelGroup.ISSUES);
+        config.setEnabledEventTypes(Set.of("WORK_ITEM_STATUS_CHANGED"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(config));
+
+        service.testGroup("proj-1", "ISSUES", adminUser);
+
+        ArgumentCaptor<NotificationMessage> captor = ArgumentCaptor.forClass(NotificationMessage.class);
+        verify(notificationDeliveryService).deliver(captor.capture());
+        assertThat(captor.getValue().getMetadata()).containsEntry("test", "true").doesNotContainKey("workItemId");
+        verifyNoMoreInteractions(notificationDeliveryService);
     }
 
     @Test

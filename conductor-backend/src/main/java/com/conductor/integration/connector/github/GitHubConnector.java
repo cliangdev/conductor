@@ -2,15 +2,12 @@ package com.conductor.integration.connector.github;
 
 import com.conductor.entity.Connection;
 import com.conductor.integration.*;
-import com.conductor.knowledge.KnowledgeIngestionService;
-import com.conductor.knowledge.KnowledgeSubmission;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.service.ConnectionService;
-import com.conductor.service.ProjectSettingsService;
-import com.conductor.service.WorkItemService;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalOrigin;
+import com.conductor.signal.SignalTypes;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,7 +22,6 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
-import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
@@ -33,8 +29,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * GitHub App connector — an APP-LEVEL webhook connector behind the generic receiver
@@ -46,8 +40,10 @@ import java.util.regex.Pattern;
  *       receiver fans out to every connection (possibly across projects) that connected that installation.</li>
  *   <li>{@link #handleLifecycle} keeps connections in sync (install deleted → delete matching connections;
  *       installation_repositories is a no-op — repos are listed live).</li>
- *   <li>{@link #handleEvent} maps a merged PR whose body says "closes conductor/KEY-N" → issue DONE,
- *       delegating the aggregate mutation + notifications to {@link WorkItemService}.</li>
+ *   <li>{@link #handleEvent} publishes {@link SignalTypes#GITHUB_PULL_REQUEST_MERGED} on a merged PR —
+ *       it does not itself decide what a merge means to Conductor (issue completion) or the Knowledge
+ *       Center; that domain knowledge lives in the {@code SignalBus} subscribers that claim the type
+ *       ({@code PullRequestMergeSubscriber}, {@code KnowledgeSignalSink}).</li>
  *   <li>{@link #issueRuntimeCredential} (CREDENTIAL capability) mints a short-lived, optionally
  *       repo-scoped installation token for injection into a {@code claude-code} container's env — see
  *       {@code ClaudeCodeContainerRunner#buildEnv}.</li>
@@ -62,41 +58,29 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
     private static final String CONNECTOR_ID = "github";
     private static final String INSTALLATION_ID_KEY = "installationId";
 
-    private static final Pattern CLOSES_PATTERN =
-            Pattern.compile("closes\\s+conductor/([A-Z]+-\\d+)", Pattern.CASE_INSENSITIVE);
-
-    /** PR actions that fire {@link EventType#GITHUB_PULL_REQUEST} for review-workflow triggers.
+    /** PR actions that fire {@link SignalTypes#GITHUB_PULL_REQUEST} for review-workflow triggers.
      *  Deliberately excludes {@code closed}-without-merge (an abandoned PR shouldn't be reviewed) —
-     *  merges are already handled separately above via the issue-completion path. */
+     *  merges are already handled separately above via {@link SignalTypes#GITHUB_PULL_REQUEST_MERGED}. */
     private static final Set<String> PR_REVIEW_ACTIONS = Set.of("opened", "labeled", "synchronize", "reopened");
 
-    private final WorkItemService workItemService;
     private final ConnectionRepository connectionRepository;
     private final ConnectionService connectionService;
     private final GitHubAppService gitHubAppService;
-    private final KnowledgeIngestionService knowledgeIngestionService;
-    private final ProjectSettingsService projectSettingsService;
-    private final NotificationDispatcher notificationDispatcher;
+    private final SignalBus signalBus;
     private final ObjectMapper objectMapper;
     /** App-level webhook signing secret (one per GitHub App, not per connection). */
     private final String appWebhookSecret;
 
-    public GitHubConnector(WorkItemService workItemService,
-                           ConnectionRepository connectionRepository,
+    public GitHubConnector(ConnectionRepository connectionRepository,
                            ConnectionService connectionService,
                            GitHubAppService gitHubAppService,
-                           KnowledgeIngestionService knowledgeIngestionService,
-                           ProjectSettingsService projectSettingsService,
-                           NotificationDispatcher notificationDispatcher,
+                           SignalBus signalBus,
                            ObjectMapper objectMapper,
                            @Value("${GITHUB_APP_WEBHOOK_SECRET:}") String appWebhookSecret) {
-        this.workItemService = workItemService;
         this.connectionRepository = connectionRepository;
         this.connectionService = connectionService;
         this.gitHubAppService = gitHubAppService;
-        this.knowledgeIngestionService = knowledgeIngestionService;
-        this.projectSettingsService = projectSettingsService;
-        this.notificationDispatcher = notificationDispatcher;
+        this.signalBus = signalBus;
         this.objectMapper = objectMapper;
         this.appWebhookSecret = appWebhookSecret;
     }
@@ -208,7 +192,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
             boolean isMergeEvent = "closed".equals(action) && merged;
             if (!isMergeEvent) {
                 if (PR_REVIEW_ACTIONS.contains(action)) {
-                    dispatchPullRequestReviewEvent(ctx, root, action);
+                    dispatchPullRequestReviewEvent(ctx, root, action, event.traceId());
                 } else {
                     log.info("Skipping event {} - action='{}' merged={} is not a merge or reviewable action",
                             event.deliveryId(), action, merged);
@@ -216,32 +200,7 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
                 return;
             }
 
-            submitMergedPrKnowledge(ctx.projectId(), root);
-
-            String prBody = root.path("pull_request").path("body").asText("");
-            String prUrl = root.path("pull_request").path("html_url").asText("");
-
-            Matcher matcher = CLOSES_PATTERN.matcher(prBody);
-            if (!matcher.find()) {
-                log.warn("Skipping event {} - PR body lacks 'closes conductor/ISSUE-KEY'. PR: {}",
-                        event.deliveryId(), prUrl);
-                return;
-            }
-            String displayId = matcher.group(1).toUpperCase();
-            String[] parts = displayId.split("-");
-            String projectKey = parts[0];
-            int sequenceNumber = Integer.parseInt(parts[1]);
-
-            // Aggregate mutation + DONE notifications live in the domain service. The cross-project guard
-            // (issue must belong to this connection's project) is enforced there via projectId.
-            try {
-                workItemService.completeFromPullRequest(ctx.projectId(), projectKey, sequenceNumber, prUrl);
-                log.info("Event {} - issue {}-{} completed from merged PR {}",
-                        event.deliveryId(), projectKey, sequenceNumber, prUrl);
-            } catch (jakarta.persistence.EntityNotFoundException notFound) {
-                // No such issue, or it belongs to another project sharing this installation — skip quietly.
-                log.warn("Skipping event {} - {}", event.deliveryId(), notFound.getMessage());
-            }
+            dispatchPullRequestMergedEvent(ctx, root, event.traceId());
         } catch (Exception e) {
             // Surface to the dispatcher so the event is marked FAILED and retried.
             throw new RuntimeException("Failed to process GitHub event: " + e.getMessage(), e);
@@ -249,61 +208,55 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
     }
 
     /**
-     * Knowledge Center adapter: on a merged PR (knowledge enabled), submits it as a
-     * {@code github.pr_merged} source regardless of whether it references a Conductor issue -- unlike
-     * {@link #handleEvent}'s issue-completion path, this is about the codebase, not a specific Work
-     * Item. Own try/catch so any failure here (including the enablement check) never disrupts the
-     * pre-existing issue-completion flow above/below it.
+     * Fires {@link SignalTypes#GITHUB_PULL_REQUEST_MERGED} carrying the raw PR facts (including the raw
+     * {@code body}, unparsed) so subscribers can each apply their own domain's meaning to a merge: {@code
+     * KnowledgeSignalSink} submits it as a {@code github.pr_merged} Knowledge source regardless of whether
+     * it references a Conductor issue, and {@code PullRequestMergeSubscriber} parses the body for a
+     * "closes conductor/KEY-N" directive and completes the linked Work Item. Neither of those is GitHub
+     * -payload knowledge, so neither lives here.
      */
-    private void submitMergedPrKnowledge(String projectId, JsonNode root) {
-        try {
-            if (!projectSettingsService.isKnowledgeEnabled(projectId)) {
-                return;
-            }
-            String fullName = root.path("repository").path("full_name").asText(null);
-            int number = root.path("pull_request").path("number").asInt(-1);
-            if (fullName == null || fullName.isBlank() || number < 0) {
-                return;
-            }
-            String sourceRef = "github:" + fullName + "#" + number;
-            String title = root.path("pull_request").path("title").asText(null);
+    private void dispatchPullRequestMergedEvent(ConnectionContext ctx, JsonNode root, String traceId) {
+        JsonNode pr = root.path("pull_request");
+        JsonNode repository = root.path("repository");
 
-            List<String> labels = new ArrayList<>();
-            for (JsonNode label : root.path("pull_request").path("labels")) {
-                String name = nodeText(label.path("name"));
-                if (name != null) labels.add(name);
-            }
-
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("title", title);
-            payload.put("body", root.path("pull_request").path("body").asText(""));
-            payload.put("labels", labels);
-            payload.put("merged_by", nodeText(root.path("pull_request").path("merged_by").path("login")));
-            payload.put("baseSha", nodeText(root.path("pull_request").path("base").path("sha")));
-            payload.put("headSha", nodeText(root.path("pull_request").path("head").path("sha")));
-            if (root.path("pull_request").hasNonNull("changed_files")) {
-                payload.put("changedFilesCount", root.path("pull_request").path("changed_files").asInt());
-            }
-
-            KnowledgeSubmission submission = new KnowledgeSubmission(
-                    projectId, "github.pr_merged", sourceRef, title, "application/json",
-                    objectMapper.writeValueAsString(payload), OffsetDateTime.now(),
-                    "github-pr-merged:" + sourceRef, new KnowledgeSubmission.Origin("GITHUB_CONNECTOR", sourceRef),
-                    null, null); // domain: null -- the engineering domain's "github.*" pattern routes this
-            knowledgeIngestionService.submit(submission);
-        } catch (Exception e) {
-            log.warn("Failed to submit knowledge source for merged PR (project {}): {}", projectId, e.getMessage());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        putIfPresent(payload, "repoFullName", nodeText(repository.path("full_name")));
+        String ref = null;
+        JsonNode numberNode = pr.path("number");
+        if (numberNode.isInt()) {
+            ref = String.valueOf(numberNode.asInt());
+            payload.put("number", numberNode.asInt());
         }
+        putIfPresent(payload, "title", nodeText(pr.path("title")));
+        payload.put("body", pr.path("body").asText(""));
+
+        List<String> labels = new ArrayList<>();
+        for (JsonNode label : pr.path("labels")) {
+            String name = nodeText(label.path("name"));
+            if (name != null) labels.add(name);
+        }
+        payload.put("labels", labels);
+
+        putIfPresent(payload, "mergedBy", nodeText(pr.path("merged_by").path("login")));
+        putIfPresent(payload, "baseSha", nodeText(pr.path("base").path("sha")));
+        putIfPresent(payload, "headSha", nodeText(pr.path("head").path("sha")));
+        if (pr.hasNonNull("changed_files")) {
+            payload.put("changedFilesCount", pr.path("changed_files").asInt());
+        }
+        putIfPresent(payload, "htmlUrl", nodeText(pr.path("html_url")));
+
+        signalBus.publish(Signal.of(SignalTypes.GITHUB_PULL_REQUEST_MERGED, ctx.projectId(), ref, Instant.now(),
+                payload, new SignalOrigin("github_pull_request_merged", ref), traceId));
     }
 
     /**
-     * Fires {@link EventType#GITHUB_PULL_REQUEST} so a {@code github.pull_request} workflow trigger
+     * Fires {@link SignalTypes#GITHUB_PULL_REQUEST} so a {@code github.pull_request} workflow trigger
      * can pick it up. {@code ctx.projectId()} is already the correctly-resolved project id for this
      * connection (resolved upstream by the installation-id fan-out in {@link #route}) — no extra
      * {@code ConnectionRepository} lookup is needed here, unlike the merge-completion path above which
      * needs a different, project-scoped lookup (issue key).
      */
-    private void dispatchPullRequestReviewEvent(ConnectionContext ctx, JsonNode root, String action) {
+    private void dispatchPullRequestReviewEvent(ConnectionContext ctx, JsonNode root, String action, String traceId) {
         JsonNode pr = root.path("pull_request");
         JsonNode repository = root.path("repository");
 
@@ -311,8 +264,10 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
         putIfPresent(meta, "repoName", nodeText(repository.path("name")));
         putIfPresent(meta, "repoFullName", nodeText(repository.path("full_name")));
         JsonNode numberNode = pr.path("number");
+        String prNumber = null;
         if (numberNode.isInt()) {
-            meta.put("prNumber", String.valueOf(numberNode.asInt()));
+            prNumber = String.valueOf(numberNode.asInt());
+            meta.put("prNumber", prNumber);
         }
         putIfPresent(meta, "prTitle", nodeText(pr.path("title")));
         putIfPresent(meta, "author", nodeText(pr.path("user").path("login")));
@@ -325,7 +280,9 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
             putIfPresent(meta, "label", nodeText(root.path("label").path("name")));
         }
 
-        notificationDispatcher.dispatch(NotificationEvent.of(EventType.GITHUB_PULL_REQUEST, ctx.projectId(), meta));
+        Map<String, Object> payload = new LinkedHashMap<>(meta);
+        signalBus.publish(Signal.of(SignalTypes.GITHUB_PULL_REQUEST, ctx.projectId(), prNumber, Instant.now(),
+                payload, new SignalOrigin("github_pull_request", prNumber), traceId));
     }
 
     /**
@@ -386,7 +343,18 @@ public class GitHubConnector implements WebhookConnector, CredentialConnector {
         }
     }
 
-    private static void putIfPresent(Map<String, String> map, String key, String value) {
+    /**
+     * Omits the key entirely when the value is null, rather than storing a null. {@code Signal}'s
+     * payload (like the {@code Map.copyOf} it is built on) rejects null values outright, and a
+     * present-but-null key would also surface in {@code workflow_runs.event_payload} as a literal
+     * {@code "null"} for a customer YAML expression like {@code ${{ event.label }}} rather than being
+     * absent.
+     *
+     * <p>{@code ? super String} so one helper serves both the {@code Map<String,String>} metadata maps
+     * and the {@code Map<String,Object>} signal payloads -- two overloads would erase to the same
+     * signature and fail to compile.
+     */
+    private static void putIfPresent(Map<String, ? super String> map, String key, String value) {
         if (value != null) map.put(key, value);
     }
 

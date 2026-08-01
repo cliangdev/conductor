@@ -8,7 +8,7 @@ import com.conductor.entity.User;
  * workflow container, neither of which has a user behind it.
  *
  * <p>Exactly one of the two is always set, which is what lets a provenance column be recorded as
- * "a user or a label" (the {@code chk_*_attribution} constraints in {@code V103}) and still always
+ * "a user or a label" (the {@code chk_*_attribution} constraints in {@code V109}) and still always
  * render a byline. Resolved by {@link ProjectSecurityService#requireProjectAccess}.
  */
 public record ProjectActor(User user, String label) {

@@ -7,19 +7,21 @@ import com.conductor.entity.Review;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
-import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.view.ReviewWithUser;
+import com.conductor.signal.Signal;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.SignalOrigin;
+import com.conductor.signal.SignalTypes;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +37,7 @@ public class ReviewService {
     private final ProjectMemberRepository projectMemberRepository;
     private final WorkItemRepository workItemRepository;
     private final UserRepository userRepository;
-    private final NotificationDispatcher notificationDispatcher;
+    private final SignalBus signalBus;
 
     public ReviewService(
             ReviewRepository reviewRepository,
@@ -43,13 +45,13 @@ public class ReviewService {
             ProjectMemberRepository projectMemberRepository,
             WorkItemRepository workItemRepository,
             UserRepository userRepository,
-            NotificationDispatcher notificationDispatcher) {
+            SignalBus signalBus) {
         this.reviewRepository = reviewRepository;
         this.workItemReviewerRepository = workItemReviewerRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.workItemRepository = workItemRepository;
         this.userRepository = userRepository;
-        this.notificationDispatcher = notificationDispatcher;
+        this.signalBus = signalBus;
     }
 
     @Transactional
@@ -89,9 +91,10 @@ public class ReviewService {
 
         WorkItem workItem = workItemRepository.findById(workItemId).orElse(null);
         String workItemTitle = workItem != null ? workItem.getTitle() : workItemId;
-        notificationDispatcher.dispatch(NotificationEvent.of(
-                EventType.REVIEW_SUBMITTED, projectId,
-                Map.of("workItemId", workItemId, "workItemTitle", workItemTitle, "verdict", verdict)));
+        signalBus.publish(Signal.of(
+                SignalTypes.CONDUCTOR_WORK_ITEM_REVIEW_SUBMITTED, projectId, workItemId, Instant.now(),
+                Map.of("workItemId", workItemId, "workItemTitle", workItemTitle, "verdict", verdict),
+                new SignalOrigin("work_item", workItemId)));
 
         return review;
     }

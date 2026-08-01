@@ -8,8 +8,8 @@ import com.conductor.generated.model.NotificationGroupRequest;
 import com.conductor.generated.model.NotificationTestResponse;
 import com.conductor.notification.ChannelGroup;
 import com.conductor.notification.EventType;
-import com.conductor.notification.NotificationDispatcher;
-import com.conductor.notification.NotificationEvent;
+import com.conductor.notification.NotificationDeliveryService;
+import com.conductor.notification.NotificationMessage;
 import com.conductor.notification.ProviderType;
 import com.conductor.repository.NotificationGroupConfigRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -30,15 +30,15 @@ public class NotificationGroupService {
     private static final Logger log = LoggerFactory.getLogger(NotificationGroupService.class);
 
     private final NotificationGroupConfigRepository groupConfigRepository;
-    private final NotificationDispatcher notificationDispatcher;
+    private final NotificationDeliveryService notificationDeliveryService;
     private final ProjectSecurityService projectSecurityService;
 
     public NotificationGroupService(
             NotificationGroupConfigRepository groupConfigRepository,
-            NotificationDispatcher notificationDispatcher,
+            NotificationDeliveryService notificationDeliveryService,
             ProjectSecurityService projectSecurityService) {
         this.groupConfigRepository = groupConfigRepository;
-        this.notificationDispatcher = notificationDispatcher;
+        this.notificationDeliveryService = notificationDeliveryService;
         this.projectSecurityService = projectSecurityService;
     }
 
@@ -131,12 +131,12 @@ public class NotificationGroupService {
                 .orElse(channelGroup.getEventTypes().get(0));
 
         try {
-            NotificationEvent event = NotificationEvent.of(
+            NotificationMessage event = NotificationMessage.of(
                     testEventType,
                     projectId,
                     Map.of("test", "true", "description", "Test notification from Conductor")
             );
-            notificationDispatcher.dispatch(event);
+            notificationDeliveryService.deliver(event);
 
             NotificationTestResponse response = new NotificationTestResponse();
             response.setSuccess(true);

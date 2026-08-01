@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * credential rather than a user session.
  *
  * <p>This has to run over real HTTP against Postgres: the two things it pins only exist there. The
- * {@code V103} migration is what allows a null author at all (the H2 unit profile builds its schema
+ * {@code V109} migration is what allows a null author at all (the H2 unit profile builds its schema
  * from the entities and never runs Flyway), and an agent-authored doc is invisible to any listing
  * whose fetch join is an inner join — a bug that no service-level test can see, because the join
  * lives in the repository query.

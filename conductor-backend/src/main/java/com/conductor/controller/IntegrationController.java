@@ -14,7 +14,9 @@ import com.conductor.generated.model.ConnectionResponse;
 import com.conductor.generated.model.ConnectionSummary;
 import com.conductor.generated.model.ConnectorCatalogConfigFieldDto;
 import com.conductor.generated.model.ConnectorCatalogEntryDto;
+import com.conductor.generated.model.ConnectorCatalogIngestDto;
 import com.conductor.generated.model.ConnectorConfigFieldDto;
+import com.conductor.generated.model.ConnectorFeedDto;
 import com.conductor.generated.model.CreateConnectionRequest;
 import com.conductor.generated.model.GcpProjectsResponse;
 import com.conductor.generated.model.GcpProjectsResponseProjectsInner;
@@ -24,6 +26,7 @@ import com.conductor.generated.model.IntegrationListItem;
 import com.conductor.generated.model.IntegrationToolItem;
 import com.conductor.generated.model.OAuthAuthorizeResponse;
 import com.conductor.generated.model.UpdateConnectionRequest;
+import com.conductor.generated.model.UpdateConnectorFeedRequest;
 import com.conductor.generated.model.WebhookEventSummary;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.Capability;
@@ -36,8 +39,12 @@ import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.FetchConnector;
+import com.conductor.integration.IngestSpec;
 import com.conductor.integration.connector.GcpBillingConnector;
 import com.conductor.integration.connector.gsc.GscConnector;
+import com.conductor.integration.ingest.ConnectorFeed;
+import com.conductor.integration.ingest.ConnectorFeedRepository;
+import com.conductor.integration.ingest.ConnectorFeedStatus;
 import com.conductor.repository.ConnectionDataCacheRepository;
 import com.conductor.repository.WebhookEventRepository;
 import com.conductor.service.ConnectionService;
@@ -80,6 +87,7 @@ public class IntegrationController implements IntegrationsApi {
     private final ConnectionDataCacheRepository cacheRepository;
     private final WebhookEventRepository webhookEventRepository;
     private final ProjectSecurityService projectSecurityService;
+    private final ConnectorFeedRepository connectorFeedRepository;
     private final ObjectMapper objectMapper;
     /**
      * Present only outside the {@code local} profile (the real {@link GcpBillingConnector} is
@@ -101,6 +109,7 @@ public class IntegrationController implements IntegrationsApi {
                                 ConnectionDataCacheRepository cacheRepository,
                                 WebhookEventRepository webhookEventRepository,
                                 ProjectSecurityService projectSecurityService,
+                                ConnectorFeedRepository connectorFeedRepository,
                                 Optional<GcpBillingConnector> gcpBillingConnector,
                                 Optional<GscConnector> gscConnector,
                                 RuntimeTargetService runtimeTargetService,
@@ -112,6 +121,7 @@ public class IntegrationController implements IntegrationsApi {
         this.cacheRepository = cacheRepository;
         this.webhookEventRepository = webhookEventRepository;
         this.projectSecurityService = projectSecurityService;
+        this.connectorFeedRepository = connectorFeedRepository;
         this.gcpBillingConnector = gcpBillingConnector;
         this.gscConnector = gscConnector;
         this.runtimeTargetService = runtimeTargetService;
@@ -169,9 +179,52 @@ public class IntegrationController implements IntegrationsApi {
                             .map(Capability::name).toList())
                     .configFields(toCatalogConfigFieldDtos(spec))
                     .connected(!activeConnectionIds.isEmpty())
-                    .activeConnectionIds(activeConnectionIds));
+                    .activeConnectionIds(activeConnectionIds)
+                    .ingest(toCatalogIngestDtos(connector)));
         }
         return ResponseEntity.ok(items);
+    }
+
+    @Override
+    public ResponseEntity<List<ConnectorFeedDto>> listConnectorFeeds(String projectId, String connectorId) {
+        requireMember(projectId);
+        Map<String, IngestSpec> specsById = ingestSpecsById(connectorId);
+        List<ConnectorFeedDto> feeds = connectorFeedRepository.findByProjectIdAndConnectorId(projectId, connectorId)
+                .stream()
+                .map(feed -> toFeedDto(feed, specsById.get(feed.getIngestId())))
+                .toList();
+        return ResponseEntity.ok(feeds);
+    }
+
+    @Override
+    public ResponseEntity<ConnectorFeedDto> updateConnectorFeed(
+            String projectId, String connectorId, String feedId, UpdateConnectorFeedRequest request) {
+        requireAdminOrCreator(projectId);
+        ConnectorFeed feed = requireFeed(projectId, connectorId, feedId);
+        if (request.getEnabled() != null) {
+            feed.setEnabled(request.getEnabled());
+            if (Boolean.TRUE.equals(request.getEnabled())) {
+                resumeFeed(feed);
+            }
+        }
+        if (request.getIntervalMinutes() != null) {
+            feed.setIntervalMinutes(request.getIntervalMinutes());
+        }
+        connectorFeedRepository.save(feed);
+        return ResponseEntity.ok(toFeedDto(feed, ingestSpecsById(connectorId).get(feed.getIngestId())));
+    }
+
+    @Override
+    public ResponseEntity<ConnectorFeedDto> runConnectorFeedNow(String projectId, String connectorId, String feedId) {
+        requireAdminOrCreator(projectId);
+        ConnectorFeed feed = requireFeed(projectId, connectorId, feedId);
+        // "Sync now" only re-dues the feed for the existing scheduler to pick up -- it must never run
+        // the pull inline and block this request on an outbound HTTP call to the third party.
+        resumeFeed(feed);
+        feed.setNextRunAt(OffsetDateTime.now());
+        connectorFeedRepository.save(feed);
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(toFeedDto(feed, ingestSpecsById(connectorId).get(feed.getIngestId())));
     }
 
     @Override
@@ -463,6 +516,77 @@ public class IntegrationController implements IntegrationsApi {
         return conn;
     }
 
+    private ConnectorFeed requireFeed(String projectId, String connectorId, String feedId) {
+        ConnectorFeed feed = connectorFeedRepository.findById(feedId)
+                .orElseThrow(() -> new EntityNotFoundException("Feed not found: " + feedId));
+        if (!feed.getProjectId().equals(projectId) || !feed.getConnectorId().equals(connectorId)) {
+            // EntityNotFoundException, not ResponseStatusException: GlobalExceptionHandler has a
+            // dedicated handler for the former that renders a real 404; a ResponseStatusException falls
+            // through to the catch-all Exception handler and renders 500 regardless of its own status.
+            throw new EntityNotFoundException("Feed not found in project/connector: " + feedId);
+        }
+        return feed;
+    }
+
+    /**
+     * Clears the scheduler-owned failure state so an operator explicitly resuming a feed actually gets
+     * it picked up again. {@code ConnectorFeedRepository#claimDue} requires {@code status = 'ACTIVE'
+     * AND enabled = true}, so without this a PATCH of {@code enabled: true} on a DEAD, PAUSED or
+     * SETUP_REQUIRED feed -- or a "sync now" on one -- returns 200/202 and then silently never runs,
+     * contradicting {@code ConnectorFeedStatus}'s own contract that a DEAD feed resumes once re-enabled.
+     *
+     * <p>Resetting {@code consecutiveFailures} matters as much as the status: leaving it at the
+     * dead-letter threshold would send the feed straight back to DEAD on its first hiccup instead of
+     * giving the operator a fresh budget. SETUP_REQUIRED is reset too -- if the underlying connection
+     * is still unauthenticated the next pull re-marks it within one tick, which is honest feedback
+     * rather than a permanently un-retryable row.
+     */
+    private void resumeFeed(ConnectorFeed feed) {
+        feed.setStatus(ConnectorFeedStatus.ACTIVE);
+        feed.setConsecutiveFailures(0);
+        feed.setLastError(null);
+    }
+
+    /** The connector's currently-declared ingest feeds, keyed by ingest id -- used to enrich a
+     *  {@code connector_feed} row with the label/description/isMetricFeed that live in the connector's
+     *  own tool-spec JSON rather than being duplicated onto the row itself. */
+    private Map<String, IngestSpec> ingestSpecsById(String connectorId) {
+        return connectorRegistry.getById(connectorId)
+                .map(connector -> connector.getToolSpec().ingest().stream()
+                        .collect(java.util.stream.Collectors.toMap(IngestSpec::id, s -> s)))
+                .orElseGet(Map::of);
+    }
+
+    private List<ConnectorCatalogIngestDto> toCatalogIngestDtos(Connector connector) {
+        return connector.getToolSpec().ingest().stream()
+                .map(spec -> new ConnectorCatalogIngestDto()
+                        .id(spec.id())
+                        .label(spec.label())
+                        .description(spec.description())
+                        .isMetricFeed(spec.isMetricFeed()))
+                .toList();
+    }
+
+    /** {@code spec} is null when the connector's tool-spec JSON dropped or renamed this ingest id
+     *  after the {@code connector_feed} row was provisioned -- falls back to the raw ingest id rather
+     *  than failing the whole list. */
+    private ConnectorFeedDto toFeedDto(ConnectorFeed feed, IngestSpec spec) {
+        return new ConnectorFeedDto()
+                .id(feed.getId())
+                .ingestId(feed.getIngestId())
+                .label(spec != null ? spec.label() : feed.getIngestId())
+                .description(spec != null ? spec.description() : null)
+                .enabled(feed.isEnabled())
+                .intervalMinutes(feed.getIntervalMinutes())
+                .status(ConnectorFeedDto.StatusEnum.fromValue(feed.getStatus().name()))
+                .lastRunAt(feed.getLastRunAt())
+                .lastSuccessAt(feed.getLastSuccessAt())
+                .lastError(feed.getLastError())
+                .consecutiveFailures(feed.getConsecutiveFailures())
+                .nextRunAt(feed.getNextRunAt())
+                .isMetricFeed(spec != null && spec.isMetricFeed());
+    }
+
     /** SERVICE_ACCOUNT connectors (GCP) require a well-formed GCP service-account JSON key. */
     private void requireValidServiceAccountKey(String key) {
         Map<String, Object> parsed;
@@ -589,8 +713,9 @@ public class IntegrationController implements IntegrationsApi {
     /**
      * Member-level gate: accepts either a {@link User} principal or a project-scoped machine
      * principal ({@link ProjectScopedPrincipal} -- a project API key or a run-scoped MCP token)
-     * whose {@code projectId} matches the requested project -- mirroring
-     * {@code KnowledgeController#requireProjectAccess}.
+     * whose {@code projectId} matches the requested project. The rule itself lives in
+     * {@link ProjectSecurityService#requireProjectAccess}, shared with every other project-scoped
+     * controller.
      */
     private void requireMember(String projectId) {
         projectSecurityService.requireProjectAccess(projectId);

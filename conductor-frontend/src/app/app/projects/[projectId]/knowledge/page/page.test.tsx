@@ -1,17 +1,32 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { vi } from 'vitest'
-import type { KnowledgePageRevisionView, KnowledgePageView } from '@/lib/knowledge-api'
+import type { KnowledgePageDismissResult, KnowledgePageRevisionView, KnowledgePageView } from '@/lib/knowledge-api'
 
-// Plain (non-vi.fn) stubs so rejected-promise paths aren't flagged as unhandled.
+// Plain (non-vi.fn) stubs so rejected-promise paths aren't flagged as unhandled -- see the reference
+// note on vi.fn + rejected promises in reference_vitest_rejected_promise_mock.
 let getKnowledgePageBehavior: (projectId: string, path: string) => Promise<KnowledgePageView | null> = () =>
   Promise.resolve(basePage())
 let listKnowledgeRevisionsBehavior: (
   projectId: string,
   path: string
 ) => Promise<KnowledgePageRevisionView[]> = () => Promise.resolve([])
+let dismissKnowledgePageBehavior: (
+  projectId: string,
+  body: { path: string; baseVersion: number; reason: string },
+  token: string
+) => Promise<KnowledgePageDismissResult> = () =>
+  Promise.resolve({
+    path: 'engineering/architecture.md',
+    version: 4,
+    curationPagePath: 'engineering/_curation.md',
+    curationPageVersion: 2,
+  })
+// Records dismissKnowledgePage call args for assertions, without wrapping the stub itself in vi.fn().
+let dismissKnowledgePageCalls: Array<[string, { path: string; baseVersion: number; reason: string }, string]> = []
 
 const push = vi.fn()
+const showToast = vi.fn()
 const searchParams = new URLSearchParams({ path: 'engineering/architecture.md' })
 
 vi.mock('next/navigation', () => ({
@@ -24,6 +39,33 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: 'token' }),
 }))
 
+vi.mock('@/components/ui/toast', () => ({
+  useToast: () => ({ showToast }),
+}))
+
+// Flatten the modal so ConfirmModal's content is always in the DOM when open -- same approach as
+// workflows/[workflowId]/runs/page.test.tsx (the real base-ui Dialog is portal-based).
+vi.mock('@/components/ui/modal', () => ({
+  Modal: ({
+    open,
+    children,
+    title,
+    footer,
+  }: {
+    open: boolean
+    children: React.ReactNode
+    title: string
+    footer: React.ReactNode
+  }) =>
+    open ? (
+      <div data-testid="modal">
+        <h2>{title}</h2>
+        {children}
+        {footer}
+      </div>
+    ) : null,
+}))
+
 vi.mock('@/lib/knowledge-api', async () => ({
   // Preserve real exports (KNOWLEDGE_LIBRARIAN_SLUG etc.) — components under test import
   // constants from this module, not just the network functions overridden below.
@@ -31,6 +73,13 @@ vi.mock('@/lib/knowledge-api', async () => ({
   getKnowledgePage: (...args: unknown[]) => getKnowledgePageBehavior.call(null, ...(args as [string, string])),
   listKnowledgeRevisions: (...args: unknown[]) =>
     listKnowledgeRevisionsBehavior.call(null, ...(args as [string, string])),
+  dismissKnowledgePage: (...args: unknown[]) => {
+    dismissKnowledgePageCalls.push(args as [string, { path: string; baseVersion: number; reason: string }, string])
+    return dismissKnowledgePageBehavior.call(
+      null,
+      ...(args as [string, { path: string; baseVersion: number; reason: string }, string]),
+    )
+  },
 }))
 
 vi.mock('@/lib/format', () => ({
@@ -62,8 +111,17 @@ function basePage(): KnowledgePageView {
 describe('Knowledge page view', () => {
   beforeEach(() => {
     push.mockClear()
+    showToast.mockClear()
     getKnowledgePageBehavior = () => Promise.resolve(basePage())
     listKnowledgeRevisionsBehavior = () => Promise.resolve([])
+    dismissKnowledgePageBehavior = () =>
+      Promise.resolve({
+        path: 'engineering/architecture.md',
+        version: 4,
+        curationPagePath: 'engineering/_curation.md',
+        curationPageVersion: 2,
+      })
+    dismissKnowledgePageCalls = []
   })
 
   it('renders the title, type badge, path, and markdown content', async () => {
@@ -145,5 +203,92 @@ describe('Knowledge page view', () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(screen.queryByText(/ts:A_TIME/)).not.toBeInTheDocument()
     expect(screen.getByText(/ts:B_TIME/)).toBeInTheDocument()
+  })
+
+  describe('Not worth filing', () => {
+    it('renders next to History', async () => {
+      render(<KnowledgePageRoute />)
+      await screen.findByText('Architecture')
+
+      expect(screen.getByRole('button', { name: /not worth filing/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /history/i })).toBeInTheDocument()
+    })
+
+    it('opens the modal when clicked', async () => {
+      render(<KnowledgePageRoute />)
+      await screen.findByText('Architecture')
+
+      fireEvent.click(screen.getByRole('button', { name: /not worth filing/i }))
+
+      expect(await screen.findByTestId('modal')).toBeInTheDocument()
+      expect(screen.getByLabelText(/reason/i)).toBeInTheDocument()
+    })
+
+    it('disables confirm while the reason is blank, enables it once typed', async () => {
+      render(<KnowledgePageRoute />)
+      await screen.findByText('Architecture')
+      fireEvent.click(screen.getByRole('button', { name: /not worth filing/i }))
+      await screen.findByTestId('modal')
+
+      const confirmButton = screen.getByRole('button', { name: /^remove page$/i })
+      expect(confirmButton).toBeDisabled()
+
+      fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'Nothing happened here.' } })
+      expect(confirmButton).not.toBeDisabled()
+    })
+
+    it('submits with the page path, baseVersion, and typed reason', async () => {
+      render(<KnowledgePageRoute />)
+      await screen.findByText('Architecture')
+      fireEvent.click(screen.getByRole('button', { name: /not worth filing/i }))
+      await screen.findByTestId('modal')
+      fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'Nothing happened here.' } })
+
+      fireEvent.click(screen.getByRole('button', { name: /^remove page$/i }))
+
+      await waitFor(() => expect(dismissKnowledgePageCalls).toHaveLength(1))
+      const [projectId, body, token] = dismissKnowledgePageCalls[0]
+      expect(projectId).toBe('proj-1')
+      expect(body).toEqual({
+        path: 'engineering/architecture.md',
+        baseVersion: 3,
+        reason: 'Nothing happened here.',
+      })
+      expect(token).toBe('token')
+    })
+
+    it('on success, toasts the curation path and routes back to the knowledge index', async () => {
+      render(<KnowledgePageRoute />)
+      await screen.findByText('Architecture')
+      fireEvent.click(screen.getByRole('button', { name: /not worth filing/i }))
+      await screen.findByTestId('modal')
+      fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'Nothing happened here.' } })
+      fireEvent.click(screen.getByRole('button', { name: /^remove page$/i }))
+
+      await waitFor(() => expect(push).toHaveBeenCalledWith('/app/projects/proj-1/knowledge'))
+      expect(showToast).toHaveBeenCalledWith(expect.stringContaining('engineering/_curation.md'))
+    })
+
+    it('on failure, toasts the error and leaves the page rendered', async () => {
+      const conflictError = new Error('conflict') as Error & { detail?: string }
+      conflictError.detail = 'This page changed since you opened it — reload and try again.'
+      dismissKnowledgePageBehavior = () => Promise.reject(conflictError)
+
+      render(<KnowledgePageRoute />)
+      await screen.findByText('Architecture')
+      fireEvent.click(screen.getByRole('button', { name: /not worth filing/i }))
+      await screen.findByTestId('modal')
+      fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: 'Nothing happened here.' } })
+      fireEvent.click(screen.getByRole('button', { name: /^remove page$/i }))
+
+      await waitFor(() =>
+        expect(showToast).toHaveBeenCalledWith(
+          'This page changed since you opened it — reload and try again.',
+          'error',
+        ),
+      )
+      expect(push).not.toHaveBeenCalled()
+      expect(screen.getByText('Architecture')).toBeInTheDocument()
+    })
   })
 })

@@ -3,6 +3,7 @@ package com.conductor.knowledge.page;
 import com.conductor.exception.BusinessException;
 import com.conductor.knowledge.Actor;
 import com.conductor.knowledge.KnowledgeSourceRepository;
+import com.conductor.knowledge.domain.KnowledgeDomainRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,11 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -35,6 +40,7 @@ class KnowledgePageServiceTest {
     private KnowledgePageRevisionRepository revisionRepository;
     private KnowledgeLinkRepository linkRepository;
     private KnowledgeSourceRepository sourceRepository;
+    private KnowledgeDomainRepository domainRepository;
     private KnowledgePageService service;
 
     @BeforeEach
@@ -43,8 +49,9 @@ class KnowledgePageServiceTest {
         revisionRepository = mock(KnowledgePageRevisionRepository.class);
         linkRepository = mock(KnowledgeLinkRepository.class);
         sourceRepository = mock(KnowledgeSourceRepository.class);
+        domainRepository = mock(KnowledgeDomainRepository.class);
         service = new KnowledgePageService(pageRepository, revisionRepository, linkRepository, sourceRepository,
-                new FrontmatterParser(), new ObjectMapper());
+                domainRepository, new FrontmatterParser(), new ObjectMapper());
 
         when(pageRepository.save(any(KnowledgePage.class))).thenAnswer(inv -> inv.getArgument(0));
         when(revisionRepository.save(any(KnowledgePageRevision.class))).thenAnswer(inv -> {
@@ -244,6 +251,97 @@ class KnowledgePageServiceTest {
         assertThat(results).isEmpty();
         verify(sourceRepository).markProcessed(PROJECT_ID, List.of("src-1", "src-2"));
         verifyNoInteractions(pageRepository, revisionRepository, linkRepository);
+    }
+
+    // --- batchWrite skipped[] validation ---
+
+    @Test
+    void sourceIdInBothSourceIdsAndSkippedThrows() {
+        assertThatThrownBy(() -> service.batchWrite(PROJECT_ID, List.of(), List.of("src-1"),
+                List.of(new SkippedSource("src-1", "not material")), null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("src-1");
+        verifyNoInteractions(sourceRepository);
+    }
+
+    @Test
+    void skippedWithBlankReasonThrows() {
+        assertThatThrownBy(() -> service.batchWrite(PROJECT_ID, List.of(), List.of(),
+                List.of(new SkippedSource("src-1", "   ")), null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("src-1");
+    }
+
+    @Test
+    void skippedWithNullReasonThrows() {
+        assertThatThrownBy(() -> service.batchWrite(PROJECT_ID, List.of(), List.of(),
+                List.of(new SkippedSource("src-1", null)), null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("src-1");
+    }
+
+    @Test
+    void skippedWithBlankSourceIdThrows() {
+        assertThatThrownBy(() -> service.batchWrite(PROJECT_ID, List.of(), List.of(),
+                List.of(new SkippedSource("  ", "reason")), null))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void nullOrEmptySkippedIsNoOp() {
+        List<PageWriteResult> resultsWithNull = service.batchWrite(PROJECT_ID, List.of(), List.of(), null, null);
+        List<PageWriteResult> resultsWithEmpty = service.batchWrite(PROJECT_ID, List.of(), List.of(), List.of(), null);
+
+        assertThat(resultsWithNull).isEmpty();
+        assertThat(resultsWithEmpty).isEmpty();
+        verifyNoInteractions(sourceRepository);
+    }
+
+    @Test
+    void duplicateIdWithinSkippedIsDedupedKeepingFirst() {
+        when(sourceRepository.markSkipped(eq(PROJECT_ID), anyList(), anyString())).thenReturn(1);
+
+        service.batchWrite(PROJECT_ID, List.of(), List.of(),
+                List.of(new SkippedSource("src-1", "first reason"), new SkippedSource("src-1", "second reason")),
+                null);
+
+        verify(sourceRepository).markSkipped(PROJECT_ID, List.of("src-1"), "first reason");
+        verify(sourceRepository, never()).markSkipped(eq(PROJECT_ID), anyList(), eq("second reason"));
+    }
+
+    @Test
+    void reasonLongerThan2000CharsIsTruncated() {
+        when(sourceRepository.markSkipped(eq(PROJECT_ID), anyList(), anyString())).thenReturn(1);
+        String longReason = "a".repeat(2001);
+
+        service.batchWrite(PROJECT_ID, List.of(), List.of(), List.of(new SkippedSource("src-1", longReason)), null);
+
+        org.mockito.ArgumentCaptor<String> reasonCaptor = forClass(String.class);
+        verify(sourceRepository).markSkipped(eq(PROJECT_ID), eq(List.of("src-1")), reasonCaptor.capture());
+        assertThat(reasonCaptor.getValue()).hasSize(2000);
+    }
+
+    @Test
+    void reasonWithNewlinesAndTabsIsCollapsedToSingleSpaces() {
+        when(sourceRepository.markSkipped(eq(PROJECT_ID), anyList(), anyString())).thenReturn(1);
+
+        service.batchWrite(PROJECT_ID, List.of(), List.of(),
+                List.of(new SkippedSource("src-1", "line one\nline two\tindented")), null);
+
+        verify(sourceRepository).markSkipped(PROJECT_ID, List.of("src-1"), "line one line two indented");
+    }
+
+    @Test
+    void skippedSourcesAreGroupedByIdenticalReasonIntoOneMarkSkippedCallEach() {
+        when(sourceRepository.markSkipped(eq(PROJECT_ID), anyList(), anyString())).thenReturn(1);
+
+        service.batchWrite(PROJECT_ID, List.of(), List.of(),
+                List.of(new SkippedSource("src-1", "dup of x"), new SkippedSource("src-2", "dup of x"),
+                        new SkippedSource("src-3", "unrelated")),
+                null);
+
+        verify(sourceRepository).markSkipped(PROJECT_ID, List.of("src-1", "src-2"), "dup of x");
+        verify(sourceRepository).markSkipped(PROJECT_ID, List.of("src-3"), "unrelated");
     }
 
     private KnowledgePage existingPage(String path, int version) {

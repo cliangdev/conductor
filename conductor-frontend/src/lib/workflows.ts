@@ -10,7 +10,8 @@
 import pluralize from 'pluralize'
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost, apiPut } from '@/lib/api'
-import { parseWorkflowYaml, isManualTrigger } from '@/lib/workflowAutomation'
+import { parseWorkflowYaml, isManualTrigger, type TriggerKind } from '@/lib/workflowAutomation'
+import { triggerLabel } from '@/components/workflow/TriggerBadges'
 import type {
   WorkflowView,
   WorkflowStatusCategory,
@@ -20,6 +21,7 @@ import type {
   WorkflowCreateResponse,
   WorkflowDefinitionDto,
   WorkflowRunDto,
+  WorkflowScheduleSkipDto,
 } from '@/types/workflow'
 import type { StatechartDefinition } from '@/lib/workflowDefinition'
 import type { Member } from '@/types'
@@ -60,19 +62,87 @@ export function cancelWorkflowRun(
   )
 }
 
-/** Runs for one Workflow, newest first. */
+export interface CancelQueuedRunsResponse {
+  cancelledCount: number
+}
+
+/**
+ * Cancels every PENDING run for the workflow, plus any run that reads RUNNING but is only blocked on
+ * a self-hosted job no daemon has claimed yet. Never touches a run with genuinely in-flight work
+ * (a RUNNING job, or an already-claimed AWAITING_PICKUP job) — a subset of what the UI displays as
+ * "Queued", not the full displayed set.
+ */
+export function cancelQueuedWorkflowRuns(
+  projectId: string,
+  workflowId: string,
+  token: string,
+): Promise<CancelQueuedRunsResponse> {
+  return apiPost<CancelQueuedRunsResponse>(
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/runs/cancel-queued`,
+    {},
+    token,
+  )
+}
+
+/** Recent cron ticks dropped because a `concurrency: single` run was already in flight, newest first. */
+export function listScheduleSkips(
+  projectId: string,
+  workflowId: string,
+  token: string,
+  limit?: number,
+): Promise<WorkflowScheduleSkipDto[]> {
+  const qs = limit != null ? `?limit=${limit}` : ''
+  return apiGet<WorkflowScheduleSkipDto[]>(
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/schedule-skips${qs}`,
+    token,
+  )
+}
+
+/** Runs for one Workflow, newest first. `status` repeats the raw-status query param (backend OR's
+ *  them); `state` is the derived UI-facing alternative ("queued"/"running" — see the backend's
+ *  `?state=` contract in openapi.yaml). The two are mutually exclusive server-side (400 if both are
+ *  sent), so this throws client-side rather than letting a caller trip that 400 at request time. */
 export function listWorkflowRuns(
   projectId: string,
   workflowId: string,
   token: string,
-  opts?: { page?: number; size?: number },
+  opts?: { page?: number; size?: number; status?: readonly string[]; state?: 'queued' | 'running' },
 ): Promise<WorkflowRunDto[]> {
+  if (opts?.state && opts.status?.length) {
+    throw new Error('listWorkflowRuns: `state` and `status` are mutually exclusive')
+  }
   const page = opts?.page ?? 0
   const size = opts?.size ?? 20
+  const params = new URLSearchParams({ page: String(page), size: String(size) })
+  for (const status of opts?.status ?? []) params.append('status', status)
+  if (opts?.state) params.set('state', opts.state)
   return apiGet<WorkflowRunDto[]>(
-    `/api/v1/projects/${projectId}/workflows/${workflowId}/runs?page=${page}&size=${size}`,
+    `/api/v1/projects/${projectId}/workflows/${workflowId}/runs?${params.toString()}`,
     token,
   )
+}
+
+// Maps a WorkflowRunDto.triggerType (the raw id WorkflowTriggerService stores on the run) to the same
+// TriggerKind vocabulary parseWorkflowYaml uses for the YAML "on:" block — the "conductor."/"github."
+// prefixed ids below are literally the raw YAML keys it already knows how to read.
+const RUN_TRIGGER_KIND: Record<string, TriggerKind> = {
+  workflow_dispatch: 'workflow_dispatch',
+  webhook: 'webhook',
+  schedule: 'schedule',
+  'conductor.work_item.status_changed': 'work_item_status_changed',
+  'github.pull_request': 'github_pull_request',
+}
+
+/**
+ * Human label for a run's raw `triggerType` (e.g. "conductor.work_item.status_changed" → "work item"),
+ * reusing TriggerBadges' triggerLabel/TRIGGER_LABEL map rather than a second copy. A `workflow_dispatch`
+ * run always reads as "manual" here — a run has no access to the YAML's `manual: false` opt-out, so a
+ * system-triggered dispatch (e.g. the knowledge-librarian) still reads as "manual".
+ */
+export function humanizeTriggerType(triggerType: string): string {
+  const kind = RUN_TRIGGER_KIND[triggerType]
+  if (!kind) return humanizeId(triggerType.replace(/\./g, '_'))
+  return triggerLabel({ kind, raw: {} })
 }
 
 // ── WorkflowView cache ──────────────────────────────────────────────────────
@@ -261,6 +331,33 @@ const WELL_KNOWN_HUES: Record<string, StatusHue> = {
   failed: 'red',
   error: 'red',
   loopexhausted: 'amber',
+  // Self-hosted-runner job/run states (WorkflowJobStatus.AWAITING_PICKUP / WorkflowRunStatus.LOCAL_PICKUP_TIMEOUT).
+  // Amber (not blue/"running") because the job hasn't started — it's queued, waiting on a daemon to
+  // claim it, the same "not yet active" meaning amber carries for in-progress/attention states.
+  awaitingpickup: 'amber',
+  // Red (not slate/"skipped") — WorkflowRunStatus.java's own javadoc calls a LOCAL_PICKUP_TIMEOUT
+  // run "effectively dead" (the self-hosted daemon never claimed it); it never produced a result,
+  // so it reads as a failure, not a benign skip.
+  localpickuptimeout: 'red',
+  // Pipeline stage statuses (issue #342) — WebhookEventStatus / KnowledgeSourceStatus /
+  // ConnectorFeedStatus / DigestStatus all reuse these same words for analogous meanings, so one
+  // set of entries here covers all four rather than a per-stage color map.
+  processing: 'blue',
+  processed: 'green',
+  dead: 'red',
+  active: 'green',
+  paused: 'gray',
+  setuprequired: 'amber',
+  narrating: 'blue',
+  submitted: 'green',
+}
+
+// Human labels for status ids whose raw form reads as schema jargon rather than something a user
+// would say out loud — the design system's "translate at the UI boundary" rule. Everything else
+// falls back to humanizeId, which is legible enough on its own (e.g. "Loop Exhausted").
+const WELL_KNOWN_LABELS: Record<string, string> = {
+  awaitingpickup: 'Waiting for runner',
+  localpickuptimeout: 'Never picked up',
 }
 
 // Fallback when the status id itself isn't recognized — keyed by workflow/lifecycle category.
@@ -285,6 +382,12 @@ export function statusHue(status: string, category?: string): StatusHue {
 export function categoryHue(category?: string): StatusHue {
   const fromCategory = category ? CATEGORY_HUES[normalizeStatusId(category)] : undefined
   return fromCategory ?? 'gray'
+}
+
+/** Human label for a status id — the default `StatusBadge` label when no explicit `label` prop is
+ *  given. Looks up {@link WELL_KNOWN_LABELS} first, then falls back to {@link humanizeId}. */
+export function statusLabel(status: string): string {
+  return WELL_KNOWN_LABELS[normalizeStatusId(status)] ?? humanizeId(status)
 }
 
 /** Pluralize a Workflow noun for page titles and nav labels, e.g. "Issue" → "Issues", "Story" → "Stories". */
@@ -661,7 +764,7 @@ export function enableWorkflow(
 /** Create a lifecycle (statechart) Workflow. Returns the saved workflow + any validation warnings. */
 export function createLifecycleWorkflow(
   projectId: string,
-  body: { name: string; area?: string; definition: StatechartDefinition },
+  body: { name: string; area?: string; tag?: string; definition: StatechartDefinition },
   token: string,
 ): Promise<WorkflowCreateResponse> {
   return apiPost<WorkflowCreateResponse>(`/api/v1/projects/${projectId}/workflows`, body, token)
@@ -671,7 +774,7 @@ export function createLifecycleWorkflow(
 export function updateLifecycleWorkflow(
   projectId: string,
   workflowId: string,
-  body: { name?: string; area?: string; definition: StatechartDefinition },
+  body: { name?: string; area?: string; tag?: string; definition: StatechartDefinition },
   token: string,
 ): Promise<WorkflowCreateResponse> {
   return apiPut<WorkflowCreateResponse>(

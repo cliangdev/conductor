@@ -55,4 +55,13 @@ class ConnectorRegistryTest {
         assertThat(registry.capabilitiesOf(registry.getById("pusher").get()))
                 .containsExactly(Capability.WEBHOOK);
     }
+
+    @Test
+    void findIngestIsEmptyForAFetchOnlyConnector() {
+        ConnectorRegistry registry = new ConnectorRegistry(List.of(fetchConnector()));
+        registry.init();
+
+        assertThat(registry.findIngest("puller")).isEmpty();
+        assertThat(registry.capabilitiesOf(registry.getById("puller").get())).doesNotContain(Capability.INGEST);
+    }
 }

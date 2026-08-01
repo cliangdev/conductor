@@ -13,6 +13,7 @@ import com.conductor.entity.WorkflowStepStatus;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.WorkflowsApi;
+import com.conductor.generated.model.CancelQueuedRunsResponse;
 import com.conductor.generated.model.DispatchWorkflowRequest;
 import com.conductor.generated.model.InterpolationFunctionDto;
 import com.conductor.generated.model.InterpolationRootDto;
@@ -51,6 +52,8 @@ import com.conductor.workflow.StepFailureExplanations;
 import com.conductor.workflow.WorkflowFailureCircuitBreaker;
 import com.conductor.workflow.WorkflowJobOrchestrator;
 import com.conductor.workflow.WorkflowRunCancellationService;
+import com.conductor.workflow.WorkflowRunFailureNotifier;
+import com.conductor.workflow.WorkflowRunQueryService;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.conductor.workflow.lifecycle.Statechart;
@@ -102,8 +105,10 @@ public class WorkflowController implements WorkflowsApi {
     private final ObjectMapper objectMapper;
     private final WorkflowYamlParser yamlParser;
     private final WorkflowFailureCircuitBreaker circuitBreaker;
+    private final WorkflowRunFailureNotifier runFailureNotifier;
     private final StepSchemaRegistry stepSchemaRegistry;
     private final WorkflowRunCancellationService runCancellationService;
+    private final WorkflowRunQueryService runQueryService;
 
     public WorkflowController(WorkflowService workflowService,
                                WorkflowTriggerService workflowTriggerService,
@@ -120,9 +125,12 @@ public class WorkflowController implements WorkflowsApi {
                                ObjectMapper objectMapper,
                                WorkflowYamlParser yamlParser,
                                WorkflowFailureCircuitBreaker circuitBreaker,
+                               WorkflowRunFailureNotifier runFailureNotifier,
                                StepSchemaRegistry stepSchemaRegistry,
-                               WorkflowRunCancellationService runCancellationService) {
+                               WorkflowRunCancellationService runCancellationService,
+                               WorkflowRunQueryService runQueryService) {
         this.runCancellationService = runCancellationService;
+        this.runQueryService = runQueryService;
         this.workflowService = workflowService;
         this.workflowTriggerService = workflowTriggerService;
         this.workflowJobOrchestrator = workflowJobOrchestrator;
@@ -138,6 +146,7 @@ public class WorkflowController implements WorkflowsApi {
         this.objectMapper = objectMapper;
         this.yamlParser = yamlParser;
         this.circuitBreaker = circuitBreaker;
+        this.runFailureNotifier = runFailureNotifier;
         this.stepSchemaRegistry = stepSchemaRegistry;
     }
 
@@ -336,6 +345,7 @@ public class WorkflowController implements WorkflowsApi {
         if (!alreadyFinalizedByJobCompletion
                 && (newStatus == WorkflowRunStatus.SUCCESS || newStatus == WorkflowRunStatus.FAILED)) {
             circuitBreaker.recordOutcome(run);
+            runFailureNotifier.notifyFailed(run);
         }
         return ResponseEntity.ok(toRunDto(run));
     }
@@ -413,6 +423,9 @@ public class WorkflowController implements WorkflowsApi {
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new EntityNotFoundException("Project not found");
         }
+        // Same ownership gap as listWorkflowRuns above — scope workflowId to this project before
+        // reading its schedule skips.
+        workflowService.getWorkflow(projectId, workflowId);
         int maxResults = limit != null ? limit : 20;
         List<WorkflowSchedule> schedules = scheduleRepository.findByWorkflowId(workflowId);
         List<WorkflowScheduleSkipDto> dtos = schedules.stream()
@@ -426,17 +439,24 @@ public class WorkflowController implements WorkflowsApi {
 
     @Override
     public ResponseEntity<List<WorkflowRunDto>> listWorkflowRuns(String projectId, String workflowId,
-                                                                  Integer page, Integer size) {
+                                                                  Integer page, Integer size,
+                                                                  List<String> status, String state) {
         String userId = currentUserId();
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new EntityNotFoundException("Project not found");
         }
+        // Scope workflowId to this project before reading its runs — without this, any member of any
+        // project could list another project's runs (and now its queue/wait-reason state) by guessing
+        // a workflowId, the same class of gap the mutating endpoints below already guard against.
+        workflowService.getWorkflow(projectId, workflowId);
         int pageNum = page != null ? page : 0;
         int pageSize = size != null ? size : 50;
         PageRequest pageable = PageRequest.of(pageNum, pageSize, Sort.by(Sort.Direction.DESC, "startedAt"));
-        List<WorkflowRunDto> dtos = runRepository.findByWorkflowId(workflowId, pageable)
-                .stream()
-                .map(this::toRunDto)
+        // Filtering is domain/query logic and lives in the service; the controller stays a thin adapter.
+        List<WorkflowRun> runs = runQueryService.findRuns(workflowId, status, state, pageable);
+        Map<String, String> waitReasonsByRunId = runQueryService.deriveWaitReasons(runs);
+        List<WorkflowRunDto> dtos = runs.stream()
+                .map(run -> toRunDto(run, waitReasonsByRunId.get(run.getId())))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(dtos);
     }
@@ -485,6 +505,21 @@ public class WorkflowController implements WorkflowsApi {
         return ResponseEntity.status(202).body(toRunDto(runCancellationService.cancelRun(runId)));
     }
 
+    @Override
+    public ResponseEntity<CancelQueuedRunsResponse> cancelQueuedWorkflowRuns(String projectId, String workflowId) {
+        String userId = currentUserId();
+        if (!projectSecurityService.isProjectMember(projectId, userId)) {
+            throw new EntityNotFoundException("Project not found");
+        }
+        // 404s if workflowId isn't in this project — same ownership check the single-run cancel does,
+        // just at the workflow level since this endpoint has no runId to re-scope from.
+        WorkflowDefinition workflow = workflowService.getWorkflow(projectId, workflowId);
+        int cancelledCount = runCancellationService.cancelQueuedRuns(workflow.getId());
+        CancelQueuedRunsResponse response = new CancelQueuedRunsResponse();
+        response.setCancelledCount(cancelledCount);
+        return ResponseEntity.ok(response);
+    }
+
     private WorkflowJobRunDto toJobRunDto(WorkflowJobRun jobRun, List<WorkflowStepRun> steps) {
         WorkflowJobRunDto dto = new WorkflowJobRunDto();
         dto.setId(jobRun.getId());
@@ -517,7 +552,14 @@ public class WorkflowController implements WorkflowsApi {
         return dto;
     }
 
+    /** Single-run call sites (dispatch, cancel, legacy status update) don't batch, so they never carry
+     *  a waitReason — that's only derived by {@link #listWorkflowRuns}, where batching one query across
+     *  a whole page actually matters. */
     private WorkflowRunDto toRunDto(WorkflowRun run) {
+        return toRunDto(run, null);
+    }
+
+    private WorkflowRunDto toRunDto(WorkflowRun run, String waitReason) {
         WorkflowRunDto dto = new WorkflowRunDto();
         dto.setId(run.getId());
         dto.setWorkflowId(run.getWorkflow().getId());
@@ -526,6 +568,7 @@ public class WorkflowController implements WorkflowsApi {
         dto.setStartedAt(run.getStartedAt());
         dto.setCompletedAt(run.getCompletedAt());
         dto.setEventPayload(parseEventPayload(run.getEventPayload()));
+        dto.setWaitReason(waitReason);
         return dto;
     }
 
@@ -551,6 +594,7 @@ public class WorkflowController implements WorkflowsApi {
         dto.setVersion(def.getVersion());
         dto.setState(def.getState() == null ? null : WorkflowState.fromValue(def.getState()));
         dto.setArea(def.getArea());
+        dto.setTag(def.getTag());
         dto.setSchemaVersion(def.getSchemaVersion());
         // COND-22: explicit, authoritative kind + sidebar visibility. `definition` is set explicitly to
         // null for automations — the generated DTO field otherwise defaults to {}, which would mislead
