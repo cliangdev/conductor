@@ -1,14 +1,14 @@
 package com.conductor.service;
 
+import com.conductor.entity.Project;
 import com.conductor.entity.ProjectDoc;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
-import com.conductor.repository.DocFolderRepository;
 import com.conductor.repository.DocVersionRepository;
 import com.conductor.repository.ProjectDocRepository;
 import com.conductor.repository.ProjectRepository;
-import com.conductor.repository.UserRepository;
+import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,10 +42,7 @@ class ProjectDocServiceTest {
     private DocVersionRepository docVersionRepository;
 
     @Mock
-    private DocFolderRepository docFolderRepository;
-
-    @Mock
-    private UserRepository userRepository;
+    private DocFolderService docFolderService;
 
     @Mock
     private ProjectRepository projectRepository;
@@ -55,28 +52,33 @@ class ProjectDocServiceTest {
 
     private ProjectDocService service;
     private ProjectDoc doc;
+    private ProjectActor human;
 
     @BeforeEach
     void setUp() {
         service = new ProjectDocService(
-                projectDocRepository, docVersionRepository, docFolderRepository, userRepository, projectRepository);
+                projectDocRepository, docVersionRepository, docFolderService, projectRepository);
         // docCommentService is @Lazy field-injected in production; set it here so "never called" is a
         // real assertion rather than a null-reference accident.
         ReflectionTestUtils.setField(service, "docCommentService", docCommentService);
 
         User user = new User();
         user.setId("user-1");
+        human = ProjectActor.of(user);
+
+        Project project = new Project();
+        project.setId("proj-1");
 
         doc = new ProjectDoc();
         doc.setId("doc-1");
+        doc.setProject(project);
 
         when(projectDocRepository.findByIdWithUsers("doc-1")).thenReturn(Optional.of(doc));
-        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
     }
 
     private String toggle(String content, int lineNumber, boolean checked) {
         doc.setContent(content);
-        return service.setTaskState("doc-1", lineNumber, checked, "user-1").getContent();
+        return service.setTaskState("proj-1", "doc-1", lineNumber, checked, human).getContent();
     }
 
     @Test
@@ -147,7 +149,7 @@ class ProjectDocServiceTest {
     void rejectsALineThatIsNoLongerATaskItem() {
         doc.setContent("just a paragraph");
 
-        assertThatThrownBy(() -> service.setTaskState("doc-1", 1, true, "user-1"))
+        assertThatThrownBy(() -> service.setTaskState("proj-1", "doc-1", 1, true, human))
                 .isInstanceOf(ConflictException.class)
                 .hasMessageContaining("no longer a task list item");
     }
@@ -156,7 +158,7 @@ class ProjectDocServiceTest {
     void rejectsAPlainBulletWithNoCheckbox() {
         doc.setContent("- alpha");
 
-        assertThatThrownBy(() -> service.setTaskState("doc-1", 1, true, "user-1"))
+        assertThatThrownBy(() -> service.setTaskState("proj-1", "doc-1", 1, true, human))
                 .isInstanceOf(ConflictException.class);
     }
 
@@ -164,7 +166,7 @@ class ProjectDocServiceTest {
     void rejectsALineNumberPastTheEndOfTheDocument() {
         doc.setContent("- [ ] alpha");
 
-        assertThatThrownBy(() -> service.setTaskState("doc-1", 9, true, "user-1"))
+        assertThatThrownBy(() -> service.setTaskState("proj-1", "doc-1", 9, true, human))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("out of range");
     }
@@ -173,7 +175,7 @@ class ProjectDocServiceTest {
     void rejectsANonPositiveLineNumber() {
         doc.setContent("- [ ] alpha");
 
-        assertThatThrownBy(() -> service.setTaskState("doc-1", 0, true, "user-1"))
+        assertThatThrownBy(() -> service.setTaskState("proj-1", "doc-1", 0, true, human))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -181,7 +183,35 @@ class ProjectDocServiceTest {
     void treatsNullContentAsEmptyRatherThanCrashing() {
         doc.setContent(null);
 
-        assertThatThrownBy(() -> service.setTaskState("doc-1", 1, true, "user-1"))
+        assertThatThrownBy(() -> service.setTaskState("proj-1", "doc-1", 1, true, human))
                 .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void recordsAHumanEditorAsAUser() {
+        toggle("- [ ] alpha", 1, true);
+
+        assertThat(doc.getUpdatedBy()).isNotNull();
+        assertThat(doc.getUpdatedByLabel()).isNull();
+    }
+
+    @Test
+    void recordsAnAgentEditorAsALabelWithNoUser() {
+        doc.setContent("- [ ] alpha");
+
+        service.setTaskState("proj-1", "doc-1", 1, true, ProjectActor.agent("Agent (run abc12345)"));
+
+        // No user row exists for a run-scoped token, so the label is the only byline the doc can carry.
+        assertThat(doc.getUpdatedBy()).isNull();
+        assertThat(doc.getUpdatedByLabel()).isEqualTo("Agent (run abc12345)");
+    }
+
+    @Test
+    void hidesADocBelongingToAnotherProject() {
+        doc.setContent("- [ ] alpha");
+
+        // A credential scoped to proj-2 must not reach proj-1's doc by putting its own id in the path.
+        assertThatThrownBy(() -> service.setTaskState("proj-2", "doc-1", 1, true, human))
+                .isInstanceOf(EntityNotFoundException.class);
     }
 }

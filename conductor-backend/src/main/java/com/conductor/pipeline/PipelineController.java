@@ -1,7 +1,5 @@
 package com.conductor.pipeline;
 
-import com.conductor.entity.User;
-import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.PipelineApi;
 import com.conductor.generated.model.PipelineHealthDto;
 import com.conductor.generated.model.PipelineStage;
@@ -9,11 +7,8 @@ import com.conductor.generated.model.PipelineStageEdge;
 import com.conductor.generated.model.PipelineStageHealth;
 import com.conductor.generated.model.PipelineTraceDto;
 import com.conductor.generated.model.PipelineTraceNode;
-import com.conductor.security.ProjectScopedPrincipal;
 import com.conductor.service.ProjectSecurityService;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -70,24 +65,9 @@ public class PipelineController implements PipelineApi {
 
     // ---- auth ----
 
-    /**
-     * Member-level gate, mirroring {@code KnowledgeController#requireProjectAccess} /
-     * {@code IntegrationController#requireMember}: a {@link User} principal must be a project member,
-     * or the caller is a project-scoped machine principal already bound to this project.
-     */
+    /** Member-level gate — see {@link ProjectSecurityService#requireProjectAccess} for who passes. */
     private void requireMember(String projectId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = auth != null ? auth.getPrincipal() : null;
-        if (principal instanceof User user) {
-            if (!projectSecurityService.isProjectMember(projectId, user.getId())) {
-                throw new ForbiddenException("Not a member of this project");
-            }
-            return;
-        }
-        if (auth instanceof ProjectScopedPrincipal scoped && projectId.equals(scoped.getProjectId())) {
-            return;
-        }
-        throw new ForbiddenException("Not a member of this project");
+        projectSecurityService.requireProjectAccess(projectId);
     }
 
     // ---- DTO mapping ----

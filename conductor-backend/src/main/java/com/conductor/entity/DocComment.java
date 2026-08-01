@@ -25,9 +25,13 @@ public class DocComment {
     @JoinColumn(name = "doc_id", nullable = false)
     private ProjectDoc doc;
 
+    /** Null when a machine actor left this comment — {@link #authorLabel} carries its identity instead. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "author_id", nullable = false)
+    @JoinColumn(name = "author_id")
     private User author;
+
+    @Column(name = "author_label", length = 255)
+    private String authorLabel;
 
     @Column(name = "content", columnDefinition = "TEXT", nullable = false)
     private String content;
@@ -47,6 +51,10 @@ public class DocComment {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "resolved_by")
     private User resolvedBy;
+
+    /** Set instead of {@link #resolvedBy} when a machine actor resolved the thread. */
+    @Column(name = "resolved_by_label", length = 255)
+    private String resolvedByLabel;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -77,6 +85,9 @@ public class DocComment {
     public User getAuthor() { return author; }
     public void setAuthor(User author) { this.author = author; }
 
+    public String getAuthorLabel() { return authorLabel; }
+    public void setAuthorLabel(String authorLabel) { this.authorLabel = authorLabel; }
+
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }
 
@@ -94,6 +105,9 @@ public class DocComment {
 
     public User getResolvedBy() { return resolvedBy; }
     public void setResolvedBy(User resolvedBy) { this.resolvedBy = resolvedBy; }
+
+    public String getResolvedByLabel() { return resolvedByLabel; }
+    public void setResolvedByLabel(String resolvedByLabel) { this.resolvedByLabel = resolvedByLabel; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

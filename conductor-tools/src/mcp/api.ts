@@ -1,3 +1,4 @@
+import { Blob } from 'node:buffer'
 import type { Config } from './config.js'
 
 async function requestWithStatus<T>(
@@ -76,4 +77,39 @@ export async function apiPut<T>(urlPath: string, body: unknown, config: Config):
 
 export async function apiDelete(urlPath: string, config: Config): Promise<void> {
   await request<void>('DELETE', urlPath, undefined, config)
+}
+
+/**
+ * POSTs a single file as multipart/form-data. Deliberately does not set Content-Type: fetch has to
+ * generate it itself so the multipart boundary matches the body it builds.
+ */
+export async function apiPostFile<T>(
+  urlPath: string,
+  file: { fieldName: string; filename: string; contentType: string; bytes: Uint8Array },
+  config: Config
+): Promise<T> {
+  // Copy into a plain ArrayBuffer: the incoming view may be backed by a pooled Node Buffer, which is
+  // both a type mismatch for Blob and a slice of a larger allocation.
+  const buffer = new ArrayBuffer(file.bytes.byteLength)
+  new Uint8Array(buffer).set(file.bytes)
+
+  const form = new FormData()
+  form.append(
+    file.fieldName,
+    new Blob([buffer], { type: file.contentType }) as unknown as globalThis.Blob,
+    file.filename
+  )
+
+  const response = await fetch(`${config.apiUrl}${urlPath}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${config.apiKey}` },
+    body: form,
+  })
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '')
+    throw new Error(`API error ${response.status}: ${text}`)
+  }
+
+  return (await response.json()) as T
 }

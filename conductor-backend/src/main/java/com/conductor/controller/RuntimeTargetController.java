@@ -83,22 +83,12 @@ public class RuntimeTargetController implements RuntimeTargetsApi {
     /**
      * Member-level gate: accepts either a {@link User} principal or a project-scoped machine
      * principal ({@link ProjectScopedPrincipal} -- a project API key or a run-scoped MCP token)
-     * whose {@code projectId} matches the requested project -- mirroring
-     * {@code KnowledgeController#requireProjectAccess}.
+     * whose {@code projectId} matches the requested project. The rule itself lives in
+     * {@link ProjectSecurityService#requireProjectAccess}, shared with every other project-scoped
+     * controller.
      */
     private void requireMember(String projectId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = auth != null ? auth.getPrincipal() : null;
-        if (principal instanceof User user) {
-            if (!projectSecurityService.isProjectMember(projectId, user.getId())) {
-                throw new AccessDeniedException("Not a member of this project");
-            }
-            return;
-        }
-        if (auth instanceof ProjectScopedPrincipal scoped && projectId.equals(scoped.getProjectId())) {
-            return;
-        }
-        throw new AccessDeniedException("Not a member of this project");
+        projectSecurityService.requireProjectAccess(projectId);
     }
 
     /**

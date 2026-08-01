@@ -98,7 +98,7 @@ src/
 ├── commands/    # CLI commands: mcp, start, stop, status, dashboard, login, logout, init, config, doctor, lint
 ├── daemon/      # watcher.ts — chokidar file watcher, 500ms debounce
 ├── lib/         # API client, config loader
-└── mcp/         # MCP server (stdio): work items, documents, workflows, comments, integrations tools
+└── mcp/         # MCP server (stdio): work items, documents, project docs, workflows, comments, integrations
 ```
 
 Local files at `~/.conductor/{projectId}/issues/**`. Offline queue at `~/.conductor/sync-queue.json`.

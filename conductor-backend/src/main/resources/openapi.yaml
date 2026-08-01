@@ -310,7 +310,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Project not found or caller is not a member
+          description: Project, folder, document, version or comment not found
           content:
             application/json:
               schema:
@@ -550,7 +550,10 @@ paths:
     get:
       tags:
         - project-docs
-      summary: List folder tree for a project
+      summary: List all folders in a project
+      description: >
+        Every folder in the project as a flat list, in name order — clients nest it themselves
+        via `parentId`.
       operationId: listDocFolders
       security:
         - bearerAuth: []
@@ -576,8 +579,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Project not found or caller is not a member
+          description: Project, folder, document, version or comment not found
           content:
             application/json:
               schema:
@@ -621,8 +630,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Project not found or caller is not a member
+          description: Project, folder, document, version or comment not found
           content:
             application/json:
               schema:
@@ -673,6 +688,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Folder not found
           content:
@@ -703,6 +724,12 @@ paths:
           description: Folder deleted
         "401":
           description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
           content:
             application/json:
               schema:
@@ -749,8 +776,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Project not found or caller is not a member
+          description: Project, folder, document, version or comment not found
           content:
             application/json:
               schema:
@@ -762,6 +795,10 @@ paths:
         - project-docs
       summary: List docs in a project
       operationId: listProjectDocs
+      description: >
+        Documents directly inside `folderId`, or at the project root when it is omitted. Pass
+        `recursive=true` for every document in the project regardless of folder — one call instead of
+        one per folder when a client is building the whole tree.
       security:
         - bearerAuth: []
         - apiKeyAuth: []
@@ -776,6 +813,13 @@ paths:
           required: false
           schema:
             type: string
+        - name: recursive
+          in: query
+          required: false
+          description: Return every document in the project. Ignores folderId.
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: List of docs
@@ -791,8 +835,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Project not found or caller is not a member
+          description: Project, folder, document, version or comment not found
           content:
             application/json:
               schema:
@@ -836,8 +886,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Project not found or caller is not a member
+          description: Project, folder, document, version or comment not found
           content:
             application/json:
               schema:
@@ -872,6 +928,12 @@ paths:
                 $ref: "#/components/schemas/ProjectDocResponse"
         "401":
           description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
           content:
             application/json:
               schema:
@@ -926,6 +988,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Doc not found
           content:
@@ -976,6 +1044,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Doc not found
           content:
@@ -1010,6 +1084,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Doc not found
           content:
@@ -1026,8 +1106,8 @@ paths:
         Flips one GFM task list item (`- [ ]` / `- [x]`) on the given 1-based source line, without
         rewriting the rest of the doc. Unlike a full content update this does not create a new
         version and does not mark line comments stale — checking a box never changes the line count,
-        so existing comment anchors stay valid. Requires ADMIN or CREATOR. Idempotent: setting a box
-        to the state it already has succeeds and is a no-op.
+        so existing comment anchors stay valid. Requires ADMIN or CREATOR, or a credential scoped to
+        this project. Idempotent: setting a box to the state it already has succeeds and is a no-op.
       operationId: setDocTaskState
       security:
         - bearerAuth: []
@@ -1079,7 +1159,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Requires ADMIN or CREATOR
+          description: Caller may not act on this project
           content:
             application/json:
               schema:
@@ -1132,6 +1212,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Doc not found
           content:
@@ -1173,6 +1259,12 @@ paths:
                 $ref: "#/components/schemas/DocVersionResponse"
         "401":
           description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
           content:
             application/json:
               schema:
@@ -1222,6 +1314,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Version not found
           content:
@@ -1234,6 +1332,11 @@ paths:
       tags:
         - project-docs
       summary: Upload an image to a doc
+      description: >
+        Stores the image and returns a Markdown snippet to paste into the document. The URL in that
+        snippet is a short-lived signed URL, but saving it into the doc is safe: the server rewrites
+        any doc-image URL to a stable reference on write and mints a fresh signed URL on every read,
+        so embedded images do not expire.
       operationId: uploadDocImage
       security:
         - bearerAuth: []
@@ -1268,6 +1371,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DocImageUploadResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "400":
           description: Invalid file type
 
@@ -1302,6 +1411,12 @@ paths:
                   $ref: "#/components/schemas/DocCommentResponse"
         "401":
           description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
           content:
             application/json:
               schema:
@@ -1353,6 +1468,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
           content:
             application/json:
               schema:
@@ -1455,6 +1576,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Comment not found
           content:
@@ -1496,6 +1623,12 @@ paths:
                 $ref: "#/components/schemas/DocCommentResponse"
         "401":
           description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller may not act on this project
           content:
             application/json:
               schema:
@@ -1691,7 +1824,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Project not found or caller is not a member
+          description: Project, folder, document, version or comment not found
           content:
             application/json:
               schema:
@@ -7286,11 +7419,21 @@ components:
 
     RenameFolderRequest:
       type: object
-      required:
-        - name
+      description: >
+        Rename and/or reparent in one call. `name` renames. `parentId` moves the folder (and its
+        whole subtree) under that folder; `moveToRoot: true` moves it to the top level.
       properties:
         name:
           type: string
+          description: New name. Omit to keep the current one.
+        parentId:
+          type: string
+          nullable: true
+          description: New parent folder. Mutually exclusive with moveToRoot; may not be the folder itself or one of its descendants.
+        moveToRoot:
+          type: boolean
+          default: false
+          description: Move the folder to the top level. Mutually exclusive with parentId.
 
     ProjectDocSummaryResponse:
       type: object
@@ -7390,6 +7533,10 @@ components:
 
     RenameDocRequest:
       type: object
+      description: >
+        Rename and/or move in one call. `title` renames. `folderId` moves into that folder;
+        `moveToRoot: true` moves out of any folder. Moving to root needs the explicit flag because
+        the generated models cannot distinguish an omitted `folderId` from an explicit null.
       properties:
         title:
           type: string
@@ -7397,6 +7544,10 @@ components:
         folderId:
           type: string
           nullable: true
+        moveToRoot:
+          type: boolean
+          default: false
+          description: Move the document out of its folder to the project root. Mutually exclusive with folderId.
 
     ProjectDocSearchResult:
       type: object
@@ -7421,7 +7572,6 @@ components:
         - id
         - docId
         - versionNumber
-        - authorId
         - authorName
         - createdAt
       properties:
@@ -7433,6 +7583,8 @@ components:
           type: integer
         authorId:
           type: string
+          nullable: true
+          description: Null when a machine actor (agent) authored this
         authorName:
           type: string
         createdAt:
@@ -7445,7 +7597,6 @@ components:
         - id
         - docId
         - versionNumber
-        - authorId
         - authorName
         - createdAt
       properties:
@@ -7460,6 +7611,8 @@ components:
           nullable: true
         authorId:
           type: string
+          nullable: true
+          description: Null when a machine actor (agent) authored this
         authorName:
           type: string
         createdAt:
@@ -7471,7 +7624,6 @@ components:
       required:
         - id
         - commentId
-        - authorId
         - authorName
         - content
         - createdAt
@@ -7482,6 +7634,8 @@ components:
           type: string
         authorId:
           type: string
+          nullable: true
+          description: Null when a machine actor (agent) authored this
         authorName:
           type: string
         content:
@@ -7495,7 +7649,6 @@ components:
       required:
         - id
         - docId
-        - authorId
         - authorName
         - content
         - lineStale
@@ -7509,6 +7662,8 @@ components:
           type: string
         authorId:
           type: string
+          nullable: true
+          description: Null when a machine actor (agent) authored this
         authorName:
           type: string
         content:

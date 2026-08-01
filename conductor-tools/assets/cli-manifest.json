@@ -374,6 +374,85 @@
       "description": "Raise a gap report for a knowledge domain not yet in the registry. Claim-or-return on slug.",
       "category": "knowledge",
       "requiredParams": ["slug", "displayName", "reason"]
+    },
+    {
+      "name": "list_project_docs",
+      "description": "Map the project's Docs section — folder paths and every document as a \"Folder/Title\" path, or full-text search with query.",
+      "category": "project-docs"
+    },
+    {
+      "name": "read_project_doc",
+      "description": "Read one project document by path or docId — full Markdown plus taskLines (every checkbox with its line number and state).",
+      "category": "project-docs"
+    },
+    {
+      "name": "write_project_doc",
+      "description": "Create or replace a project document at a path, creating any missing folders.",
+      "category": "project-docs",
+      "requiredParams": ["path", "content"]
+    },
+    {
+      "name": "move_project_doc",
+      "description": "Rename a project document and/or move it to another folder.",
+      "category": "project-docs",
+      "requiredParams": ["newPath"]
+    },
+    {
+      "name": "delete_project_doc",
+      "description": "Delete a project document, along with its version history and comments.",
+      "category": "project-docs"
+    },
+    {
+      "name": "set_project_doc_task",
+      "description": "Check or uncheck one Markdown checkbox in a project document by 1-based line number.",
+      "category": "project-docs",
+      "requiredParams": ["lineNumber", "checked"]
+    },
+    {
+      "name": "list_project_doc_comments",
+      "description": "Read the line-anchored comments humans left on a project document, unresolved by default.",
+      "category": "project-docs"
+    },
+    {
+      "name": "comment_on_project_doc",
+      "description": "Leave a comment anchored to one line of a project document.",
+      "category": "project-docs",
+      "requiredParams": ["lineNumber", "content"]
+    },
+    {
+      "name": "respond_to_project_doc_comment",
+      "description": "Answer a comment thread on a project document — reply, resolve, or both.",
+      "category": "project-docs",
+      "requiredParams": ["commentId"]
+    },
+    {
+      "name": "list_project_doc_versions",
+      "description": "List a project document's edit history — version number, author and timestamp, newest first.",
+      "category": "project-docs"
+    },
+    {
+      "name": "restore_project_doc_version",
+      "description": "Roll a project document back to an earlier version, appended as a new version rather than a rewind.",
+      "category": "project-docs",
+      "requiredParams": ["versionNumber"]
+    },
+    {
+      "name": "upload_project_doc_image",
+      "description": "Upload a local image file to a project document and get the Markdown snippet to embed.",
+      "category": "project-docs",
+      "requiredParams": ["filePath"]
+    },
+    {
+      "name": "move_project_folder",
+      "description": "Rename a docs folder and/or move it under another one, taking its whole subtree with it.",
+      "category": "project-docs",
+      "requiredParams": ["path", "newPath"]
+    },
+    {
+      "name": "delete_project_folder",
+      "description": "Delete a docs folder and its subfolders; documents inside are kept and resurface at the project root.",
+      "category": "project-docs",
+      "requiredParams": ["path"]
     }
   ]
 }

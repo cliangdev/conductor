@@ -9,11 +9,14 @@ import java.util.List;
 @Repository
 public interface DocFolderRepository extends JpaRepository<DocFolder, String> {
 
-    List<DocFolder> findByProjectIdAndParentIsNull(String projectId);
-
-    List<DocFolder> findByProjectIdAndParentId(String projectId, String parentId);
+    List<DocFolder> findByProjectIdOrderByNameAsc(String projectId);
 
     boolean existsByProjectIdAndParentIsNullAndName(String projectId, String name);
 
     boolean existsByProjectIdAndParentIdAndName(String projectId, String parentId, String name);
+
+    // ...AndIdNot variants: renaming a folder in place must not collide with itself.
+    boolean existsByProjectIdAndParentIsNullAndNameAndIdNot(String projectId, String name, String id);
+
+    boolean existsByProjectIdAndParentIdAndNameAndIdNot(String projectId, String parentId, String name, String id);
 }

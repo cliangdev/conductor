@@ -1,6 +1,8 @@
 package com.conductor.knowledge.controller;
 
 import com.conductor.config.SecurityConfig;
+import com.conductor.entity.MemberRole;
+import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.knowledge.KnowledgeIngestionService;
@@ -17,6 +19,7 @@ import com.conductor.repository.ProjectApiKeyRepository;
 import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
+import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.workflow.RunTokenService;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,7 +52,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Follows the security-filter setup precedent in {@code WorkflowControllerTest}/{@code IntegrationControllerTest}.
  */
 @WebMvcTest(KnowledgeController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, ProjectSecurityService.class})
 class KnowledgeControllerTest {
 
     private static final String PROJECT_ID = "proj-1";
@@ -60,7 +63,7 @@ class KnowledgeControllerTest {
     @MockitoBean private KnowledgePageService pageService;
     @MockitoBean private KnowledgeSearchService searchService;
     @MockitoBean private KnowledgeDomainService domainService;
-    @MockitoBean private ProjectSecurityService projectSecurityService;
+    @MockitoBean private ProjectMemberRepository projectMemberRepository;
 
     // Security-filter collaborators
     @MockitoBean private JwtService jwtService;
@@ -83,7 +86,7 @@ class KnowledgeControllerTest {
 
     @Test
     void batchWrite_happyPath_returns200WithResults() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any(), any()))
                 .thenReturn(List.of(new PageWriteResult("dir/page.md", 1, "abc123")));
 
@@ -104,7 +107,7 @@ class KnowledgeControllerTest {
 
     @Test
     void batchWrite_conflict_returns409WithConflictsArray() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any(), any()))
                 .thenThrow(new KnowledgeConflictException(List.of(
                         new KnowledgeConflictException.Conflict("dir/page.md", 3, "---\ntype: doc\n---\n\nold"))));
@@ -126,7 +129,7 @@ class KnowledgeControllerTest {
 
     @Test
     void batchWrite_invalidFrontmatter_returns422() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), any(), any()))
                 .thenThrow(new FrontmatterException("Document is empty -- every page needs a frontmatter 'type'"));
 
@@ -143,7 +146,7 @@ class KnowledgeControllerTest {
 
     @Test
     void batchWrite_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(false);
 
         String body = """
                 {"writes":[{"path":"dir/page.md","content":"---\\ntype: doc\\n---\\n\\nhello"}]}
@@ -158,7 +161,7 @@ class KnowledgeControllerTest {
 
     @Test
     void batchWrite_acceptsAndForwardsSkipped() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), anyList(), any()))
                 .thenReturn(List.of());
 
@@ -184,7 +187,7 @@ class KnowledgeControllerTest {
 
     @Test
     void batchWrite_sourceIdInBothListsReturns400() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(pageService.batchWrite(eq(PROJECT_ID), anyList(), any(), anyList(), any()))
                 .thenThrow(new com.conductor.exception.BusinessException(
                         "Source src-1 appears in both sourceIds and skipped"));
@@ -204,7 +207,7 @@ class KnowledgeControllerTest {
 
     @Test
     void dismiss_happyPath_returns200WithResponseBody() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(pageService.dismissPage(eq(PROJECT_ID), eq("engineering/work-items/cx-14.md"), eq(1),
                 eq("Not worth filing."), anyString(), any()))
                 .thenReturn(new KnowledgePageService.DismissResult(
@@ -227,7 +230,7 @@ class KnowledgeControllerTest {
 
     @Test
     void dismiss_blankReason_returns400() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(pageService.dismissPage(eq(PROJECT_ID), anyString(), any(), anyString(), anyString(), any()))
                 .thenThrow(new com.conductor.exception.BusinessException("dismiss requires a non-blank reason"));
 
@@ -244,7 +247,7 @@ class KnowledgeControllerTest {
 
     @Test
     void dismiss_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(false);
 
         String body = """
                 {"path":"notes/a.md","baseVersion":1,"reason":"Not worth filing."}
@@ -259,7 +262,7 @@ class KnowledgeControllerTest {
 
     @Test
     void dismiss_unknownPath_returns404() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(pageService.dismissPage(eq(PROJECT_ID), anyString(), any(), anyString(), anyString(), any()))
                 .thenThrow(new jakarta.persistence.EntityNotFoundException(
                         "No live knowledge page at path: notes/missing.md"));
@@ -277,7 +280,7 @@ class KnowledgeControllerTest {
 
     @Test
     void dismiss_conflict_returns409WithConflictsArray() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(pageService.dismissPage(eq(PROJECT_ID), anyString(), any(), anyString(), anyString(), any()))
                 .thenThrow(new KnowledgeConflictException(
                         "This page changed since you opened it — reload and try again.",
@@ -300,7 +303,7 @@ class KnowledgeControllerTest {
 
     @Test
     void submitSource_accepted_returns202() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.submit(any())).thenReturn(new SourceReceipt("src-1", SourceReceipt.Status.ACCEPTED));
 
         String body = """
@@ -318,7 +321,7 @@ class KnowledgeControllerTest {
 
     @Test
     void submitSource_duplicate_returns202WithDuplicateStatus() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.submit(any())).thenReturn(new SourceReceipt("src-1", SourceReceipt.Status.DUPLICATE));
 
         String body = """
@@ -336,7 +339,7 @@ class KnowledgeControllerTest {
 
     @Test
     void listSources_defaultsToPendingStatus() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.listSources(eq(PROJECT_ID), eq(com.conductor.knowledge.KnowledgeSourceStatus.PENDING), isNull()))
                 .thenReturn(List.of());
 
@@ -348,7 +351,7 @@ class KnowledgeControllerTest {
 
     @Test
     void listSources_byIds_callsGetSources() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.getSources(eq(PROJECT_ID), any()))
                 .thenReturn(List.of(new KnowledgeSourceView("src-1", PROJECT_ID, "manual_note", null, null,
                         null, "hello", false, null, null, null, null,
@@ -370,7 +373,7 @@ class KnowledgeControllerTest {
      */
     @Test
     void listSources_statusSkipped_roundTripsToDomainEnum() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.listSources(eq(PROJECT_ID), eq(com.conductor.knowledge.KnowledgeSourceStatus.SKIPPED), isNull()))
                 .thenReturn(List.of(new KnowledgeSourceView("src-1", PROJECT_ID, "manual_note", null, null,
                         null, null, false, null, null, null, null,
@@ -388,7 +391,7 @@ class KnowledgeControllerTest {
 
     @Test
     void sourceCounts_happyPath_returnsCountsPerStatus() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.getSourceCounts(PROJECT_ID))
                 .thenReturn(new KnowledgeSourceCountsView(3, 1, 42, 4, 2));
 
@@ -404,7 +407,7 @@ class KnowledgeControllerTest {
 
     @Test
     void sourceCounts_zeroDefaultsWhenProjectHasNoSources() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         when(ingestionService.getSourceCounts(PROJECT_ID))
                 .thenReturn(new KnowledgeSourceCountsView(0, 0, 0, 0, 0));
 
@@ -420,7 +423,7 @@ class KnowledgeControllerTest {
 
     @Test
     void sourceCounts_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
                         .header("Authorization", "Bearer valid-token"))
@@ -431,7 +434,8 @@ class KnowledgeControllerTest {
 
     @Test
     void retryDeadSources_admin_returns200WithCount() throws Exception {
-        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.ADMIN)));
         when(ingestionService.retryDeadSources(PROJECT_ID)).thenReturn(3);
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/retry")
@@ -442,7 +446,8 @@ class KnowledgeControllerTest {
 
     @Test
     void retryDeadSources_nonAdmin_returns403() throws Exception {
-        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/retry")
                         .header("Authorization", "Bearer valid-token"))
@@ -465,7 +470,7 @@ class KnowledgeControllerTest {
 
     @Test
     void listDomains_returnsRegistryWithCounts() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         com.conductor.knowledge.domain.KnowledgeDomain engineering = new com.conductor.knowledge.domain.KnowledgeDomain();
         engineering.setSlug("engineering");
         engineering.setDisplayName("Engineering");
@@ -490,7 +495,8 @@ class KnowledgeControllerTest {
 
     @Test
     void updateDomain_admin_updatesAndReturns200() throws Exception {
-        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.ADMIN)));
         com.conductor.knowledge.domain.KnowledgeDomain updated = new com.conductor.knowledge.domain.KnowledgeDomain();
         updated.setSlug("engineering");
         updated.setDisplayName("Eng");
@@ -514,7 +520,8 @@ class KnowledgeControllerTest {
 
     @Test
     void updateDomain_nonAdmin_returns403() throws Exception {
-        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                         .patch("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains/engineering")
@@ -526,7 +533,7 @@ class KnowledgeControllerTest {
 
     @Test
     void createDomain_member_landsSuggestedWith201WhenNew() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         com.conductor.knowledge.domain.KnowledgeDomain suggested = new com.conductor.knowledge.domain.KnowledgeDomain();
         suggested.setSlug("legal");
         suggested.setDisplayName("Legal");
@@ -549,7 +556,7 @@ class KnowledgeControllerTest {
 
     @Test
     void createDomain_existingSlug_returns200NotCreated() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
         com.conductor.knowledge.domain.KnowledgeDomain existing = new com.conductor.knowledge.domain.KnowledgeDomain();
         existing.setSlug("engineering");
         existing.setDisplayName("Engineering");
@@ -571,7 +578,7 @@ class KnowledgeControllerTest {
 
     @Test
     void createDomain_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(false);
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains")
                         .header("Authorization", "Bearer valid-token")
@@ -582,7 +589,8 @@ class KnowledgeControllerTest {
 
     @Test
     void createSpecialist_admin_returns200() throws Exception {
-        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.ADMIN)));
         com.conductor.knowledge.domain.KnowledgeDomain domain = new com.conductor.knowledge.domain.KnowledgeDomain();
         domain.setSlug("engineering");
         domain.setDisplayName("Engineering");
@@ -602,7 +610,8 @@ class KnowledgeControllerTest {
 
     @Test
     void createSpecialist_nonAdmin_returns403() throws Exception {
-        when(projectSecurityService.isProjectAdmin(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/knowledge/domains/engineering/specialist")
                         .header("Authorization", "Bearer valid-token"))
@@ -658,5 +667,12 @@ class KnowledgeControllerTest {
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/knowledge/sources/counts")
                         .header("Authorization", "Bearer eyJ.mcp.mismatched"))
                 .andExpect(status().isForbidden());
+    }
+
+    /** A membership row carrying {@code role} — what the real ProjectSecurityService reads. */
+    private static ProjectMember memberWithRole(MemberRole role) {
+        ProjectMember member = new ProjectMember();
+        member.setRole(role);
+        return member;
     }
 }

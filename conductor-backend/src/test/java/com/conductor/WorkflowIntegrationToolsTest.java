@@ -1,6 +1,8 @@
 package com.conductor;
 
 import com.conductor.config.SecurityConfig;
+import com.conductor.entity.MemberRole;
+import com.conductor.entity.ProjectMember;
 import com.conductor.controller.IntegrationController;
 import com.conductor.entity.Connection;
 import com.conductor.entity.User;
@@ -24,6 +26,7 @@ import com.conductor.service.ConnectionService;
 import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.JwtService;
 import com.conductor.service.OAuthFlowService;
+import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.workflow.IntegrationStepExecutor;
 import com.conductor.workflow.StepExecutionContext;
@@ -52,7 +55,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(IntegrationController.class)
-@Import({SecurityConfig.class, GlobalExceptionHandler.class})
+@Import({SecurityConfig.class, GlobalExceptionHandler.class, ProjectSecurityService.class})
 class WorkflowIntegrationToolsTest {
 
     private static final String PROJECT_ID = "proj-e2e";
@@ -66,7 +69,7 @@ class WorkflowIntegrationToolsTest {
     @MockitoBean private OAuthFlowService oAuthFlowService;
     @MockitoBean private ConnectionDataCacheRepository cacheRepository;
     @MockitoBean private WebhookEventRepository webhookEventRepository;
-    @MockitoBean private ProjectSecurityService projectSecurityService;
+    @MockitoBean private ProjectMemberRepository projectMemberRepository;
     @MockitoBean private com.conductor.integration.ingest.ConnectorFeedRepository connectorFeedRepository;
     @MockitoBean private Optional<GcpBillingConnector> gcpBillingConnector;
     @MockitoBean private Optional<GscConnector> gscConnector;
@@ -90,7 +93,7 @@ class WorkflowIntegrationToolsTest {
         when(jwtService.validateToken("test-token")).thenReturn(true);
         when(jwtService.getUserIdFromToken("test-token")).thenReturn("user-1");
         when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(true);
     }
 
     // ── listIntegrationTools endpoint ─────────────────────────────────────────
@@ -142,7 +145,7 @@ class WorkflowIntegrationToolsTest {
 
     @Test
     void listIntegrationTools_nonMember_returns403() throws Exception {
-        when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(false);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/tools")
                 .header("Authorization", "Bearer test-token"))
@@ -314,5 +317,12 @@ class WorkflowIntegrationToolsTest {
 
         assertThat(result.getStatus()).isEqualTo(com.conductor.entity.WorkflowStepStatus.FAILED);
         assertThat(result.getErrorReason()).isEqualTo("Configure your Search Console property");
+    }
+
+    /** A membership row carrying {@code role} — what the real ProjectSecurityService reads. */
+    private static ProjectMember memberWithRole(MemberRole role) {
+        ProjectMember member = new ProjectMember();
+        member.setRole(role);
+        return member;
     }
 }

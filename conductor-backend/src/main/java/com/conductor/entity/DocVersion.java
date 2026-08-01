@@ -30,9 +30,13 @@ public class DocVersion {
     @Column(name = "content", columnDefinition = "TEXT")
     private String content;
 
+    /** Null when a machine actor wrote this version — {@link #authorLabel} carries its identity instead. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "author_id", nullable = false)
+    @JoinColumn(name = "author_id")
     private User author;
+
+    @Column(name = "author_label", length = 255)
+    private String authorLabel;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -59,6 +63,9 @@ public class DocVersion {
 
     public User getAuthor() { return author; }
     public void setAuthor(User author) { this.author = author; }
+
+    public String getAuthorLabel() { return authorLabel; }
+    public void setAuthorLabel(String authorLabel) { this.authorLabel = authorLabel; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

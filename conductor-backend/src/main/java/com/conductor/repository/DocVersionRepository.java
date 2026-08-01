@@ -12,10 +12,12 @@ import java.util.Optional;
 @Repository
 public interface DocVersionRepository extends JpaRepository<DocVersion, String> {
 
-    @Query("SELECT v FROM DocVersion v JOIN FETCH v.author WHERE v.doc.id = :docId ORDER BY v.versionNumber DESC")
+    // LEFT JOIN FETCH on the author: a version written by an agent has none, and an inner join would
+    // hide it from the history panel entirely.
+    @Query("SELECT v FROM DocVersion v LEFT JOIN FETCH v.author WHERE v.doc.id = :docId ORDER BY v.versionNumber DESC")
     List<DocVersion> findByDocIdOrderByVersionNumberDesc(@Param("docId") String docId);
 
-    @Query("SELECT v FROM DocVersion v JOIN FETCH v.author JOIN FETCH v.doc WHERE v.id = :id")
+    @Query("SELECT v FROM DocVersion v LEFT JOIN FETCH v.author JOIN FETCH v.doc WHERE v.id = :id")
     Optional<DocVersion> findByIdWithAuthor(@Param("id") String id);
 
     int countByDocId(String docId);

@@ -24,9 +24,13 @@ public class DocCommentReply {
     @JoinColumn(name = "comment_id", nullable = false)
     private DocComment comment;
 
+    /** Null when a machine actor wrote this reply — {@link #authorLabel} carries its identity instead. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "author_id", nullable = false)
+    @JoinColumn(name = "author_id")
     private User author;
+
+    @Column(name = "author_label", length = 255)
+    private String authorLabel;
 
     @Column(name = "content", columnDefinition = "TEXT", nullable = false)
     private String content;
@@ -50,6 +54,9 @@ public class DocCommentReply {
 
     public User getAuthor() { return author; }
     public void setAuthor(User author) { this.author = author; }
+
+    public String getAuthorLabel() { return authorLabel; }
+    public void setAuthorLabel(String authorLabel) { this.authorLabel = authorLabel; }
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }

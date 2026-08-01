@@ -40,7 +40,7 @@ import com.conductor.knowledge.page.PageWriteResult;
 import com.conductor.knowledge.page.RevisionView;
 import com.conductor.knowledge.page.SearchHit;
 import com.conductor.knowledge.page.SkippedSource;
-import com.conductor.security.ProjectScopedPrincipal;
+import com.conductor.service.ProjectActor;
 import com.conductor.service.ProjectSecurityService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -238,28 +238,19 @@ public class KnowledgeController implements KnowledgeApi {
     }
 
     /**
-     * Verifies the authenticated caller may act on {@code projectId} and derives its Actor/Origin
-     * provenance in the same step -- both a user JWT/user-API-key principal ({@link User}, checked
-     * via {@link ProjectSecurityService#isProjectMember}) and a project-scoped machine principal
-     * ({@link ProjectScopedPrincipal} -- a project API key or a run-scoped MCP token -- whose
-     * {@code projectId} must equal the path {@code projectId}) are accepted, mirroring
-     * {@code DaemonEventsController#requireProjectApiKeyScopeForRun}.
+     * Maps the caller resolved by {@link ProjectSecurityService#requireProjectAccess} onto this
+     * domain's Actor/Origin provenance. A machine caller already carries its own byline
+     * ({@link ProjectActor#label} -- "Agent", or the run id when the token is run-scoped); a human
+     * one is labelled the way the frontend would render them.
      */
     private Caller requireProjectAccess(String projectId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = auth != null ? auth.getPrincipal() : null;
-        if (principal instanceof User user) {
-            if (!projectSecurityService.isProjectMember(projectId, user.getId())) {
-                throw new ForbiddenException("Not a member of this project");
-            }
-            return new Caller(new Actor("user", user.getId(), null),
-                    new KnowledgeSubmission.Origin("USER", user.getId()), displayLabel(user));
-        }
-        if (auth instanceof ProjectScopedPrincipal scoped && projectId.equals(scoped.getProjectId())) {
+        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        if (actor.isMachine()) {
             return new Caller(new Actor("agent", projectId, null),
-                    new KnowledgeSubmission.Origin("API_KEY", projectId), "API key");
+                    new KnowledgeSubmission.Origin("API_KEY", projectId), actor.label());
         }
-        throw new ForbiddenException("Not a member of this project");
+        return new Caller(new Actor("user", actor.userId(), null),
+                new KnowledgeSubmission.Origin("USER", actor.userId()), displayLabel(actor.user()));
     }
 
     /** Best available human-readable name for {@code user}: displayName, then name, then email --

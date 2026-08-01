@@ -35,13 +35,21 @@ public class ProjectDoc {
     @Column(name = "content", columnDefinition = "TEXT")
     private String content;
 
+    /** Null when a machine actor authored this doc — {@link #createdByLabel} carries its identity instead. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "created_by", nullable = false)
+    @JoinColumn(name = "created_by")
     private User createdBy;
 
+    @Column(name = "created_by_label", length = 255)
+    private String createdByLabel;
+
+    /** Null when a machine actor made the last edit — see {@link #updatedByLabel}. */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "updated_by", nullable = false)
+    @JoinColumn(name = "updated_by")
     private User updatedBy;
+
+    @Column(name = "updated_by_label", length = 255)
+    private String updatedByLabel;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -81,8 +89,14 @@ public class ProjectDoc {
     public User getCreatedBy() { return createdBy; }
     public void setCreatedBy(User createdBy) { this.createdBy = createdBy; }
 
+    public String getCreatedByLabel() { return createdByLabel; }
+    public void setCreatedByLabel(String createdByLabel) { this.createdByLabel = createdByLabel; }
+
     public User getUpdatedBy() { return updatedBy; }
     public void setUpdatedBy(User updatedBy) { this.updatedBy = updatedBy; }
+
+    public String getUpdatedByLabel() { return updatedByLabel; }
+    public void setUpdatedByLabel(String updatedByLabel) { this.updatedByLabel = updatedByLabel; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
