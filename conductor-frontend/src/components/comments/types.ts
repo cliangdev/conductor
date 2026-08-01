@@ -1,6 +1,7 @@
 export interface CommentReply {
   id: string
-  authorId: string
+  /** Null for a machine author (an agent or a run-scoped token) — see `authorName` for the byline. */
+  authorId: string | null
   authorName: string
   content: string
   createdAt: string
@@ -9,7 +10,8 @@ export interface CommentReply {
 export interface Comment {
   id: string
   documentId: string
-  authorId: string
+  /** Null for a machine author (an agent or a run-scoped token) — see `authorName` for the byline. */
+  authorId: string | null
   authorName: string
   content: string
   lineNumber?: number
