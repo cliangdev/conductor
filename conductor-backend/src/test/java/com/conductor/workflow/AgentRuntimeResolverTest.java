@@ -87,13 +87,28 @@ class AgentRuntimeResolverTest {
     }
 
     @Test
-    void neitherCredentialThrowsNamingBothOptions() {
+    void neitherCredentialThrowsNamingBothOptionsForClaudeProvider() {
         when(credentialService.hasCredential(PROJECT_ID, "claude-code")).thenReturn(false);
         when(credentialService.hasCredential(PROJECT_ID, "claude")).thenReturn(false);
 
         assertThatThrownBy(() -> resolver.resolve(PROJECT_ID, definition(null)))
                 .isInstanceOf(AgentRuntimeUnresolvedException.class)
                 .hasMessageContaining("Claude Code")
-                .hasMessageContaining("claude");
+                .hasMessageContaining("claude")
+                .hasMessageContaining("Settings → AI Providers");
+    }
+
+    @Test
+    void noCredentialForNonClaudeProviderNamesOnlyItsOwnApiKeyNotClaudeCode() {
+        // The container always runs Claude, so offering the claude-code option for a non-claude
+        // provider agent would be actively wrong -- the message must name only that provider's key.
+        when(credentialService.hasCredential(PROJECT_ID, "gemini")).thenReturn(false);
+
+        assertThatThrownBy(() -> resolver.resolve(PROJECT_ID, definition("gemini", null)))
+                .isInstanceOf(AgentRuntimeUnresolvedException.class)
+                .hasMessageContaining("'gemini' API key")
+                .hasMessageContaining("Settings → AI Providers")
+                .hasMessageNotContaining("Claude Code")
+                .hasMessageNotContaining("claude-code");
     }
 }

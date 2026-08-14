@@ -164,6 +164,7 @@ See `scripts/gcloud-alias-example.sh` for a persistent shell alias.
 - [`docs/workflows.md`](docs/workflows.md) — Workflow YAML format, trigger types, step types, execution modes, self-hosted runner setup.
 - [`docs/knowledge.md`](docs/knowledge.md) — Knowledge Center: ingestion envelope, wiki page model, librarian workflows.
 - [`docs/conversations.md`](docs/conversations.md) — Conversations & the CEO agent: addressable agents, the conversation REST API, Discord `/ask` setup.
+- [`docs/ai-providers.md`](docs/ai-providers.md) — AI Providers: BYO-key model, registered providers, connection states, model discovery, extending with a new provider.
 - [`docs/mcp-tool-guidelines.md`](docs/mcp-tool-guidelines.md) — MCP tool design principles: context budget, action–verify pattern, dispatch–status pattern, checklist. **Read before creating or updating any MCP tool.**
 - [`docs/design-system.md`](docs/design-system.md) — Frontend design system: tokens (light + dark), typography, status ramp, required primitives, page-chrome patterns, anti-patterns. **Read before any UI work.**
 - [`docs/dev-workflow.md`](docs/dev-workflow.md) — PR branch deploy/test/debug loop: deploy labels, skip-tests, live MCP testing, log access.

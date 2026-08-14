@@ -104,6 +104,7 @@ CLI + MCP for agent use: see the [conductor-tools README](conductor-tools/README
 | [docs/workflows.md](docs/workflows.md) | Workflow YAML, triggers, step types, execution modes, self-hosted runners |
 | [docs/knowledge.md](docs/knowledge.md) | Knowledge Center: ingestion, wiki model, librarian workflows |
 | [docs/conversations.md](docs/conversations.md) | Conversations & the CEO agent: addressable agents, REST API, Discord `/ask` setup |
+| [docs/ai-providers.md](docs/ai-providers.md) | AI Providers: BYO-key model, registered providers, model discovery, adding a provider |
 | [docs/api-guidelines.md](docs/api-guidelines.md) | OpenAPI-first workflow, external vs internal API split |
 | [docs/mcp-tool-guidelines.md](docs/mcp-tool-guidelines.md) | MCP tool design principles |
 | [docs/integrations-adding-a-connector.md](docs/integrations-adding-a-connector.md) | Building a new connector |

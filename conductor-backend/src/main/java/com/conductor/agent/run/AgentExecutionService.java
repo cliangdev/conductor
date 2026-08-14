@@ -164,7 +164,7 @@ public class AgentExecutionService {
         Optional<String> apiKey = credentialService.resolveApiKey(projectId, agent.getProvider());
         if (apiKey.isEmpty()) {
             return finish(run, usage, transcript, toolCallLog, AgentRun.Status.FAILED, null, null,
-                    "No API key configured for provider '" + agent.getProvider() + "' in this project");
+                    missingApiKeyMessage(projectId, agent.getProvider()));
         }
 
         // Resolve tools the agent is bound to.
@@ -241,6 +241,29 @@ public class AgentExecutionService {
         Map<String, Object> structured = request.outputSchema() != null
                 ? extractJsonObject(finalText) : null;
         return finish(run, usage, transcript, toolCallLog, status, finalText, structured, errorReason);
+    }
+
+    /**
+     * An actionable failure message for a missing credential: names the fix (Settings → AI Providers)
+     * and, when the project already has a key for a different provider, names those too. This reaches
+     * a Discord {@code /ask} user via an addressable agent (e.g. the CEO agent) whenever an operator
+     * switches the agent's provider before configuring a key for it — "no openai key configured; this
+     * project has a claude key configured" is the difference between a five-second fix and a support
+     * ticket. Excludes {@link ProviderCredentialService#NON_MODEL_PROVIDERS} (e.g. {@code claude-code})
+     * from the "other providers" list since those can never be picked as an agent's model provider.
+     */
+    private String missingApiKeyMessage(String projectId, String provider) {
+        String base = "No API key configured for provider '" + provider + "' in this project — add one "
+                + "under Settings → AI Providers.";
+        List<String> configuredElsewhere = credentialService.listStatuses(projectId).stream()
+                .filter(s -> s.configured() && !s.provider().equals(provider))
+                .map(ProviderCredentialService.ProviderCredentialStatusView::provider)
+                .filter(p -> !ProviderCredentialService.NON_MODEL_PROVIDERS.contains(p))
+                .toList();
+        if (configuredElsewhere.isEmpty()) {
+            return base;
+        }
+        return base + " This project has a key configured for: " + String.join(", ", configuredElsewhere) + ".";
     }
 
     // ---- ReAct internals ----

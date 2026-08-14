@@ -18,6 +18,7 @@ import com.conductor.agent.tool.ToolResult;
 import com.conductor.service.LogRedactionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -277,5 +278,60 @@ class AgentExecutionServiceTest {
         assertThatThrownBy(() -> service.run(
                 new AgentRunRequest("agent-1", "Do the thing", Map.of(), null), tooLong, null))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ---- missing API key: the failure reason must name the fix and any already-configured alternative ----
+
+    /** Runs the agent with no credential for its provider and returns the persisted run's errorReason. */
+    private String runWithNoCredentialAndCaptureErrorReason(
+            List<ProviderCredentialService.ProviderCredentialStatusView> statuses) {
+        Agent agent = agent("{}");
+        AgentRepository agentRepo = mock(AgentRepository.class);
+        when(agentRepo.findById("agent-1")).thenReturn(Optional.of(agent));
+
+        ArgumentCaptor<AgentRun> savedRun = ArgumentCaptor.forClass(AgentRun.class);
+        AgentRunRepository runRepo = mock(AgentRunRepository.class);
+        when(runRepo.save(savedRun.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        ProviderCredentialService credentials = mock(ProviderCredentialService.class);
+        when(credentials.resolveApiKey("p1", "fake")).thenReturn(Optional.empty());
+        when(credentials.listStatuses("p1")).thenReturn(statuses);
+
+        LogRedactionService redaction = mock(LogRedactionService.class);
+        when(redaction.redact(any(), any())).thenAnswer(inv -> inv.getArgument(1));
+
+        AgentExecutionService service = new AgentExecutionService(agentRepo, registryFor(new CapturingProvider()),
+                credentials, registryFor(new RecordingTool()), runRepo, redaction, MAPPER);
+
+        AgentRunResult result = service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null));
+        assertThat(result.status()).isEqualTo(AgentRun.Status.FAILED.name());
+
+        List<AgentRun> saved = savedRun.getAllValues();
+        return saved.get(saved.size() - 1).getErrorReason();
+    }
+
+    @Test
+    void missingApiKeyMessageNamesTheFixWhenNoOtherProviderIsConfigured() {
+        String reason = runWithNoCredentialAndCaptureErrorReason(
+                List.of(new ProviderCredentialService.ProviderCredentialStatusView("fake", false)));
+
+        assertThat(reason).isEqualTo("No API key configured for provider 'fake' in this project — add one "
+                + "under Settings → AI Providers.");
+    }
+
+    @Test
+    void missingApiKeyMessageNamesOtherConfiguredModelProvidersButNotNonModelOnes() {
+        // "claude-code" is a NON_MODEL_PROVIDERS credential id, not a selectable agent model provider --
+        // suggesting it here would tell the operator to do something impossible.
+        String reason = runWithNoCredentialAndCaptureErrorReason(List.of(
+                new ProviderCredentialService.ProviderCredentialStatusView("fake", false),
+                new ProviderCredentialService.ProviderCredentialStatusView("claude", true),
+                new ProviderCredentialService.ProviderCredentialStatusView("claude-code", true)));
+
+        assertThat(reason)
+                .contains("No API key configured for provider 'fake'")
+                .contains("Settings → AI Providers")
+                .contains("This project has a key configured for: claude.")
+                .doesNotContain("claude-code");
     }
 }

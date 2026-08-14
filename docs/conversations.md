@@ -5,7 +5,8 @@ Discord) and one **addressable agent** — an agent that opts into being talked 
 from a workflow step. Every project gets a self-healing default addressable agent, the **CEO agent**
 (slug `ceo`): a general-purpose coordinator with read/write tools across Work Items, Workflows, Agents,
 and project docs, so "ask the project something" has a sensible target even before anyone configures a
-specialist.
+specialist. It's seeded on the `claude` provider; switch it (or any agent) to any other configured
+provider from **Automation → Agents** — see [`docs/ai-providers.md`](ai-providers.md).
 
 ## Table of contents
 
