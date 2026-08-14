@@ -124,21 +124,25 @@ public class WorkItemController implements WorkItemsApi {
         return ResponseEntity.ok(toV2Transitions(view));
     }
 
-    /** Map a {@link WorkItem} entity to the v2 response, surfacing the bound Workflow slug (absent in v1). */
-    private static WorkItemResponse toResponse(WorkItem item, long unresolvedCommentCount) {
+    /** Map a {@link WorkItem} entity to the v2 response, surfacing the bound Workflow slug (absent in v1).
+     *  Package-private (not {@code private}) so {@code WorkItemControllerTest} can unit test the
+     *  null-createdBy/createdByLabel fallback without a Spring context. */
+    static WorkItemResponse toResponse(WorkItem item, long unresolvedCommentCount) {
         String displayId = item.getProject().getKey() + "-" + item.getSequenceNumber();
         WorkItemAssignee assignee = null;
         if (item.getAssignee() != null) {
             User a = item.getAssignee();
             assignee = new WorkItemAssignee(a.getId(), a.getName()).avatarUrl(a.getAvatarUrl());
         }
+        // createdBy is null for a machine-authored item (e.g. via coordinator:create_work_item) --
+        // createdByLabel carries its identity instead. See the V111 migration / WorkItem#createdByLabel.
         return new WorkItemResponse(
                 item.getId(),
                 item.getProject().getId(),
                 item.getType(),
                 item.getTitle(),
                 item.getCurrentStatus(),
-                item.getCreatedBy().getId(),
+                item.getCreatedBy() != null ? item.getCreatedBy().getId() : null,
                 item.getCreatedAt(),
                 item.getUpdatedAt(),
                 item.getSequenceNumber(),
@@ -146,7 +150,8 @@ public class WorkItemController implements WorkItemsApi {
                 .description(item.getDescription())
                 .workflow(item.getWorkflow())
                 .unresolvedCommentCount((int) unresolvedCommentCount)
-                .assignee(assignee);
+                .assignee(assignee)
+                .createdByLabel(item.getCreatedByLabel());
     }
 
     /** Map the doer-projection transitions view into its v2 response DTO (identical shape). */

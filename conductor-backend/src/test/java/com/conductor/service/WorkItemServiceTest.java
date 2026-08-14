@@ -159,6 +159,48 @@ class WorkItemServiceTest {
                 .isInstanceOf(ForbiddenException.class);
     }
 
+    // --- ProjectActor overload (V111: machine-attributed Work Items, e.g. coordinator:create_work_item) ---
+
+    @Test
+    void createWorkItemWithMachineActorSkipsMembershipCheckAndPersistsLabelAttribution() {
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(workItemRepository.findMaxSequenceNumberByProjectId("proj-1")).thenReturn(0);
+        when(workItemWorkflowService.initialStatus("proj-1", "ENGINEERING")).thenReturn("DRAFT");
+        when(workItemRepository.save(any(WorkItem.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        ProjectActor actor = ProjectActor.agent("Agent (ceo)");
+        WorkItem created = workItemService.createWorkItem("proj-1", "PRD", "Agent-made PRD", null, null, actor);
+
+        assertThat(created.getCreatedBy()).isNull();
+        assertThat(created.getCreatedByLabel()).isEqualTo("Agent (ceo)");
+        // A machine actor is never a project_members row -- verifying it never asks is the point.
+        verify(projectSecurityService, never()).isProjectMember(any(), any());
+    }
+
+    @Test
+    void createWorkItemWithHumanActorOverloadStillEnforcesMembership() {
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(false);
+
+        ProjectActor actor = ProjectActor.of(caller);
+
+        assertThatThrownBy(() -> workItemService.createWorkItem("proj-1", "PRD", "title", null, null, actor))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void createWorkItemWithHumanActorOverloadPersistsUserAttributionNotLabel() {
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(workItemRepository.findMaxSequenceNumberByProjectId("proj-1")).thenReturn(0);
+        when(workItemWorkflowService.initialStatus("proj-1", "ENGINEERING")).thenReturn("DRAFT");
+        when(workItemRepository.save(any(WorkItem.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        WorkItem created = workItemService.createWorkItem("proj-1", "PRD", "Human PRD", null, null, ProjectActor.of(caller));
+
+        assertThat(created.getCreatedBy()).isEqualTo(caller);
+        assertThat(created.getCreatedByLabel()).isNull();
+    }
+
     @Test
     void listIssuesFiltersByType() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));

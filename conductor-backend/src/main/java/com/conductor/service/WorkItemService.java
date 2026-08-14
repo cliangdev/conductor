@@ -71,13 +71,32 @@ public class WorkItemService {
     }
 
     /**
-     * Canonical create-Work-Item business logic, returning the persisted entity. The v2 controller maps the
-     * entity to its response DTO. Takes plain fields so the service stays decoupled from any generated DTO.
+     * Canonical create-Work-Item business logic for a human caller, returning the persisted entity. The
+     * v2 controller maps the entity to its response DTO. Takes plain fields so the service stays
+     * decoupled from any generated DTO. Delegates to the {@link ProjectActor} overload below so the two
+     * callers (human REST, machine tool) never diverge.
      */
     @Transactional
     public WorkItem createWorkItem(String projectId, String type, String title, String description,
                                    String workflowSlug, User caller) {
-        verifyMembership(projectId, caller.getId());
+        return createWorkItem(projectId, type, title, description, workflowSlug, ProjectActor.of(caller));
+    }
+
+    /**
+     * Canonical create-Work-Item business logic for any {@link ProjectActor} -- a human user or a
+     * machine actor (e.g. an addressable agent via {@code coordinator:create_work_item}). Membership is
+     * a {@code project_members} row check, which only has meaning for a human: {@link
+     * ProjectActor#isMachine()} skips {@link #verifyMembership} entirely for a machine actor rather than
+     * failing it against a caller that could never be a project member. Attribution follows the V111
+     * user-or-label pattern: {@code createdBy}/{@code createdByLabel} mirror {@code actor.user()}/{@code
+     * actor.label()} exactly, mutually exclusive by construction (see {@link ProjectActor}).
+     */
+    @Transactional
+    public WorkItem createWorkItem(String projectId, String type, String title, String description,
+                                   String workflowSlug, ProjectActor actor) {
+        if (!actor.isMachine()) {
+            verifyMembership(projectId, actor.user().getId());
+        }
 
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
@@ -93,7 +112,8 @@ public class WorkItemService {
         workItem.setType(type);
         workItem.setTitle(title);
         workItem.setDescription(description);
-        workItem.setCreatedBy(caller);
+        workItem.setCreatedBy(actor.user());
+        workItem.setCreatedByLabel(actor.label());
         workItem.setWorkflow(workflow);
         workItem.setWorkflowVersion(workItemWorkflowService.boundVersion(projectId, workflow));
         workItem.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
