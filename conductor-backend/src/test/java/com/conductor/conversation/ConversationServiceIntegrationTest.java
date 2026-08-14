@@ -1,0 +1,167 @@
+package com.conductor.conversation;
+
+import com.conductor.agent.Agent;
+import com.conductor.agent.AgentRepository;
+import com.conductor.entity.Project;
+import com.conductor.entity.User;
+import com.conductor.repository.ProjectRepository;
+import com.conductor.repository.UserRepository;
+import com.conductor.service.ProjectActor;
+import com.conductor.support.AbstractNoneWebIntegrationTest;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.time.OffsetDateTime;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * DB-backed test for {@link ConversationService}. Deliberately NOT {@code @Transactional} at the class
+ * level: {@link ConversationService#findOrCreateByChannelKey} inserts via a {@code REQUIRES_NEW} nested
+ * transaction (same claim-or-load shape as {@code KnowledgeIngestionService#submit}), which would
+ * suspend and be unable to see this test's setup data if it were still sitting uncommitted in an outer
+ * test transaction. Isolation instead comes from each test using its own random project/agent id, per
+ * docs/testing-guidelines.md's shared-database contract.
+ */
+class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
+
+    @Autowired
+    private ConversationService conversationService;
+    @Autowired
+    private ConversationRepository conversationRepository;
+    @Autowired
+    private ProjectRepository projectRepository;
+    @Autowired
+    private UserRepository userRepository;
+    @Autowired
+    private AgentRepository agentRepository;
+
+    private String projectId;
+    private String agentId;
+    private ProjectActor actor;
+
+    @BeforeEach
+    void setUp() {
+        User user = new User();
+        user.setFirebaseUid("test-uid-" + UUID.randomUUID());
+        user.setEmail("test-" + UUID.randomUUID() + "@example.com");
+        userRepository.save(user);
+
+        Project project = new Project();
+        project.setName("Conversation Test Project");
+        project.setKey("CV" + String.valueOf(UUID.randomUUID()).substring(0, 6).toUpperCase());
+        project.setCreatedBy(user);
+        projectId = projectRepository.save(project).getId();
+
+        Agent agent = new Agent();
+        agent.setProjectId(projectId);
+        agent.setName("Test Agent");
+        agent.setSlug("test-agent-" + UUID.randomUUID().toString().substring(0, 8));
+        agent.setProvider("fake");
+        agent.setState("ACTIVE");
+        agentId = agentRepository.save(agent).getId();
+
+        actor = ProjectActor.of(user);
+    }
+
+    @Test
+    void findOrCreateByChannelKeyReturnsExistingConversationOnRepeatCall() {
+        String channelKey = "guild1:thread1";
+
+        Conversation first = conversationService.findOrCreateByChannelKey(
+                projectId, agentId, ConversationChannel.DISCORD, channelKey, null, actor);
+        Conversation second = conversationService.findOrCreateByChannelKey(
+                projectId, agentId, ConversationChannel.DISCORD, channelKey, null, actor);
+
+        assertThat(second.getId()).isEqualTo(first.getId());
+        assertThat(conversationRepository.findByProjectIdAndChannelAndChannelKey(projectId, "discord", channelKey))
+                .hasValueSatisfying(c -> assertThat(c.getId()).isEqualTo(first.getId()));
+    }
+
+    @Test
+    void findOrCreateByChannelKeySurvivesAConcurrentInsertRace() throws Exception {
+        String channelKey = "guild2:thread2";
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch go = new CountDownLatch(1);
+        AtomicReference<Conversation> resultA = new AtomicReference<>();
+        AtomicReference<Conversation> resultB = new AtomicReference<>();
+
+        try {
+            pool.submit(() -> {
+                awaitLatch(go);
+                resultA.set(conversationService.findOrCreateByChannelKey(
+                        projectId, agentId, ConversationChannel.DISCORD, channelKey, null, actor));
+            });
+            pool.submit(() -> {
+                awaitLatch(go);
+                resultB.set(conversationService.findOrCreateByChannelKey(
+                        projectId, agentId, ConversationChannel.DISCORD, channelKey, null, actor));
+            });
+            go.countDown();
+            pool.shutdown();
+            assertThat(pool.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(resultA.get()).isNotNull();
+        assertThat(resultB.get()).isNotNull();
+        assertThat(resultA.get().getId()).isEqualTo(resultB.get().getId());
+        assertThat(conversationRepository.findByProjectIdAndChannelAndChannelKey(projectId, "discord", channelKey))
+                .isPresent();
+    }
+
+    private void awaitLatch(CountDownLatch latch) {
+        try {
+            latch.await(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    @Test
+    void appendUserMessageBumpsLastMessageAt() throws InterruptedException {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+        OffsetDateTime before = conversation.getLastMessageAt();
+        Thread.sleep(5); // ensure a measurable clock tick between create and append
+
+        ConversationMessage message = conversationService.appendUserMessage(
+                projectId, conversation.getId(), "hello", "Alice", null, actor);
+
+        assertThat(message.getRole()).isEqualTo(ConversationMessage.Role.USER);
+        assertThat(message.getStatus()).isEqualTo(ConversationMessage.Status.COMPLETED);
+        assertThat(message.getAuthorLabel()).isEqualTo("Alice");
+        Conversation reloaded = conversationRepository.findById(conversation.getId()).orElseThrow();
+        assertThat(reloaded.getLastMessageAt()).isAfter(before);
+    }
+
+    @Test
+    void appendUserMessageFallsBackToActorLabelWhenAuthorLabelIsBlank() {
+        ProjectActor machineActor = ProjectActor.agent("project-api-key");
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", machineActor);
+
+        ConversationMessage message = conversationService.appendUserMessage(
+                projectId, conversation.getId(), "hello", "   ", null, machineActor);
+
+        assertThat(message.getAuthorLabel()).isEqualTo("project-api-key");
+    }
+
+    @Test
+    void getThrowsForCrossProjectConversation() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+
+        assertThatThrownBy(() -> conversationService.get("some-other-project-id", conversation.getId()))
+                .isInstanceOf(ConversationNotFoundException.class);
+    }
+}

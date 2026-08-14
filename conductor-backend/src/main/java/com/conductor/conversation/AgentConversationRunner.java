@@ -1,0 +1,181 @@
+package com.conductor.conversation;
+
+import com.conductor.agent.provider.ChatMessage;
+import com.conductor.agent.run.AgentExecutionService;
+import com.conductor.agent.run.AgentRun;
+import com.conductor.agent.run.AgentRunRequest;
+import com.conductor.agent.run.AgentRunResult;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Component;
+
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+
+/**
+ * Drives one conversation turn: loads history, builds the recent-turns window, hands it to
+ * {@link AgentExecutionService#run(AgentRunRequest, List, String)}, and persists the result. {@link
+ * #submit} is the async entry point (runs on {@code ConversationExecutorConfig}'s bounded pool); {@link
+ * #runNow} is the synchronous core, exposed separately so a caller already off the request thread can
+ * skip the pool.
+ */
+@Component
+public class AgentConversationRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(AgentConversationRunner.class);
+
+    /** History window caps -- both enforced together (oldest dropped first) over the COMPLETED turns
+     *  that precede the latest USER message. Package-visible for the window-policy unit test. */
+    static final int MAX_WINDOW_MESSAGES = 20;
+    static final long MAX_WINDOW_CHARS = 24_000;
+    private static final int MAX_ERROR_REASON_LENGTH = 500;
+
+    private final ConversationRepository conversationRepository;
+    private final ConversationMessageRepository messageRepository;
+    private final AgentExecutionService agentExecutionService;
+    private final MemoryAugmentor memoryAugmentor;
+    private final ExecutorService conversationExecutor;
+
+    public AgentConversationRunner(ConversationRepository conversationRepository,
+                                   ConversationMessageRepository messageRepository,
+                                   AgentExecutionService agentExecutionService,
+                                   MemoryAugmentor memoryAugmentor,
+                                   @Qualifier("conversationExecutor") ExecutorService conversationExecutor) {
+        this.conversationRepository = conversationRepository;
+        this.messageRepository = messageRepository;
+        this.agentExecutionService = agentExecutionService;
+        this.memoryAugmentor = memoryAugmentor;
+        this.conversationExecutor = conversationExecutor;
+    }
+
+    /**
+     * Async entry point. A {@link java.util.concurrent.RejectedExecutionException} (pool + 50-deep
+     * queue both full) propagates through the returned future rather than being swallowed -- the caller
+     * is expected to catch it and send a "busy, try again" reply instead of silently dropping the turn.
+     */
+    public CompletableFuture<ConversationMessage> submit(String conversationId) {
+        return CompletableFuture.supplyAsync(() -> runNow(conversationId), conversationExecutor);
+    }
+
+    /**
+     * Synchronous core: run one turn to completion and persist it. Assumes the latest message in the
+     * conversation is an already-appended, COMPLETED USER turn awaiting a reply (see {@code
+     * ConversationService#appendUserMessage}) -- throws {@link IllegalStateException} if not, since
+     * that's a caller-ordering bug, not an agent-side failure. Two distinct agent-side failure shapes
+     * are both recorded as a FAILED message and returned normally, never thrown: {@code
+     * AgentExecutionService} throws for a setup-time problem (unknown agent id, the 60k-char prior-
+     * message cap), while an execution-time problem (no provider credential, guardrail tripped mid-run)
+     * comes back as a normal {@link AgentRunResult} with {@link AgentRunResult#status()} == FAILED --
+     * see {@code AgentExecutionService#runForAgent}'s javadoc. Both are handled here.
+     */
+    public ConversationMessage runNow(String conversationId) {
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new ConversationNotFoundException(conversationId));
+
+        List<ConversationMessage> history = messageRepository.findByConversationIdAndStatusOrderByCreatedAtAsc(
+                conversationId, ConversationMessage.Status.COMPLETED);
+        if (history.isEmpty() || history.get(history.size() - 1).getRole() != ConversationMessage.Role.USER) {
+            throw new IllegalStateException(
+                    "Conversation " + conversationId + " has no pending USER turn to run");
+        }
+        ConversationMessage latestUser = history.get(history.size() - 1);
+        List<ChatMessage> window = buildWindow(history.subList(0, history.size() - 1));
+        window = memoryAugmentor.augment(conversation.getProjectId(), conversation.getAgentId(), conversationId, window);
+
+        ConversationMessage pending = new ConversationMessage();
+        pending.setConversationId(conversationId);
+        pending.setRole(ConversationMessage.Role.ASSISTANT);
+        pending.setContent("");
+        pending.setStatus(ConversationMessage.Status.PENDING);
+        pending = messageRepository.save(pending);
+
+        String suffix = buildSystemPromptSuffix(conversation, latestUser);
+        // __conversation_depth is a placeholder for a future recursion guard (an addressable agent's
+        // tools may themselves start conversations) -- always 0 today, nothing reads it yet.
+        AgentRunRequest request = new AgentRunRequest(conversation.getAgentId(), latestUser.getContent(),
+                Map.of("__conversation_depth", 0), null);
+
+        try {
+            AgentRunResult result = agentExecutionService.run(request, window, suffix);
+            pending.setAgentRunId(result.runId());
+            if (AgentRun.Status.FAILED.name().equals(result.status())) {
+                pending.setStatus(ConversationMessage.Status.FAILED);
+                pending.setErrorReason(truncate(result.outputText() != null && !result.outputText().isBlank()
+                        ? result.outputText()
+                        : "Agent run failed (see agent_runs " + result.runId() + ")"));
+            } else {
+                pending.setContent(result.outputText() == null ? "" : result.outputText());
+                pending.setStatus(ConversationMessage.Status.COMPLETED);
+            }
+        } catch (Exception e) {
+            log.warn("Conversation {} turn failed: {}", conversationId, e.getMessage());
+            pending.setStatus(ConversationMessage.Status.FAILED);
+            pending.setErrorReason(truncate(e.getMessage() == null ? e.toString() : e.getMessage()));
+        }
+
+        messageRepository.save(pending);
+        conversation.setLastMessageAt(OffsetDateTime.now());
+        conversationRepository.save(conversation);
+        return pending;
+    }
+
+    private String buildSystemPromptSuffix(Conversation conversation, ConversationMessage latestUser) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("You're in an ongoing conversation on the ").append(conversation.getChannel()).append(" channel");
+        if (latestUser.getAuthorLabel() != null && !latestUser.getAuthorLabel().isBlank()) {
+            sb.append(" with ").append(latestUser.getAuthorLabel());
+        }
+        sb.append(". Answer directly and concisely -- external channels may truncate long replies (roughly "
+                + "2000 characters). Cite which tools or sources informed your answer. You may use your "
+                + "tools before answering.");
+        return sb.toString();
+    }
+
+    /**
+     * The recent-turns window: {@code priorHistory} (COMPLETED turns, oldest first, already excluding
+     * the latest USER message -- the caller turns that into the task instead) trimmed to the last
+     * {@link #MAX_WINDOW_MESSAGES} AND {@link #MAX_WINDOW_CHARS} total content characters together
+     * (whichever cap is hit first stops including older messages), then re-trimmed to start on a USER
+     * turn if a cap split a USER/ASSISTANT pair. Package-visible for the unit test.
+     */
+    static List<ChatMessage> buildWindow(List<ConversationMessage> priorHistory) {
+        List<ConversationMessage> countCapped = priorHistory.size() > MAX_WINDOW_MESSAGES
+                ? priorHistory.subList(priorHistory.size() - MAX_WINDOW_MESSAGES, priorHistory.size())
+                : priorHistory;
+
+        List<ConversationMessage> charCapped = new ArrayList<>();
+        long total = 0;
+        for (int i = countCapped.size() - 1; i >= 0; i--) {
+            ConversationMessage m = countCapped.get(i);
+            int len = m.getContent() == null ? 0 : m.getContent().length();
+            if (total + len > MAX_WINDOW_CHARS && !charCapped.isEmpty()) {
+                break;
+            }
+            charCapped.add(0, m);
+            total += len;
+        }
+
+        int start = 0;
+        while (start < charCapped.size() && charCapped.get(start).getRole() != ConversationMessage.Role.USER) {
+            start++;
+        }
+        List<ConversationMessage> trimmed = charCapped.subList(start, charCapped.size());
+
+        List<ChatMessage> window = new ArrayList<>();
+        for (ConversationMessage m : trimmed) {
+            window.add(m.getRole() == ConversationMessage.Role.USER
+                    ? ChatMessage.user(m.getContent())
+                    : ChatMessage.assistant(m.getContent(), List.of()));
+        }
+        return window;
+    }
+
+    private String truncate(String s) {
+        return s.length() > MAX_ERROR_REASON_LENGTH ? s.substring(0, MAX_ERROR_REASON_LENGTH) : s;
+    }
+}
