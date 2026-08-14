@@ -295,6 +295,17 @@ public class IntegrationController implements IntegrationsApi {
             connectionService.storeWebhookSecret(conn, generatedSecret);
         }
 
+        // Connector-specific post-creation setup (see Connector#onConnectionCreated's javadoc) -- a
+        // no-op for every connector except the few that override it. A throw here means the connection
+        // can never actually work as created (e.g. a vendor-side command registration that failed), so
+        // the framework deletes the row rather than leaving a connection that looks connected but isn't.
+        try {
+            connector.onConnectionCreated(conn, connectionService.toContext(conn));
+        } catch (Exception e) {
+            connectionService.delete(conn.getId());
+            throw new BusinessException("Connection setup failed: " + e.getMessage());
+        }
+
         return ResponseEntity.status(HttpStatus.CREATED).body(toConnectionResponse(conn, generatedSecret));
     }
 

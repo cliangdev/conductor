@@ -153,6 +153,20 @@ public class ConversationService {
         return saved;
     }
 
+    /**
+     * Repoints an existing conversation's {@code channelKey} -- e.g. Discord's non-thread {@code /ask}
+     * flow starts a conversation under a temporary {@code guildId:interaction:<interactionId>} key
+     * (the real thread doesn't exist yet when the interaction arrives) and calls this once the thread
+     * is actually created, to move it to the durable {@code guildId:threadId} key every subsequent
+     * message in that thread will resolve by.
+     */
+    @Transactional
+    public Conversation updateChannelKey(String projectId, String conversationId, String newChannelKey) {
+        Conversation conversation = get(projectId, conversationId);
+        conversation.setChannelKey(newChannelKey);
+        return conversationRepository.save(conversation);
+    }
+
     @Transactional
     public Conversation archive(String projectId, String conversationId) {
         Conversation conversation = get(projectId, conversationId);
