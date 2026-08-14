@@ -30,7 +30,7 @@ class AddressableAgentResolverTest {
     private AddressableAgentResolver resolverWith(Agent... agents) {
         AgentRepository repo = mock(AgentRepository.class);
         when(repo.findByProjectId("p1")).thenReturn(List.of(agents));
-        return new AddressableAgentResolver(repo);
+        return new AddressableAgentResolver(repo, mock(CoordinatorProvisioner.class));
     }
 
     @Test

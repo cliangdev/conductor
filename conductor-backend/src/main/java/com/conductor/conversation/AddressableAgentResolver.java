@@ -19,20 +19,26 @@ import java.util.Optional;
 public class AddressableAgentResolver {
 
     private final AgentRepository agentRepository;
+    private final CoordinatorProvisioner coordinatorProvisioner;
 
-    public AddressableAgentResolver(AgentRepository agentRepository) {
+    public AddressableAgentResolver(AgentRepository agentRepository,
+                                    CoordinatorProvisioner coordinatorProvisioner) {
         this.agentRepository = agentRepository;
+        this.coordinatorProvisioner = coordinatorProvisioner;
     }
 
     /**
      * @param nameOrNull a slug, a display name, or blank/null for the default -- the
-     *                    {@value DefaultAgentSlugs#CEO} slug (which may not exist yet; that's just
-     *                    another {@link AgentNotAddressableException#notFound} case, not a special one).
+     *                    {@value DefaultAgentSlugs#CEO} slug. Every conversation flow resolves before it
+     *                    creates anything, so this is the chokepoint that self-heals the default CEO
+     *                    agent -- a fresh (or CEO-deleted) project resolves successfully on its very
+     *                    first request instead of 404ing until something else happens to provision.
      *                    Matching is case-insensitive, slug first (unique per project, so at most one
      *                    match), then display name. A name matching several agents resolves to whichever
      *                    one's slug exactly equals the attempted name; if none does, it's ambiguous.
      */
     public Agent resolve(String projectId, String nameOrNull) {
+        coordinatorProvisioner.ensureProvisioned(projectId);
         String attempted = (nameOrNull == null || nameOrNull.isBlank())
                 ? DefaultAgentSlugs.CEO : nameOrNull.trim();
 

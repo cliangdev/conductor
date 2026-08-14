@@ -8887,7 +8887,7 @@ components:
           type: string
         status:
           type: string
-          enum: [ACTIVE, ARCHIVED]
+          enum: [ACTIVE]
         createdAt:
           type: string
           format: date-time

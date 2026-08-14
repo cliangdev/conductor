@@ -17,6 +17,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
@@ -34,6 +35,14 @@ import org.springframework.web.client.RestTemplate;
  * interaction token expires in 15 minutes) -- never logged, and never allowed to leak via a raw {@link
  * ResourceAccessException} message, which (like {@code DiscordActionConnector}'s webhook URL case)
  * embeds the full request URL verbatim.
+ *
+ * <p>{@link #editOriginal} ALSO retries once on a bare {@code 404} (see {@link #NOT_FOUND_RETRY_DELAY_MS}):
+ * {@code DiscordAppConnector.handleEvent} enqueues the whole turn asynchronously and returns the
+ * {@code type: 5} ack body immediately, so the async task's later {@code editOriginal} call can win a
+ * race against Discord's own processing of the HTTP response that carried that ack -- Discord doesn't
+ * yet have an "original interaction response" to edit for a few milliseconds after sending it. A single
+ * short-delay retry absorbs that window without meaningfully delaying a genuine 404 (interaction token
+ * actually expired/invalid).
  */
 @Component
 @Profile("!local")
@@ -43,6 +52,7 @@ public class DiscordInteractionClient {
     private static final String API_BASE = "https://discord.com/api/v10";
     private static final int MAX_ATTEMPTS = 2;
     private static final long DEFAULT_RETRY_AFTER_MS = 1000;
+    private static final long NOT_FOUND_RETRY_DELAY_MS = 1500;
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -72,7 +82,7 @@ public class DiscordInteractionClient {
         String url = API_BASE + "/webhooks/" + applicationId + "/" + interactionToken + "/messages/@original";
         ObjectNode body = objectMapper.createObjectNode();
         body.put("content", content);
-        JsonNode response = exchangeWithRetry(url, HttpMethod.PATCH, body, null);
+        JsonNode response = exchangeWithRetry(url, HttpMethod.PATCH, body, null, true);
         return new MessageRef(textOrNull(response, "id"), textOrNull(response, "channel_id"));
     }
 
@@ -81,11 +91,12 @@ public class DiscordInteractionClient {
         String url = API_BASE + "/channels/" + channelId + "/messages/" + messageId + "/threads";
         ObjectNode body = objectMapper.createObjectNode();
         body.put("name", name);
-        JsonNode response = exchangeWithRetry(url, HttpMethod.POST, body, botToken);
+        JsonNode response = exchangeWithRetry(url, HttpMethod.POST, body, botToken, false);
         return new ThreadRef(textOrNull(response, "id"));
     }
 
-    private JsonNode exchangeWithRetry(String url, HttpMethod method, ObjectNode body, String botToken) {
+    private JsonNode exchangeWithRetry(String url, HttpMethod method, ObjectNode body, String botToken,
+                                       boolean retryOn404) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         if (botToken != null) {
@@ -109,9 +120,19 @@ public class DiscordInteractionClient {
                     sleep(retryAfterMs);
                     continue;
                 }
+                if (retryOn404 && e.getStatusCode() == HttpStatus.NOT_FOUND && attempt < MAX_ATTEMPTS) {
+                    log.warn("Discord API returned 404 editing the interaction response — retrying once "
+                            + "after {}ms (may just be racing Discord's own processing of the ack)",
+                            NOT_FOUND_RETRY_DELAY_MS);
+                    sleep(NOT_FOUND_RETRY_DELAY_MS);
+                    continue;
+                }
                 // Status text + response body only -- HttpClientErrorException's message never embeds
                 // the request URL (unlike ResourceAccessException below), so this is safe to surface.
                 throw new DiscordWebhookException("Discord API rejected the request ("
+                        + e.getStatusCode().value() + "): " + e.getStatusText());
+            } catch (HttpServerErrorException e) {
+                throw new DiscordWebhookException("Discord API request failed ("
                         + e.getStatusCode().value() + "): " + e.getStatusText());
             } catch (ResourceAccessException e) {
                 // Same sanitization as DiscordActionConnector: e's own message embeds the full request

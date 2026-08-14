@@ -669,12 +669,8 @@ public class CoordinatorToolProvider implements AgentToolProvider {
                             + "-- coordinator chains are not allowed");
                 }
 
-                // __conversation_depth is set for forward compatibility with the recursion guard
-                // AgentConversationRunner seeds (Phase 3) -- ToolInvocationContext carries no depth
-                // today, so this tool cannot read/increment an actual caller depth; see the Phase 4
-                // report for why that guard is currently limited to (a) self-target and (b) chain-target.
                 AgentRunResult result = agentExecutionService.run(context.projectId(), target.getId(), task,
-                        Map.of("__conversation_depth", 1), null);
+                        Map.of(), null);
 
                 if (AgentRun.Status.FAILED.name().equals(result.status())) {
                     return ToolResult.error("ask_agent run failed (runId=" + result.runId() + "): "

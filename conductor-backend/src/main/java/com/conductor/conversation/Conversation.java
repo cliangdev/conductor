@@ -7,7 +7,6 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
-import org.hibernate.annotations.ColumnTransformer;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -28,8 +27,10 @@ import java.util.UUID;
 @Table(name = "conversations")
 public class Conversation {
 
-    /** Lifecycle status of a conversation. */
-    public enum Status { ACTIVE, ARCHIVED }
+    /** Lifecycle status of a conversation. The DB's {@code ck_conversations_status} CHECK still allows
+     *  {@code 'ARCHIVED'} (an intentionally untouched historical migration), but nothing writes it --
+     *  {@code archive()} was removed as dead code, so this enum only ever holds {@code ACTIVE} today. */
+    public enum Status { ACTIVE }
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
@@ -66,10 +67,6 @@ public class Conversation {
 
     @Column(name = "created_by_label", length = 255)
     private String createdByLabel;
-
-    @Column(name = "metadata_json", columnDefinition = "JSONB")
-    @ColumnTransformer(write = "?::jsonb")
-    private String metadataJson;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -120,9 +117,6 @@ public class Conversation {
 
     public String getCreatedByLabel() { return createdByLabel; }
     public void setCreatedByLabel(String createdByLabel) { this.createdByLabel = createdByLabel; }
-
-    public String getMetadataJson() { return metadataJson; }
-    public void setMetadataJson(String metadataJson) { this.metadataJson = metadataJson; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

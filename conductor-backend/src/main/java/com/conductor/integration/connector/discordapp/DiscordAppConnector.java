@@ -8,7 +8,6 @@ import com.conductor.conversation.Conversation;
 import com.conductor.conversation.ConversationChannel;
 import com.conductor.conversation.ConversationMessage;
 import com.conductor.conversation.ConversationService;
-import com.conductor.conversation.CoordinatorProvisioner;
 import com.conductor.entity.Connection;
 import com.conductor.exception.ConflictException;
 import com.conductor.integration.ConnectionContext;
@@ -26,6 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpHeaders;
@@ -42,6 +42,7 @@ import java.security.spec.NamedParameterSpec;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 
 /**
@@ -54,7 +55,11 @@ import java.util.concurrent.RejectedExecutionException;
  * per-user allowlist or role gate today. This mirrors the guild's own permission model (an admin who
  * doesn't want a channel/role able to ask should restrict who can use the command via Discord's own
  * command permissions), but a project-side allowlist config field is a reasonable future iteration if
- * that turns out to be insufficient.
+ * that turns out to be insufficient. The blast radius is real, not just "read access": the resolved
+ * agent's full tool set runs on the asker's behalf, so a guild member can also cause Work Item creation
+ * and dispatch of published workflows through whichever agent they address -- not merely query the
+ * project read-only. A future per-connection allowlist or per-channel tool-scoping seam would narrow
+ * this; neither exists today (see {@code docs/conversations.md}'s non-goals list).
  *
  * <p>Verification is Ed25519 over {@code timestamp + rawBody}, using the JDK's native {@code
  * Signature}/{@code KeyFactory} "Ed25519" support (Java 15+, no external crypto dependency). Discord
@@ -75,16 +80,20 @@ public class DiscordAppConnector implements WebhookConnector {
     private static final int CHANNEL_TYPE_PRIVATE_THREAD = 12;
     private static final int MAX_REPLY_CHARS = 2000;
     private static final int MAX_THREAD_NAME_CHARS = 90;
+    /** Matches the {@code conversations.title} column (VARCHAR(200), V110) -- a question longer than
+     *  this would otherwise fail the insert with a DB error deep inside the async flow, after Discord
+     *  has already been told "thinking…", with nothing left to send an error reply from. */
+    private static final int MAX_TITLE_CHARS = 200;
     /** Discord's ephemeral-response flag (visible only to the invoking user). */
     private static final int EPHEMERAL_FLAG = 64;
 
     private final ConversationService conversationService;
-    private final CoordinatorProvisioner coordinatorProvisioner;
     private final AddressableAgentResolver addressableAgentResolver;
     private final AgentConversationRunner runner;
     private final DiscordInteractionClient interactionClient;
     private final DiscordCommandRegistrar commandRegistrar;
     private final ObjectMapper objectMapper;
+    private final ExecutorService conversationExecutor;
 
     // @Autowired is load-bearing -- see DiscordActionConnector's identical comment: with two
     // constructors and no annotation, Spring falls back to a nonexistent no-arg constructor and the
@@ -95,22 +104,23 @@ public class DiscordAppConnector implements WebhookConnector {
     // chain, see its class javadoc) -- ConnectorRegistry eagerly collects every Connector bean
     // including this one, so an eager `runner` here closes a real cycle back through the tool-provider
     // family, the same shape CoordinatorToolProvider hit in Phase 4. Deferring resolution to first use
-    // breaks it with no behavior change (runner is only ever used inside handleEvent).
+    // breaks it with no behavior change -- this is purely a bean-graph-construction concern, unrelated
+    // to which of runner's methods (submit vs runNow) is actually called at request time.
     @Autowired
     public DiscordAppConnector(ConversationService conversationService,
-                               CoordinatorProvisioner coordinatorProvisioner,
                                AddressableAgentResolver addressableAgentResolver,
                                @Lazy AgentConversationRunner runner,
                                DiscordInteractionClient interactionClient,
                                DiscordCommandRegistrar commandRegistrar,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               @Qualifier("conversationExecutor") ExecutorService conversationExecutor) {
         this.conversationService = conversationService;
-        this.coordinatorProvisioner = coordinatorProvisioner;
         this.addressableAgentResolver = addressableAgentResolver;
         this.runner = runner;
         this.interactionClient = interactionClient;
         this.commandRegistrar = commandRegistrar;
         this.objectMapper = objectMapper;
+        this.conversationExecutor = conversationExecutor;
     }
 
     @Override
@@ -242,10 +252,18 @@ public class DiscordAppConnector implements WebhookConnector {
     }
 
     /**
-     * MUST be fast/enqueue-only -- see {@link WebhookConnector#synchronousResponse}'s javadoc. Only
-     * reached for {@code /ask} (every other interaction type/command is fully consumed synchronously
-     * above); appends the user's message and hands the actual agent run to {@link
-     * AgentConversationRunner#submit}'s bounded executor, returning immediately.
+     * MUST be fast/enqueue-only -- see {@link WebhookConnector#synchronousResponse}'s javadoc: {@code
+     * WebhookDispatchService} calls this SYNCHRONOUSLY, inline, before the receiving request's HTTP
+     * response (carrying the {@code type: 5} deferred ack) is actually flushed back to Discord. Only
+     * pure, DB-free JSON parsing/extraction happens here -- everything else (provisioning, agent
+     * resolution, the conversation, the agent run, and EVERY {@code editOriginal} reply, including every
+     * error path) runs on {@link #conversationExecutor} via {@link #runAskFlow}, off this thread
+     * entirely. That used to not be true: an earlier version did DB work and sent error replies
+     * synchronously here, which meant an error path's {@code editOriginal} PATCH could reach Discord
+     * before Discord had even processed the ack response this same request is still in the middle of
+     * sending -- Discord had no "original interaction response" yet, so the PATCH 404'd and the user's
+     * "thinking…" message never resolved. Only reached for {@code /ask} (every other interaction
+     * type/command is fully consumed synchronously in {@link #synchronousResponse}).
      */
     @Override
     public void handleEvent(InboundEvent event, ConnectionContext ctx) {
@@ -294,27 +312,51 @@ public class DiscordAppConnector implements WebhookConnector {
         String globalName = userNode.hasNonNull("global_name") ? userNode.get("global_name").asText() : null;
         String displayName = globalName != null && !globalName.isBlank() ? globalName : username;
 
-        coordinatorProvisioner.ensureProvisioned(projectId);
+        String finalQuestion = question;
+        String finalAgentOption = agentOption;
+        try {
+            conversationExecutor.execute(() -> runAskFlow(projectId, applicationId, interactionToken,
+                    interactionId, botToken, finalQuestion, finalAgentOption, guildId, channelId, isThread, displayName));
+        } catch (RejectedExecutionException e) {
+            // Nothing to reply with -- the whole point of enqueueing is that the reply itself happens
+            // inside the queued task. A rejection here (pool + 50-deep queue both full) means the user's
+            // "thinking…" message is simply never resolved; acceptable per the accepted posture (a
+            // genuinely overloaded instance can't promise every /ask gets an answer).
+            log.warn("Discord /ask interaction {} rejected -- conversation executor is full, no reply will be sent",
+                    interactionId);
+        }
+    }
 
+    /**
+     * The entire {@code /ask} flow, off the webhook request thread: provisioning, agent resolution, the
+     * conversation find-or-create, the user-message append, the agent run itself ({@link
+     * AgentConversationRunner#runNow} directly -- NOT {@link AgentConversationRunner#submit}, since this
+     * method is already running on {@link #conversationExecutor}; submitting again would be a pointless
+     * second hop through the same bounded pool), and every {@code editOriginal} reply, success or error.
+     */
+    private void runAskFlow(String projectId, String applicationId, String interactionToken, String interactionId,
+                            String botToken, String question, String agentOption, String guildId, String channelId,
+                            boolean isThread, String displayName) {
+        // CEO self-heal happens inside resolve() -- the shared chokepoint for every conversation flow.
         Agent target;
         try {
             target = addressableAgentResolver.resolve(projectId, agentOption);
         } catch (AgentNotAddressableException e) {
-            interactionClient.editOriginal(applicationId, interactionToken,
+            safeEditOriginal(applicationId, interactionToken,
                     "Couldn't find an agent matching '" + e.attemptedName() + "'.");
             return;
         }
 
         ProjectActor actor = ProjectActor.agent("Discord (" + displayName + ")");
         Conversation conversation;
-        boolean isNewConversation;
+        boolean needsThreadCreation;
         if (isThread) {
             String channelKey = guildId + ":" + channelId;
             conversation = conversationService.findOrCreateByChannelKey(
                     projectId, target.getId(), ConversationChannel.DISCORD, channelKey, null, actor);
-            isNewConversation = false;
+            needsThreadCreation = false;
             if (agentOption != null && !agentOption.isBlank() && !conversation.getAgentId().equals(target.getId())) {
-                interactionClient.editOriginal(applicationId, interactionToken,
+                safeEditOriginal(applicationId, interactionToken,
                         "This thread is already talking to a different agent — start a new /ask outside "
                                 + "a thread to talk to '" + agentOption + "'.");
                 return;
@@ -322,39 +364,41 @@ public class DiscordAppConnector implements WebhookConnector {
         } else {
             // The real thread doesn't exist yet (we haven't posted anything) -- key on the interaction
             // id temporarily; onTurnComplete repoints this to guildId:threadId once the thread exists.
+            // The title is truncated to the conversations.title column's own limit -- an untruncated
+            // over-length question would otherwise fail this insert with a DB error, here on the async
+            // task where there'd be nothing left to send an error reply from.
             String temporaryChannelKey = guildId + ":interaction:" + interactionId;
-            conversation = conversationService.findOrCreateByChannelKey(
-                    projectId, target.getId(), ConversationChannel.DISCORD, temporaryChannelKey, question, actor);
-            isNewConversation = true;
+            conversation = conversationService.findOrCreateByChannelKey(projectId, target.getId(),
+                    ConversationChannel.DISCORD, temporaryChannelKey, truncate(question, MAX_TITLE_CHARS), actor);
+            needsThreadCreation = true;
         }
 
         try {
             conversationService.appendUserMessage(
                     projectId, conversation.getId(), question, displayName, interactionId, actor);
         } catch (ConflictException e) {
-            interactionClient.editOriginal(applicationId, interactionToken,
+            safeEditOriginal(applicationId, interactionToken,
                     "Still working on the previous message — try again in a moment.");
             return;
         }
 
         String conversationId = conversation.getId();
-        boolean newConversation = isNewConversation;
-        String finalQuestion = question;
+        ConversationMessage reply = null;
+        Throwable error = null;
         try {
-            runner.submit(conversationId).whenComplete((reply, error) -> onTurnComplete(
-                    reply, error, applicationId, interactionToken, botToken, newConversation,
-                    finalQuestion, projectId, conversationId, guildId));
-        } catch (RejectedExecutionException e) {
-            interactionClient.editOriginal(applicationId, interactionToken,
-                    "I'm a bit busy right now — try again shortly.");
+            reply = runner.runNow(conversationId);
+        } catch (Exception e) {
+            error = e;
         }
+        onTurnComplete(reply, error, applicationId, interactionToken, botToken, needsThreadCreation,
+                question, projectId, conversationId, guildId);
     }
 
-    /** Runs on whichever thread completes the run (the bounded conversation executor, or the calling
-     *  thread if already complete) -- edits @original with the answer, and for a brand-new (non-thread)
+    /** Always runs synchronously right after {@link AgentConversationRunner#runNow} returns (or throws)
+     *  inside {@link #runAskFlow} -- edits @original with the answer, and for a brand-new (non-thread)
      *  invocation, creates the thread from that message and repoints the conversation's channelKey. */
     private void onTurnComplete(ConversationMessage reply, Throwable error, String applicationId,
-                                String interactionToken, String botToken, boolean isNewConversation,
+                                String interactionToken, String botToken, boolean needsThreadCreation,
                                 String question, String projectId, String conversationId, String guildId) {
         String content;
         if (error != null) {
@@ -366,25 +410,31 @@ public class DiscordAppConnector implements WebhookConnector {
             content = truncateReply(reply.getContent());
         }
 
-        DiscordInteractionClient.MessageRef edited;
-        try {
-            edited = interactionClient.editOriginal(applicationId, interactionToken, content);
-        } catch (Exception e) {
-            log.warn("Failed to edit Discord interaction response for conversation {}: {}", conversationId, e.getMessage());
-            return;
-        }
-
-        if (!isNewConversation || edited.channelId() == null || edited.messageId() == null) {
+        DiscordInteractionClient.MessageRef edited = safeEditOriginal(applicationId, interactionToken, content);
+        if (edited == null || !needsThreadCreation || edited.channelId() == null || edited.messageId() == null) {
             return;
         }
         try {
             DiscordInteractionClient.ThreadRef thread = interactionClient.createThread(
-                    botToken, edited.channelId(), edited.messageId(), truncateThreadName(question));
+                    botToken, edited.channelId(), edited.messageId(), truncate(question, MAX_THREAD_NAME_CHARS));
             if (thread.id() != null) {
                 conversationService.updateChannelKey(projectId, conversationId, guildId + ":" + thread.id());
             }
         } catch (Exception e) {
             log.warn("Failed to create Discord thread for conversation {}: {}", conversationId, e.getMessage());
+        }
+    }
+
+    /** Every reply on the async flow funnels through here -- a failure (including the rare case where
+     *  {@link DiscordInteractionClient}'s own bounded 404 retry is exhausted) is logged and swallowed
+     *  rather than thrown, since there is no caller left on this thread to catch it. */
+    private DiscordInteractionClient.MessageRef safeEditOriginal(String applicationId, String interactionToken,
+                                                                  String content) {
+        try {
+            return interactionClient.editOriginal(applicationId, interactionToken, content);
+        } catch (Exception e) {
+            log.warn("Failed to edit Discord interaction response for interaction {}: {}", interactionToken, e.getMessage());
+            return null;
         }
     }
 
@@ -398,9 +448,20 @@ public class DiscordAppConnector implements WebhookConnector {
         return text.substring(0, cut) + suffix;
     }
 
-    private String truncateThreadName(String question) {
-        String text = question.trim();
-        return text.length() <= MAX_THREAD_NAME_CHARS ? text : text.substring(0, MAX_THREAD_NAME_CHARS) + "…";
+    /** Truncates to at most {@code maxChars}, reserving room for the "…" marker so the result never
+     *  exceeds {@code maxChars} even after truncation (unlike naively appending the marker AFTER cutting
+     *  to the full length, which would overshoot by one character -- the bug the original thread-name-only
+     *  version of this had, harmless there since Discord's own 100-char thread-name cap left slack, but
+     *  not safely reusable as-is once the same helper also has to respect a hard DB column limit). Shared
+     *  by the thread-name truncation and the conversation-title truncation (see {@link #MAX_TITLE_CHARS}).
+     */
+    private String truncate(String text, int maxChars) {
+        String trimmed = text == null ? "" : text.trim();
+        if (trimmed.length() <= maxChars) {
+            return trimmed;
+        }
+        String suffix = "…";
+        return trimmed.substring(0, maxChars - suffix.length()) + suffix;
     }
 
     private JsonNode tryParse(byte[] rawBody) {

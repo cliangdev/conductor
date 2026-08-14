@@ -35,6 +35,8 @@ class CoordinatorProvisionerIntegrationTest extends AbstractNoneWebIntegrationTe
     @Autowired
     private CoordinatorProvisioner provisioner;
     @Autowired
+    private AddressableAgentResolver resolver;
+    @Autowired
     private AgentRepository agentRepository;
     @Autowired
     private ProjectRepository projectRepository;
@@ -78,6 +80,16 @@ class CoordinatorProvisionerIntegrationTest extends AbstractNoneWebIntegrationTe
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    @Test
+    void resolveOnAFreshProjectSelfHealsTheCeoBeforeResolving() {
+        // The very first conversation request a project ever sees goes through resolve() -- it must
+        // seed the CEO rather than 404 (the controller path never calls ensureProvisioned itself).
+        Agent resolved = resolver.resolve(projectId, null);
+
+        assertThat(resolved.getSlug()).isEqualTo(DefaultAgentSlugs.CEO);
+        assertThat(agentRepository.findByProjectIdAndSlug(projectId, DefaultAgentSlugs.CEO)).isPresent();
     }
 
     @Test

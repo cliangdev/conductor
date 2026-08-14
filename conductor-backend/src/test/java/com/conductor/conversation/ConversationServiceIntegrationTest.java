@@ -13,8 +13,10 @@ import com.conductor.support.AbstractNoneWebIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -179,6 +181,35 @@ class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
     }
 
     @Test
+    void appendUserMessageTreatsAStalePendingReplyAsAbandonedAndAllowsTheNewTurn() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+
+        // No preceding "first" USER message here on purpose: findTopByConversationIdOrderByCreatedAtDesc
+        // picks whichever row has the latest createdAt, and this row's createdAt is deliberately backdated
+        // below -- an intervening real-time row would out-rank it and this test would never exercise the
+        // guard's stale-PENDING branch at all.
+        ConversationMessage stalePending = new ConversationMessage();
+        stalePending.setConversationId(conversation.getId());
+        stalePending.setRole(ConversationMessage.Role.ASSISTANT);
+        stalePending.setContent("");
+        stalePending.setStatus(ConversationMessage.Status.PENDING);
+        // Explicitly set BEFORE persisting -- @PrePersist only fills createdAt when null, so this
+        // survives the insert, simulating a turn whose run died minutes ago (a deploy, a crash) rather
+        // than one that's still genuinely in flight.
+        stalePending.setCreatedAt(OffsetDateTime.now().minusMinutes(ConversationService.STALE_PENDING_MINUTES + 1));
+        messageRepository.saveAndFlush(stalePending);
+
+        ConversationMessage second = conversationService.appendUserMessage(
+                projectId, conversation.getId(), "second", "Alice", null, actor);
+
+        assertThat(second.getContent()).isEqualTo("second");
+        ConversationMessage reloadedStale = messageRepository.findById(stalePending.getId()).orElseThrow();
+        assertThat(reloadedStale.getStatus()).isEqualTo(ConversationMessage.Status.FAILED);
+        assertThat(reloadedStale.getErrorReason()).contains("interrupted");
+    }
+
+    @Test
     void appendUserMessageSucceedsWhenLatestTurnIsACompletedAssistantReply() {
         Conversation conversation = conversationService.create(
                 projectId, agentId, ConversationChannel.API, null, "Title", actor);
@@ -195,6 +226,48 @@ class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
                 projectId, conversation.getId(), "second", "Alice", null, actor);
 
         assertThat(second.getContent()).isEqualTo("second");
+    }
+
+    // ---- findWithLockByIdAndProjectId (the lock appendUserMessage now uses -- see its javadoc) ----
+    //
+    // A genuinely deterministic two-thread test proving the lock closes the exact race (two concurrent
+    // POSTs both observing "no turn in flight" before either commits) would need to pause a transaction
+    // mid-flight at a precise point, which Spring's declarative @Transactional doesn't offer a clean hook
+    // for. Per the review brief's "best-effort" allowance, these two are basic correctness coverage for
+    // the new repository method itself (right row, project-scoped) rather than a concurrency test; the
+    // lock's usage inside appendUserMessage's transaction is otherwise exercised by every test above.
+    // @Transactional (method-level, unlike the class) since a PESSIMISTIC_WRITE query needs an active
+    // transaction/session, and the class deliberately isn't @Transactional (see the class javadoc). Both
+    // tests insert the Conversation directly via the repository, NOT conversationService.create -- that
+    // goes through CoordinatorProvisioner's REQUIRES_NEW insert, which would suspend this test's own
+    // transaction and be unable to see its still-uncommitted project/agent setup data (the exact trap the
+    // class javadoc warns about for the class-level case).
+
+    @Test
+    @Transactional
+    void findWithLockByIdAndProjectIdReturnsTheConversationWhenItExists() {
+        Conversation conversation = newConversationDirect();
+
+        Optional<Conversation> locked = conversationRepository.findWithLockByIdAndProjectId(conversation.getId(), projectId);
+
+        assertThat(locked).hasValueSatisfying(c -> assertThat(c.getId()).isEqualTo(conversation.getId()));
+    }
+
+    @Test
+    @Transactional
+    void findWithLockByIdAndProjectIdReturnsEmptyForWrongProject() {
+        Conversation conversation = newConversationDirect();
+
+        assertThat(conversationRepository.findWithLockByIdAndProjectId(conversation.getId(), "wrong-project")).isEmpty();
+    }
+
+    private Conversation newConversationDirect() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectId(projectId);
+        conversation.setAgentId(agentId);
+        conversation.setChannel(ConversationChannel.API.dbValue());
+        conversation.setCreatedByUserId(actor.userId());
+        return conversationRepository.saveAndFlush(conversation);
     }
 
     @Test

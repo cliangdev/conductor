@@ -22,6 +22,4 @@ public interface ConversationMessageRepository extends JpaRepository<Conversatio
      *  #appendUserMessage}'s one-in-flight-turn guard reads this to check whether the conversation is
      *  mid-reply before accepting a new user message. */
     Optional<ConversationMessage> findTopByConversationIdOrderByCreatedAtDesc(String conversationId);
-
-    long countByConversationId(String conversationId);
 }

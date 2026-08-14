@@ -54,18 +54,20 @@ class AgentConversationRunnerWindowTest {
 
     @Test
     void countCapKeepsOnlyTheMostRecentTwentyAndDropsOldestFirst() {
-        // 21 alternating turns (indices 0..20, USER on even indices). The last 20 is indices [1..20];
-        // index 1 (ASSISTANT-1) lands at the front, so this also exercises the leading-assistant trim,
-        // leaving indices [2..20] -- 19 messages, starting on USER-2.
-        List<ConversationMessage> history = alternating(21);
+        // 22 alternating turns (indices 0..21, USER on even indices, ending on ASSISTANT-21 -- a
+        // trailing USER with no successor would be dropped as an orphan before the count cap even runs,
+        // see orphanUserTurnAfterAFailedReplyIsDroppedToKeepStrictAlternation below; the leading-trim
+        // interaction is covered separately by leadingAssistantAfterTrimIsDropped). The last 20 is
+        // indices [2..21], which already starts on USER-2 -- no leading-assistant trim needed here.
+        List<ConversationMessage> history = alternating(22);
 
         List<ChatMessage> window = AgentConversationRunner.buildWindow(history);
 
-        assertThat(window).hasSize(19);
+        assertThat(window).hasSize(20);
         assertThat(window.get(0).role()).isEqualTo(ChatMessage.Role.USER);
         assertThat(window.get(0).text()).isEqualTo("USER-2");
-        assertThat(window.get(window.size() - 1).text()).isEqualTo("USER-20");
-        // Nothing before index 2 survives (the count cap dropped index 0, the leading trim dropped 1).
+        assertThat(window.get(window.size() - 1).text()).isEqualTo("ASSISTANT-21");
+        // Nothing before index 2 survives.
         assertThat(window.stream().map(ChatMessage::text)).noneMatch(t -> t.equals("USER-0") || t.equals("ASSISTANT-1"));
     }
 
@@ -90,14 +92,57 @@ class AgentConversationRunnerWindowTest {
         assertThat(window.get(1).text()).startsWith("d");
     }
 
+    /**
+     * Behavior change from the strict-alternation fix: a solo message with nothing else in {@code
+     * priorHistory} can only mean its own reply failed (COMPLETED-only history has no room for anything
+     * else to coexist with it) -- so under strict alternation it's an orphan like any other, correctly
+     * dropped entirely rather than sent to the model on its own. Before this fix, a lone oversized USER
+     * message survived the char cap's "always keep at least the last item" escape hatch (still covered,
+     * on a paired fixture, by charCapDropsOldestMessagesFirstButAlwaysKeepsTheMostRecentOne above); now
+     * it's dropped one step earlier, before the char cap even runs.
+     */
     @Test
-    void charCapNeverDropsTheSingleMostRecentMessageEvenIfItAloneExceedsTheBudget() {
+    void charCapSoloUnpairedMessage_isDroppedAsAnOrphanRatherThanSurviving() {
         List<ConversationMessage> history = List.of(msg(ConversationMessage.Role.USER, "x".repeat(30_000)));
 
         List<ChatMessage> window = AgentConversationRunner.buildWindow(history);
 
-        assertThat(window).hasSize(1);
-        assertThat(window.get(0).text()).hasSize(30_000);
+        assertThat(window).isEmpty();
+    }
+
+    @Test
+    void orphanUserTurnAfterAFailedReplyIsDroppedToKeepStrictAlternation() {
+        // priorHistory only ever contains COMPLETED-status turns (the caller's query filters FAILED
+        // out), so a failed reply leaves its USER turn with no immediate ASSISTANT successor in the raw
+        // list -- exactly what a real "question failed, then retried" sequence looks like once the
+        // FAILED assistant row is filtered out upstream.
+        List<ConversationMessage> history = List.of(
+                msg(ConversationMessage.Role.USER, "first question (its reply failed)"),
+                msg(ConversationMessage.Role.USER, "retry"),
+                msg(ConversationMessage.Role.ASSISTANT, "answer to retry"));
+
+        List<ChatMessage> window = AgentConversationRunner.buildWindow(history);
+
+        assertThat(window).hasSize(2);
+        assertThat(window.get(0).role()).isEqualTo(ChatMessage.Role.USER);
+        assertThat(window.get(0).text()).isEqualTo("retry");
+        assertThat(window.get(1).role()).isEqualTo(ChatMessage.Role.ASSISTANT);
+        assertThat(window.get(1).text()).isEqualTo("answer to retry");
+    }
+
+    @Test
+    void multipleConsecutiveOrphanUserTurnsAreAllDropped() {
+        List<ConversationMessage> history = List.of(
+                msg(ConversationMessage.Role.USER, "attempt 1"),
+                msg(ConversationMessage.Role.USER, "attempt 2"),
+                msg(ConversationMessage.Role.USER, "attempt 3"),
+                msg(ConversationMessage.Role.ASSISTANT, "finally answered"));
+
+        List<ChatMessage> window = AgentConversationRunner.buildWindow(history);
+
+        assertThat(window).hasSize(2);
+        assertThat(window.get(0).text()).isEqualTo("attempt 3");
+        assertThat(window.get(1).text()).isEqualTo("finally answered");
     }
 
     @Test

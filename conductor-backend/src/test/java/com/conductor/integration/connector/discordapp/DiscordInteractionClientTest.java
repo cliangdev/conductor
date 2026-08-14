@@ -84,6 +84,56 @@ class DiscordInteractionClientTest {
 
     @Test
     void editOriginal_4xx_wrapsAsDiscordWebhookException() {
+        // Not 404 -- editOriginal retries once on a bare 404 (see the tests below), which would make
+        // this generic-4xx-wraps-cleanly test also pay a ~1.5s retry sleep for no reason.
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(contains("/messages/@original"), eq(HttpMethod.PATCH), any(), eq(String.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.BAD_REQUEST, "Bad Request",
+                        new HttpHeaders(), new byte[0], null));
+        DiscordInteractionClient client = new DiscordInteractionClient(new ObjectMapper(), restTemplate);
+
+        assertThatThrownBy(() -> client.editOriginal("app-1", "tok-1", "hello"))
+                .isInstanceOf(DiscordWebhookException.class)
+                .hasMessageContaining("400");
+    }
+
+    @Test
+    void editOriginal_5xx_wrapsAsDiscordWebhookException() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(contains("/messages/@original"), eq(HttpMethod.PATCH), any(), eq(String.class)))
+                .thenThrow(org.springframework.web.client.HttpServerErrorException.create(
+                        HttpStatus.BAD_GATEWAY, "Bad Gateway", new HttpHeaders(), new byte[0], null));
+        DiscordInteractionClient client = new DiscordInteractionClient(new ObjectMapper(), restTemplate);
+
+        assertThatThrownBy(() -> client.editOriginal("app-1", "tok-1", "hello"))
+                .isInstanceOf(DiscordWebhookException.class)
+                .hasMessageContaining("502");
+    }
+
+    /**
+     * The race this retry exists for: {@code DiscordAppConnector} now enqueues the whole {@code /ask}
+     * flow and returns immediately, so this call can reach Discord before Discord has finished
+     * processing the ack response that same webhook request is still sending -- Discord briefly has no
+     * "original interaction response" to edit, hence a transient 404. A short delay (real, not
+     * mocked -- this test genuinely sleeps ~1.5s) then one retry absorbs that window.
+     */
+    @Test
+    void editOriginal_404_retriesOnceThenSucceeds() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(contains("/messages/@original"), eq(HttpMethod.PATCH), any(), eq(String.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found",
+                        new HttpHeaders(), new byte[0], null))
+                .thenReturn(ResponseEntity.ok("{\"id\":\"msg-1\",\"channel_id\":\"chan-1\"}"));
+        DiscordInteractionClient client = new DiscordInteractionClient(new ObjectMapper(), restTemplate);
+
+        DiscordInteractionClient.MessageRef ref = client.editOriginal("app-1", "tok-1", "hello");
+
+        assertThat(ref.messageId()).isEqualTo("msg-1");
+        verify(restTemplate, times(2)).exchange(contains("/messages/@original"), eq(HttpMethod.PATCH), any(), eq(String.class));
+    }
+
+    @Test
+    void editOriginal_404Twice_throwsAfterOneRetry() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         when(restTemplate.exchange(contains("/messages/@original"), eq(HttpMethod.PATCH), any(), eq(String.class)))
                 .thenThrow(HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found",
@@ -93,6 +143,22 @@ class DiscordInteractionClientTest {
         assertThatThrownBy(() -> client.editOriginal("app-1", "tok-1", "hello"))
                 .isInstanceOf(DiscordWebhookException.class)
                 .hasMessageContaining("404");
+        verify(restTemplate, times(2)).exchange(contains("/messages/@original"), eq(HttpMethod.PATCH), any(), eq(String.class));
+    }
+
+    /** {@code createThread} does NOT opt into the 404 retry -- there is no equivalent race for it (it
+     *  runs well after {@code editOriginal} already succeeded), so a 404 there is a genuine failure. */
+    @Test
+    void createThread_404_doesNotRetry() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(contains("/threads"), eq(HttpMethod.POST), any(), eq(String.class)))
+                .thenThrow(HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found",
+                        new HttpHeaders(), new byte[0], null));
+        DiscordInteractionClient client = new DiscordInteractionClient(new ObjectMapper(), restTemplate);
+
+        assertThatThrownBy(() -> client.createThread("bot-token", "chan-1", "msg-1", "name"))
+                .isInstanceOf(DiscordWebhookException.class);
+        verify(restTemplate, times(1)).exchange(contains("/threads"), eq(HttpMethod.POST), any(), eq(String.class));
     }
 
     @Test

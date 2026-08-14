@@ -74,13 +74,14 @@ public class ConversationService {
      * {@link DataIntegrityViolationException} and re-reads the winner's row rather than erroring --
      * same race-loses-then-re-reads shape as {@code KnowledgeIngestionService#submit}'s dedup-key path.
      *
-     * <p>Self-heals the {@value DefaultAgentSlugs#CEO} agent first, same as {@link #create} -- this is
-     * the path an external channel (Discord, Phase 8) routes through, so it must never fail to resolve
-     * a default target just because a project's CEO agent was never seeded or was deleted.
+     * <p>Does NOT self-heal the {@value DefaultAgentSlugs#CEO} agent itself -- {@link #create} (reached
+     * via {@link #insertInNewTx} on the create path) already does that once, and a caller resolving an
+     * addressable agent (which is what determines {@code agentId} in the first place) has already run
+     * its own self-heal before ever reaching this method. Calling it a third time here was pure
+     * duplication, not an extra safety margin.
      */
     public Conversation findOrCreateByChannelKey(String projectId, String agentId, ConversationChannel channel,
                                                  String channelKey, String title, ProjectActor actor) {
-        coordinatorProvisioner.ensureProvisioned(projectId);
         if (channelKey == null || channelKey.isBlank()) {
             throw new IllegalArgumentException("channelKey is required for findOrCreateByChannelKey");
         }
@@ -116,6 +117,11 @@ public class ConversationService {
         return messageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId, pageable);
     }
 
+    /** A PENDING assistant reply older than this is treated as abandoned (its run died mid-turn -- a
+     *  deploy, a crash -- and nothing will ever complete it) rather than genuinely in flight. See {@link
+     *  #appendUserMessage}. */
+    static final long STALE_PENDING_MINUTES = 10;
+
     /**
      * Appends a USER-role, COMPLETED message and bumps {@code last_message_at} -- the human/external
      * side of a turn. {@code authorLabel} is the display name shown for this turn (e.g. a Discord
@@ -124,19 +130,37 @@ public class ConversationService {
      *
      * <p>Rejects with {@link ConflictException} (409) when the conversation's most recent turn is a
      * still-PENDING assistant reply -- only one turn may be in flight at a time. Enforced here (not in
-     * the REST controller alone) so every caller -- the REST API today, a future Discord webhook
-     * receiver -- gets the same guard against double-submitting a turn.
+     * the REST controller alone) so every caller -- the REST API today, the Discord webhook receiver --
+     * gets the same guard against double-submitting a turn. A PENDING reply older than {@link
+     * #STALE_PENDING_MINUTES} is instead treated as abandoned (there is no scheduler that would ever
+     * complete it): it's marked FAILED with an "interrupted" reason and the new turn is allowed through,
+     * rather than wedging the conversation in a permanent 409 until an operator intervenes.
+     *
+     * <p>The conversation row is fetched with a {@code PESSIMISTIC_WRITE} lock ({@link
+     * ConversationRepository#findWithLockByIdAndProjectId}) held for the rest of this transaction --
+     * without it, two concurrent POSTs against the same conversation can both read "latest turn is
+     * COMPLETED" before either has inserted its USER message, both pass the guard above, and both then
+     * kick off a run. The lock serializes them: the second caller blocks here until the first commits
+     * (by which point its new PENDING assistant row is what the second caller's own guard check sees).
      */
     @Transactional
     public ConversationMessage appendUserMessage(String projectId, String conversationId, String content,
                                                   String authorLabel, String externalMessageId, ProjectActor actor) {
-        Conversation conversation = get(projectId, conversationId);
+        Conversation conversation = conversationRepository.findWithLockByIdAndProjectId(conversationId, projectId)
+                .orElseThrow(() -> new ConversationNotFoundException(projectId, conversationId));
 
         messageRepository.findTopByConversationIdOrderByCreatedAtDesc(conversationId).ifPresent(latest -> {
-            if (latest.getRole() == ConversationMessage.Role.ASSISTANT
-                    && latest.getStatus() == ConversationMessage.Status.PENDING) {
-                throw new ConflictException("A turn is already in progress for this conversation");
+            if (latest.getRole() != ConversationMessage.Role.ASSISTANT
+                    || latest.getStatus() != ConversationMessage.Status.PENDING) {
+                return;
             }
+            if (latest.getCreatedAt().isBefore(OffsetDateTime.now().minusMinutes(STALE_PENDING_MINUTES))) {
+                latest.setStatus(ConversationMessage.Status.FAILED);
+                latest.setErrorReason("interrupted — run never completed");
+                messageRepository.save(latest);
+                return;
+            }
+            throw new ConflictException("A turn is already in progress for this conversation");
         });
 
         ConversationMessage message = new ConversationMessage();
@@ -164,13 +188,6 @@ public class ConversationService {
     public Conversation updateChannelKey(String projectId, String conversationId, String newChannelKey) {
         Conversation conversation = get(projectId, conversationId);
         conversation.setChannelKey(newChannelKey);
-        return conversationRepository.save(conversation);
-    }
-
-    @Transactional
-    public Conversation archive(String projectId, String conversationId) {
-        Conversation conversation = get(projectId, conversationId);
-        conversation.setStatus(Conversation.Status.ARCHIVED);
         return conversationRepository.save(conversation);
     }
 }

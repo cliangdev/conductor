@@ -54,8 +54,24 @@ class DiscordCommandRegistrarTest {
         assertThat(options).hasSize(2);
         assertThat(options.get(0).get("name").asText()).isEqualTo("question");
         assertThat(options.get(0).get("required").asBoolean()).isTrue();
+        // Discord truncates nothing server-side -- Conductor's own conversations.title column (VARCHAR(200))
+        // is what actually needs protecting, so the option itself caps well above that with room to spare.
+        assertThat(options.get(0).get("max_length").asInt()).isEqualTo(1500);
         assertThat(options.get(1).get("name").asText()).isEqualTo("agent");
         assertThat(options.get(1).get("required").asBoolean()).isFalse();
+    }
+
+    @Test
+    void registerAskCommand_5xx_throwsDiscordWebhookException() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(contains("/commands"), eq(HttpMethod.PUT), any(), eq(String.class)))
+                .thenThrow(org.springframework.web.client.HttpServerErrorException.create(
+                        HttpStatus.INTERNAL_SERVER_ERROR, "Server Error", new HttpHeaders(), "boom".getBytes(), null));
+        DiscordCommandRegistrar registrar = new DiscordCommandRegistrar(new ObjectMapper(), restTemplate);
+
+        assertThatThrownBy(() -> registrar.registerAskCommand("bot-token", "app-1", "guild-1"))
+                .isInstanceOf(DiscordWebhookException.class)
+                .hasMessageContaining("500");
     }
 
     @Test

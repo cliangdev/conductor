@@ -48,6 +48,15 @@ sequenceDiagram
     CC-->>Caller: reply, or PENDING if still running past the budget
 ```
 
+The two callers differ in *when* the reply is sent, which is why the diagram's last step reads
+differently for each: the REST controller sends its HTTP response once the run finishes (or times out at
+90s, see [REST endpoints](#rest-endpoints)) -- there is nothing to enqueue, the caller IS the request
+thread. Discord's connector cannot do that (Discord's own ack budget for the deferred response is far
+shorter than a model run) -- `DiscordAppConnector.handleEvent` only parses the interaction and enqueues
+the entire rest of the flow (provisioning through every reply, success or error) onto the same bounded
+executor `AgentConversationRunner#submit` uses, then returns immediately; the "reply" happens later, as
+an outbound Discord API call (`editOriginal`) from that queued task, not as this request's HTTP response.
+
 ## Addressable agents
 
 Any agent can opt in via `config.addressable: true` (surfaced on `AgentResponse.addressable`, badged
@@ -179,14 +188,29 @@ requires project membership (or an equivalent project-scoped API key / workflow 
 different — the connector is a machine actor with no per-guild-member identity check: **any member of the
 connected guild who can invoke `/ask` can query the project through whichever addressable agent they
 name.** There is no per-user allowlist or role gate today; this mirrors the guild's own permission model
-(an admin who wants to restrict who can use `/ask` does so via Discord's own command permissions). A
-project-side allowlist config field is a reasonable future iteration if that turns out to be
-insufficient.
+(an admin who wants to restrict who can use `/ask` does so via Discord's own command permissions).
+
+**The blast radius is bigger than "read access."** The resolved agent's full tool set runs on the
+asker's behalf — for the default CEO coordinator, that includes `create_work_item` and
+`dispatch_workflow` (see [Coordinator tools](#coordinator-tools)). A guild member who can invoke `/ask`
+can therefore cause Work Item creation and dispatch of published workflows in the project, not merely
+query it. Stated plainly rather than glossed over: today's posture trusts every member of the connected
+guild with everything the addressed agent's tools can do. A project-side allowlist config field, or
+per-channel/per-connection tool scoping (letting an admin bind a narrower tool set to the Discord surface
+than the same agent gets over the REST API), are reasonable future iterations if that turns out to be
+insufficient — see [Non-goals](#non-goals--future-seams).
 
 ## Non-goals / future seams
 
 Deliberately out of scope for this iteration, each a plausible next step:
 
+- **Per-connection allowlist** — restricting *who* (which Discord user ids, or roles) may invoke `/ask`
+  on a given connection, narrower than "any guild member." Today the only lever is Discord's own
+  command-permissions UI, outside Conductor entirely.
+- **Per-channel/per-connection tool scoping** — letting an agent expose a narrower tool set over Discord
+  than it exposes over the REST API (e.g. read-only project-doc search via `/ask`, but no
+  `create_work_item`/`dispatch_workflow`), rather than the same full tool set on every addressable
+  surface. See [Access control](#access-control) for why this matters.
 - **Slack** — no Slack connector exists yet; the webhook SPI's `synchronousResponse` extension (built for
   Discord's PING/deferred-ack contract) generalizes to Slack's `url_verification` challenge the same way.
 - **Gateway `@mentions`** — the Discord integration is slash-command-only (`/ask`); reacting to a plain

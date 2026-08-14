@@ -60,8 +60,11 @@ public class AgentConversationRunner {
 
     /**
      * Async entry point. A {@link java.util.concurrent.RejectedExecutionException} (pool + 50-deep
-     * queue both full) propagates through the returned future rather than being swallowed -- the caller
-     * is expected to catch it and send a "busy, try again" reply instead of silently dropping the turn.
+     * queue both full) is thrown synchronously, directly out of this call -- {@code
+     * CompletableFuture.supplyAsync} calls {@code Executor#execute} inline before returning, so a
+     * rejecting executor's exception propagates from {@link #submit} itself, never through the returned
+     * future. The caller is expected to catch it around this call and send a "busy, try again" reply
+     * instead of silently dropping the turn.
      */
     public CompletableFuture<ConversationMessage> submit(String conversationId) {
         return CompletableFuture.supplyAsync(() -> runNow(conversationId), conversationExecutor);
@@ -100,10 +103,8 @@ public class AgentConversationRunner {
         pending = messageRepository.save(pending);
 
         String suffix = buildSystemPromptSuffix(conversation, latestUser);
-        // __conversation_depth is a placeholder for a future recursion guard (an addressable agent's
-        // tools may themselves start conversations) -- always 0 today, nothing reads it yet.
         AgentRunRequest request = new AgentRunRequest(conversation.getAgentId(), latestUser.getContent(),
-                Map.of("__conversation_depth", 0), null);
+                Map.of(), null);
 
         try {
             AgentRunResult result = agentExecutionService.run(request, window, suffix);
@@ -152,15 +153,17 @@ public class AgentConversationRunner {
 
     /**
      * The recent-turns window: {@code priorHistory} (COMPLETED turns, oldest first, already excluding
-     * the latest USER message -- the caller turns that into the task instead) trimmed to the last
-     * {@link #MAX_WINDOW_MESSAGES} AND {@link #MAX_WINDOW_CHARS} total content characters together
-     * (whichever cap is hit first stops including older messages), then re-trimmed to start on a USER
-     * turn if a cap split a USER/ASSISTANT pair. Package-visible for the unit test.
+     * the latest USER message -- the caller turns that into the task instead) first has any orphaned
+     * USER turn dropped (see {@link #dropOrphanUserTurns}), then is trimmed to the last {@link
+     * #MAX_WINDOW_MESSAGES} AND {@link #MAX_WINDOW_CHARS} total content characters together (whichever
+     * cap is hit first stops including older messages), then re-trimmed to start on a USER turn if a cap
+     * split a USER/ASSISTANT pair. Package-visible for the unit test.
      */
     static List<ChatMessage> buildWindow(List<ConversationMessage> priorHistory) {
-        List<ConversationMessage> countCapped = priorHistory.size() > MAX_WINDOW_MESSAGES
-                ? priorHistory.subList(priorHistory.size() - MAX_WINDOW_MESSAGES, priorHistory.size())
-                : priorHistory;
+        List<ConversationMessage> alternating = dropOrphanUserTurns(priorHistory);
+        List<ConversationMessage> countCapped = alternating.size() > MAX_WINDOW_MESSAGES
+                ? alternating.subList(alternating.size() - MAX_WINDOW_MESSAGES, alternating.size())
+                : alternating;
 
         List<ConversationMessage> charCapped = new ArrayList<>();
         long total = 0;
@@ -187,6 +190,31 @@ public class AgentConversationRunner {
                     : ChatMessage.assistant(m.getContent(), List.of()));
         }
         return window;
+    }
+
+    /**
+     * {@code priorHistory} only ever contains COMPLETED-status turns (the caller's repository query
+     * already filters on that) -- a FAILED assistant reply is invisible here, which means a USER turn
+     * whose reply failed and was retried leaves TWO consecutive USER entries in the raw list (the failed
+     * turn's USER message, then the retry's). Sent as-is, that's a non-alternating transcript, which
+     * providers with a strict user/assistant turn-order requirement reject outright. Drop any USER entry
+     * that isn't immediately followed by an ASSISTANT entry -- i.e. keep only a USER turn that actually
+     * has a surviving reply -- so the output strictly alternates.
+     */
+    private static List<ConversationMessage> dropOrphanUserTurns(List<ConversationMessage> history) {
+        List<ConversationMessage> result = new ArrayList<>();
+        for (int i = 0; i < history.size(); i++) {
+            ConversationMessage m = history.get(i);
+            if (m.getRole() == ConversationMessage.Role.USER) {
+                boolean hasReply = i + 1 < history.size()
+                        && history.get(i + 1).getRole() == ConversationMessage.Role.ASSISTANT;
+                if (!hasReply) {
+                    continue;
+                }
+            }
+            result.add(m);
+        }
+        return result;
     }
 
     private String truncate(String s) {

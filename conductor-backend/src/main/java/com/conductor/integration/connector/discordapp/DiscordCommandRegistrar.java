@@ -13,6 +13,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
@@ -61,6 +62,10 @@ public class DiscordCommandRegistrar {
         question.put("name", "question");
         question.put("description", "Your question");
         question.put("required", true);
+        // Discord allows up to 6000, but a conversation's title column is VARCHAR(200) (DiscordAppConnector
+        // truncates before storing) -- 1500 is a generous middle ground: room for a real question, short
+        // of provoking a "why was my question cut off" surprise from the 6000 ceiling.
+        question.put("max_length", 1500);
 
         ObjectNode agent = objectMapper.createObjectNode();
         agent.put("type", 3);
@@ -97,6 +102,9 @@ public class DiscordCommandRegistrar {
             // Message/response-body only -- never the URL (it carries no secret here, application/guild
             // id are not credentials, but staying consistent with the other Discord clients' discipline).
             throw new DiscordWebhookException("Discord rejected /ask command registration ("
+                    + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
+        } catch (HttpServerErrorException e) {
+            throw new DiscordWebhookException("Discord command registration failed ("
                     + e.getStatusCode().value() + "): " + e.getResponseBodyAsString());
         } catch (ResourceAccessException e) {
             Throwable rootCause = e.getCause() != null ? e.getCause() : e;

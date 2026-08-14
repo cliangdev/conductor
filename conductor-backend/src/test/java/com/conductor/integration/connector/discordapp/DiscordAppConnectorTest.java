@@ -8,7 +8,6 @@ import com.conductor.conversation.Conversation;
 import com.conductor.conversation.ConversationChannel;
 import com.conductor.conversation.ConversationMessage;
 import com.conductor.conversation.ConversationService;
-import com.conductor.conversation.CoordinatorProvisioner;
 import com.conductor.entity.Connection;
 import com.conductor.exception.ConflictException;
 import com.conductor.integration.ConnectionContext;
@@ -18,6 +17,7 @@ import com.conductor.integration.WebhookVerification;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpHeaders;
 
 import java.nio.charset.StandardCharsets;
@@ -31,16 +31,19 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class DiscordAppConnectorTest {
@@ -52,23 +55,35 @@ class DiscordAppConnectorTest {
     private static final String BOT_TOKEN = "bot-token";
 
     private ConversationService conversationService;
-    private CoordinatorProvisioner coordinatorProvisioner;
     private AddressableAgentResolver addressableAgentResolver;
     private AgentConversationRunner runner;
     private DiscordInteractionClient interactionClient;
     private DiscordCommandRegistrar commandRegistrar;
+    private ExecutorService conversationExecutor;
     private DiscordAppConnector connector;
 
     @BeforeEach
     void setUp() {
         conversationService = mock(ConversationService.class);
-        coordinatorProvisioner = mock(CoordinatorProvisioner.class);
         addressableAgentResolver = mock(AddressableAgentResolver.class);
         runner = mock(AgentConversationRunner.class);
         interactionClient = mock(DiscordInteractionClient.class);
         commandRegistrar = mock(DiscordCommandRegistrar.class);
-        connector = new DiscordAppConnector(conversationService, coordinatorProvisioner,
-                addressableAgentResolver, runner, interactionClient, commandRegistrar, new ObjectMapper());
+        // Same-thread executor -- handleEvent's whole point is to enqueue rather than run inline, so
+        // tests need SOMETHING to actually run the enqueued task; running it synchronously on the calling
+        // thread (rather than a real background thread) keeps every other test deterministic without
+        // latches/waits. handleEvent_agentNotAddressable_repliesOnlyAfterEnqueuedTaskRuns below uses a
+        // separate, non-auto-running executor specifically to prove the enqueue-before-run ordering this
+        // stub would otherwise hide.
+        conversationExecutor = mock(ExecutorService.class);
+        doAnswer(invocation -> {
+            Runnable task = invocation.getArgument(0);
+            task.run();
+            return null;
+        }).when(conversationExecutor).execute(any(Runnable.class));
+        connector = new DiscordAppConnector(conversationService,
+                addressableAgentResolver, runner, interactionClient, commandRegistrar, new ObjectMapper(),
+                conversationExecutor);
     }
 
     // ---- verify (Ed25519) ----
@@ -184,7 +199,7 @@ class DiscordAppConnectorTest {
                 eq(ConversationChannel.DISCORD), anyString(), anyString(), any())).thenReturn(conversation);
 
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "the answer", null);
-        when(runner.submit("conv-1")).thenReturn(CompletableFuture.completedFuture(reply));
+        when(runner.runNow("conv-1")).thenReturn(reply);
         when(interactionClient.editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef("msg-1", "chan-1"));
         when(interactionClient.createThread(eq(BOT_TOKEN), eq("chan-1"), eq("msg-1"), anyString()))
@@ -200,6 +215,38 @@ class DiscordAppConnectorTest {
         verify(conversationService).updateChannelKey(PROJECT_ID, "conv-1", GUILD_ID + ":thread-1");
     }
 
+    /**
+     * Blocker fix: {@code conversations.title} is VARCHAR(200) (V110) -- an untruncated long question
+     * used to fail this exact insert, deep inside the (now-async) flow with nothing left to reply from.
+     * The full, UNtruncated question must still be what's stored as the actual message content and
+     * handed to the agent -- only the title (and, separately, the thread name) are ever shortened.
+     */
+    @Test
+    void handleEvent_longQuestion_truncatesTitleButKeepsFullQuestionAsMessageContent() {
+        Agent target = agent("agent-1", "ceo", "CEO");
+        when(addressableAgentResolver.resolve(PROJECT_ID, null)).thenReturn(target);
+        String longQuestion = "q".repeat(250);
+        Conversation conversation = conversation("conv-1", "agent-1");
+        when(conversationService.findOrCreateByChannelKey(eq(PROJECT_ID), eq("agent-1"),
+                eq(ConversationChannel.DISCORD), anyString(), anyString(), any())).thenReturn(conversation);
+        ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null);
+        when(runner.runNow("conv-1")).thenReturn(reply);
+        when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
+                .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
+
+        InboundEvent event = event(askInteractionJson(null, longQuestion, false, "chan-1", null));
+        connector.handleEvent(event, ctxWithBotToken());
+
+        ArgumentCaptor<String> titleCaptor = ArgumentCaptor.forClass(String.class);
+        verify(conversationService).findOrCreateByChannelKey(eq(PROJECT_ID), eq("agent-1"),
+                eq(ConversationChannel.DISCORD), anyString(), titleCaptor.capture(), any());
+        assertThat(titleCaptor.getValue()).hasSizeLessThanOrEqualTo(200);
+        assertThat(titleCaptor.getValue()).isNotEqualTo(longQuestion);
+
+        verify(conversationService).appendUserMessage(eq(PROJECT_ID), eq("conv-1"), eq(longQuestion),
+                anyString(), anyString(), any());
+    }
+
     @Test
     void handleEvent_threadInvocation_continuesConversationWithoutCreatingThread() {
         Agent target = agent("agent-1", "ceo", "CEO");
@@ -211,7 +258,7 @@ class DiscordAppConnectorTest {
                 .thenReturn(conversation);
 
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null);
-        when(runner.submit("conv-1")).thenReturn(CompletableFuture.completedFuture(reply));
+        when(runner.runNow("conv-1")).thenReturn(reply);
         when(interactionClient.editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef("msg-1", "thread-9"));
 
@@ -253,6 +300,38 @@ class DiscordAppConnectorTest {
         verify(conversationService, never()).findOrCreateByChannelKey(any(), any(), any(), any(), any(), any());
     }
 
+    /**
+     * The core of the enqueue-only fix: proves {@code handleEvent} itself does nothing but parse and
+     * enqueue -- not even an error reply -- by using a non-auto-running executor and asserting zero
+     * {@code interactionClient} interactions BEFORE the captured task is manually run. Every other test
+     * in this class uses the auto-running {@code conversationExecutor} stub from {@code setUp}, which
+     * would hide a regression back to doing work inline (the reply would still show up "eventually" in
+     * the same call, since the stub runs the task synchronously inside {@code execute(...)}) -- this test
+     * is the one that would actually catch it.
+     */
+    @Test
+    void handleEvent_agentNotAddressable_repliesOnlyAfterEnqueuedTaskRuns() {
+        when(addressableAgentResolver.resolve(PROJECT_ID, "nope"))
+                .thenThrow(AgentNotAddressableException.notFound("nope"));
+
+        ExecutorService capturingExecutor = mock(ExecutorService.class);
+        DiscordAppConnector capturingConnector = new DiscordAppConnector(conversationService,
+                addressableAgentResolver, runner, interactionClient, commandRegistrar, new ObjectMapper(),
+                capturingExecutor);
+
+        InboundEvent event = event(askInteractionJson(null, "question", false, "chan-1", "nope"));
+        capturingConnector.handleEvent(event, ctxWithBotToken());
+
+        ArgumentCaptor<Runnable> taskCaptor = ArgumentCaptor.forClass(Runnable.class);
+        verify(capturingExecutor).execute(taskCaptor.capture());
+        verifyNoInteractions(interactionClient); // nothing replied yet -- handleEvent only enqueued
+
+        taskCaptor.getValue().run(); // now actually run the enqueued flow, as the executor eventually would
+
+        verify(interactionClient).editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN),
+                eq("Couldn't find an agent matching 'nope'."));
+    }
+
     @Test
     void handleEvent_appendUserMessageConflict_postsBusyFollowup() {
         Agent target = agent("agent-1", "ceo", "CEO");
@@ -268,23 +347,22 @@ class DiscordAppConnectorTest {
 
         verify(interactionClient).editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN),
                 org.mockito.ArgumentMatchers.contains("Still working on the previous message"));
-        verify(runner, never()).submit(anyString());
+        verify(runner, never()).runNow(anyString());
     }
 
+    /** RejectedExecutionException can now only happen at ENQUEUE time (the executor + its queue both
+     *  full) -- handleEvent itself has nothing left to reply with at that point, since the reply logic
+     *  lives entirely inside the task that never got to run. Per the accepted posture, this is a silent
+     *  drop (logged, no Discord reply) rather than a "busy" follow-up. */
     @Test
-    void handleEvent_submitRejected_postsBusyFollowup() {
-        Agent target = agent("agent-1", "ceo", "CEO");
-        when(addressableAgentResolver.resolve(PROJECT_ID, null)).thenReturn(target);
-        Conversation conversation = conversation("conv-1", "agent-1");
-        when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
-                .thenReturn(conversation);
-        when(runner.submit("conv-1")).thenThrow(new RejectedExecutionException("pool full"));
+    void handleEvent_enqueueRejected_dropsSilentlyWithoutReplying() {
+        doThrow(new RejectedExecutionException("pool full")).when(conversationExecutor).execute(any(Runnable.class));
 
         InboundEvent event = event(askInteractionJson(null, "question", false, "chan-1", null));
         connector.handleEvent(event, ctxWithBotToken());
 
-        verify(interactionClient).editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN),
-                org.mockito.ArgumentMatchers.contains("busy"));
+        verifyNoInteractions(interactionClient);
+        verifyNoInteractions(conversationService);
     }
 
     @Test
@@ -295,7 +373,7 @@ class DiscordAppConnectorTest {
         when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
                 .thenReturn(conversation);
         ConversationMessage failed = assistantMessage(ConversationMessage.Status.FAILED, "", "run-9");
-        when(runner.submit("conv-1")).thenReturn(CompletableFuture.completedFuture(failed));
+        when(runner.runNow("conv-1")).thenReturn(failed);
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
@@ -313,9 +391,7 @@ class DiscordAppConnectorTest {
         Conversation conversation = conversation("conv-1", "agent-1");
         when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
                 .thenReturn(conversation);
-        CompletableFuture<ConversationMessage> failedFuture = new CompletableFuture<>();
-        failedFuture.completeExceptionally(new RuntimeException("boom"));
-        when(runner.submit("conv-1")).thenReturn(failedFuture);
+        when(runner.runNow("conv-1")).thenThrow(new RuntimeException("boom"));
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
@@ -335,7 +411,7 @@ class DiscordAppConnectorTest {
                 .thenReturn(conversation);
         String longContent = "x".repeat(2500);
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, longContent, null);
-        when(runner.submit("conv-1")).thenReturn(CompletableFuture.completedFuture(reply));
+        when(runner.runNow("conv-1")).thenReturn(reply);
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
