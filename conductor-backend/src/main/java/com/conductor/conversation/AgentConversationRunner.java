@@ -1,5 +1,7 @@
 package com.conductor.conversation;
 
+import com.conductor.agent.Agent;
+import com.conductor.agent.AgentRepository;
 import com.conductor.agent.provider.ChatMessage;
 import com.conductor.agent.run.AgentExecutionService;
 import com.conductor.agent.run.AgentRun;
@@ -37,17 +39,20 @@ public class AgentConversationRunner {
 
     private final ConversationRepository conversationRepository;
     private final ConversationMessageRepository messageRepository;
+    private final AgentRepository agentRepository;
     private final AgentExecutionService agentExecutionService;
     private final MemoryAugmentor memoryAugmentor;
     private final ExecutorService conversationExecutor;
 
     public AgentConversationRunner(ConversationRepository conversationRepository,
                                    ConversationMessageRepository messageRepository,
+                                   AgentRepository agentRepository,
                                    AgentExecutionService agentExecutionService,
                                    MemoryAugmentor memoryAugmentor,
                                    @Qualifier("conversationExecutor") ExecutorService conversationExecutor) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
+        this.agentRepository = agentRepository;
         this.agentExecutionService = agentExecutionService;
         this.memoryAugmentor = memoryAugmentor;
         this.conversationExecutor = conversationExecutor;
@@ -124,8 +129,17 @@ public class AgentConversationRunner {
         return pending;
     }
 
+    /**
+     * The agent's CURRENT name/slug are loaded fresh (not cached anywhere) on every turn, so a rename
+     * takes effect on the very next message -- matching how {@code AddressableAgentResolver} already
+     * routes a human-typed reference by whatever the agent is named right now, not what it was named
+     * when the conversation started.
+     */
     private String buildSystemPromptSuffix(Conversation conversation, ConversationMessage latestUser) {
         StringBuilder sb = new StringBuilder();
+        agentRepository.findById(conversation.getAgentId()).ifPresent(agent ->
+                sb.append("You are ").append(agent.getName())
+                        .append(" (the '").append(agent.getSlug()).append("' agent). "));
         sb.append("You're in an ongoing conversation on the ").append(conversation.getChannel()).append(" channel");
         if (latestUser.getAuthorLabel() != null && !latestUser.getAuthorLabel().isBlank()) {
             sb.append(" with ").append(latestUser.getAuthorLabel());

@@ -201,4 +201,46 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
         List<?> window = windowCaptor.getValue();
         assertThat(window).hasSize(2);
     }
+
+    /** Phase 5 tweak: the system prompt suffix names the agent's CURRENT name/slug (loaded fresh every
+     *  turn via {@code AgentRepository}), not a value baked in at conversation-creation time -- so a
+     *  rename takes effect on the very next turn. */
+    @Test
+    void systemPromptSuffixNamesTheCurrentAgent() {
+        Conversation conversation = conversationWithPendingUserTurn("Who are you?");
+
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-4", "I'm the agent.", null, TokenUsage.ZERO,
+                        AgentRun.Status.SUCCEEDED.name()));
+
+        runner.runNow(conversation.getId());
+
+        Agent agent = agentRepository.findById(agentId).orElseThrow();
+        org.mockito.ArgumentCaptor<String> suffixCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), suffixCaptor.capture());
+
+        assertThat(suffixCaptor.getValue()).contains(agent.getName()).contains(agent.getSlug());
+    }
+
+    /** Renaming the agent between conversation creation and the next turn is reflected immediately --
+     *  proves the suffix is not cached/derived from anything stored on the {@link Conversation} itself. */
+    @Test
+    void systemPromptSuffixReflectsARenameThatHappenedAfterTheConversationStarted() {
+        Conversation conversation = conversationWithPendingUserTurn("Who are you now?");
+
+        Agent agent = agentRepository.findById(agentId).orElseThrow();
+        agent.setName("Renamed Agent");
+        agentRepository.save(agent);
+
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-5", "I'm renamed.", null, TokenUsage.ZERO,
+                        AgentRun.Status.SUCCEEDED.name()));
+
+        runner.runNow(conversation.getId());
+
+        org.mockito.ArgumentCaptor<String> suffixCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), suffixCaptor.capture());
+
+        assertThat(suffixCaptor.getValue()).contains("Renamed Agent");
+    }
 }
