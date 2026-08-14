@@ -249,9 +249,12 @@ public class ProjectDocService {
         projectDocRepository.delete(doc);
     }
 
+    /** @param limit caps the ranked result set at the query level -- callers pass whatever they intend
+     *                to actually use (the REST endpoint's own page size, or an agent tool's already-
+     *                clamped {@code limit} argument) rather than fetching everything and truncating after. */
     @Transactional(readOnly = true)
-    public List<ProjectDoc> searchDocs(String projectId, String query) {
-        return projectDocRepository.searchByProjectIdAndQuery(projectId, query);
+    public List<ProjectDoc> searchDocs(String projectId, String query, int limit) {
+        return projectDocRepository.searchByProjectIdAndQuery(projectId, query, limit);
     }
 
     /** Records who last touched the doc — a user, or a machine actor's label. */

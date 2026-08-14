@@ -43,6 +43,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -517,7 +518,8 @@ class CoordinatorToolProviderTest {
 
     @Test
     void searchProjectDocsHappyPath() throws Exception {
-        when(projectDocService.searchDocs("p1", "hello")).thenReturn(List.of(doc("d1", "Doc One", "hello world")));
+        when(projectDocService.searchDocs("p1", "hello", 20))
+                .thenReturn(List.of(doc("d1", "Doc One", "hello world")));
 
         ToolResult result = tool("search_project_docs").invoke(Map.of("q", "hello"), CTX);
 
@@ -529,8 +531,10 @@ class CoordinatorToolProviderTest {
 
     @Test
     void searchProjectDocsRespectsLimit() throws Exception {
-        when(projectDocService.searchDocs("p1", "x")).thenReturn(
-                List.of(doc("d1", "a", "x"), doc("d2", "b", "x"), doc("d3", "c", "x")));
+        // The limit is now enforced at the query level (see ProjectDocRepository's LIMIT clause) --
+        // the service is expected to receive the tool's already-clamped limit, not the unbounded set.
+        when(projectDocService.searchDocs("p1", "x", 2)).thenReturn(
+                List.of(doc("d1", "a", "x"), doc("d2", "b", "x")));
 
         ToolResult result = tool("search_project_docs").invoke(Map.of("q", "x", "limit", 2), CTX);
 
@@ -540,7 +544,7 @@ class CoordinatorToolProviderTest {
 
     @Test
     void searchProjectDocsServiceExceptionBecomesToolError() {
-        when(projectDocService.searchDocs(anyString(), anyString())).thenThrow(new RuntimeException("boom"));
+        when(projectDocService.searchDocs(anyString(), anyString(), anyInt())).thenThrow(new RuntimeException("boom"));
 
         ToolResult result = tool("search_project_docs").invoke(Map.of("q", "x"), CTX);
 

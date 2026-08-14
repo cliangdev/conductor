@@ -58,6 +58,8 @@ public class ProjectDocsController implements ProjectDocsApi {
             "image/webp", "webp"
     );
 
+    private static final int SEARCH_RESULT_LIMIT = 50;
+
     private final DocFolderService docFolderService;
     private final ProjectDocService projectDocService;
     private final DocVersionService docVersionService;
@@ -204,7 +206,7 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<List<ProjectDocSearchResult>> searchProjectDocs(String projectId, String q) {
         requireDocAccess(projectId);
-        List<ProjectDoc> docs = projectDocService.searchDocs(projectId, q);
+        List<ProjectDoc> docs = projectDocService.searchDocs(projectId, q, SEARCH_RESULT_LIMIT);
         List<ProjectDocSearchResult> results = docs.stream()
                 .map(doc -> toSearchResult(doc, q))
                 .collect(Collectors.toList());

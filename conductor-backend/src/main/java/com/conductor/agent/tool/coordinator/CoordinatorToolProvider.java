@@ -556,8 +556,8 @@ public class CoordinatorToolProvider implements AgentToolProvider {
 
         @Override
         public String description() {
-            return "Full-text (LIKE-based) search over the project's docs -- id, title, snippet. Use "
-                    + "before read_project_doc.";
+            return "Full-text search over the project's docs -- id, title, snippet. Use before "
+                    + "read_project_doc.";
         }
 
         @Override
@@ -576,10 +576,9 @@ public class CoordinatorToolProvider implements AgentToolProvider {
                     return ToolResult.error("q is required");
                 }
                 int limit = clampLimit(arguments.get("limit"), 20);
-                List<ProjectDoc> docs = projectDocService.searchDocs(context.projectId(), q);
+                List<ProjectDoc> docs = projectDocService.searchDocs(context.projectId(), q, limit);
                 List<Map<String, Object>> rows = new ArrayList<>();
                 for (ProjectDoc doc : docs) {
-                    if (rows.size() >= limit) break;
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("id", doc.getId());
                     row.put("title", doc.getTitle());
@@ -750,8 +749,9 @@ public class CoordinatorToolProvider implements AgentToolProvider {
         return Math.min(requested, cap);
     }
 
-    /** Best-effort snippet around the first query-term hit, falling back to a leading clip -- good
-     *  enough until Phase 9's FTS upgrade replaces this LIKE-backed search with ranked snippets. */
+    /** Best-effort snippet around the first query-term hit, falling back to a leading clip. Rows already
+     *  arrive rank-ordered from {@code ProjectDocService#searchDocs}; this only picks WHERE within each
+     *  doc's content to cut the snippet, same as {@code ProjectDocsController#extractSnippet}. */
     private String snippet(String content, String query) {
         if (content == null) return "";
         int idx = content.toLowerCase().indexOf(query.toLowerCase());
