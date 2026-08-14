@@ -8956,4 +8956,9 @@ components:
         userMessage:
           $ref: '#/components/schemas/ConversationMessageResponse'
         assistantMessage:
-          $ref: '#/components/schemas/ConversationMessageResponse'
+          description: >-
+            Null when the run hadn't even started within the response budget (queue backlog) -- there's
+            no assistant reply to describe yet. Poll GET .../messages once it exists.
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ConversationMessageResponse'

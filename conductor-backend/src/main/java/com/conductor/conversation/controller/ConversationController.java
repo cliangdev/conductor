@@ -133,11 +133,16 @@ public class ConversationController implements ConversationsApi {
             throw new ConversationBusyException(
                     "Too many conversations running right now -- please try again shortly");
         } catch (TimeoutException e) {
-            // The run keeps completing in the background (it's not cancelled) -- return whatever the
-            // conversation's latest turn is right now (almost always the still-PENDING assistant row
-            // AgentConversationRunner inserts up front) and let the caller poll GET .../messages.
-            assistantMessage = messageRepository.findTopByConversationIdOrderByCreatedAtDesc(conversationId)
-                    .orElse(userMessage);
+            // The run keeps completing in the background (it's not cancelled) -- return the conversation's
+            // latest turn if it's the still-PENDING assistant row AgentConversationRunner inserts up front
+            // (the overwhelmingly common case), and let the caller poll GET .../messages. If the queued
+            // task hadn't even started within the budget, the latest row is still the user's own message
+            // -- there's no assistant reply to describe yet, so report null rather than echoing it back
+            // mislabeled as an assistant turn.
+            ConversationMessage latest = messageRepository
+                    .findTopByConversationIdOrderByCreatedAtDesc(conversationId).orElse(null);
+            assistantMessage = latest != null && latest.getRole() == ConversationMessage.Role.ASSISTANT
+                    ? latest : null;
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
             if (cause instanceof RuntimeException re) {
@@ -151,7 +156,7 @@ public class ConversationController implements ConversationsApi {
 
         PostMessageResponse response = new PostMessageResponse();
         response.setUserMessage(toDto(userMessage));
-        response.setAssistantMessage(toDto(assistantMessage));
+        response.setAssistantMessage(assistantMessage != null ? toDto(assistantMessage) : null);
         return ResponseEntity.ok(response);
     }
 

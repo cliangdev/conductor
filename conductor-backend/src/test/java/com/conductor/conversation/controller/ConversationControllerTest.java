@@ -330,4 +330,29 @@ class ConversationControllerTest {
                 .andExpect(jsonPath("$.assistantMessage.id").value("a1"))
                 .andExpect(jsonPath("$.assistantMessage.status").value("PENDING"));
     }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    void postMessageTimeoutBeforeTheQueuedTaskEvenStartedReturnsNullAssistantMessage() throws Exception {
+        asMember();
+        ConversationMessage userMsg = message("u1", ConversationMessage.Role.USER, "hello",
+                ConversationMessage.Status.COMPLETED);
+        when(conversationService.appendUserMessage(eq(PROJECT_ID), eq(CONVERSATION_ID), anyString(),
+                anyString(), eq(null), any())).thenReturn(userMsg);
+
+        CompletableFuture<ConversationMessage> future = mock(CompletableFuture.class);
+        when(future.get(90L, TimeUnit.SECONDS)).thenThrow(new TimeoutException());
+        when(runner.submit(CONVERSATION_ID)).thenReturn(future);
+        // The queued task never started -- the conversation's latest row is still the user's own message.
+        when(messageRepository.findTopByConversationIdOrderByCreatedAtDesc(CONVERSATION_ID))
+                .thenReturn(Optional.of(userMsg));
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/conversations/" + CONVERSATION_ID + "/messages")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":\"hello\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userMessage.id").value("u1"))
+                .andExpect(jsonPath("$.assistantMessage").doesNotExist());
+    }
 }
