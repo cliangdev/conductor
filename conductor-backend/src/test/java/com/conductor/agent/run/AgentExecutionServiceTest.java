@@ -211,6 +211,63 @@ class AgentExecutionServiceTest {
         assertThat(provider.requests.get(0)).isEqualTo(provider.requests.get(1));
     }
 
+    // ---- maxTokens: unset stays null so each provider applies its own cap ----
+
+    @Test
+    void unsetMaxTokensInConfigIsPassedThroughAsNullNotAHardcodedDefault() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+
+        service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null));
+
+        assertThat(provider.requests.get(0).maxTokens()).isNull();
+    }
+
+    @Test
+    void explicitMaxTokensInConfigFlowsThroughToTheRequest() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{\"maxTokens\":4096}"), provider, new RecordingTool());
+
+        service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null));
+
+        assertThat(provider.requests.get(0).maxTokens()).isEqualTo(4096);
+    }
+
+    // ---- MAX_TOKENS terminal turn: FAILED when blank, SUCCEEDED-with-warning when truncated but non-empty ----
+
+    @Test
+    void maxTokensStopReasonWithBlankTextFails() {
+        ChatModelProvider provider = new ChatModelProvider() {
+            public String id() { return "fake"; }
+            public ChatResponse complete(ChatRequest request, String apiKey) {
+                return new ChatResponse(ChatResponse.StopReason.MAX_TOKENS, "", List.of(), new TokenUsage(5, 5));
+            }
+        };
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+
+        AgentRunResult result = service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null));
+
+        assertThat(result.status()).isEqualTo(AgentRun.Status.FAILED.name());
+        assertThat(result.outputText()).isEmpty();
+    }
+
+    @Test
+    void maxTokensStopReasonWithNonBlankTextSucceedsWithTruncationWarning() {
+        ChatModelProvider provider = new ChatModelProvider() {
+            public String id() { return "fake"; }
+            public ChatResponse complete(ChatRequest request, String apiKey) {
+                return new ChatResponse(ChatResponse.StopReason.MAX_TOKENS, "partial answer",
+                        List.of(), new TokenUsage(5, 5));
+            }
+        };
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+
+        AgentRunResult result = service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null));
+
+        assertThat(result.status()).isEqualTo(AgentRun.Status.SUCCEEDED.name());
+        assertThat(result.outputText()).isEqualTo("partial answer");
+    }
+
     @Test
     void priorMessagesOverTheCharCapThrows() {
         CapturingProvider provider = new CapturingProvider();

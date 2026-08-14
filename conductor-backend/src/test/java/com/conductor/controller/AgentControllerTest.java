@@ -5,6 +5,9 @@ import com.conductor.agent.AgentAvatarDefaults;
 import com.conductor.agent.AgentService;
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.agent.credential.ProviderCredentialService.ProviderCredentialStatusView;
+import com.conductor.agent.provider.ChatModelProvider;
+import com.conductor.agent.provider.ModelInfo;
+import com.conductor.agent.provider.ModelProviderRegistry;
 import com.conductor.config.SecurityConfig;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.ProjectMember;
@@ -66,6 +69,7 @@ class AgentControllerTest {
     @MockitoBean private ClaudeRuntimeService claudeRuntimeService;
     @MockitoBean private RuntimeTargetService runtimeTargetService;
     @MockitoBean private ProjectMemberRepository projectMemberRepository;
+    @MockitoBean private ModelProviderRegistry providerRegistry;
     @MockitoBean private ObjectMapper objectMapper;
 
     // Security filter chain collaborators
@@ -248,6 +252,63 @@ class AgentControllerTest {
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers")
                         .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- listProviderModels ----
+
+    @Test
+    void listProviderModels_nonMember_returns403() throws Exception {
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/openai/models")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listProviderModels_unknownProvider_returnsEmptyListNot500() throws Exception {
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(providerRegistry.findById("not-a-provider")).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/not-a-provider/models")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.models.length()").value(0));
+    }
+
+    @Test
+    void listProviderModels_noStoredCredential_returnsEmptyListWithoutCallingProvider() throws Exception {
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        ChatModelProvider provider = org.mockito.Mockito.mock(ChatModelProvider.class);
+        when(providerRegistry.findById("openai")).thenReturn(Optional.of(provider));
+        when(providerCredentialService.resolveApiKey(PROJECT_ID, "openai")).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/openai/models")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.models.length()").value(0));
+
+        verify(provider, org.mockito.Mockito.never()).availableModels(any());
+    }
+
+    @Test
+    void listProviderModels_populated_returnsIdsAndLatestFlag() throws Exception {
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        ChatModelProvider provider = org.mockito.Mockito.mock(ChatModelProvider.class);
+        when(providerRegistry.findById("openai")).thenReturn(Optional.of(provider));
+        when(providerCredentialService.resolveApiKey(PROJECT_ID, "openai")).thenReturn(Optional.of("sk-test"));
+        when(provider.availableModels("sk-test")).thenReturn(List.of(
+                new ModelInfo("gpt-5.6-sol", true),
+                new ModelInfo("gpt-5.5", false)));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/openai/models")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.models.length()").value(2))
+                .andExpect(jsonPath("$.models[0].id").value("gpt-5.6-sol"))
+                .andExpect(jsonPath("$.models[0].latest").value(true))
+                .andExpect(jsonPath("$.models[1].id").value("gpt-5.5"))
+                .andExpect(jsonPath("$.models[1].latest").value(false));
     }
 
     // ---- listProviderCredentialStatuses ----

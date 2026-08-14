@@ -12,7 +12,10 @@ import com.openai.models.chat.completions.ChatCompletionMessage;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
 import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
 import com.openai.models.completions.CompletionUsage;
+import com.openai.models.models.Model;
+import com.openai.models.models.ModelListPage;
 import com.openai.services.blocking.ChatService;
+import com.openai.services.blocking.ModelService;
 import com.openai.services.blocking.chat.ChatCompletionService;
 import org.junit.jupiter.api.Test;
 
@@ -23,6 +26,7 @@ import java.util.function.Function;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -301,6 +305,118 @@ class OpenAiProviderTest {
         }
     }
 
+    // ---- model discovery (availableModels) ----
+
+    @Test
+    void availableModelsFiltersUnknownAndExcludedVariantIdsThenOrdersByCreatedDescending() {
+        // Built before when(models.list()) starts -- nesting a when(page.data()) call (inside pageOf)
+        // as an argument of an unfinished outer when(models.list()) confuses Mockito's ongoing-stubbing
+        // state (it reports the OUTER when() as "unfinished").
+        ModelListPage page = pageOf(
+                model("gpt-5.6-sol", 6000),          // kept, newest -> latest
+                model("gpt-5.4", 5000),               // kept
+                model("gpt-5.4-mini", 5500),          // excluded: -mini (cheaper tier), despite being newer
+                model("gpt-4o-audio-preview", 4000),  // excluded: -audio
+                model("gpt-4o-search-preview", 4000), // excluded: -search
+                model("gpt-5.1-codex", 4500),         // excluded: -codex
+                model("gpt-5.2-2025-12-11", 4900),    // excluded: dated snapshot
+                model("text-embedding-3-large", 7000) // excluded: not a known ChatModel id at all
+        );
+        ModelService models = mock(ModelService.class);
+        when(models.list()).thenReturn(page);
+        OpenAiProvider provider = new OpenAiProvider(keyCapturingFactory(clientWithModels(models)));
+
+        List<ModelInfo> result = provider.availableModels("sk-test");
+
+        assertThat(result).extracting(ModelInfo::id).containsExactly("gpt-5.6-sol", "gpt-5.4");
+        assertThat(result.get(0).latest()).isTrue();
+        assertThat(result.get(1).latest()).isFalse();
+    }
+
+    @Test
+    void availableModelsTieBreaksEqualCreatedTimestampsByIdDescending() {
+        ModelListPage page = pageOf(model("gpt-5.4", 1000), model("gpt-5.5", 1000)); // built before when() -- see note above
+        ModelService models = mock(ModelService.class);
+        when(models.list()).thenReturn(page);
+        OpenAiProvider provider = new OpenAiProvider(keyCapturingFactory(clientWithModels(models)));
+        List<ModelInfo> result = provider.availableModels("sk-test");
+
+        assertThat(result).extracting(ModelInfo::id).containsExactly("gpt-5.5", "gpt-5.4");
+        assertThat(result.get(0).latest()).isTrue();
+    }
+
+    @Test
+    void availableModelsCachesSoASecondCallWithinTtlDoesNotReList() {
+        ModelListPage page = pageOf(model("gpt-5.4", 1000)); // built before when() -- see note above
+        ModelService models = mock(ModelService.class);
+        when(models.list()).thenReturn(page);
+        OpenAiProvider provider = new OpenAiProvider(keyCapturingFactory(clientWithModels(models)));
+
+        provider.availableModels("sk-test");
+        List<ModelInfo> second = provider.availableModels("sk-test");
+
+        assertThat(second).extracting(ModelInfo::id).containsExactly("gpt-5.4");
+        verify(models, times(1)).list();
+    }
+
+    @Test
+    void availableModelsNegativelyCachesAFailedListingCallTooSoItIsNotRetriedImmediately() {
+        ModelService models = mock(ModelService.class);
+        when(models.list()).thenThrow(new RuntimeException("boom"));
+        OpenAiProvider provider = new OpenAiProvider(keyCapturingFactory(clientWithModels(models)));
+
+        List<ModelInfo> first = provider.availableModels("sk-test");
+        List<ModelInfo> second = provider.availableModels("sk-test");
+
+        assertThat(first).isEmpty();
+        assertThat(second).isEmpty();
+        verify(models, times(1)).list();
+    }
+
+    @Test
+    void availableModelsReturnsEmptyListRatherThanThrowingOnListingException() {
+        ModelService models = mock(ModelService.class);
+        when(models.list()).thenThrow(new RuntimeException("boom"));
+        OpenAiProvider provider = new OpenAiProvider(keyCapturingFactory(clientWithModels(models)));
+
+        assertThat(provider.availableModels("sk-test")).isEmpty();
+    }
+
+    // ---- run-time default model resolution (complete()'s blank-model substitution) ----
+
+    @Test
+    void blankModelUsesTheDiscoveredNewestModelNotTheStaticFallback() {
+        ChatCompletionService completions = mock(ChatCompletionService.class);
+        when(completions.create(any(ChatCompletionCreateParams.class)))
+                .thenReturn(chatCompletion("ok", List.of(), ChatCompletion.Choice.FinishReason.STOP));
+        ModelListPage page = pageOf(model("gpt-5.6-sol", 6000), model("gpt-5.4", 5000)); // built before when() -- see note above
+        ModelService models = mock(ModelService.class);
+        when(models.list()).thenReturn(page);
+        OpenAIClient client = clientWithModelsAndChat(models, completions);
+        OpenAiProvider provider = new OpenAiProvider(keyCapturingFactory(client));
+
+        provider.complete(new ChatRequest(null, null, List.of(ChatMessage.user("hi")), List.of(), null, null), "sk-test");
+
+        ChatCompletionCreateParams params = capturedParams(completions);
+        assertThat(params.model().asString()).isEqualTo("gpt-5.6-sol");
+    }
+
+    @Test
+    void blankModelFallsBackToFallbackModelWhenDiscoveryFails() {
+        ChatCompletionService completions = mock(ChatCompletionService.class);
+        when(completions.create(any(ChatCompletionCreateParams.class)))
+                .thenReturn(chatCompletion("ok", List.of(), ChatCompletion.Choice.FinishReason.STOP));
+        ModelService models = mock(ModelService.class);
+        when(models.list()).thenThrow(new RuntimeException("boom"));
+        OpenAIClient client = clientWithModelsAndChat(models, completions);
+        OpenAiProvider provider = new OpenAiProvider(keyCapturingFactory(client));
+
+        provider.complete(new ChatRequest(null, null, List.of(ChatMessage.user("hi")), List.of(), null, null), "sk-test");
+
+        ChatCompletionCreateParams params = capturedParams(completions);
+        assertThat(params.model().asString()).isEqualTo(OpenAiProvider.FALLBACK_MODEL);
+    }
+
     // ---- helpers ----
 
     private OpenAiProvider providerFor(ChatCompletionService completions, ChatCompletion response) {
@@ -315,6 +431,28 @@ class OpenAiProviderTest {
         when(client.chat()).thenReturn(chat);
         when(chat.completions()).thenReturn(completions);
         return client;
+    }
+
+    private OpenAIClient clientWithModels(ModelService modelService) {
+        OpenAIClient client = mock(OpenAIClient.class);
+        when(client.models()).thenReturn(modelService);
+        return client;
+    }
+
+    private OpenAIClient clientWithModelsAndChat(ModelService modelService, ChatCompletionService completions) {
+        OpenAIClient client = clientFor(completions);
+        when(client.models()).thenReturn(modelService);
+        return client;
+    }
+
+    private ModelListPage pageOf(Model... models) {
+        ModelListPage page = mock(ModelListPage.class);
+        when(page.data()).thenReturn(List.of(models));
+        return page;
+    }
+
+    private Model model(String id, long created) {
+        return Model.builder().id(id).created(created).ownedBy("openai").build();
     }
 
     private Function<String, OpenAIClient> keyCapturingFactory(OpenAIClient client) {

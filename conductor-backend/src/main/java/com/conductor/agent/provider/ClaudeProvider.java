@@ -15,12 +15,19 @@ import com.anthropic.models.messages.ToolResultBlockParam;
 import com.anthropic.models.messages.ToolUseBlockParam;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 /**
  * {@link ChatModelProvider} for Anthropic Claude, backed by the official anthropic-java SDK.
@@ -33,15 +40,40 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class ClaudeProvider implements ChatModelProvider {
 
+    private static final Logger log = LoggerFactory.getLogger(ClaudeProvider.class);
+
     /** Default model when an agent does not pin one. Latest Opus per the claude-api guidance. */
     public static final String DEFAULT_MODEL = "claude-opus-4-8";
     private static final int DEFAULT_MAX_TOKENS = 8192;
 
+    private static final Duration MODEL_LIST_TTL = Duration.ofMinutes(30);
+
+    /** Shorter TTL for a failed/empty listing, so a dead or rate-limited key doesn't get retried on every turn. */
+    private static final Duration MODEL_LIST_NEGATIVE_TTL = Duration.ofMinutes(5);
+
+    private record ModelCacheEntry(List<ModelInfo> models, Instant expiresAt) {}
+
     private final ObjectMapper objectMapper;
     private final Map<String, AnthropicClient> clientCache = new ConcurrentHashMap<>();
+    private final Map<String, ModelCacheEntry> modelCache = new ConcurrentHashMap<>();
+    private final Function<String, AnthropicClient> clientFactory;
 
+    /**
+     * {@code @Autowired} is load-bearing, not decoration: adding the test-seam constructor below made
+     * this a two-constructor bean, and Spring only auto-selects a constructor when exactly one is
+     * declared. Without the annotation it falls back to a no-arg constructor that doesn't exist, and
+     * the whole application context fails to start — a failure no Mockito-only test can catch. Same
+     * trap as {@code DiscordActionConnector}.
+     */
+    @Autowired
     public ClaudeProvider(ObjectMapper objectMapper) {
+        this(objectMapper, apiKey -> AnthropicOkHttpClient.builder().apiKey(apiKey).build());
+    }
+
+    /** Test seam: injects a stub client factory so tests never hit the real Anthropic API. */
+    ClaudeProvider(ObjectMapper objectMapper, Function<String, AnthropicClient> clientFactory) {
         this.objectMapper = objectMapper;
+        this.clientFactory = clientFactory;
     }
 
     @Override
@@ -54,10 +86,53 @@ public class ClaudeProvider implements ChatModelProvider {
         return DEFAULT_MODEL;
     }
 
+    /**
+     * Read-only discovery via Anthropic's models-list API — unlike {@link OpenAiProvider}, this never
+     * feeds {@link #DEFAULT_MODEL} or {@link #complete}'s blank-model substitution; both keep their
+     * existing pinned behaviour. This exists solely so an Agents-form model picker can be uniform
+     * across providers. No id filtering: unlike OpenAI's catalog (which mixes in audio/search/image/
+     * mini/nano variants), Anthropic's models-list only returns general-purpose Claude chat models.
+     */
+    @Override
+    public List<ModelInfo> availableModels(String apiKey) {
+        ModelCacheEntry cached = modelCache.get(apiKey);
+        Instant now = Instant.now();
+        if (cached != null && now.isBefore(cached.expiresAt())) {
+            return cached.models();
+        }
+        List<ModelInfo> models = listModels(apiKey);
+        Duration ttl = models.isEmpty() ? MODEL_LIST_NEGATIVE_TTL : MODEL_LIST_TTL;
+        modelCache.put(apiKey, new ModelCacheEntry(models, now.plus(ttl)));
+        return models;
+    }
+
+    private List<ModelInfo> listModels(String apiKey) {
+        try {
+            AnthropicClient client = clientCache.computeIfAbsent(apiKey, clientFactory);
+            List<com.anthropic.models.models.ModelInfo> candidates = client.models().list().data().stream()
+                    // Newest first; id descending is an arbitrary but deterministic tie-break for
+                    // models sharing a createdAt timestamp.
+                    .sorted(Comparator.comparing(com.anthropic.models.models.ModelInfo::createdAt)
+                            .thenComparing(com.anthropic.models.models.ModelInfo::id)
+                            .reversed())
+                    .toList();
+
+            List<ModelInfo> result = new ArrayList<>(candidates.size());
+            for (int i = 0; i < candidates.size(); i++) {
+                result.add(new ModelInfo(candidates.get(i).id(), i == 0));
+            }
+            return result;
+        } catch (RuntimeException e) {
+            // Never let a listing failure propagate — see OpenAiProvider#listModels. Key deliberately
+            // omitted from the log line.
+            log.debug("Claude model discovery failed: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
     @Override
     public ChatResponse complete(ChatRequest request, String apiKey) {
-        AnthropicClient client = clientCache.computeIfAbsent(apiKey,
-                k -> AnthropicOkHttpClient.builder().apiKey(k).build());
+        AnthropicClient client = clientCache.computeIfAbsent(apiKey, clientFactory);
 
         String model = request.model() == null || request.model().isBlank()
                 ? DEFAULT_MODEL : request.model();

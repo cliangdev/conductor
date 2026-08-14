@@ -6,7 +6,9 @@ import com.conductor.agent.AgentService;
 import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.agent.credential.ProviderCredentialService;
 import com.conductor.agent.credential.ProviderCredentialService.ProviderCredentialStatusView;
+import com.conductor.agent.provider.ModelProviderRegistry;
 import com.conductor.entity.RuntimeTarget;
+import com.conductor.exception.CredentialEncryptionException;
 import com.conductor.entity.User;
 import com.conductor.generated.api.AgentsApi;
 import com.conductor.generated.model.AgentConfig;
@@ -16,6 +18,8 @@ import com.conductor.generated.model.AvailableAgentTool;
 import com.conductor.generated.model.ClaudeRuntimeConfig;
 import com.conductor.generated.model.CreateAgentRequest;
 import com.conductor.generated.model.ProviderCredentialStatus;
+import com.conductor.generated.model.ProviderModelInfo;
+import com.conductor.generated.model.ProviderModelsResponse;
 import com.conductor.generated.model.ProviderVerificationReport;
 import com.conductor.generated.model.ProviderVerificationSummary;
 import com.conductor.generated.model.SetClaudeRuntimeRequest;
@@ -64,6 +68,7 @@ public class AgentController implements AgentsApi {
     private final ClaudeRuntimeService claudeRuntimeService;
     private final RuntimeTargetService runtimeTargetService;
     private final ProjectSecurityService projectSecurityService;
+    private final ModelProviderRegistry providerRegistry;
     private final ObjectMapper objectMapper;
 
     public AgentController(AgentService agentService,
@@ -72,6 +77,7 @@ public class AgentController implements AgentsApi {
                            ClaudeRuntimeService claudeRuntimeService,
                            RuntimeTargetService runtimeTargetService,
                            ProjectSecurityService projectSecurityService,
+                           ModelProviderRegistry providerRegistry,
                            ObjectMapper objectMapper) {
         this.agentService = agentService;
         this.providerCredentialService = providerCredentialService;
@@ -79,6 +85,7 @@ public class AgentController implements AgentsApi {
         this.claudeRuntimeService = claudeRuntimeService;
         this.runtimeTargetService = runtimeTargetService;
         this.projectSecurityService = projectSecurityService;
+        this.providerRegistry = providerRegistry;
         this.objectMapper = objectMapper;
     }
 
@@ -221,6 +228,29 @@ public class AgentController implements AgentsApi {
                 .map(p -> new AgentProviderInfo().id(p.id()).defaultModel(p.defaultModel()))
                 .toList();
         return ResponseEntity.ok(providers);
+    }
+
+    @Override
+    public ResponseEntity<ProviderModelsResponse> listProviderModels(String projectId, String provider) {
+        requireMember(projectId);
+        // An unknown provider, a provider with no stored credential, or a key that won't decrypt is
+        // not an error here -- the Agents-form model picker just falls back to free text, and a
+        // broken credential already surfaces loudly under Settings -> AI Providers.
+        List<ProviderModelInfo> models = discoverModels(projectId, provider).stream()
+                .map(m -> new ProviderModelInfo().id(m.id()).latest(m.latest()))
+                .toList();
+        return ResponseEntity.ok(new ProviderModelsResponse().models(models));
+    }
+
+    private List<com.conductor.agent.provider.ModelInfo> discoverModels(String projectId, String provider) {
+        try {
+            return providerRegistry.findById(provider)
+                    .flatMap(p -> providerCredentialService.resolveApiKey(projectId, provider)
+                            .map(p::availableModels))
+                    .orElse(List.of());
+        } catch (CredentialEncryptionException e) {
+            return List.of();
+        }
     }
 
     // ---- mapping ----

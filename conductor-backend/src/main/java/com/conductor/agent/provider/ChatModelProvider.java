@@ -1,5 +1,7 @@
 package com.conductor.agent.provider;
 
+import java.util.List;
+
 /**
  * The multi-provider LLM gateway SPI. Each implementation adapts one vendor (Claude, Gemini,
  * OpenAI) behind a single normalized contract — the "chat-model" layer of the agent module.
@@ -19,6 +21,23 @@ public interface ChatModelProvider {
      */
     default String defaultModel() {
         return null;
+    }
+
+    /**
+     * Optional live model-discovery surface: providers backed by a vendor models-list API can report
+     * the models they currently support, so an Agents-form model picker (and a provider's own
+     * default-model resolution inside {@link #complete}) reflect what the account can actually use
+     * today instead of a hand-maintained hardcoded list. A provider with no listing API just inherits
+     * this default (an empty list) — callers must treat that the same as "unknown," not as an error.
+     *
+     * <p>{@code apiKey} is the project's decrypted BYO key, resolved by the caller from
+     * {@code provider_credentials}; implementations must never log it. Exactly zero or one returned
+     * {@link ModelInfo} has {@code latest() == true}. Implementations must never throw for a listing
+     * failure (bad key, rate limit, network error) — they return an empty list instead so a dead
+     * credential never breaks a caller that merely wants suggestions.
+     */
+    default List<ModelInfo> availableModels(String apiKey) {
+        return List.of();
     }
 
     /**

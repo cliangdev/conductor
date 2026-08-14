@@ -48,7 +48,6 @@ public class AgentExecutionService {
     private static final Logger log = LoggerFactory.getLogger(AgentExecutionService.class);
 
     private static final int DEFAULT_MAX_TOOL_TURNS = 8;
-    private static final int DEFAULT_MAX_TOKENS = 8192;
     private static final int MAX_PROVIDER_ATTEMPTS = 3;
     private static final long INITIAL_BACKOFF_MS = 500;
     private static final long MAX_BACKOFF_MS = 8_000;
@@ -214,8 +213,19 @@ public class AgentExecutionService {
                 finalText = resp.text() == null ? "" : resp.text();
                 transcript.add(ChatMessage.assistant(finalText, List.of()));
                 if (resp.stopReason() == ChatResponse.StopReason.MAX_TOKENS) {
-                    status = AgentRun.Status.SUCCEEDED;
-                    errorReason = "Model hit max output tokens; answer may be truncated";
+                    if (finalText.isBlank()) {
+                        // The realistic reasoning-model failure mode: the entire completion budget
+                        // was consumed by internal reasoning before any visible answer was produced.
+                        // Reporting this as SUCCEEDED would hand the caller an empty assistant
+                        // message with no indication anything went wrong.
+                        status = AgentRun.Status.FAILED;
+                        errorReason = "Model hit max output tokens before producing any visible "
+                                + "answer (likely all consumed by internal reasoning); increase "
+                                + "maxTokens or simplify the task";
+                    } else {
+                        status = AgentRun.Status.SUCCEEDED;
+                        errorReason = "Model hit max output tokens; answer may be truncated";
+                    }
                 } else {
                     status = AgentRun.Status.SUCCEEDED;
                     errorReason = null;
@@ -320,7 +330,10 @@ public class AgentExecutionService {
     private AgentConfig parseConfig(String configJson) {
         Map<String, Object> cfg = parseObject(configJson);
         Integer maxToolTurns = asIntOrNull(cfg.get("maxToolTurns"));
-        Integer maxTokens = asInt(cfg.get("maxTokens"), DEFAULT_MAX_TOKENS);
+        // Unset stays null rather than a hardcoded default -- each ChatModelProvider applies its own
+        // cap (ClaudeProvider substitutes 8192; OpenAiProvider needs a much larger completion budget
+        // since reasoning tokens count against it too).
+        Integer maxTokens = asIntOrNull(cfg.get("maxTokens"));
         Double temperature = asDouble(cfg.get("temperature"));
         Object runtimeVal = cfg.get("runtime");
         String runtime = runtimeVal instanceof String s && !s.isBlank() ? s : null;
@@ -366,11 +379,6 @@ public class AgentExecutionService {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private Integer asInt(Object v, int fallback) {
-        Integer parsed = asIntOrNull(v);
-        return parsed != null ? parsed : fallback;
     }
 
     /** Unset/blank/unparseable stays {@code null} — callers decide whether that means "unbounded" or apply their own default. */
@@ -420,7 +428,7 @@ public class AgentExecutionService {
      * when unset — the "api" runtime's ReAct loop falls back to {@link #DEFAULT_MAX_TOOL_TURNS}, while
      * the {@code claude-code} runtime passes {@code null} straight through so the CLI runs unbounded.
      */
-    private record AgentConfig(Integer maxToolTurns, int maxTokens, Double temperature, String runtime) {}
+    private record AgentConfig(Integer maxToolTurns, Integer maxTokens, Double temperature, String runtime) {}
 
     /**
      * Engine-agnostic view of a resolved {@link Agent} — the shape the workflow {@code agent} step's
