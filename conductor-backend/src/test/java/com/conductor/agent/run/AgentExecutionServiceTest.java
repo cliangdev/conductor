@@ -3,6 +3,7 @@ package com.conductor.agent.run;
 import com.conductor.agent.Agent;
 import com.conductor.agent.AgentRepository;
 import com.conductor.agent.credential.ProviderCredentialService;
+import com.conductor.agent.provider.ChatMessage;
 import com.conductor.agent.provider.ChatModelProvider;
 import com.conductor.agent.provider.ChatRequest;
 import com.conductor.agent.provider.ChatResponse;
@@ -18,12 +19,14 @@ import com.conductor.service.LogRedactionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -49,6 +52,22 @@ class AgentExecutionServiceTest {
         public ToolResult invoke(Map<String, Object> arguments, ToolInvocationContext context) {
             calls.incrementAndGet();
             return ToolResult.ok("TOOL_OUTPUT");
+        }
+    }
+
+    /** Records every {@link ChatRequest} it's asked to complete, always finalizing immediately. */
+    private static final class CapturingProvider implements ChatModelProvider {
+        final List<ChatRequest> requests = new ArrayList<>();
+
+        public String id() { return "fake"; }
+
+        public ChatResponse complete(ChatRequest request, String apiKey) {
+            // The runner reuses one mutable transcript list across turns, so snapshot messages() here --
+            // otherwise later mutations (e.g. the finalizing assistant turn) would leak into this capture.
+            requests.add(new ChatRequest(request.model(), request.systemPrompt(), List.copyOf(request.messages()),
+                    request.tools(), request.maxTokens(), request.temperature()));
+            return new ChatResponse(ChatResponse.StopReason.COMPLETE, "Final answer",
+                    List.of(), new TokenUsage(3, 2));
         }
     }
 
@@ -145,5 +164,61 @@ class AgentExecutionServiceTest {
         assertThat(tool.calls.get()).isEqualTo(2);
         assertThat(result.status()).isEqualTo(AgentRun.Status.FAILED.name());
         assertThat(result.usage()).isEqualTo(new TokenUsage(2, 2));
+    }
+
+    @Test
+    void priorMessagesAppearInOrderBeforeTheFinalTaskMessage() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+
+        List<ChatMessage> prior = List.of(
+                ChatMessage.user("earlier question"),
+                ChatMessage.assistant("earlier answer", List.of()));
+
+        service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null), prior, null);
+
+        List<ChatMessage> sent = provider.requests.get(0).messages();
+        assertThat(sent).hasSize(3);
+        assertThat(sent.get(0)).isEqualTo(prior.get(0));
+        assertThat(sent.get(1)).isEqualTo(prior.get(1));
+        assertThat(sent.get(2).role()).isEqualTo(ChatMessage.Role.USER);
+        assertThat(sent.get(2).text()).contains("Do the thing");
+    }
+
+    @Test
+    void systemPromptSuffixIsAppendedWhenPresentAndOmittedWhenAbsent() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+        AgentRunRequest request = new AgentRunRequest("agent-1", "Do the thing", Map.of(), null);
+
+        service.run(request, List.of(), "Extra instructions.");
+        assertThat(provider.requests.get(0).systemPrompt())
+                .isEqualTo("You are a test agent.\n\nExtra instructions.");
+
+        service.run(request, List.of(), null);
+        assertThat(provider.requests.get(1).systemPrompt()).isEqualTo("You are a test agent.");
+    }
+
+    @Test
+    void singleShotRunMatchesTheThreeArgOverloadWithNoPriorMessagesOrSuffix() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+        AgentRunRequest request = new AgentRunRequest("agent-1", "Do the thing", Map.of(), null);
+
+        service.run(request);
+        service.run(request, List.of(), null);
+
+        assertThat(provider.requests.get(0)).isEqualTo(provider.requests.get(1));
+    }
+
+    @Test
+    void priorMessagesOverTheCharCapThrows() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+        List<ChatMessage> tooLong = List.of(ChatMessage.user("x".repeat(60_001)));
+
+        assertThatThrownBy(() -> service.run(
+                new AgentRunRequest("agent-1", "Do the thing", Map.of(), null), tooLong, null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -52,6 +52,7 @@ public class AgentExecutionService {
     private static final int MAX_PROVIDER_ATTEMPTS = 3;
     private static final long INITIAL_BACKOFF_MS = 500;
     private static final long MAX_BACKOFF_MS = 8_000;
+    private static final long MAX_PRIOR_MESSAGE_CHARS = 60_000;
 
     private final AgentRepository agentRepository;
     private final ModelProviderRegistry providerRegistry;
@@ -79,9 +80,30 @@ public class AgentExecutionService {
 
     /** Run an agent (resolved by id) to completion or a guardrail. Never throws for ordinary failures. */
     public AgentRunResult run(AgentRunRequest request) {
+        return run(request, List.of(), null);
+    }
+
+    /**
+     * Multi-turn variant for addressable agents (e.g. a {@code Conversation}): {@code priorMessages} is
+     * an already-windowed, alternating user/assistant history sent to the provider verbatim -- ahead of
+     * the usual {@code buildFirstUserMessage(task, context, outputSchema)} turn, which stays the final
+     * message and the only one wrapped with context/schema. {@code systemPromptSuffix} (nullable) is
+     * appended to the agent's {@code systemPrompt} for this call only; it is never persisted onto the
+     * {@link Agent}. Prior messages are windowed by the caller -- this throws
+     * {@link IllegalArgumentException} if their combined content exceeds 60,000 characters rather than
+     * silently truncating.
+     */
+    public AgentRunResult run(AgentRunRequest request, List<ChatMessage> priorMessages, String systemPromptSuffix) {
+        List<ChatMessage> prior = priorMessages == null ? List.of() : priorMessages;
+        long priorChars = prior.stream().mapToLong(m -> m.text() == null ? 0 : m.text().length()).sum();
+        if (priorChars > MAX_PRIOR_MESSAGE_CHARS) {
+            throw new IllegalArgumentException(
+                    "priorMessages content (" + priorChars + " chars) exceeds the " + MAX_PRIOR_MESSAGE_CHARS
+                            + "-char cap; the caller must window the history");
+        }
         Agent agent = agentRepository.findById(request.agentId())
                 .orElseThrow(() -> new EntityNotFoundException("Agent not found: " + request.agentId()));
-        return runForAgent(agent, request);
+        return runForAgent(agent, request, prior, systemPromptSuffix);
     }
 
     /**
@@ -97,7 +119,7 @@ public class AgentExecutionService {
         Agent agent = agentRepository.findByProjectIdAndSlug(projectId, agentRef)
                 .or(() -> agentRepository.findById(agentRef).filter(a -> projectId.equals(a.getProjectId())))
                 .orElseThrow(() -> new EntityNotFoundException("Agent not found: " + agentRef));
-        return runForAgent(agent, new AgentRunRequest(agent.getId(), task, context, outputSchema));
+        return runForAgent(agent, new AgentRunRequest(agent.getId(), task, context, outputSchema), List.of(), null);
     }
 
     /**
@@ -115,9 +137,13 @@ public class AgentExecutionService {
                 agent.getSystemPrompt(), parseToolIds(agent.getToolIds()), cfg.maxToolTurns(), cfg.runtime());
     }
 
-    private AgentRunResult runForAgent(Agent agent, AgentRunRequest request) {
+    private AgentRunResult runForAgent(Agent agent, AgentRunRequest request,
+                                       List<ChatMessage> priorMessages, String systemPromptSuffix) {
         String projectId = agent.getProjectId();
         AgentConfig cfg = parseConfig(agent.getConfigJson());
+        String effectiveSystemPrompt = systemPromptSuffix == null || systemPromptSuffix.isBlank()
+                ? agent.getSystemPrompt()
+                : (agent.getSystemPrompt() == null ? "" : agent.getSystemPrompt()) + "\n\n" + systemPromptSuffix;
 
         AgentRun run = new AgentRun();
         run.setAgentId(agent.getId());
@@ -153,7 +179,9 @@ public class AgentExecutionService {
 
         ToolInvocationContext toolCtx = new ToolInvocationContext(projectId, agent.getId(), run.getId());
 
-        // Seed the conversation.
+        // Seed the conversation: caller-windowed prior turns verbatim, then the task as the final
+        // user message (the only one wrapped with context/schema).
+        transcript.addAll(priorMessages);
         transcript.add(ChatMessage.user(buildFirstUserMessage(request)));
 
         // The in-process "api" runtime drives its own request loop, so unlike the claude-code runtime
@@ -168,7 +196,7 @@ public class AgentExecutionService {
         try {
             for (int turn = 0; turn < effectiveMaxTurns; turn++) {
                 ChatRequest req = new ChatRequest(
-                        agent.getModel(), agent.getSystemPrompt(), transcript, toolDefs,
+                        agent.getModel(), effectiveSystemPrompt, transcript, toolDefs,
                         cfg.maxTokens(), cfg.temperature());
                 ChatResponse resp = completeWithRetry(provider.get(), req, apiKey.get());
                 usage = usage.plus(resp.usage());
