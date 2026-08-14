@@ -16,10 +16,13 @@ vi.mock('@/contexts/AuthContext', () => ({
 let listAgentProvidersBehavior: () => Promise<{ id: string; defaultModel?: string | null }[]> = () =>
   Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8' }])
 let listAgentToolsBehavior: () => Promise<unknown[]> = () => Promise.resolve([])
+let listProviderModelsBehavior: () => Promise<{ models: { id: string; latest: boolean }[] }> = () =>
+  Promise.resolve({ models: [] })
 
 vi.mock('@/lib/api', () => ({
   listAgentProviders: () => listAgentProvidersBehavior(),
   listAgentTools: () => listAgentToolsBehavior(),
+  listProviderModels: () => listProviderModelsBehavior(),
 }))
 
 import { AgentForm } from './AgentForm'
@@ -53,6 +56,7 @@ describe('AgentForm avatar payload', () => {
   beforeEach(() => {
     listAgentProvidersBehavior = () => Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8' }])
     listAgentToolsBehavior = () => Promise.resolve([])
+    listProviderModelsBehavior = () => Promise.resolve({ models: [] })
   })
 
   it('create mode: submits an avatar pair drawn from the known emoji/color sets', async () => {
@@ -109,5 +113,50 @@ describe('AgentForm avatar payload', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ avatarEmoji: '🦉', avatarColor: 'violet' }))
+  })
+})
+
+describe('AgentForm model picker', () => {
+  beforeEach(() => {
+    listAgentProvidersBehavior = () => Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8' }])
+    listAgentToolsBehavior = () => Promise.resolve([])
+    listProviderModelsBehavior = () => Promise.resolve({ models: [] })
+  })
+
+  it('populates a datalist of model ids from listProviderModels', async () => {
+    listProviderModelsBehavior = () =>
+      Promise.resolve({ models: [{ id: 'claude-opus-5', latest: true }, { id: 'claude-sonnet-5', latest: false }] })
+    render(<AgentForm projectId="proj-1" submitLabel="Create Agent" saving={false} error={null} onSubmit={vi.fn()} />)
+
+    const modelInput = await screen.findByLabelText('Model')
+    await waitFor(() => {
+      expect(screen.getByText('claude-opus-5 (latest)')).toBeInTheDocument()
+      expect(screen.getByText('claude-sonnet-5')).toBeInTheDocument()
+    })
+    expect(modelInput).toHaveAttribute('list', 'agent-model-options')
+    expect(
+      screen.getByText("Leave blank to use the provider's latest supported model."),
+    ).toBeInTheDocument()
+  })
+
+  it('leaves the plain free-text field when the model list is empty', async () => {
+    listProviderModelsBehavior = () => Promise.resolve({ models: [] })
+    render(<AgentForm projectId="proj-1" submitLabel="Create Agent" saving={false} error={null} onSubmit={vi.fn()} />)
+
+    const modelInput = await screen.findByLabelText('Model')
+    await waitFor(() => expect((screen.getByLabelText('Provider') as HTMLSelectElement).value).toBe('claude'))
+    expect(modelInput).not.toHaveAttribute('list')
+    expect(screen.getByText('Leave blank to use the provider default.')).toBeInTheDocument()
+  })
+
+  it('does not throw and falls back to free text when the model request rejects', async () => {
+    // Plain per-test stub, not vi.fn() — see reference_vitest_rejected_promise_mock memory.
+    listProviderModelsBehavior = () => Promise.reject(new Error('boom'))
+    render(<AgentForm projectId="proj-1" submitLabel="Create Agent" saving={false} error={null} onSubmit={vi.fn()} />)
+
+    const modelInput = await screen.findByLabelText('Model')
+    await waitFor(() => expect((screen.getByLabelText('Provider') as HTMLSelectElement).value).toBe('claude'))
+    expect(modelInput).not.toHaveAttribute('list')
+    expect(screen.getByText('Leave blank to use the provider default.')).toBeInTheDocument()
   })
 })

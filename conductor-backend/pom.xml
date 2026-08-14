@@ -147,6 +147,13 @@
             <version>2.52.0</version>
         </dependency>
 
+        <!-- OpenAI Java SDK — backs the OpenAI model provider in the agent module -->
+        <dependency>
+            <groupId>com.openai</groupId>
+            <artifactId>openai-java</artifactId>
+            <version>4.50.0</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

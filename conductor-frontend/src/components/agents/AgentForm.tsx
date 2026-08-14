@@ -5,12 +5,15 @@ import { useRouter } from 'next/navigation'
 import {
   listAgentProviders,
   listAgentTools,
+  listProviderModels,
   type Agent,
   type AgentProviderInfo,
   type AvailableAgentTool,
   type CreateAgentBody,
+  type ProviderModelInfo,
 } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
+import { providerDisplayName } from '@/lib/providers'
 import { isReservedTag } from '@/lib/tags'
 import { Button } from '@/components/ui/button'
 import { AgentAvatarPicker, randomAvatar } from '@/components/agents/AgentAvatarPicker'
@@ -39,6 +42,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
   const router = useRouter()
 
   const [providers, setProviders] = useState<AgentProviderInfo[]>([])
+  const [models, setModels] = useState<ProviderModelInfo[]>([])
   const [tools, setTools] = useState<AvailableAgentTool[]>([])
   const [toolsLoaded, setToolsLoaded] = useState(false)
 
@@ -76,6 +80,23 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
       .finally(() => setToolsLoaded(true))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, accessToken])
+
+  useEffect(() => {
+    if (!accessToken || !projectId || !provider) return
+    let cancelled = false
+    // Suggestions only — the Model field stays free text, so a fetch failure or empty discovery
+    // list must never block the form or surface an error toast, just fall back silently.
+    listProviderModels(projectId, provider, accessToken)
+      .then((res) => {
+        if (!cancelled) setModels(res.models)
+      })
+      .catch(() => {
+        if (!cancelled) setModels([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, accessToken, provider])
 
   const defaultModel = useMemo(
     () => providers.find((p) => p.id === provider)?.defaultModel ?? null,
@@ -196,7 +217,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
           >
             {providers.length === 0 && <option value="">Loading…</option>}
             {providers.map((p) => (
-              <option key={p.id} value={p.id}>{p.id.charAt(0).toUpperCase() + p.id.slice(1)}</option>
+              <option key={p.id} value={p.id}>{providerDisplayName(p.id)}</option>
             ))}
           </select>
         </div>
@@ -208,8 +229,20 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
             value={model}
             onChange={(e) => setModel(e.target.value)}
             placeholder={defaultModel ? `${defaultModel} (default)` : 'Provider default'}
+            list={models.length > 0 ? 'agent-model-options' : undefined}
           />
-          <p className="text-xs text-muted-foreground mt-1">Leave blank to use the provider default.</p>
+          {models.length > 0 && (
+            <datalist id="agent-model-options">
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>{m.latest ? `${m.id} (latest)` : m.id}</option>
+              ))}
+            </datalist>
+          )}
+          <p className="text-xs text-muted-foreground mt-1">
+            {models.length > 0
+              ? "Leave blank to use the provider's latest supported model."
+              : 'Leave blank to use the provider default.'}
+          </p>
         </div>
       </div>
 

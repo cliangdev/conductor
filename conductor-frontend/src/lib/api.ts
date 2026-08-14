@@ -615,6 +615,25 @@ export function listAgentProviders(projectId: string, token: string): Promise<Ag
   return apiGet<AgentProviderInfo[]>(`/api/v1/projects/${projectId}/agents/providers`, token)
 }
 
+export interface ProviderModelInfo {
+  id: string
+  latest: boolean
+}
+
+/** Models the provider currently supports, for the Model field's combobox suggestions. Empty when
+ *  no credential is stored for `provider` or the provider does no discovery — callers should fall
+ *  back to free text, not treat an empty list as an error. */
+export function listProviderModels(
+  projectId: string,
+  provider: string,
+  token: string,
+): Promise<{ models: ProviderModelInfo[] }> {
+  return apiGet<{ models: ProviderModelInfo[] }>(
+    `/api/v1/projects/${projectId}/agents/providers/${provider}/models`,
+    token,
+  )
+}
+
 /**
  * Credential status for every provider the backend knows about in one call (today: `claude`,
  * `claude-code`) — the read-model backing the "Connect Claude" surface, so it doesn't have to
