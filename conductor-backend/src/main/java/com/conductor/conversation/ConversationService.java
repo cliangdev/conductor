@@ -1,5 +1,7 @@
 package com.conductor.conversation;
 
+import com.conductor.agent.DefaultAgentSlugs;
+import com.conductor.exception.ConflictException;
 import com.conductor.service.ProjectActor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -23,6 +25,7 @@ public class ConversationService {
 
     private final ConversationRepository conversationRepository;
     private final ConversationMessageRepository messageRepository;
+    private final CoordinatorProvisioner coordinatorProvisioner;
 
     /** Self-reference so the {@code REQUIRES_NEW} insert in {@link #findOrCreateByChannelKey} runs
      *  through the Spring proxy -- see {@code LibrarianDispatchService}/{@code KnowledgeIngestionService}
@@ -32,13 +35,23 @@ public class ConversationService {
     ConversationService self;
 
     public ConversationService(ConversationRepository conversationRepository,
-                               ConversationMessageRepository messageRepository) {
+                               ConversationMessageRepository messageRepository,
+                               CoordinatorProvisioner coordinatorProvisioner) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
+        this.coordinatorProvisioner = coordinatorProvisioner;
     }
 
+    /**
+     * @param projectId self-heals the {@value DefaultAgentSlugs#CEO} agent via {@link
+     *                   CoordinatorProvisioner#ensureProvisioned} before anything else -- so a fresh
+     *                   project (or one where the CEO agent was deleted) always has a resolvable default
+     *                   target the first time a conversation is created against it, without a separate
+     *                   provisioning step callers have to remember.
+     */
     public Conversation create(String projectId, String agentId, ConversationChannel channel, String channelKey,
                                String title, ProjectActor actor) {
+        coordinatorProvisioner.ensureProvisioned(projectId);
         Conversation conversation = new Conversation();
         conversation.setProjectId(projectId);
         conversation.setAgentId(agentId);
@@ -60,9 +73,14 @@ public class ConversationService {
      * (project_id, channel, channel_key) is the real guard. This just catches the losing insert's
      * {@link DataIntegrityViolationException} and re-reads the winner's row rather than erroring --
      * same race-loses-then-re-reads shape as {@code KnowledgeIngestionService#submit}'s dedup-key path.
+     *
+     * <p>Self-heals the {@value DefaultAgentSlugs#CEO} agent first, same as {@link #create} -- this is
+     * the path an external channel (Discord, Phase 8) routes through, so it must never fail to resolve
+     * a default target just because a project's CEO agent was never seeded or was deleted.
      */
     public Conversation findOrCreateByChannelKey(String projectId, String agentId, ConversationChannel channel,
                                                  String channelKey, String title, ProjectActor actor) {
+        coordinatorProvisioner.ensureProvisioned(projectId);
         if (channelKey == null || channelKey.isBlank()) {
             throw new IllegalArgumentException("channelKey is required for findOrCreateByChannelKey");
         }
@@ -103,11 +121,23 @@ public class ConversationService {
      * side of a turn. {@code authorLabel} is the display name shown for this turn (e.g. a Discord
      * username); when absent, falls back to {@code actor.label()} for a machine actor (e.g. a project
      * API key posting on behalf of an integration with no per-message display name of its own).
+     *
+     * <p>Rejects with {@link ConflictException} (409) when the conversation's most recent turn is a
+     * still-PENDING assistant reply -- only one turn may be in flight at a time. Enforced here (not in
+     * the REST controller alone) so every caller -- the REST API today, a future Discord webhook
+     * receiver -- gets the same guard against double-submitting a turn.
      */
     @Transactional
     public ConversationMessage appendUserMessage(String projectId, String conversationId, String content,
                                                   String authorLabel, String externalMessageId, ProjectActor actor) {
         Conversation conversation = get(projectId, conversationId);
+
+        messageRepository.findTopByConversationIdOrderByCreatedAtDesc(conversationId).ifPresent(latest -> {
+            if (latest.getRole() == ConversationMessage.Role.ASSISTANT
+                    && latest.getStatus() == ConversationMessage.Status.PENDING) {
+                throw new ConflictException("A turn is already in progress for this conversation");
+            }
+        });
 
         ConversationMessage message = new ConversationMessage();
         message.setConversationId(conversation.getId());

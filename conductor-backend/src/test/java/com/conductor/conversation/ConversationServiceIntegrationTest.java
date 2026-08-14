@@ -2,8 +2,10 @@ package com.conductor.conversation;
 
 import com.conductor.agent.Agent;
 import com.conductor.agent.AgentRepository;
+import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
+import com.conductor.exception.ConflictException;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.ProjectActor;
@@ -37,6 +39,8 @@ class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
     private ConversationService conversationService;
     @Autowired
     private ConversationRepository conversationRepository;
+    @Autowired
+    private ConversationMessageRepository messageRepository;
     @Autowired
     private ProjectRepository projectRepository;
     @Autowired
@@ -157,11 +161,69 @@ class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
     }
 
     @Test
+    void appendUserMessageRejectsWhenLatestTurnIsAPendingAssistantReply() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+        conversationService.appendUserMessage(projectId, conversation.getId(), "first", "Alice", null, actor);
+
+        ConversationMessage pendingAssistant = new ConversationMessage();
+        pendingAssistant.setConversationId(conversation.getId());
+        pendingAssistant.setRole(ConversationMessage.Role.ASSISTANT);
+        pendingAssistant.setContent("");
+        pendingAssistant.setStatus(ConversationMessage.Status.PENDING);
+        messageRepository.saveAndFlush(pendingAssistant);
+
+        assertThatThrownBy(() -> conversationService.appendUserMessage(
+                projectId, conversation.getId(), "second", "Alice", null, actor))
+                .isInstanceOf(ConflictException.class);
+    }
+
+    @Test
+    void appendUserMessageSucceedsWhenLatestTurnIsACompletedAssistantReply() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+        conversationService.appendUserMessage(projectId, conversation.getId(), "first", "Alice", null, actor);
+
+        ConversationMessage completedAssistant = new ConversationMessage();
+        completedAssistant.setConversationId(conversation.getId());
+        completedAssistant.setRole(ConversationMessage.Role.ASSISTANT);
+        completedAssistant.setContent("reply");
+        completedAssistant.setStatus(ConversationMessage.Status.COMPLETED);
+        messageRepository.saveAndFlush(completedAssistant);
+
+        ConversationMessage second = conversationService.appendUserMessage(
+                projectId, conversation.getId(), "second", "Alice", null, actor);
+
+        assertThat(second.getContent()).isEqualTo("second");
+    }
+
+    @Test
     void getThrowsForCrossProjectConversation() {
         Conversation conversation = conversationService.create(
                 projectId, agentId, ConversationChannel.API, null, "Title", actor);
 
         assertThatThrownBy(() -> conversationService.get("some-other-project-id", conversation.getId()))
                 .isInstanceOf(ConversationNotFoundException.class);
+    }
+
+    // ---- CEO agent self-heal (Phase 5: CoordinatorProvisioner#ensureProvisioned) ----
+
+    @Test
+    void createOnAFreshProjectAutoSeedsTheCeoAgent() {
+        assertThat(agentRepository.existsByProjectIdAndSlug(projectId, DefaultAgentSlugs.CEO)).isFalse();
+
+        conversationService.create(projectId, agentId, ConversationChannel.API, null, "Title", actor);
+
+        assertThat(agentRepository.existsByProjectIdAndSlug(projectId, DefaultAgentSlugs.CEO)).isTrue();
+    }
+
+    @Test
+    void findOrCreateByChannelKeyOnAFreshProjectAutoSeedsTheCeoAgent() {
+        assertThat(agentRepository.existsByProjectIdAndSlug(projectId, DefaultAgentSlugs.CEO)).isFalse();
+
+        conversationService.findOrCreateByChannelKey(
+                projectId, agentId, ConversationChannel.DISCORD, "guild3:thread3", null, actor);
+
+        assertThat(agentRepository.existsByProjectIdAndSlug(projectId, DefaultAgentSlugs.CEO)).isTrue();
     }
 }

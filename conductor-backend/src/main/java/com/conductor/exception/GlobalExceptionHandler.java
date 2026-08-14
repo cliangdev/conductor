@@ -1,6 +1,9 @@
 package com.conductor.exception;
 
 import com.conductor.agent.AgentReferencedByWorkflowsException;
+import com.conductor.conversation.AgentNotAddressableException;
+import com.conductor.conversation.ConversationBusyException;
+import com.conductor.conversation.ConversationNotFoundException;
 import com.conductor.knowledge.page.FrontmatterException;
 import com.conductor.knowledge.page.KnowledgeConflictException;
 import jakarta.persistence.EntityNotFoundException;
@@ -146,6 +149,37 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ForbiddenException.class)
     public ProblemDetail handleForbiddenException(ForbiddenException e) {
         ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.FORBIDDEN);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(ConversationNotFoundException.class)
+    public ProblemDetail handleConversationNotFoundException(ConversationNotFoundException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    /**
+     * {@link AgentNotAddressableException#isAmbiguous()} picks the status: an ambiguous name match is a
+     * 409 (the caller's request is well-formed but underspecified -- add the slug to resolve it
+     * deterministically), while every other case (including the plain not-found and the default-to-CEO
+     * case) is a 404 (nothing in the project matches at all).
+     */
+    @ExceptionHandler(AgentNotAddressableException.class)
+    public ProblemDetail handleAgentNotAddressableException(AgentNotAddressableException e) {
+        HttpStatus status = e.isAmbiguous() ? HttpStatus.CONFLICT : HttpStatus.NOT_FOUND;
+        ProblemDetail problem = ProblemDetail.forStatus(status);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(e.getMessage());
+        return problem;
+    }
+
+    @ExceptionHandler(ConversationBusyException.class)
+    public ProblemDetail handleConversationBusyException(ConversationBusyException e) {
+        ProblemDetail problem = ProblemDetail.forStatus(HttpStatus.SERVICE_UNAVAILABLE);
         problem.setType(URI.create("about:blank"));
         problem.setDetail(e.getMessage());
         return problem;

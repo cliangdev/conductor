@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ConversationMessageRepository extends JpaRepository<ConversationMessage, String> {
@@ -16,6 +17,11 @@ public interface ConversationMessageRepository extends JpaRepository<Conversatio
      *  COMPLETED-only in-memory log rather than a page. */
     List<ConversationMessage> findByConversationIdAndStatusOrderByCreatedAtAsc(
             String conversationId, ConversationMessage.Status status);
+
+    /** The single most recent turn regardless of role/status -- {@code ConversationService
+     *  #appendUserMessage}'s one-in-flight-turn guard reads this to check whether the conversation is
+     *  mid-reply before accepting a new user message. */
+    Optional<ConversationMessage> findTopByConversationIdOrderByCreatedAtDesc(String conversationId);
 
     long countByConversationId(String conversationId);
 }

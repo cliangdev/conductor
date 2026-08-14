@@ -42,6 +42,10 @@ tags:
     description: User-managed named AI Agents and per-provider BYO credentials
   - name: runtime-targets
     description: Project-owned runtime targets for claude-code workflow steps (BYO Cloud Run)
+  - name: conversations
+    description: >-
+      Conversations with an addressable Agent (e.g. the project's CEO coordinator) -- create a
+      conversation, post messages, and poll for the agent's reply.
   - name: knowledge
     description: >-
       Knowledge Center: the ingestion inbox (knowledge sources) and the OKF wiki bundle (knowledge pages)
@@ -4876,6 +4880,204 @@ paths:
         '404':
           description: runtimeTargetId doesn't name a runtime target in this project
 
+  /projects/{projectId}/conversations:
+    post:
+      tags: [conversations]
+      summary: Create a conversation with an addressable agent
+      description: >-
+        Creates a new conversation on the api channel. agentName is optional -- when omitted, resolves
+        to the project's default CEO coordinator agent. Resolution matches by slug (case-insensitive)
+        first, then display name, among ACTIVE agents opted into direct addressing
+        (configJson.addressable=true).
+      operationId: createConversation
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConversationRequest'
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: >-
+            agentName doesn't resolve to exactly one addressable agent, or (when omitted) the project
+            has no CEO agent yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: agentName matches multiple addressable agents by display name, with no exact-slug tiebreak
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags: [conversations]
+      summary: List conversations in the project
+      operationId: listConversations
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, default: 20}
+        - name: offset
+          in: query
+          required: false
+          description: >-
+            Row offset, most-recently-active-first. Should be a multiple of limit -- internally mapped
+            to a page index (offset / limit).
+          schema: {type: integer, default: 0}
+      responses:
+        '200':
+          description: Conversations, most recently active first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationListResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/conversations/{conversationId}:
+    get:
+      tags: [conversations]
+      summary: Get one conversation
+      operationId: getConversation
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: conversationId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /projects/{projectId}/conversations/{conversationId}/messages:
+    get:
+      tags: [conversations]
+      summary: List messages in a conversation, chronological
+      operationId: listConversationMessages
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: conversationId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, default: 50}
+        - name: offset
+          in: query
+          required: false
+          description: >-
+            Row offset, oldest first. Should be a multiple of limit -- internally mapped to a page
+            index (offset / limit).
+          schema: {type: integer, default: 0}
+      responses:
+        '200':
+          description: Messages, oldest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationMessageListResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [conversations]
+      summary: Post a message and run the agent's reply
+      description: >-
+        Appends a USER message, then runs the conversation's agent synchronously up to a 90s budget. If
+        the agent hasn't finished by then, assistantMessage is returned with status PENDING -- the run
+        keeps completing it in the background; poll GET .../messages to see the final result.
+        Server-sent events are a future upgrade for this. Only one turn may be in flight per
+        conversation at a time.
+      operationId: postConversationMessage
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: conversationId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostMessageRequest'
+      responses:
+        '200':
+          description: The posted user message and the agent's reply (possibly still PENDING)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostMessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: A turn is already in progress for this conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /projects/{projectId}/knowledge/sources:
     post:
       tags: [knowledge]
@@ -8639,3 +8841,119 @@ components:
           type: array
           items:
             type: string
+
+    CreateConversationRequest:
+      type: object
+      properties:
+        agentName:
+          type: string
+          description: >-
+            Target agent's slug or display name. Omit for the project's default CEO coordinator agent.
+        title:
+          type: string
+
+    ConversationResponse:
+      type: object
+      required:
+        - id
+        - agentId
+        - agentName
+        - agentSlug
+        - channel
+        - status
+        - createdAt
+        - lastMessageAt
+      properties:
+        id:
+          type: string
+        agentId:
+          type: string
+        agentName:
+          type: string
+        agentSlug:
+          type: string
+        channel:
+          type: string
+          description: Always "api" for a REST-created conversation.
+        title:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, ARCHIVED]
+        createdAt:
+          type: string
+          format: date-time
+        lastMessageAt:
+          type: string
+          format: date-time
+
+    ConversationListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationResponse'
+        total:
+          type: integer
+          format: int64
+
+    ConversationMessageResponse:
+      type: object
+      required:
+        - id
+        - role
+        - content
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [USER, ASSISTANT]
+        content:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, COMPLETED, FAILED]
+        agentRunId:
+          type: string
+        authorLabel:
+          type: string
+        errorReason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ConversationMessageListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationMessageResponse'
+        total:
+          type: integer
+          format: int64
+
+    PostMessageRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 8000
+
+    PostMessageResponse:
+      type: object
+      required: [userMessage, assistantMessage]
+      properties:
+        userMessage:
+          $ref: '#/components/schemas/ConversationMessageResponse'
+        assistantMessage:
+          $ref: '#/components/schemas/ConversationMessageResponse'
