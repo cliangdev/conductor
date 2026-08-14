@@ -120,7 +120,8 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 `workflow_definitions` → `workflow_definition_versions` (immutable published snapshots) → `workflow_runs`/`workflow_job_runs`/`workflow_step_runs`; plus `workflow_secrets`, `workflow_artifacts`, `runtime_targets` (BYO Cloud Run)  
 `connections` (connector framework) + `webhook_event` (inbound) + `action_invocation` (outbound idempotency/retry)  
 `connector_feed` (scheduled per-connection pull binding, declared via a connector's `ingest[]`) → `connector_feed_digest` (per-period change report); `disposition_policy` (routes a signal type to a handling lane) — see [`docs/knowledge.md`](docs/knowledge.md#metrics-digests)  
-`agents` → `agent_runs` (ReAct transcripts); `provider_credentials` (BYO model keys, KMS envelope)  
+`agents` → `agent_runs` (ReAct transcripts); `provider_credentials` (BYO model keys, KMS envelope); `config.addressable` opts an agent into direct conversation  
+`conversations` → `conversation_messages` (USER/ASSISTANT turns) — multi-turn chat with an addressable agent over the REST API or Discord's `/ask`, see [`docs/conversations.md`](docs/conversations.md)  
 `knowledge_sources` → `knowledge_pages`/`knowledge_page_revisions` (+ links) — agent-maintained wiki, see [`docs/knowledge.md`](docs/knowledge.md)
 
 **Future eng/marketing grouping** should use **labels + saved views** (or a nullable `group` tag on `project_members`), *not* a nested container above projects — that two-level org→project model was deliberately removed for simplicity.
@@ -162,6 +163,7 @@ See `scripts/gcloud-alias-example.sh` for a persistent shell alias.
 - [`docs/api-guidelines.md`](docs/api-guidelines.md) — OpenAPI-first workflow, external vs internal API split, REST conventions. **Read before creating or updating any API.**
 - [`docs/workflows.md`](docs/workflows.md) — Workflow YAML format, trigger types, step types, execution modes, self-hosted runner setup.
 - [`docs/knowledge.md`](docs/knowledge.md) — Knowledge Center: ingestion envelope, wiki page model, librarian workflows.
+- [`docs/conversations.md`](docs/conversations.md) — Conversations & the CEO agent: addressable agents, the conversation REST API, Discord `/ask` setup.
 - [`docs/mcp-tool-guidelines.md`](docs/mcp-tool-guidelines.md) — MCP tool design principles: context budget, action–verify pattern, dispatch–status pattern, checklist. **Read before creating or updating any MCP tool.**
 - [`docs/design-system.md`](docs/design-system.md) — Frontend design system: tokens (light + dark), typography, status ramp, required primitives, page-chrome patterns, anti-patterns. **Read before any UI work.**
 - [`docs/dev-workflow.md`](docs/dev-workflow.md) — PR branch deploy/test/debug loop: deploy labels, skip-tests, live MCP testing, log access.

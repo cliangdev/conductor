@@ -244,6 +244,7 @@ public class AgentController implements AgentsApi {
                         ? agent.getAvatarColor() : AgentAvatarDefaults.defaultColor(agent.getSlug())))
                 .tag(agent.getTag())
                 .isDefault(DefaultAgentSlugs.isDefault(agent.getSlug()))
+                .addressable(agent.isAddressable())
                 .createdAt(agent.getCreatedAt())
                 .updatedAt(agent.getUpdatedAt());
     }

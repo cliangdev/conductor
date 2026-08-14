@@ -513,6 +513,9 @@ export interface Agent {
    *  project member. Deleting one is allowed — it is recreated the next time the owning feature
    *  self-heals. */
   isDefault: boolean
+  /** True when a human can talk to this agent directly in a conversation (Discord's /ask, the
+   *  conversation REST API) by name or slug -- opt-in per agent via config.addressable. */
+  addressable: boolean
   /** Free-text grouping tag (e.g. "engineering"); "default"/"system" are reserved server-side. */
   tag?: string | null
   createdAt: string

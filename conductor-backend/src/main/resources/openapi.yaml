@@ -7962,6 +7962,7 @@ components:
         - createdAt
         - updatedAt
         - isDefault
+        - addressable
       properties:
         id:
           type: string
@@ -8016,6 +8017,13 @@ components:
             created by a project member. Deleting a default agent is allowed -- it is recreated the
             next time the owning feature self-heals (e.g. a knowledge settings save, or the next
             librarian dispatch).
+        addressable:
+          type: boolean
+          description: >-
+            True when a human can talk to this agent directly in a conversation (Discord's /ask,
+            the conversation REST API) by name or slug -- set via config.addressable, opt-in per
+            agent. An agent with this false is still runnable from a workflow step; it just isn't a
+            conversation target.
         createdAt:
           type: string
           format: date-time

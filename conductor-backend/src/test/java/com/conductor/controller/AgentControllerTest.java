@@ -169,6 +169,32 @@ class AgentControllerTest {
                 .andExpect(jsonPath("$.isDefault").value(false));
     }
 
+    // ---- addressable mapping ----
+
+    @Test
+    void getAgent_configAddressableTrue_addressableTrue() throws Exception {
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        Agent agent = stubAgent();
+        agent.setConfigJson("{\"addressable\":true}");
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(agent);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.addressable").value(true));
+    }
+
+    @Test
+    void getAgent_configAddressableAbsent_addressableFalse() throws Exception {
+        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(stubAgent());
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.addressable").value(false));
+    }
+
     // ---- listAgentTools ----
 
     @Test
