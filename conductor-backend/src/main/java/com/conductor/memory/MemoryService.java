@@ -108,6 +108,24 @@ public class MemoryService {
         }
     }
 
+    /**
+     * Closes {@code targetId} and points its {@code supersededBy} at {@code replacementId} -- unlike
+     * {@link #supersede}, the replacement row already exists (it isn't created here). Used by {@code
+     * MemoryConsolidationService}'s SUPERSEDE decision, where the raw row being consolidated *is* the
+     * replacement: bending {@link #supersede} to accept an existing replacement id would blur its
+     * "always inserts a fresh row" contract, so this is a separate, narrower operation instead.
+     */
+    @Transactional
+    public void closeAndLink(String projectId, String targetId, String replacementId) {
+        AgentMemory target = get(projectId, targetId);
+        if (target.getValidTo() != null) {
+            throw new MemoryConflictException("Memory already superseded: " + targetId);
+        }
+        target.setValidTo(OffsetDateTime.now());
+        target.setSupersededBy(replacementId);
+        repository.save(target);
+    }
+
     @Transactional
     public void delete(String projectId, String id) {
         repository.delete(get(projectId, id));
