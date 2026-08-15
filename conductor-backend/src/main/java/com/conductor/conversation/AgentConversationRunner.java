@@ -10,10 +10,12 @@ import com.conductor.agent.run.AgentRunResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -35,6 +37,19 @@ public class AgentConversationRunner {
      *  that precede the latest USER message. Package-visible for the window-policy unit test. */
     static final int MAX_WINDOW_MESSAGES = 20;
     static final long MAX_WINDOW_CHARS = 24_000;
+
+    /**
+     * Newest-first row cap for the history fetch in {@link #runNow} -- deliberately well above {@link
+     * #MAX_WINDOW_MESSAGES} so it's {@link #buildWindow}'s count cap, not this fetch size, that ends up
+     * bounding the window. Two things eat into the fetched rows before the count cap ever applies:
+     * {@link #dropOrphanUserTurns} can remove entries (a USER turn whose reply failed leaves it without
+     * an immediate ASSISTANT successor once FAILED rows are filtered out upstream), and a truncated fetch
+     * can start mid-pair, costing one more leading entry to re-align on a USER turn. Doubling {@link
+     * #MAX_WINDOW_MESSAGES} covers even a worst-case run of orphaned turns (roughly every other fetched
+     * message dropped) with enough survivors left to still fill the cap; {@code + 1} covers the
+     * single-entry leading-alignment trim.
+     */
+    private static final int WINDOW_FETCH_LIMIT = MAX_WINDOW_MESSAGES * 2 + 1;
 
     private final ConversationRepository conversationRepository;
     private final ConversationMessageRepository messageRepository;
@@ -88,14 +103,20 @@ public class AgentConversationRunner {
         Conversation conversation = conversationRepository.findById(conversationId)
                 .orElseThrow(() -> new ConversationNotFoundException(conversationId));
 
-        List<ConversationMessage> history = messageRepository.findByConversationIdAndStatusOrderByCreatedAtAsc(
-                conversationId, ConversationMessage.Status.COMPLETED);
-        if (history.isEmpty() || history.get(history.size() - 1).getRole() != ConversationMessage.Role.USER) {
+        // Newest-first, bounded fetch (see WINDOW_FETCH_LIMIT's javadoc) rather than the conversation's
+        // entire COMPLETED history -- element 0 is the latest COMPLETED message, exactly the last element
+        // of the old unbounded-ascending fetch, so the two preconditions below preserve that contract.
+        List<ConversationMessage> recentDescending = messageRepository.findByConversationIdAndStatusOrderByCreatedAtDescIdDesc(
+                conversationId, ConversationMessage.Status.COMPLETED, PageRequest.of(0, WINDOW_FETCH_LIMIT));
+        if (recentDescending.isEmpty() || recentDescending.get(0).getRole() != ConversationMessage.Role.USER) {
             throw new IllegalStateException(
                     "Conversation " + conversationId + " has no pending USER turn to run");
         }
-        ConversationMessage latestUser = history.get(history.size() - 1);
-        List<ChatMessage> window = buildWindow(history.subList(0, history.size() - 1));
+        ConversationMessage latestUser = recentDescending.get(0);
+        List<ConversationMessage> priorHistory = new ArrayList<>(
+                recentDescending.subList(1, recentDescending.size()));
+        Collections.reverse(priorHistory);
+        List<ChatMessage> window = buildWindow(priorHistory);
         MemoryAugmentor.Augmentation augmentation;
         try {
             augmentation = memoryAugmentor.augment(conversation.getProjectId(),

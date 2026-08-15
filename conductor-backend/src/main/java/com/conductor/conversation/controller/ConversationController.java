@@ -24,10 +24,13 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * External {@code /api/v1} surface for {@link Conversation}s -- create, list, and post messages to an
@@ -76,8 +79,16 @@ public class ConversationController implements ConversationsApi {
     public ResponseEntity<ConversationListResponse> listConversations(String projectId, Integer limit, String cursor) {
         projectSecurityService.requireProjectAccess(projectId);
         ConversationService.CursorPage<Conversation> page = conversationService.listByProject(projectId, cursor, limit);
+
+        // One batched lookup for the whole page rather than one findById per row -- the same agent
+        // routinely owns several conversations, so a per-row query was an N+1 (up to `limit`, default 20,
+        // capped at 100) on every list call. A conversation whose agent was since deleted still renders
+        // (falls back to the raw id, same as toDto's existing null-agent case) rather than 404ing the list.
+        List<String> agentIds = page.items().stream().map(Conversation::getAgentId).distinct().toList();
+        Map<String, Agent> agentsById = agentRepository.findAllById(agentIds).stream()
+                .collect(Collectors.toMap(Agent::getId, Function.identity()));
         List<ConversationResponse> items = page.items().stream()
-                .map(c -> toDto(c, agentRepository.findById(c.getAgentId()).orElse(null)))
+                .map(c -> toDto(c, agentsById.get(c.getAgentId())))
                 .toList();
         return ResponseEntity.ok(new ConversationListResponse().items(items).nextCursor(page.nextCursor()));
     }

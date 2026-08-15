@@ -192,7 +192,7 @@ class ConversationControllerTest {
     void listConversationsReturnsItemsAndNextCursor() throws Exception {
         asMember();
         Agent a = agent("agent-1", "ceo", "John");
-        when(agentRepository.findById("agent-1")).thenReturn(Optional.of(a));
+        when(agentRepository.findAllById(any())).thenReturn(List.of(a));
         ConversationService.CursorPage<Conversation> page = new ConversationService.CursorPage<>(
                 List.of(conversation(CONVERSATION_ID, "agent-1")), "opaque-next-cursor");
         when(conversationService.listByProject(eq(PROJECT_ID), eq(null), eq(20))).thenReturn(page);
@@ -209,7 +209,7 @@ class ConversationControllerTest {
     void listConversationsOnTheLastPageReturnsNullNextCursor() throws Exception {
         asMember();
         Agent a = agent("agent-1", "ceo", "John");
-        when(agentRepository.findById("agent-1")).thenReturn(Optional.of(a));
+        when(agentRepository.findAllById(any())).thenReturn(List.of(a));
         ConversationService.CursorPage<Conversation> page = new ConversationService.CursorPage<>(
                 List.of(conversation(CONVERSATION_ID, "agent-1")), null);
         when(conversationService.listByProject(eq(PROJECT_ID), eq(null), eq(20))).thenReturn(page);
@@ -218,6 +218,54 @@ class ConversationControllerTest {
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.nextCursor").doesNotExist());
+    }
+
+    /**
+     * Post-review efficiency fix: {@code listConversations} used to call {@code agentRepository.findById}
+     * once per row (N+1, up to the page limit). It must now resolve every row's agent from a single
+     * {@code findAllById} batch instead -- proven here by asserting the batch call happens exactly once
+     * and the old per-row lookup never happens at all, not just by asserting the response shape (which
+     * would pass under either implementation).
+     */
+    @Test
+    void listConversationsResolvesAgentsWithOneBatchedLookupNotOnePerRow() throws Exception {
+        asMember();
+        Agent agentOne = agent("agent-1", "ceo", "John");
+        Agent agentTwo = agent("agent-2", "researcher", "Ada");
+        when(agentRepository.findAllById(any())).thenReturn(List.of(agentOne, agentTwo));
+        ConversationService.CursorPage<Conversation> page = new ConversationService.CursorPage<>(
+                List.of(conversation("conv-1", "agent-1"), conversation("conv-2", "agent-2"),
+                        conversation("conv-3", "agent-1")),
+                null);
+        when(conversationService.listByProject(eq(PROJECT_ID), eq(null), eq(20))).thenReturn(page);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/conversations")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(3))
+                .andExpect(jsonPath("$.items[0].agentName").value("John"))
+                .andExpect(jsonPath("$.items[1].agentName").value("Ada"))
+                .andExpect(jsonPath("$.items[2].agentName").value("John"));
+
+        verify(agentRepository).findAllById(any());
+        verify(agentRepository, org.mockito.Mockito.never()).findById(anyString());
+    }
+
+    /** A conversation whose agent no longer exists must still render (falls back to the raw agent id),
+     *  the same behavior the old per-row {@code findById(...).orElse(null)} lookup had. */
+    @Test
+    void listConversationsWithAMissingAgentFallsBackToTheRawAgentId() throws Exception {
+        asMember();
+        when(agentRepository.findAllById(any())).thenReturn(List.of());
+        ConversationService.CursorPage<Conversation> page = new ConversationService.CursorPage<>(
+                List.of(conversation(CONVERSATION_ID, "deleted-agent")), null);
+        when(conversationService.listByProject(eq(PROJECT_ID), eq(null), eq(20))).thenReturn(page);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/conversations")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].agentName").value("deleted-agent"))
+                .andExpect(jsonPath("$.items[0].agentSlug").value("deleted-agent"));
     }
 
     @Test

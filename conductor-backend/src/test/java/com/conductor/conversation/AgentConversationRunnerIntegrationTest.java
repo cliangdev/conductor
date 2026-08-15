@@ -2,6 +2,7 @@ package com.conductor.conversation;
 
 import com.conductor.agent.Agent;
 import com.conductor.agent.AgentRepository;
+import com.conductor.agent.provider.ChatMessage;
 import com.conductor.agent.provider.TokenUsage;
 import com.conductor.agent.run.AgentExecutionService;
 import com.conductor.agent.run.AgentRun;
@@ -141,8 +142,9 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
 
         Conversation reloaded = conversationRepository.findById(conversation.getId()).orElseThrow();
         assertThat(reloaded.getLastMessageAt()).isAfterOrEqualTo(before);
-        assertThat(messageRepository.findByConversationIdAndStatusOrderByCreatedAtAsc(
-                conversation.getId(), ConversationMessage.Status.COMPLETED)).hasSize(2); // user + assistant
+        assertThat(messageRepository.findByConversationIdAndStatusOrderByCreatedAtDescIdDesc(
+                conversation.getId(), ConversationMessage.Status.COMPLETED,
+                org.springframework.data.domain.PageRequest.of(0, 100))).hasSize(2); // user + assistant
     }
 
     @Test
@@ -237,6 +239,133 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
         assertThat(requestCaptor.getValue().task()).isEqualTo("second question");
         List<?> window = windowCaptor.getValue();
         assertThat(window).hasSize(2);
+    }
+
+    /**
+     * Post-review efficiency fix: {@code runNow} used to load a conversation's ENTIRE COMPLETED history
+     * before trimming down to the window -- it now fetches only {@code WINDOW_FETCH_LIMIT} rows
+     * newest-first. This pins the fetch's ordering/reversal: with far more than
+     * {@code MAX_WINDOW_MESSAGES} (20) completed pairs on record, the resulting window must be exactly
+     * the newest 20 messages in chronological order, with the oldest ones never appearing at all. A bug
+     * in the bounded fetch (e.g. sorting ascending instead of descending before applying the row limit,
+     * which would silently hand the model the OLDEST turns instead of the newest ones) would fail this
+     * assertion even though {@code buildWindow}'s own count cap still trims to 20 either way.
+     */
+    @Test
+    void moreThanBothCapsWindowContainsOnlyTheNewestTwentyInOrder() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectId(projectId);
+        conversation.setAgentId(agentId);
+        conversation.setChannel("api");
+        conversation.setCreatedByLabel("test-harness");
+        conversation = conversationRepository.saveAndFlush(conversation);
+
+        // 25 COMPLETED pairs (50 messages) -- comfortably past both WINDOW_FETCH_LIMIT (41) and
+        // MAX_WINDOW_MESSAGES (20), so the fetch bound (not just buildWindow's count cap) is exercised.
+        for (int i = 1; i <= 25; i++) {
+            saveCompleted(conversation.getId(), ConversationMessage.Role.USER, "prior-user-" + i);
+            saveCompleted(conversation.getId(), ConversationMessage.Role.ASSISTANT, "prior-assistant-" + i);
+        }
+        ConversationMessage task = saveCompleted(conversation.getId(), ConversationMessage.Role.USER, "final question");
+        ConversationMessage pending = new ConversationMessage();
+        pending.setConversationId(conversation.getId());
+        pending.setRole(ConversationMessage.Role.ASSISTANT);
+        pending.setContent("");
+        pending.setStatus(ConversationMessage.Status.PENDING);
+        messageRepository.saveAndFlush(pending);
+
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-window-1", "ok", null, TokenUsage.ZERO,
+                        AgentRun.Status.SUCCEEDED.name()));
+
+        runner.runNow(conversation.getId(), pending.getId());
+
+        org.mockito.ArgumentCaptor<List> windowCaptor = org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.ArgumentCaptor<AgentRunRequest> requestCaptor = org.mockito.ArgumentCaptor.forClass(AgentRunRequest.class);
+        org.mockito.Mockito.verify(agentExecutionService).run(requestCaptor.capture(), windowCaptor.capture(), any());
+        assertThat(requestCaptor.getValue().task()).isEqualTo(task.getContent());
+
+        List<ChatMessage> window = windowCaptor.getValue();
+        assertThat(window).hasSize(20);
+        for (int i = 0; i < 10; i++) {
+            int pairNumber = 16 + i; // last 10 surviving pairs, oldest 15 pairs dropped entirely
+            assertThat(window.get(2 * i).role()).isEqualTo(ChatMessage.Role.USER);
+            assertThat(window.get(2 * i).text()).isEqualTo("prior-user-" + pairNumber);
+            assertThat(window.get(2 * i + 1).role()).isEqualTo(ChatMessage.Role.ASSISTANT);
+            assertThat(window.get(2 * i + 1).text()).isEqualTo("prior-assistant-" + pairNumber);
+        }
+        assertThat(window.stream().map(ChatMessage::text))
+                .noneMatch(t -> t.equals("prior-user-1") || t.equals("prior-assistant-1"));
+    }
+
+    /**
+     * Composes the bounded fetch with the orphan-USER-turn drop: a failed reply near the recent end of a
+     * long history leaves its USER turn without an immediate ASSISTANT successor once the FAILED row is
+     * excluded by the COMPLETED-only fetch, the same shape {@code dropOrphanUserTurns} handles for the
+     * old unbounded fetch -- this proves it still works once the history feeding it is itself truncated.
+     */
+    @Test
+    void orphanUserTurnNearTheFetchBoundaryIsStillDroppedAndWindowStaysAlternating() {
+        Conversation conversation = new Conversation();
+        conversation.setProjectId(projectId);
+        conversation.setAgentId(agentId);
+        conversation.setChannel("api");
+        conversation.setCreatedByLabel("test-harness");
+        conversation = conversationRepository.saveAndFlush(conversation);
+
+        // 22 ordinary COMPLETED pairs (44 messages) to push the total prior history past WINDOW_FETCH_LIMIT.
+        for (int i = 1; i <= 22; i++) {
+            saveCompleted(conversation.getId(), ConversationMessage.Role.USER, "hist-user-" + i);
+            saveCompleted(conversation.getId(), ConversationMessage.Role.ASSISTANT, "hist-assistant-" + i);
+        }
+        // A failed-then-retried turn near the recent end: the FAILED reply is invisible to the
+        // COMPLETED-only fetch, leaving "first attempt" with no immediate ASSISTANT successor.
+        saveCompleted(conversation.getId(), ConversationMessage.Role.USER, "first attempt");
+        ConversationMessage failedReply = new ConversationMessage();
+        failedReply.setConversationId(conversation.getId());
+        failedReply.setRole(ConversationMessage.Role.ASSISTANT);
+        failedReply.setContent("");
+        failedReply.setStatus(ConversationMessage.Status.FAILED);
+        messageRepository.saveAndFlush(failedReply);
+        saveCompleted(conversation.getId(), ConversationMessage.Role.USER, "retry");
+        saveCompleted(conversation.getId(), ConversationMessage.Role.ASSISTANT, "answer to retry");
+
+        ConversationMessage task = saveCompleted(conversation.getId(), ConversationMessage.Role.USER, "actual task");
+        ConversationMessage pending = new ConversationMessage();
+        pending.setConversationId(conversation.getId());
+        pending.setRole(ConversationMessage.Role.ASSISTANT);
+        pending.setContent("");
+        pending.setStatus(ConversationMessage.Status.PENDING);
+        messageRepository.saveAndFlush(pending);
+
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-window-2", "ok", null, TokenUsage.ZERO,
+                        AgentRun.Status.SUCCEEDED.name()));
+
+        runner.runNow(conversation.getId(), pending.getId());
+
+        org.mockito.ArgumentCaptor<List> windowCaptor = org.mockito.ArgumentCaptor.forClass(List.class);
+        org.mockito.ArgumentCaptor<AgentRunRequest> requestCaptor = org.mockito.ArgumentCaptor.forClass(AgentRunRequest.class);
+        org.mockito.Mockito.verify(agentExecutionService).run(requestCaptor.capture(), windowCaptor.capture(), any());
+        assertThat(requestCaptor.getValue().task()).isEqualTo(task.getContent());
+
+        List<ChatMessage> window = windowCaptor.getValue();
+        assertThat(window.stream().map(ChatMessage::text)).doesNotContain("first attempt");
+        assertThat(window.get(window.size() - 2).text()).isEqualTo("retry");
+        assertThat(window.get(window.size() - 1).text()).isEqualTo("answer to retry");
+        for (int i = 0; i < window.size(); i++) {
+            ChatMessage.Role expected = i % 2 == 0 ? ChatMessage.Role.USER : ChatMessage.Role.ASSISTANT;
+            assertThat(window.get(i).role()).as("window[%d] role", i).isEqualTo(expected);
+        }
+    }
+
+    private ConversationMessage saveCompleted(String conversationId, ConversationMessage.Role role, String content) {
+        ConversationMessage m = new ConversationMessage();
+        m.setConversationId(conversationId);
+        m.setRole(role);
+        m.setContent(content);
+        m.setStatus(ConversationMessage.Status.COMPLETED);
+        return messageRepository.saveAndFlush(m);
     }
 
     /** Phase 5 tweak: the system prompt suffix names the agent's CURRENT name/slug (loaded fresh every

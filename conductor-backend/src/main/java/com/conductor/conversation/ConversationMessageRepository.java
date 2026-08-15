@@ -1,5 +1,6 @@
 package com.conductor.conversation;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -34,10 +35,22 @@ public interface ConversationMessageRepository extends JpaRepository<Conversatio
                                                          @Param("cursorId") String cursorId,
                                                          @Param("limit") int limit);
 
-    /** Unpaginated, ascending -- {@link AgentConversationRunner}'s window-building trims from the full
-     *  COMPLETED-only in-memory log rather than a page. */
-    List<ConversationMessage> findByConversationIdAndStatusOrderByCreatedAtAsc(
-            String conversationId, ConversationMessage.Status status);
+    /** Newest-first, bounded by {@code pageable}'s page size -- {@link AgentConversationRunner#runNow}
+     *  fetches only as many COMPLETED turns as its window-building could possibly need (a small bounded
+     *  multiple of {@code MAX_WINDOW_MESSAGES}, see that constant's javadoc) rather than the conversation's
+     *  entire history, then reverses the result back into chronological order before windowing. The
+     *  existing {@code idx_conversation_messages_conversation (conversation_id, created_at)} index (V110)
+     *  still serves this: Postgres reads a btree backwards for {@code DESC} order on the same
+     *  {@code (conversation_id, created_at)} prefix, and the added {@code status} filter is just applied
+     *  per-row during that same backward index scan -- it doesn't need its own index entry.
+     *
+     *  <p>The {@code id} tiebreak matches the keyset queries above, for the same reason: {@code
+     *  appendUserMessage} inserts a USER row and its ASSISTANT placeholder back-to-back in one
+     *  transaction, so once that placeholder completes the pair can share a {@code createdAt}. Ordering
+     *  on the timestamp alone could then surface the reply ahead of the message it answers, and {@code
+     *  dropOrphanUserTurns} would silently drop the inverted pair out of the window. */
+    List<ConversationMessage> findByConversationIdAndStatusOrderByCreatedAtDescIdDesc(
+            String conversationId, ConversationMessage.Status status, Pageable pageable);
 
     /** The single most recent turn regardless of role/status -- {@code ConversationService
      *  #appendUserMessage}'s one-in-flight-turn guard reads this to check whether the conversation is
