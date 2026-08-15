@@ -214,4 +214,5 @@ class ProjectDocServiceTest {
         assertThatThrownBy(() -> service.setTaskState("proj-2", "doc-1", 1, true, human))
                 .isInstanceOf(EntityNotFoundException.class);
     }
+
 }

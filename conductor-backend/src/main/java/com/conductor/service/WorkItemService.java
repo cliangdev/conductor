@@ -216,6 +216,53 @@ public class WorkItemService {
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
     }
 
+    /**
+     * Resolve a Work Item by either its raw id or its display id (e.g. "COND-42"), for any {@link
+     * ProjectActor} -- a human caller or a machine actor (the coordinator's {@code get_work_item} tool).
+     * Tries a raw-id lookup first (via {@link WorkItemRepository#findByIdWithProjectAndAssignee}, so the
+     * caller gets the same eagerly-fetched project/assignee as a plain id lookup would), then falls back
+     * to display-id sequence-number parsing on a miss -- mirrors {@link #resolveByDisplayId}'s malformed-
+     * id tolerance rather than throwing on a ref that simply isn't a display id. Applies the same read-
+     * access check as {@link #getWorkItemEntity} for a human caller; a machine actor skips it, matching
+     * {@link #createWorkItem(String, String, String, String, String, ProjectActor)}'s machine
+     * short-circuit -- coordination tools have no {@code project_members} row to check against.
+     */
+    @Transactional(readOnly = true)
+    public WorkItem resolveByReference(String projectId, String ref, ProjectActor actor) {
+        if (!actor.isMachine()) {
+            verifyReadAccess(projectId, actor.user().getId());
+        }
+        WorkItem item = workItemRepository.findByIdWithProjectAndAssignee(ref)
+                .filter(i -> projectId.equals(i.getProject().getId()))
+                .orElse(null);
+        if (item != null) {
+            return item;
+        }
+        Integer sequenceNumber = parseSequenceNumber(ref);
+        if (sequenceNumber == null) {
+            throw new EntityNotFoundException("Work Item not found: " + ref);
+        }
+        return workItemRepository.findByProjectIdAndSequenceNumber(projectId, sequenceNumber)
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found: " + ref));
+    }
+
+    /**
+     * List Work Items in a project with the same optional type/status/workflow filters as {@link
+     * #listWorkItemEntities}, capped at the query level (see {@link
+     * WorkItemRepository#findByProjectFilteredLimited}) rather than fetched-then-truncated -- backs the
+     * coordinator's {@code list_work_items} tool. No read-access check: unlike {@link
+     * #listWorkItemEntities}'s human caller, a coordination tool's machine caller has no {@code
+     * project_members} row to check, matching {@link #resolveByReference}'s machine short-circuit.
+     */
+    @Transactional(readOnly = true)
+    public List<WorkItem> listWorkItemsForAgent(String projectId, String type, String status, String workflow,
+                                                int limit) {
+        String typeFilter = (type != null && !type.isBlank()) ? type : null;
+        String statusFilter = (status != null && !status.isBlank()) ? status : null;
+        String workflowFilter = (workflow != null && !workflow.isBlank()) ? workflow : null;
+        return workItemRepository.findByProjectFilteredLimited(projectId, typeFilter, statusFilter, workflowFilter, limit);
+    }
+
     private static Integer parseSequenceNumber(String displayId) {
         if (displayId == null) {
             return null;

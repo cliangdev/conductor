@@ -389,7 +389,7 @@ public class ProjectDocsController implements ProjectDocsApi {
         result.setId(doc.getId());
         result.setTitle(doc.getTitle());
         result.setFolderId(doc.getFolder() != null ? doc.getFolder().getId() : null);
-        result.setSnippet(extractSnippet(DocImageMarkers.summarize(doc.getContent()), query));
+        result.setSnippet(ProjectDocService.extractSnippet(doc.getContent(), query));
         return result;
     }
 
@@ -484,16 +484,4 @@ public class ProjectDocsController implements ProjectDocsApi {
         return user.getEmail();
     }
 
-    private String extractSnippet(String content, String query) {
-        if (content == null || content.isBlank()) {
-            return "";
-        }
-        int index = content.toLowerCase().indexOf(query.toLowerCase());
-        if (index < 0) {
-            return content.length() > 200 ? content.substring(0, 200) : content;
-        }
-        int start = Math.max(0, index - 50);
-        int end = Math.min(content.length(), index + query.length() + 150);
-        return content.substring(start, end);
-    }
 }

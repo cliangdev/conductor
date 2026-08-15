@@ -43,7 +43,6 @@ import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
 import com.conductor.repository.WorkflowScheduleRepository;
 import com.conductor.repository.WorkflowScheduleSkipRepository;
-import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.WorkflowDefinitionLifecycleService;
 import com.conductor.service.WorkflowService;
@@ -97,7 +96,6 @@ public class WorkflowController implements WorkflowsApi {
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowRunRepository runRepository;
     private final WorkflowJobRunRepository jobRunRepository;
-    private final WorkflowStepRunRepository stepRunRepository;
     private final WorkflowScheduleRepository scheduleRepository;
     private final WorkflowScheduleSkipRepository scheduleSkipRepository;
     private final WorkflowDefinitionLifecycleService lifecycleService;
@@ -117,7 +115,6 @@ public class WorkflowController implements WorkflowsApi {
                                WorkflowDefinitionRepository workflowRepository,
                                WorkflowRunRepository runRepository,
                                WorkflowJobRunRepository jobRunRepository,
-                               WorkflowStepRunRepository stepRunRepository,
                                WorkflowScheduleRepository scheduleRepository,
                                WorkflowScheduleSkipRepository scheduleSkipRepository,
                                WorkflowDefinitionLifecycleService lifecycleService,
@@ -138,7 +135,6 @@ public class WorkflowController implements WorkflowsApi {
         this.workflowRepository = workflowRepository;
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
-        this.stepRunRepository = stepRunRepository;
         this.scheduleRepository = scheduleRepository;
         this.scheduleSkipRepository = scheduleSkipRepository;
         this.lifecycleService = lifecycleService;
@@ -277,29 +273,13 @@ public class WorkflowController implements WorkflowsApi {
                     : " — enable it first.";
             throw new BusinessException("'" + workflow.getName() + "' is disabled" + reason);
         }
-        if (!allowsManualDispatch(workflow.getYaml())) {
+        if (!workflowService.allowsManualDispatch(workflow.getYaml())) {
             throw new BusinessException("'" + workflow.getName() + "' is managed automatically and can't be run "
                     + "manually — its trigger data is supplied by the process that dispatches it.");
         }
         Map<String, String> inputs = body != null ? body.getInputs() : null;
         WorkflowRun run = workflowTriggerService.triggerManual(workflow, userId, inputs);
         return ResponseEntity.status(202).body(toRunDto(run));
-    }
-
-    /** True unless the stored YAML explicitly opts out via {@code on.workflow_dispatch.manual: false}
-     *  (see {@link com.conductor.workflow.model.TriggersSpec#allowsManualDispatch}). A null/unparsable
-     *  yaml (lifecycle workflow, or drift) defaults to true — this is a UX guard against a known-empty
-     *  dispatch, not the sole enforcement of workflow validity. Deliberately the opposite default from
-     *  the frontend's {@code allowsManualDispatch} in lib/workflows.ts (false for missing yaml) — that
-     *  asymmetry is currently unreachable (a lifecycle workflow, the only null-yaml case, never renders
-     *  a Run button at all) but don't "fix" one side to match the other without re-checking that. */
-    private boolean allowsManualDispatch(String yaml) {
-        if (yaml == null) return true;
-        try {
-            return yamlParser.parse(yaml).triggers().allowsManualDispatch();
-        } catch (WorkflowYamlException e) {
-            return true;
-        }
     }
 
     /**
@@ -469,12 +449,8 @@ public class WorkflowController implements WorkflowsApi {
         }
         WorkflowRun run = runRepository.findByIdWithWorkflow(runId)
                 .orElseThrow(() -> new EntityNotFoundException("Run not found: " + runId));
-        List<WorkflowJobRun> jobRuns = jobRunRepository.findByRunId(runId);
-        List<WorkflowJobRunDto> jobDtos = jobRuns.stream()
-                .map(jr -> {
-                    List<WorkflowStepRun> steps = stepRunRepository.findByJobRunId(jr.getId());
-                    return toJobRunDto(jr, steps);
-                })
+        List<WorkflowJobRunDto> jobDtos = runQueryService.findJobRunsWithSteps(runId).stream()
+                .map(jrs -> toJobRunDto(jrs.jobRun(), jrs.steps()))
                 .collect(Collectors.toList());
         WorkflowRunDetailDto dto = new WorkflowRunDetailDto();
         dto.setId(run.getId());

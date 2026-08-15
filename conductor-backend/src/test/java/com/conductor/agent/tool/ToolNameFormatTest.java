@@ -1,6 +1,6 @@
 package com.conductor.agent.tool;
 
-import com.conductor.agent.AgentRepository;
+import com.conductor.agent.AgentService;
 import com.conductor.agent.run.AgentExecutionService;
 import com.conductor.agent.tool.coordinator.CoordinatorToolProvider;
 import com.conductor.knowledge.KnowledgeIngestionService;
@@ -12,16 +12,13 @@ import com.conductor.memory.AgentMemoryRepository;
 import com.conductor.memory.MemoryRetriever;
 import com.conductor.memory.tool.MemoryToolProvider;
 import com.conductor.repository.ProjectRepository;
-import com.conductor.repository.WorkItemRepository;
-import com.conductor.repository.WorkflowJobRunRepository;
 import com.conductor.repository.WorkflowRunRepository;
-import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ProjectDocService;
 import com.conductor.service.ProjectSettingsService;
 import com.conductor.service.WorkItemService;
 import com.conductor.service.WorkflowService;
+import com.conductor.workflow.WorkflowRunQueryService;
 import com.conductor.workflow.WorkflowTriggerService;
-import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
@@ -49,23 +46,19 @@ class ToolNameFormatTest {
 
     @Test
     void everyCoordinatorToolNameIsOpenAiSafe() {
-        WorkItemRepository workItemRepository = mock(WorkItemRepository.class);
         WorkItemService workItemService = mock(WorkItemService.class);
         ProjectRepository projectRepository = mock(ProjectRepository.class);
         WorkflowService workflowService = mock(WorkflowService.class);
         WorkflowTriggerService workflowTriggerService = mock(WorkflowTriggerService.class);
-        WorkflowYamlParser workflowYamlParser = mock(WorkflowYamlParser.class);
         WorkflowRunRepository workflowRunRepository = mock(WorkflowRunRepository.class);
-        WorkflowJobRunRepository workflowJobRunRepository = mock(WorkflowJobRunRepository.class);
-        WorkflowStepRunRepository workflowStepRunRepository = mock(WorkflowStepRunRepository.class);
-        AgentRepository agentRepository = mock(AgentRepository.class);
+        WorkflowRunQueryService workflowRunQueryService = mock(WorkflowRunQueryService.class);
+        AgentService agentService = mock(AgentService.class);
         ProjectDocService projectDocService = mock(ProjectDocService.class);
         AgentExecutionService agentExecutionService = mock(AgentExecutionService.class);
 
-        CoordinatorToolProvider provider = new CoordinatorToolProvider(workItemRepository, workItemService,
-                projectRepository, workflowService, workflowTriggerService, workflowYamlParser,
-                workflowRunRepository, workflowJobRunRepository, workflowStepRunRepository, agentRepository,
-                projectDocService, agentExecutionService, new ObjectMapper());
+        CoordinatorToolProvider provider = new CoordinatorToolProvider(workItemService, projectRepository,
+                workflowService, workflowTriggerService, workflowRunRepository, workflowRunQueryService,
+                agentService, projectDocService, agentExecutionService, new ObjectMapper());
 
         assertToolNamesAreOpenAiSafe(provider.available("p1"));
     }

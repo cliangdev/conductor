@@ -110,8 +110,14 @@ assistant reply — only one turn runs at a time per conversation — and otherw
 ## Coordinator tools
 
 `CoordinatorToolProvider` (tool source `coordinator`) is the CEO agent's hub-and-spoke surface across
-Conductor's other bounded contexts — every tool composes an existing service or repository read-only, or
-writes through an existing service method; this provider owns no state of its own.
+Conductor's other bounded contexts — every tool composes an existing service read-only, or writes
+through an existing service method; the provider itself is pure composition (it builds the ten tools
+once and answers the `AgentToolProvider` SPI), with the ten tools split across five per-context classes
+(`WorkItemCoordinatorTools`, `WorkflowCoordinatorTools`, `AgentCoordinatorTools`,
+`ProjectDocCoordinatorTools`, `DelegationCoordinatorTools`) so each bounded context's surface is
+reviewable on its own. Only two thin repository reads remain outside a service (a project's key, and a
+workflow run eagerly fetched with its `WorkflowDefinition`) — neither has a service method that exposes
+what's needed, and neither duplicates business logic that lives elsewhere.
 
 | Tool | Purpose |
 |---|---|
@@ -127,7 +133,10 @@ writes through an existing service method; this provider owns no state of its ow
 | `ask_agent` | Run another agent synchronously and return its answer, for one coordinator to delegate to a specialist. |
 
 `search_project_docs`/`read_project_doc`/`ask_agent` have no MCP counterpart — they're only reachable
-through this provider (the `api` runtime), not from a `claude-code`-runtime agent's MCP tool list.
+through this provider (the `api` runtime), not from a `claude-code`-runtime agent's MCP tool list. Both
+doc tools run a doc's content through `DocImageMarkers.summarize` before it reaches the model, same as
+the REST path — otherwise a stored `conductor-image:projects/{projectId}/docs/{docId}/images/{file}`
+marker would leak into the model's context and, via a Discord conversation, an end user.
 Project-doc search itself was upgraded from a LIKE scan to ranked Postgres full-text search (weighted
 `tsvector` generated column, title weighted above body — same pattern `knowledge_pages` uses, see
 [`docs/knowledge.md`](knowledge.md#page-model)); `ProjectDocService#searchDocs` now takes a `limit`

@@ -14,6 +14,8 @@ import com.conductor.validation.ReservedTags;
 import com.conductor.workflow.WorkflowTriggerService;
 import com.conductor.workflow.WorkflowValidationResult;
 import com.conductor.workflow.WorkflowValidator;
+import com.conductor.workflow.model.WorkflowYamlException;
+import com.conductor.workflow.model.WorkflowYamlParser;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -49,6 +51,7 @@ public class WorkflowService {
     private final WorkItemRepository workItemRepository;
     private final RuntimeTargetService runtimeTargetService;
     private final ObjectMapper objectMapper;
+    private final WorkflowYamlParser yamlParser;
 
     public WorkflowService(WorkflowDefinitionRepository workflowRepository,
                            ProjectRepository projectRepository,
@@ -58,7 +61,8 @@ public class WorkflowService {
                            @Lazy WorkflowTriggerService workflowTriggerService,
                            WorkItemRepository workItemRepository,
                            RuntimeTargetService runtimeTargetService,
-                           ObjectMapper objectMapper) {
+                           ObjectMapper objectMapper,
+                           WorkflowYamlParser yamlParser) {
         this.workflowRepository = workflowRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
@@ -68,6 +72,7 @@ public class WorkflowService {
         this.workItemRepository = workItemRepository;
         this.runtimeTargetService = runtimeTargetService;
         this.objectMapper = objectMapper;
+        this.yamlParser = yamlParser;
     }
 
     @Transactional
@@ -260,6 +265,28 @@ public class WorkflowService {
         }
         def.setSidebarEnabled(sidebarEnabled);
         return workflowRepository.save(def);
+    }
+
+    /**
+     * True unless the stored YAML explicitly opts out via {@code on.workflow_dispatch.manual: false}
+     * (see {@link com.conductor.workflow.model.TriggersSpec#allowsManualDispatch}). A null/unparsable
+     * yaml (lifecycle workflow, or drift) defaults to true — this is a UX guard against a known-empty
+     * dispatch, not the sole enforcement of workflow validity. Deliberately the opposite default from
+     * the frontend's {@code allowsManualDispatch} in lib/workflows.ts (false for missing yaml) — that
+     * asymmetry is currently unreachable (a lifecycle workflow, the only null-yaml case, never renders
+     * a Run button at all) but don't "fix" one side to match the other without re-checking that.
+     *
+     * <p>Shared by {@code WorkflowController#dispatchWorkflow} (human REST) and the coordinator's
+     * {@code dispatch_workflow} tool (machine) so the two never diverge on which workflows are
+     * manually dispatchable.
+     */
+    public boolean allowsManualDispatch(String yaml) {
+        if (yaml == null) return true;
+        try {
+            return yamlParser.parse(yaml).triggers().allowsManualDispatch();
+        } catch (WorkflowYamlException e) {
+            return true;
+        }
     }
 
     public WorkflowValidationResult validate(String projectId, String yaml) {
