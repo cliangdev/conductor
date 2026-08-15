@@ -101,6 +101,13 @@ class AgentControllerTest {
         apiKey.setKeyValue("project-api-key");
         when(projectApiKeyRepository.findByKeyValueWithProject("project-api-key"))
                 .thenReturn(java.util.Optional.of(apiKey));
+
+        // updateAgent now reads the existing agent first (to preserve configJson keys AgentConfig
+        // doesn't model -- see toConfigMap) before building the update input. Default every lookup to
+        // a blank-config stub; individual tests override with a more specific stub when the stored
+        // config's contents matter.
+        when(agentService.get(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(stubAgent());
     }
 
     // ---- project API key auth (bug fix regression coverage) ----
@@ -551,6 +558,77 @@ class AgentControllerTest {
         ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
         verify(agentService).update(eq(PROJECT_ID), eq("agent-1"), captor.capture());
         assertThat(captor.getValue().config()).containsEntry("runtime", "api");
+    }
+
+    // ---- agent config "addressable" round-trip (bug fix: AgentConfig had no way to opt an agent in) ----
+
+    @Test
+    void createAgent_withAddressableConfig_passesAddressableThroughToService() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        when(agentService.create(eq(PROJECT_ID), any())).thenReturn(stubAgent());
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/agents")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Marketer\",\"provider\":\"claude\","
+                                + "\"config\":{\"addressable\":true}}"))
+                .andExpect(status().isCreated());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).create(eq(PROJECT_ID), captor.capture());
+        assertThat(captor.getValue().config()).containsEntry("addressable", true);
+    }
+
+    @Test
+    void updateAgent_withAddressableConfig_passesAddressableThroughToService() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(stubAgent());
+        when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"config\":{\"addressable\":true}}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).update(eq(PROJECT_ID), eq("agent-1"), captor.capture());
+        assertThat(captor.getValue().config()).containsEntry("addressable", true);
+    }
+
+    // An edit made through the known-field AgentConfig DTO must not destroy a configJson key it
+    // doesn't model -- seededPromptHash (written by CoordinatorProvisioner) is exactly such a key: if
+    // an unrelated Agents-form save wiped it, the CEO agent's prompt would be treated as
+    // operator-edited forever, and a future shipped prompt update could never refresh it again.
+    @Test
+    void updateAgent_unrelatedConfigEdit_preservesUnknownConfigKeyLikeSeededPromptHash() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+        Agent existing = stubAgent();
+        existing.setConfigJson("{\"maxToolTurns\":24,\"seededPromptHash\":\"abc123\"}");
+        when(agentService.get(PROJECT_ID, "agent-1")).thenReturn(existing);
+        when(agentService.update(eq(PROJECT_ID), eq("agent-1"), any())).thenReturn(stubAgent());
+        // AgentController's ObjectMapper is a @MockitoBean here -- delegate the raw-map read
+        // (readConfigMap) to a real Jackson instance so the preservation logic is genuinely exercised.
+        com.fasterxml.jackson.databind.ObjectMapper realMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        when(objectMapper.readValue(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.any(com.fasterxml.jackson.core.type.TypeReference.class)))
+                .thenAnswer(inv -> realMapper.readValue((String) inv.getArgument(0),
+                        (com.fasterxml.jackson.core.type.TypeReference<?>) inv.getArgument(1)));
+
+        mockMvc.perform(patch("/api/v1/projects/" + PROJECT_ID + "/agents/agent-1")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"config\":{\"addressable\":true}}"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<AgentService.AgentInput> captor = ArgumentCaptor.forClass(AgentService.AgentInput.class);
+        verify(agentService).update(eq(PROJECT_ID), eq("agent-1"), captor.capture());
+        assertThat(captor.getValue().config())
+                .containsEntry("seededPromptHash", "abc123")
+                .containsEntry("addressable", true);
     }
 
     @Test

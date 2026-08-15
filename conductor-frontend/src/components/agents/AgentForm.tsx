@@ -16,6 +16,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { providerDisplayName } from '@/lib/providers'
 import { isReservedTag } from '@/lib/tags'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { AgentAvatarPicker, randomAvatar } from '@/components/agents/AgentAvatarPicker'
 
 const INPUT = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring'
@@ -57,6 +58,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
   const [maxToolTurns, setMaxToolTurns] = useState(initial?.config?.maxToolTurns?.toString() ?? '')
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set(initial?.toolIds ?? []))
   const [state, setState] = useState<'DRAFT' | 'ACTIVE'>(initial?.state ?? 'DRAFT')
+  const [addressable, setAddressable] = useState(initial?.addressable ?? false)
   const [nameError, setNameError] = useState<string | null>(null)
   const [tagError, setTagError] = useState<string | null>(null)
   // New agent: seed a random pair client-side so what's shown is what gets submitted (the server
@@ -145,6 +147,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
       temperature: numOrUndef(temperature) ?? null,
       maxTokens: numOrUndef(maxTokens) ?? null,
       maxToolTurns: numOrUndef(maxToolTurns) ?? null,
+      addressable,
     }
 
     onSubmit({
@@ -376,6 +379,17 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
           <option value="ACTIVE">Active</option>
         </select>
         <p className="text-xs text-muted-foreground mt-1">Only Active agents can be invoked by workflows.</p>
+      </div>
+
+      {/* Addressable */}
+      <div className="flex items-center justify-between rounded-md border border-border p-3">
+        <div>
+          <p className="text-sm font-medium text-foreground">Addressable</p>
+          <p className="text-xs text-muted-foreground">
+            Lets a human talk to this agent directly by name in a conversation (e.g. Discord&apos;s /ask).
+          </p>
+        </div>
+        <Switch checked={addressable} onCheckedChange={setAddressable} aria-label="Addressable" />
       </div>
 
       {error && <p className="text-sm text-destructive">{error}</p>}

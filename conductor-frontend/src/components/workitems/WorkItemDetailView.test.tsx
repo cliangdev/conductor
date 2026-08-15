@@ -650,4 +650,18 @@ describe('WorkItemDetailView', () => {
       expect(screen.getByDisplayValue('edit me later')).toBeInTheDocument()
     })
   })
+
+  describe('creator byline', () => {
+    it('resolves a human creator by member id', async () => {
+      ISSUE = { ...ISSUE, createdBy: 'user-2', createdByLabel: undefined }
+      await renderView()
+      expect(await screen.findByText(/created by cara creator/i)).toBeInTheDocument()
+    })
+
+    it('falls back to createdByLabel for an agent-created item with no createdBy', async () => {
+      ISSUE = { ...ISSUE, createdBy: undefined, createdByLabel: 'Agent (ceo)' }
+      await renderView()
+      expect(await screen.findByText(/created by agent \(ceo\)/i)).toBeInTheDocument()
+    })
+  })
 })

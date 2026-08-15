@@ -117,6 +117,68 @@ describe('AgentForm avatar payload', () => {
   })
 })
 
+describe('AgentForm addressable toggle', () => {
+  beforeEach(() => {
+    listAgentProvidersBehavior = () =>
+      Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8', defaultModelIsLive: false }])
+    listAgentToolsBehavior = () => Promise.resolve([])
+    listProviderModelsBehavior = () => Promise.resolve({ models: [] })
+  })
+
+  it('create mode: defaults off and submits config.addressable=false untouched', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(<AgentForm projectId="proj-1" submitLabel="Create Agent" saving={false} error={null} onSubmit={onSubmit} />)
+
+    await user.type(screen.getByLabelText('Name'), 'New Agent')
+    await waitFor(() => expect((screen.getByLabelText('Provider') as HTMLSelectElement).value).toBe('claude'))
+    expect(screen.getByRole('switch', { name: 'Addressable' })).toHaveAttribute('aria-checked', 'false')
+    await user.click(screen.getByRole('button', { name: 'Create Agent' }))
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ config: expect.objectContaining({ addressable: false }) }),
+    )
+  })
+
+  it('create mode: toggling on submits config.addressable=true', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(<AgentForm projectId="proj-1" submitLabel="Create Agent" saving={false} error={null} onSubmit={onSubmit} />)
+
+    await user.type(screen.getByLabelText('Name'), 'New Agent')
+    await waitFor(() => expect((screen.getByLabelText('Provider') as HTMLSelectElement).value).toBe('claude'))
+    await user.click(screen.getByRole('switch', { name: 'Addressable' }))
+    await user.click(screen.getByRole('button', { name: 'Create Agent' }))
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ config: expect.objectContaining({ addressable: true }) }),
+    )
+  })
+
+  it('edit mode: an already-addressable agent renders the toggle on and preserves it untouched', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(
+      <AgentForm
+        projectId="proj-1"
+        initial={baseAgent({ addressable: true })}
+        submitLabel="Save"
+        saving={false}
+        error={null}
+        onSubmit={onSubmit}
+      />
+    )
+
+    await waitFor(() => expect((screen.getByLabelText('Provider') as HTMLSelectElement).value).toBe('claude'))
+    expect(screen.getByRole('switch', { name: 'Addressable' })).toHaveAttribute('aria-checked', 'true')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ config: expect.objectContaining({ addressable: true }) }),
+    )
+  })
+})
+
 describe('AgentForm model picker', () => {
   beforeEach(() => {
     listAgentProvidersBehavior = () =>

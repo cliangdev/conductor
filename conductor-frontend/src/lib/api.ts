@@ -489,6 +489,10 @@ export interface AgentConfig {
   temperature?: number | null
   maxTokens?: number | null
   maxToolTurns?: number | null
+  /** True when a human can talk to this agent directly in a conversation (Discord's /ask, the
+   *  conversation REST API) by name or slug -- opt-in per agent. Mirrored read-only at
+   *  `Agent.addressable` for display. */
+  addressable?: boolean | null
 }
 
 export interface Agent {

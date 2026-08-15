@@ -583,7 +583,7 @@ export function WorkItemDetailView({
 
   const creatorName = issue?.createdBy
     ? allMembers.find((m) => m.userId === issue.createdBy)?.name
-    : undefined
+    : issue?.createdByLabel
 
   if (loading) {
     return <WorkItemDetailSkeleton />

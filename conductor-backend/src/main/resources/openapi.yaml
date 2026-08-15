@@ -8201,6 +8201,12 @@ components:
             Pins the runtime that executes this agent's workflow steps ("api": in-process ReAct
             loop; "claude-code": headless Claude Code container). Omit to auto-detect from the
             project's configured credentials -- see docs/workflows.md#agent--run-an-ai-agent.
+        addressable:
+          type: boolean
+          description: >-
+            True when a human can talk to this agent directly in a conversation (Discord's /ask,
+            the conversation REST API) by name or slug -- opt-in per agent. An agent with this
+            false is still runnable from a workflow step; it just isn't a conversation target.
 
     AgentResponse:
       type: object

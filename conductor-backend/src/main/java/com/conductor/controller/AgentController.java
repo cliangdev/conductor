@@ -46,6 +46,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * External CRUD for user-managed named {@link Agent}s plus per-(project, provider) BYO API-key
@@ -113,7 +114,9 @@ public class AgentController implements AgentsApi {
                 request.getProvider(),
                 request.getModel(),
                 request.getSystemPrompt(),
-                toConfigMap(request.getConfig()),
+                // No prior config to preserve keys from -- a brand-new agent's configJson is exactly
+                // what this request's known AgentConfig fields describe.
+                toConfigMap(request.getConfig(), Map.of()),
                 request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null,
                 request.getAvatarEmoji(),
@@ -126,6 +129,12 @@ public class AgentController implements AgentsApi {
     @Override
     public ResponseEntity<AgentResponse> updateAgent(String projectId, String agentId, UpdateAgentRequest request) {
         requireAdminOrCreator(projectId);
+        // Read the stored config *before* building the input so an edit through this known-field DTO
+        // (AgentConfig only models temperature/maxTokens/maxToolTurns/runtime/addressable) preserves any
+        // key set outside it -- e.g. CoordinatorProvisioner's seededPromptHash, which decides whether a
+        // future shipped prompt update may still refresh an otherwise-untouched CEO agent. Without this,
+        // saving the Agents form once and forever after treats the prompt as operator-edited.
+        Map<String, Object> existingConfig = readConfigMap(agentService.get(projectId, agentId).getConfigJson());
         AgentService.AgentInput input = new AgentService.AgentInput(
                 request.getName(),
                 request.getSlug(),
@@ -133,7 +142,7 @@ public class AgentController implements AgentsApi {
                 request.getProvider(),
                 request.getModel(),
                 request.getSystemPrompt(),
-                toConfigMap(request.getConfig()),
+                toConfigMap(request.getConfig(), existingConfig),
                 request.getToolIds(),
                 request.getState() != null ? request.getState().getValue() : null,
                 request.getAvatarEmoji(),
@@ -337,11 +346,28 @@ public class AgentController implements AgentsApi {
         }
     }
 
-    private Map<String, Object> toConfigMap(AgentConfig config) {
+    /** Every {@code configJson} key {@link AgentConfig} models -- anything else in a stored config
+     *  (e.g. {@code seededPromptHash}, written by {@code CoordinatorProvisioner} outside this DTO) is
+     *  opaque to this layer and must survive an edit made through it. */
+    private static final Set<String> KNOWN_AGENT_CONFIG_KEYS =
+            Set.of("temperature", "maxTokens", "maxToolTurns", "runtime", "addressable");
+
+    /**
+     * Builds the {@code configJson} map for a create/update from the request's known-field DTO, layered
+     * over {@code base} (the agent's current raw config on update, or an empty map on create). Unknown
+     * keys in {@code base} pass through untouched; known keys are fully owned by {@code config} -- a
+     * null field there omits the key, same as before this preserved unknown keys at all.
+     */
+    private Map<String, Object> toConfigMap(AgentConfig config, Map<String, Object> base) {
         if (config == null) {
             return null;
         }
         Map<String, Object> map = new LinkedHashMap<>();
+        base.forEach((key, value) -> {
+            if (!KNOWN_AGENT_CONFIG_KEYS.contains(key)) {
+                map.put(key, value);
+            }
+        });
         if (config.getTemperature() != null) {
             map.put("temperature", config.getTemperature());
         }
@@ -354,6 +380,9 @@ public class AgentController implements AgentsApi {
         if (config.getRuntime() != null) {
             map.put("runtime", config.getRuntime().getValue());
         }
+        if (config.getAddressable() != null) {
+            map.put("addressable", config.getAddressable());
+        }
         return map;
     }
 
@@ -365,6 +394,19 @@ public class AgentController implements AgentsApi {
             return objectMapper.readValue(json, AgentConfig.class);
         } catch (Exception e) {
             return new AgentConfig();
+        }
+    }
+
+    /** Raw view of a stored {@code configJson}, unlike {@link #readConfig} which drops anything
+     *  {@link AgentConfig} doesn't model -- used by {@link #toConfigMap} to preserve those keys. */
+    private Map<String, Object> readConfigMap(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() { });
+        } catch (Exception e) {
+            return Map.of();
         }
     }
 
