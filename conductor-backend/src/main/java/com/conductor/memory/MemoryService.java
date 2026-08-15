@@ -99,15 +99,6 @@ public class MemoryService {
         return saved;
     }
 
-    @Transactional
-    public void closeValidity(String projectId, String id) {
-        AgentMemory memory = get(projectId, id);
-        if (memory.getValidTo() == null) {
-            memory.setValidTo(OffsetDateTime.now());
-            repository.save(memory);
-        }
-    }
-
     /**
      * Closes {@code targetId} and points its {@code supersededBy} at {@code replacementId} -- unlike
      * {@link #supersede}, the replacement row already exists (it isn't created here). Used by {@code

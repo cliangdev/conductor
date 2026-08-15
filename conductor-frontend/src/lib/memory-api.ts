@@ -69,8 +69,8 @@ export function listMemories(
   if (opts?.status) params.set('status', opts.status)
   if (opts?.type) params.set('type', opts.type)
   if (opts?.agentId) params.set('agentId', opts.agentId)
-  if (opts?.limit) params.set('limit', String(opts.limit))
-  if (opts?.offset) params.set('offset', String(opts.offset))
+  if (opts?.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts?.offset !== undefined) params.set('offset', String(opts.offset))
   const qs = params.toString()
   return apiGet<MemoryListResponse>(`/api/v1/projects/${projectId}/memories${qs ? `?${qs}` : ''}`, token)
 }

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -348,28 +349,39 @@ class MemoryConsolidationServiceTest {
         when(credentialService.resolveApiKey(projectId, "claude")).thenReturn(Optional.of("api-key"));
     }
 
+    /** Stubs the claim flow ({@link AgentMemoryRepository#findClaimableRawIds}/{@code stampClaimed}/
+     *  {@code findAllById}) that {@link MemoryConsolidationService#claimBatchInNewTx} drives, so tests can
+     *  keep working in terms of "this project's due batch is these rows" without hand-rolling the claim
+     *  select/stamp/fetch sequence every time. */
+    private void wireClaimableBatch(String projectId, List<AgentMemory> batch) {
+        for (AgentMemory m : batch) {
+            when(repository.findById(m.getId())).thenReturn(Optional.of(m));
+        }
+        List<String> ids = batch.stream().map(AgentMemory::getId).toList();
+        when(repository.findClaimableRawIds(eq(projectId), any(), any(), eq(MemoryConsolidationService.BATCH_SIZE))).thenReturn(ids);
+        when(repository.findAllById(ids)).thenReturn(batch);
+    }
+
     @Test
     void consolidateAll_noCeoAgent_skipsProjectWithoutFetchingBatchOrCallingProvider() {
-        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any())).thenReturn(List.of("proj-1"));
+        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any(), any())).thenReturn(List.of("proj-1"));
         when(agentRepository.findByProjectIdAndSlug("proj-1", DefaultAgentSlugs.CEO)).thenReturn(Optional.empty());
 
         service.consolidateAll();
 
-        verify(repository, never()).findByProjectIdAndStatusAndCreatedAtLessThan(any(), any(), any(), any());
+        verify(repository, never()).findClaimableRawIds(any(), any(), any(), anyInt());
     }
 
     @Test
     void consolidateAll_knowledgeDisabled_skipsKnowledgeSearchAndPromotion() {
         String projectId = "proj-1";
-        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any())).thenReturn(List.of(projectId));
+        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any(), any())).thenReturn(List.of(projectId));
         ChatModelProvider provider = mock(ChatModelProvider.class);
         wireResolvableProvider(projectId, provider);
         when(projectSettingsService.isKnowledgeEnabled(projectId)).thenReturn(false);
 
         AgentMemory r1 = raw("r1", "some durable fact", MemoryType.FACT, 9, 0);
-        when(repository.findByProjectIdAndStatusAndCreatedAtLessThan(eq(projectId), eq(MemoryStatus.RAW), any(), any()))
-                .thenReturn(List.of(r1));
-        when(repository.findById("r1")).thenReturn(Optional.of(r1));
+        wireClaimableBatch(projectId, List.of(r1));
         when(memoryRetriever.retrieve(eq(projectId), anyString(), anyInt())).thenReturn(List.of());
         String decisionJson = "[{\"rawId\": \"r1\", \"action\": \"ADD\", \"importance\": 9, \"promote\": true}]";
         when(provider.complete(any(), eq("api-key")))
@@ -385,7 +397,7 @@ class MemoryConsolidationServiceTest {
     @Test
     void consolidateAll_promotionSuccess_stampsPromotedAtAndSubmitsExpectedShape() {
         String projectId = "proj-1";
-        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any())).thenReturn(List.of(projectId));
+        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any(), any())).thenReturn(List.of(projectId));
         ChatModelProvider provider = mock(ChatModelProvider.class);
         wireResolvableProvider(projectId, provider);
         when(projectSettingsService.isKnowledgeEnabled(projectId)).thenReturn(true);
@@ -393,9 +405,7 @@ class MemoryConsolidationServiceTest {
         AgentMemory r1 = raw("r1", "the team ships on Tuesdays", MemoryType.DECISION, 9, 0);
         r1.setAgentId("agent-9");
         r1.setSourceConversationId("conv-9");
-        when(repository.findByProjectIdAndStatusAndCreatedAtLessThan(eq(projectId), eq(MemoryStatus.RAW), any(), any()))
-                .thenReturn(List.of(r1));
-        when(repository.findById("r1")).thenReturn(Optional.of(r1));
+        wireClaimableBatch(projectId, List.of(r1));
         when(repository.findByIdAndProjectId("r1", projectId)).thenReturn(Optional.of(r1));
         when(memoryRetriever.retrieve(eq(projectId), anyString(), anyInt())).thenReturn(List.of());
         when(knowledgeSearchService.search(eq(projectId), anyString(), any(), any(), anyInt())).thenReturn(List.of());
@@ -427,15 +437,14 @@ class MemoryConsolidationServiceTest {
     @Test
     void consolidateAll_promotionSubmitFails_promotedAtStaysNullAndLogsWarning() {
         String projectId = "proj-1";
-        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any())).thenReturn(List.of(projectId));
+        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any(), any())).thenReturn(List.of(projectId));
         ChatModelProvider provider = mock(ChatModelProvider.class);
         wireResolvableProvider(projectId, provider);
         when(projectSettingsService.isKnowledgeEnabled(projectId)).thenReturn(true);
 
         AgentMemory r1 = raw("r1", "a durable decision", MemoryType.DECISION, 9, 0);
-        when(repository.findByProjectIdAndStatusAndCreatedAtLessThan(eq(projectId), eq(MemoryStatus.RAW), any(), any()))
-                .thenReturn(List.of(r1));
-        when(repository.findById("r1")).thenReturn(Optional.of(r1));
+        wireClaimableBatch(projectId, List.of(r1));
+        when(repository.findByIdAndProjectId("r1", projectId)).thenReturn(Optional.of(r1));
         when(memoryRetriever.retrieve(eq(projectId), anyString(), anyInt())).thenReturn(List.of());
         when(knowledgeSearchService.search(eq(projectId), anyString(), any(), any(), anyInt())).thenReturn(List.of());
         String decisionJson = "[{\"rawId\": \"r1\", \"action\": \"ADD\", \"importance\": 9, \"promote\": true}]";
@@ -452,7 +461,7 @@ class MemoryConsolidationServiceTest {
 
     @Test
     void consolidateAll_oneProjectFails_doesNotBlockTheNext() {
-        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any())).thenReturn(List.of("proj-bad", "proj-good"));
+        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any(), any())).thenReturn(List.of("proj-bad", "proj-good"));
         when(agentRepository.findByProjectIdAndSlug("proj-bad", DefaultAgentSlugs.CEO))
                 .thenThrow(new RuntimeException("boom"));
 
@@ -460,9 +469,7 @@ class MemoryConsolidationServiceTest {
         wireResolvableProvider("proj-good", provider);
         when(projectSettingsService.isKnowledgeEnabled("proj-good")).thenReturn(false);
         AgentMemory r1 = raw("r1", "content for the good project", MemoryType.FACT, 5, 0);
-        when(repository.findByProjectIdAndStatusAndCreatedAtLessThan(eq("proj-good"), eq(MemoryStatus.RAW), any(), any()))
-                .thenReturn(List.of(r1));
-        when(repository.findById("r1")).thenReturn(Optional.of(r1));
+        wireClaimableBatch("proj-good", List.of(r1));
         when(memoryRetriever.retrieve(eq("proj-good"), anyString(), anyInt())).thenReturn(List.of());
         String decisionJson = "[{\"rawId\": \"r1\", \"action\": \"ADD\"}]";
         when(provider.complete(any(), eq("api-key")))
@@ -471,5 +478,64 @@ class MemoryConsolidationServiceTest {
         service.consolidateAll();
 
         assertThat(r1.getStatus()).isEqualTo(MemoryStatus.ACTIVE);
+    }
+
+    // ---- claim discipline: empty claim stops the loop, unresolved rows keep their claim ----
+
+    @Test
+    void consolidateAll_fullFirstBatch_claimsAgainThenStopsOnEmptyClaim() {
+        String projectId = "proj-1";
+        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any(), any())).thenReturn(List.of(projectId));
+        ChatModelProvider provider = mock(ChatModelProvider.class);
+        wireResolvableProvider(projectId, provider);
+        when(projectSettingsService.isKnowledgeEnabled(projectId)).thenReturn(false);
+
+        List<AgentMemory> fullBatch = new ArrayList<>();
+        for (int i = 0; i < MemoryConsolidationService.BATCH_SIZE; i++) {
+            fullBatch.add(raw("r" + i, "content " + i, MemoryType.FACT, 5, 0));
+        }
+        List<String> ids = fullBatch.stream().map(AgentMemory::getId).toList();
+        for (AgentMemory m : fullBatch) {
+            when(repository.findById(m.getId())).thenReturn(Optional.of(m));
+        }
+        // First claim call returns a full batch (BATCH_SIZE rows, so the loop tries again); the second
+        // claim call finds nothing left claimable and the loop must stop there.
+        when(repository.findClaimableRawIds(eq(projectId), any(), any(), eq(MemoryConsolidationService.BATCH_SIZE)))
+                .thenReturn(ids, List.of());
+        when(repository.findAllById(ids)).thenReturn(fullBatch);
+        when(memoryRetriever.retrieve(eq(projectId), anyString(), anyInt())).thenReturn(List.of());
+        when(provider.complete(any(), eq("api-key")))
+                .thenReturn(new ChatResponse(ChatResponse.StopReason.COMPLETE, "[]", null, null));
+
+        service.consolidateAll();
+
+        verify(provider, times(1)).complete(any(), eq("api-key"));
+        verify(repository, times(2)).findClaimableRawIds(eq(projectId), any(), any(), eq(MemoryConsolidationService.BATCH_SIZE));
+    }
+
+    @Test
+    void consolidateAll_unresolvedRow_stampsClaimOnceAndIsNotRefetchedThisTick() {
+        String projectId = "proj-1";
+        when(repository.findDistinctProjectIdsWithConsolidatableRaw(any(), any())).thenReturn(List.of(projectId));
+        ChatModelProvider provider = mock(ChatModelProvider.class);
+        wireResolvableProvider(projectId, provider);
+        when(projectSettingsService.isKnowledgeEnabled(projectId)).thenReturn(false);
+
+        AgentMemory r1 = raw("r1", "unresolved content", MemoryType.FACT, 5, 0);
+        wireClaimableBatch(projectId, List.of(r1));
+        when(memoryRetriever.retrieve(eq(projectId), anyString(), anyInt())).thenReturn(List.of());
+        // Empty decision array -- the model resolved nothing, so r1 stays RAW.
+        when(provider.complete(any(), eq("api-key")))
+                .thenReturn(new ChatResponse(ChatResponse.StopReason.COMPLETE, "[]", null, null));
+
+        service.consolidateAll();
+
+        assertThat(r1.getStatus()).isEqualTo(MemoryStatus.RAW);
+        assertThat(r1.getConsolidationAttempts()).isEqualTo(1);
+        // Batch smaller than BATCH_SIZE ends the project's loop after one iteration -- the claim is
+        // stamped exactly once, and the row is never re-fetched (and re-billed to the LLM) this tick.
+        verify(repository, times(1)).findClaimableRawIds(eq(projectId), any(), any(), eq(MemoryConsolidationService.BATCH_SIZE));
+        verify(repository, times(1)).stampClaimed(List.of("r1"));
+        verify(provider, times(1)).complete(any(), eq("api-key"));
     }
 }

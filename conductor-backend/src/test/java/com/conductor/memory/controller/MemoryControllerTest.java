@@ -120,6 +120,22 @@ class MemoryControllerTest {
     }
 
     @Test
+    void list_limitAboveMax_returns400() throws Exception {
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/memories")
+                        .header("Authorization", "Bearer valid-token")
+                        .param("limit", "201"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void list_negativeOffset_returns400() throws Exception {
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/memories")
+                        .header("Authorization", "Bearer valid-token")
+                        .param("offset", "-1"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void list_nonMember_returns403() throws Exception {
         when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(false);
 

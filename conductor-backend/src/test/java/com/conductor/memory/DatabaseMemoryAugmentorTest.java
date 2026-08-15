@@ -119,4 +119,20 @@ class DatabaseMemoryAugmentorTest {
         verify(repository).bumpAccess(idsCaptor.capture());
         assertThat(idsCaptor.getValue()).containsExactly("mem-1", "mem-2");
     }
+
+    /** The single retrieved memory alone exceeds the budget -- the fill loop's first iteration breaks
+     *  before adding anything, so {@code includedIds} stays empty. Emitting the header plus a "(1 more
+     *  omitted)" line with zero actual memory content would be pure noise; this must fall back to
+     *  {@code unchanged} exactly like the no-matches case, and never bump access on nothing. */
+    @Test
+    void singleMemoryExceedingBudgetReturnsUnchanged() {
+        AgentMemory tooBig = memory("mem-1", "z".repeat(2_000));
+        when(retriever.retrieve(PROJECT_ID, "hello", 8)).thenReturn(List.of(
+                new MemoryRetriever.ScoredMemory(tooBig, 0.9, 0.9, 0.9)));
+
+        MemoryAugmentor.Augmentation result = augmentor.augment(PROJECT_ID, "agent-1", "conv-1", "hello", WINDOW);
+
+        assertThat(result).isEqualTo(MemoryAugmentor.Augmentation.unchanged(WINDOW));
+        verify(repository, never()).bumpAccess(org.mockito.ArgumentMatchers.anyCollection());
+    }
 }

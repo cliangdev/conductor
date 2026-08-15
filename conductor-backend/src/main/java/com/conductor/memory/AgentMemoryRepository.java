@@ -68,8 +68,9 @@ public interface AgentMemoryRepository extends JpaRepository<AgentMemory, String
      */
     @Query(value = """
             SELECT id, project_id, agent_id, source_conversation_id, memory_type, status, content,
-                   importance, valid_from, valid_to, superseded_by, consolidation_attempts, promoted_at,
-                   last_accessed_at, access_count, created_at, updated_at
+                   importance, valid_from, valid_to, superseded_by, consolidation_attempts,
+                   consolidation_claimed_at, promoted_at, last_accessed_at, access_count, created_at,
+                   updated_at
             FROM agent_memories
             WHERE project_id = :projectId
               AND (:status IS NULL
@@ -102,21 +103,44 @@ public interface AgentMemoryRepository extends JpaRepository<AgentMemory, String
                        @Param("memoryType") String memoryType, @Param("agentId") String agentId,
                        @Param("q") String q);
 
-    long countByProjectIdAndValidToIsNull(String projectId);
-
     long countByProjectIdAndStatusAndValidToIsNull(String projectId, MemoryStatus status);
 
     long countByProjectIdAndValidToIsNotNull(String projectId);
 
     // -- Consolidation / retention (Phase 4 consumers; added now per schema contract) -----------------
 
+    /** Excludes rows currently claimed (see {@link #findClaimableRawIds}) so a tick doesn't keep
+     *  revisiting a project whose entire due backlog another instance/batch already has locked. */
     @Query("SELECT DISTINCT m.projectId FROM AgentMemory m "
             + "WHERE m.status = com.conductor.memory.MemoryStatus.RAW "
-            + "AND m.createdAt < :cutoff AND m.consolidationAttempts < 5")
-    List<String> findDistinctProjectIdsWithConsolidatableRaw(@Param("cutoff") OffsetDateTime cutoff);
+            + "AND m.createdAt < :cutoff AND m.consolidationAttempts < 5 "
+            + "AND (m.consolidationClaimedAt IS NULL OR m.consolidationClaimedAt < :staleClaimCutoff)")
+    List<String> findDistinctProjectIdsWithConsolidatableRaw(@Param("cutoff") OffsetDateTime cutoff,
+                                                               @Param("staleClaimCutoff") OffsetDateTime staleClaimCutoff);
 
-    List<AgentMemory> findByProjectIdAndStatusAndCreatedAtLessThan(
-            String projectId, MemoryStatus status, OffsetDateTime cutoff, Pageable pageable);
+    /**
+     * The oldest-first batch (up to {@code limit}) of a project's due, unclaimed RAW rows, row-locked so
+     * two concurrent {@code MemoryConsolidationService} batches -- another scheduler instance, or the next
+     * iteration of this same tick's loop -- can never claim the same row. Mirrors {@code
+     * KnowledgeSourceRepository#findDuePendingForProjectAndDomain}: {@code FOR UPDATE SKIP LOCKED} isn't
+     * expressible in JPQL, so this is native. A row already claimed by a still-live claim (younger than
+     * {@code staleClaimCutoff}) is excluded; a row whose claim has gone stale (the claiming instance
+     * crashed mid-tick) is claimable again. Caller must stamp the returned ids via {@link #stampClaimed}
+     * in the same transaction that ran this query, before the row locks release.
+     */
+    @Query(value = "SELECT id FROM agent_memories WHERE project_id = :projectId AND status = 'RAW' "
+            + "AND created_at < :cutoff AND consolidation_attempts < 5 "
+            + "AND (consolidation_claimed_at IS NULL OR consolidation_claimed_at < :staleClaimCutoff) "
+            + "ORDER BY created_at LIMIT :limit FOR UPDATE SKIP LOCKED", nativeQuery = true)
+    List<String> findClaimableRawIds(@Param("projectId") String projectId, @Param("cutoff") OffsetDateTime cutoff,
+                                      @Param("staleClaimCutoff") OffsetDateTime staleClaimCutoff,
+                                      @Param("limit") int limit);
+
+    /** Stamps the claim marker on a batch of ids just selected by {@link #findClaimableRawIds} -- must run
+     *  in the same transaction, while those rows' locks are still held. */
+    @Modifying
+    @Query("UPDATE AgentMemory m SET m.consolidationClaimedAt = CURRENT_TIMESTAMP WHERE m.id IN :ids")
+    void stampClaimed(@Param("ids") Collection<String> ids);
 
     @Query("SELECT m FROM AgentMemory m WHERE m.validTo IS NULL AND m.importance <= :maxImportance "
             + "AND COALESCE(m.lastAccessedAt, m.createdAt) < :cutoff")

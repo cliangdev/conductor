@@ -21,7 +21,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -59,6 +58,13 @@ import java.util.stream.Collectors;
  * {@link AgentMemory#getConsolidationAttempts()} and retries on a later tick, but at {@value
  * #MAX_ATTEMPTS} attempts the row fail-safe promotes to {@link MemoryStatus#ACTIVE} as-is -- the pipeline
  * must never wedge on a row the model can't resolve, and must never silently drop it either.
+ *
+ * <p>Each batch is claimed -- locked and stamped, {@link AgentMemoryRepository#findClaimableRawIds} --
+ * before it's handed to the LLM (see {@link #claimBatchInNewTx}), the same {@code FOR UPDATE SKIP LOCKED}
+ * discipline {@code KnowledgeSourceRepository}'s claim query uses. Without it, an unresolved row (still
+ * RAW after a batch) would be re-fetched by the very next loop iteration -- billing the same content to
+ * the LLM repeatedly within one tick -- and two scheduler instances running concurrently could process,
+ * and bill for, the same rows twice.
  */
 @Component
 public class MemoryConsolidationService {
@@ -73,6 +79,10 @@ public class MemoryConsolidationService {
     private static final int MAX_BATCHES_PER_PROJECT = 5;
     /** A raw row that still has no resolvable decision after this many attempts is fail-safe promoted. */
     static final int MAX_ATTEMPTS = 5;
+    /** A claim (see {@link AgentMemoryRepository#findClaimableRawIds}) older than this is treated as
+     *  abandoned -- the claiming instance presumably crashed mid-tick -- and its rows become claimable
+     *  again. Well under the scheduler's 24h tick period, but long enough to outlive any real tick. */
+    static final int CLAIM_STALE_HOURS = 6;
 
     /** Live neighbor memories fetched per raw row before filtering down to ACTIVE-only context. */
     private static final int NEIGHBOR_FETCH_LIMIT = 8;
@@ -146,17 +156,18 @@ public class MemoryConsolidationService {
      *  the rest. */
     public void consolidateAll() {
         OffsetDateTime cutoff = OffsetDateTime.now().minusHours(minAgeHours);
-        List<String> projectIds = repository.findDistinctProjectIdsWithConsolidatableRaw(cutoff);
+        OffsetDateTime staleClaimCutoff = OffsetDateTime.now().minusHours(CLAIM_STALE_HOURS);
+        List<String> projectIds = repository.findDistinctProjectIdsWithConsolidatableRaw(cutoff, staleClaimCutoff);
         for (String projectId : projectIds) {
             try {
-                consolidateProject(projectId, cutoff);
+                consolidateProject(projectId, cutoff, staleClaimCutoff);
             } catch (Exception e) {
                 log.error("Memory consolidation failed for project {}: {}", projectId, e.getMessage(), e);
             }
         }
     }
 
-    private void consolidateProject(String projectId, OffsetDateTime cutoff) {
+    private void consolidateProject(String projectId, OffsetDateTime cutoff, OffsetDateTime staleClaimCutoff) {
         ProviderContext ctx = resolveProvider(projectId);
         if (ctx == null) {
             return;
@@ -164,8 +175,7 @@ public class MemoryConsolidationService {
         boolean knowledgeEnabled = projectSettingsService.isKnowledgeEnabled(projectId);
 
         for (int i = 0; i < MAX_BATCHES_PER_PROJECT; i++) {
-            List<AgentMemory> batch = repository.findByProjectIdAndStatusAndCreatedAtLessThan(
-                    projectId, MemoryStatus.RAW, cutoff, PageRequest.of(0, BATCH_SIZE));
+            List<AgentMemory> batch = self.claimBatchInNewTx(projectId, cutoff, staleClaimCutoff);
             if (batch.isEmpty()) {
                 return;
             }
@@ -175,7 +185,7 @@ public class MemoryConsolidationService {
                 candidates = processBatch(projectId, ctx, batch, knowledgeEnabled);
             } catch (Exception e) {
                 log.warn("Memory consolidation batch failed for project {}: {}", projectId, e.getMessage());
-                return; // leave the rest of this project's backlog for the next tick
+                return; // leave the rest of this project's backlog (still claimed) for the next tick
             }
 
             if (knowledgeEnabled) {
@@ -188,6 +198,27 @@ public class MemoryConsolidationService {
                 return; // drained this project's due backlog for this tick
             }
         }
+    }
+
+    /**
+     * Claims (locks and stamps {@link AgentMemory#getConsolidationClaimedAt()} on) the next batch of a
+     * project's due RAW rows, in its own {@code REQUIRES_NEW} transaction so the claim commits -- and the
+     * row locks release -- immediately, independent of however long the LLM call and batch-apply that
+     * follow take. Mirrors {@code KnowledgeSourceRepository}'s {@code FOR UPDATE SKIP LOCKED} claim
+     * convention: two scheduler instances (or, within one instance, two successive iterations of {@link
+     * #consolidateProject}'s loop) can never claim the same row, so a row that goes unresolved this batch
+     * keeps its claim stamp rather than being re-fetched -- and re-billed to the LLM -- later in the same
+     * tick. An empty result means nothing is currently claimable (backlog drained, or everything else is
+     * claimed by a concurrent batch); the caller treats that as "done for this project, this tick."
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public List<AgentMemory> claimBatchInNewTx(String projectId, OffsetDateTime cutoff, OffsetDateTime staleClaimCutoff) {
+        List<String> ids = repository.findClaimableRawIds(projectId, cutoff, staleClaimCutoff, BATCH_SIZE);
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        repository.stampClaimed(ids);
+        return repository.findAllById(ids);
     }
 
     private ProviderContext resolveProvider(String projectId) {
@@ -299,10 +330,13 @@ public class MemoryConsolidationService {
 
     /**
      * Applies every parsed decision for one batch in a single {@code REQUIRES_NEW} transaction, then
-     * returns the promotion candidates (decisions with {@code promote == true} whose resulting ACTIVE
-     * row exists and hasn't been promoted yet) for the caller to hand to knowledge ingestion -- that
-     * submission call happens outside this transaction (it opens its own), so a knowledge-service hiccup
-     * can never roll back memory state that was otherwise successfully consolidated.
+     * returns the promotion candidates (decisions with {@code promote == true}, built from each resulting
+     * row's ACTIVE-and-unpromoted state as of right now, in this transaction) for the caller to hand to
+     * knowledge ingestion -- that submission call happens outside this transaction (it opens its own), so
+     * a knowledge-service hiccup can never roll back memory state that was otherwise successfully
+     * consolidated. Because that hand-off happens later and outside this transaction, {@link #promote}
+     * re-verifies each candidate is still ACTIVE, live, and unpromoted immediately before submitting it --
+     * this method's own candidate list only reflects the state at the moment it was built.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public List<PromotionCandidate> applyBatchInNewTx(String projectId, List<AgentMemory> batch,
@@ -431,7 +465,23 @@ public class MemoryConsolidationService {
         repository.save(current);
     }
 
+    /**
+     * Re-verifies eligibility immediately before submitting: {@code candidate} was built from a row's
+     * in-transaction state back in {@link #applyBatchInNewTx}, but this method runs later and outside
+     * that transaction (each project's promotions run after that transaction has already committed), so
+     * the row could since have been superseded or already promoted by a concurrent path. A candidate that
+     * no longer qualifies is silently skipped rather than filed to the knowledge inbox a second time.
+     */
+    private boolean stillPromotionEligible(String projectId, PromotionCandidate candidate) {
+        return repository.findByIdAndProjectId(candidate.memoryId(), projectId)
+                .filter(m -> m.getStatus() == MemoryStatus.ACTIVE && m.getValidTo() == null && m.getPromotedAt() == null)
+                .isPresent();
+    }
+
     private void promote(String projectId, PromotionCandidate candidate) {
+        if (!stillPromotionEligible(projectId, candidate)) {
+            return;
+        }
         try {
             String payload = buildPromotionPayload(candidate);
             String dedupKey = "memory-promoted:" + candidate.memoryId() + ":" + sha256Hex(payload);

@@ -41,6 +41,7 @@ src/main/java/com/conductor/
 ├── integration/   # Connector framework + connectors (github, discord, gcp, ...)
 ├── internal/      # /internal/v1 controllers (run-token auth, not JWT)
 ├── knowledge/     # Knowledge Center: sources, pages, librarian dispatch
+├── memory/        # Agent memory: extraction, consolidation, retrieval, retention
 ├── repository/    # Spring Data JPA repositories
 ├── security/      # JWT filter, API key filter, Firebase token verification
 ├── service/       # Business logic
@@ -73,6 +74,7 @@ src/
 │   │   ├── workflows/         # Automation (YAML) list/editor + lifecycle/ statechart editors
 │   │   ├── agents/            # Agent list, creation, settings
 │   │   ├── knowledge/         # Wiki pages + ingestion sources
+│   │   ├── memory/            # Workspace agent-memory browser
 │   │   ├── integrations/      # Connector catalog + connections
 │   │   ├── docs/              # Project docs (folders, versions)
 │   │   └── settings/          # general, members, api-keys, cli, notifications, secrets

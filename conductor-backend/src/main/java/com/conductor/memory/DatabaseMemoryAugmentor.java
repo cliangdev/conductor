@@ -67,14 +67,18 @@ public class DatabaseMemoryAugmentor implements MemoryAugmentor {
                 sb.append(line);
                 includedIds.add(s.memory().getId());
             }
+            if (includedIds.isEmpty()) {
+                // The budget couldn't fit even the single highest-scored memory -- emitting the header
+                // plus an "(N more omitted)" line with zero actual memories would be pure noise.
+                return Augmentation.unchanged(window);
+            }
+
             int omitted = scored.size() - i;
             if (omitted > 0) {
                 sb.append("(").append(omitted).append(" more omitted for space)\n");
             }
 
-            if (!includedIds.isEmpty()) {
-                repository.bumpAccess(includedIds);
-            }
+            repository.bumpAccess(includedIds);
             return new Augmentation(window, sb.toString().stripTrailing());
         } catch (Exception e) {
             log.warn("Memory augmentation failed for project {} conversation {}: {}",

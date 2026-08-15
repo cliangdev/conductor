@@ -172,10 +172,9 @@ describe('MemoryPage', () => {
     )
   })
 
-  it('creating a memory calls createMemory and shows it in the list', async () => {
-    vi.mocked(memoryApi.createMemory).mockResolvedValue(
-      memory({ id: 'mem-new', content: 'New durable fact from a conversation.', type: 'fact', importance: 5 }),
-    )
+  it('creating a memory calls createMemory and re-queries the list', async () => {
+    const created = memory({ id: 'mem-new', content: 'New durable fact from a conversation.', type: 'fact', importance: 5 })
+    vi.mocked(memoryApi.createMemory).mockResolvedValue(created)
 
     render(<MemoryPage />)
     await screen.findByText(/team prefers feature branches/i)
@@ -187,6 +186,10 @@ describe('MemoryPage', () => {
       target: { value: 'New durable fact from a conversation.' },
     })
     fireEvent.click(within(modal).getByRole('button', { name: /^add memory$/i }))
+
+    // The page re-queries after a create (the new memory may not match the active filters and the
+    // server owns the sort order) instead of splicing the created row in locally.
+    vi.mocked(memoryApi.listMemories).mockResolvedValue({ items: [created, memory()], total: 2 })
 
     await waitFor(() => {
       expect(memoryApi.createMemory).toHaveBeenCalledWith(

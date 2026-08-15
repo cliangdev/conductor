@@ -350,10 +350,6 @@ const WELL_KNOWN_HUES: Record<string, StatusHue> = {
   setuprequired: 'amber',
   narrating: 'blue',
   submitted: 'green',
-  // Agent memory's derived tri-state (see docs/memory.md) — `active` above already covers the
-  // consolidated/durable case with the same "done" green it uses everywhere else.
-  raw: 'amber',
-  superseded: 'slate',
 }
 
 // Human labels for status ids whose raw form reads as schema jargon rather than something a user
@@ -362,7 +358,6 @@ const WELL_KNOWN_HUES: Record<string, StatusHue> = {
 const WELL_KNOWN_LABELS: Record<string, string> = {
   awaitingpickup: 'Waiting for runner',
   localpickuptimeout: 'Never picked up',
-  raw: 'Awaiting consolidation',
 }
 
 // Fallback when the status id itself isn't recognized — keyed by workflow/lifecycle category.

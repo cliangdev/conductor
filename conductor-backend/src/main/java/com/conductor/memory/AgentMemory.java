@@ -68,6 +68,11 @@ public class AgentMemory {
     @Column(name = "consolidation_attempts", nullable = false)
     private int consolidationAttempts;
 
+    /** Set by {@code MemoryConsolidationService}'s claim step; null means unclaimed. See {@code
+     *  AgentMemoryRepository#claimBatch}. */
+    @Column(name = "consolidation_claimed_at")
+    private OffsetDateTime consolidationClaimedAt;
+
     @Column(name = "promoted_at")
     private OffsetDateTime promotedAt;
 
@@ -139,6 +144,9 @@ public class AgentMemory {
 
     public int getConsolidationAttempts() { return consolidationAttempts; }
     public void setConsolidationAttempts(int consolidationAttempts) { this.consolidationAttempts = consolidationAttempts; }
+
+    public OffsetDateTime getConsolidationClaimedAt() { return consolidationClaimedAt; }
+    public void setConsolidationClaimedAt(OffsetDateTime consolidationClaimedAt) { this.consolidationClaimedAt = consolidationClaimedAt; }
 
     public OffsetDateTime getPromotedAt() { return promotedAt; }
     public void setPromotedAt(OffsetDateTime promotedAt) { this.promotedAt = promotedAt; }

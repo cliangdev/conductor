@@ -2,11 +2,11 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { BrainIcon, LibraryIcon, SearchIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiErrorMessage, listAgents, type Agent } from '@/lib/api'
+import { apiErrorMessage, listAgents, type Agent, type ApiError } from '@/lib/api'
 import {
   createMemory,
   deleteMemory,
@@ -30,7 +30,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import { StatusBadge } from '@/components/ui/status-badge'
+import { StatusBadge, type StatusHue } from '@/components/ui/status-badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -44,6 +44,12 @@ import { AgentAvatar } from '@/components/agents/AgentAvatar'
 const MEMORY_TYPES: MemoryType[] = ['fact', 'decision', 'preference', 'event']
 const MEMORY_STATUSES: MemoryStatus[] = ['raw', 'active', 'superseded']
 const PAGE_SIZE = 50
+
+// Domain-local status styling: memory's derived tri-state ids are common English words ("raw",
+// "superseded") that must not enter the app-wide WELL_KNOWN_HUES map — a Workflow could name a Work
+// Item status "Raw" and would inherit memory's styling. Hue passed explicitly to StatusBadge instead.
+const MEMORY_STATUS_HUES: Record<MemoryStatus, StatusHue> = { raw: 'amber', active: 'green', superseded: 'slate' }
+const MEMORY_STATUS_LABELS: Record<MemoryStatus, string> = { raw: 'Raw', active: 'Active', superseded: 'Superseded' }
 
 export default function MemoryPage() {
   const { projectId } = useParams<{ projectId: string }>()
@@ -111,8 +117,14 @@ export default function MemoryPage() {
       .catch(() => {})
   }, [projectId, accessToken])
 
+  // Monotonic request sequence shared by loadMemories and handleLoadMore: a response only lands if no
+  // newer list request has started since, so a slow response for an old filter/search combination can
+  // never overwrite (or append into) results for the current one.
+  const listReqSeq = useRef(0)
+
   const loadMemories = useCallback(() => {
     if (!accessToken || !projectId) return
+    const seq = ++listReqSeq.current
     setLoading(true)
     setError(null)
     listMemories(projectId, accessToken, {
@@ -123,11 +135,17 @@ export default function MemoryPage() {
       offset: 0,
     })
       .then((res) => {
+        if (seq !== listReqSeq.current) return
         setItems(res.items)
         setTotal(res.total)
       })
-      .catch((err) => setError(apiErrorMessage(err, 'Failed to load memories.')))
-      .finally(() => setLoading(false))
+      .catch((err) => {
+        if (seq !== listReqSeq.current) return
+        setError(apiErrorMessage(err, 'Failed to load memories.'))
+      })
+      .finally(() => {
+        if (seq === listReqSeq.current) setLoading(false)
+      })
   }, [projectId, accessToken, query, statusFilter, typeFilter])
 
   useEffect(() => {
@@ -136,6 +154,7 @@ export default function MemoryPage() {
 
   async function handleLoadMore() {
     if (!accessToken || !projectId) return
+    const seq = listReqSeq.current
     setLoadingMore(true)
     try {
       const res = await listMemories(projectId, accessToken, {
@@ -145,7 +164,13 @@ export default function MemoryPage() {
         limit: PAGE_SIZE,
         offset: items.length,
       })
-      setItems((prev) => [...prev, ...res.items])
+      if (seq !== listReqSeq.current) return // filters changed mid-flight; these rows belong to the old query
+      // Offset pagination over a continuously-written, created_at-DESC table: a row inserted between
+      // pages shifts the window, so a page can re-return rows already shown. Dedupe by id on append.
+      setItems((prev) => {
+        const seen = new Set(prev.map((m) => m.id))
+        return [...prev, ...res.items.filter((m) => !seen.has(m.id))]
+      })
       setTotal(res.total)
     } catch (err) {
       showToast(apiErrorMessage(err, 'Failed to load more memories.'), 'error')
@@ -173,10 +198,11 @@ export default function MemoryPage() {
     setAddSubmitting(true)
     setAddError(null)
     try {
-      const created = await createMemory(projectId, { content, type: addType, importance: addImportance }, accessToken)
-      setItems((prev) => [created, ...prev])
-      setTotal((t) => t + 1)
+      await createMemory(projectId, { content, type: addType, importance: addImportance }, accessToken)
       setAddOpen(false)
+      // Re-query instead of splicing the created row in locally: the new memory may not match the
+      // active status/type/search filters, and the server owns the sort order.
+      loadMemories()
       refreshCounts()
       showToast('Memory created')
     } catch (err) {
@@ -195,12 +221,22 @@ export default function MemoryPage() {
 
   useEffect(() => {
     if (!detailId || !accessToken || !projectId) return
+    let stale = false // a newer detail opened (or the sheet closed) before this response landed
     setDetailLoading(true)
     setDetailError(null)
     getMemory(projectId, detailId, accessToken)
-      .then(setDetail)
-      .catch((err) => setDetailError(apiErrorMessage(err, 'Failed to load memory.')))
-      .finally(() => setDetailLoading(false))
+      .then((d) => {
+        if (!stale) setDetail(d)
+      })
+      .catch((err) => {
+        if (!stale) setDetailError(apiErrorMessage(err, 'Failed to load memory.'))
+      })
+      .finally(() => {
+        if (!stale) setDetailLoading(false)
+      })
+    return () => {
+      stale = true
+    }
   }, [detailId, projectId, accessToken])
 
   function closeDetail() {
@@ -237,11 +273,24 @@ export default function MemoryPage() {
         accessToken,
       )
       setDetail((prev) => (prev ? { ...prev, ...updated } : prev))
-      setItems((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
+      // Re-query like the create path: an edit can change `type` out from under an active type filter,
+      // and the server owns the sort order.
+      loadMemories()
       setEditing(false)
       showToast('Memory updated')
     } catch (err) {
-      setEditError(apiErrorMessage(err, 'Failed to update memory.'))
+      const status = (err as ApiError).status
+      if (status === 409) {
+        // Superseded by consolidation after the sheet was opened; the client-side disable was stale.
+        setEditError('This memory was superseded while you were editing — close and reopen it to see the latest version.')
+      } else if (status === 404) {
+        showToast('This memory no longer exists.', 'error')
+        closeDetail()
+        loadMemories()
+        refreshCounts()
+      } else {
+        setEditError(apiErrorMessage(err, 'Failed to update memory.'))
+      }
     } finally {
       setEditSubmitting(false)
     }
@@ -258,7 +307,14 @@ export default function MemoryPage() {
       showToast('Memory deleted')
       closeDetail()
     } catch (err) {
-      showToast(apiErrorMessage(err, 'Failed to delete memory.'), 'error')
+      if ((err as ApiError).status === 404) {
+        // Already gone (deleted elsewhere or purged) -- the desired end state, so just resync.
+        closeDetail()
+        loadMemories()
+        refreshCounts()
+      } else {
+        showToast(apiErrorMessage(err, 'Failed to delete memory.'), 'error')
+      }
     } finally {
       setDeleteSubmitting(false)
     }
@@ -368,7 +424,7 @@ export default function MemoryPage() {
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <Badge variant="secondary" className="capitalize">{m.type}</Badge>
-                      <StatusBadge status={m.status} />
+                      <StatusBadge status={m.status} hue={MEMORY_STATUS_HUES[m.status]} label={MEMORY_STATUS_LABELS[m.status]} />
                       <span className="text-xs text-muted-foreground">Importance {m.importance}/10</span>
                       {agent && (
                         <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
@@ -508,7 +564,7 @@ export default function MemoryPage() {
               <>
                 <div className="flex items-center gap-2 flex-wrap">
                   <Badge variant="secondary" className="capitalize">{detail.type}</Badge>
-                  <StatusBadge status={detail.status} />
+                  <StatusBadge status={detail.status} hue={MEMORY_STATUS_HUES[detail.status]} label={MEMORY_STATUS_LABELS[detail.status]} />
                   <span className="text-xs text-muted-foreground">Importance {detail.importance}/10</span>
                 </div>
                 <p className="text-sm whitespace-pre-wrap">{detail.content}</p>
@@ -554,7 +610,9 @@ export default function MemoryPage() {
 
                 {detail.status === 'superseded' && (
                   <Alert variant="warning">
-                    This memory has been superseded — its validity window is closed, so it can no longer be edited.
+                    {detail.supersededBy
+                      ? 'This memory has been superseded by a newer version, so it can no longer be edited.'
+                      : 'This memory aged out — it went unused long enough that retention closed it, so it can no longer be edited.'}
                   </Alert>
                 )}
 

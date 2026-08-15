@@ -138,7 +138,8 @@ class MemoryServiceTest extends AbstractNoneWebIntegrationTest {
     @Test
     void updateOnClosedRowIsRejected() {
         AgentMemory original = memoryService.createManual(projectId, "will be closed", MemoryType.FACT, 5);
-        memoryService.closeValidity(projectId, original.getId());
+        original.setValidTo(java.time.OffsetDateTime.now());
+        memoryRepository.save(original);
 
         assertThatThrownBy(() -> memoryService.update(projectId, original.getId(), "new content", null, null))
                 .isInstanceOf(MemoryConflictException.class);
