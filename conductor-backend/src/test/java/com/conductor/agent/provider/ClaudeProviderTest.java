@@ -1,16 +1,22 @@
 package com.conductor.agent.provider;
 
 import com.anthropic.client.AnthropicClient;
+import com.anthropic.core.AutoPager;
+import com.anthropic.models.messages.Message;
+import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.models.ModelListPage;
+import com.anthropic.services.blocking.MessageService;
 import com.anthropic.services.blocking.ModelService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -45,7 +51,7 @@ class ClaudeProviderTest {
     }
 
     @Test
-    void availableModelsTieBreaksEqualCreatedAtByIdDescending() {
+    void availableModelsTieBreaksEqualLengthIdsAtTheSameCreatedAtByIdDescending() {
         OffsetDateTime same = OffsetDateTime.parse("2026-05-01T00:00:00Z");
         ModelListPage page = pageOf(modelInfo("claude-opus-4-7", same), modelInfo("claude-opus-4-8", same)); // see note above
         ModelService models = mock(ModelService.class);
@@ -98,6 +104,36 @@ class ClaudeProviderTest {
         assertThat(provider.defaultModel()).isEqualTo(ClaudeProvider.DEFAULT_MODEL);
     }
 
+    @Test
+    void completeWithBlankModelStillResolvesToDefaultModelEvenWhenDiscoveryReportsADifferentNewest() {
+        // The real invariant defaultModelAndCompleteBlankModelSubstitutionAreUnaffectedByDiscovery above
+        // only pins a getter -- it would still pass if availableModels() were deleted from ClaudeProvider
+        // entirely. Prove the actual behavior instead: stub discovery to report a newer model than
+        // DEFAULT_MODEL, then confirm complete()'s blank-model substitution ignores it.
+        ModelListPage page = pageOf(modelInfo("claude-opus-5-1", OffsetDateTime.now())); // see note above
+        ModelService models = mock(ModelService.class);
+        when(models.list()).thenReturn(page);
+
+        MessageService messages = mock(MessageService.class);
+        when(messages.create(any(MessageCreateParams.class))).thenReturn(mock(Message.class));
+        AnthropicClient client = mock(AnthropicClient.class);
+        when(client.models()).thenReturn(models);
+        when(client.messages()).thenReturn(messages);
+
+        ClaudeProvider provider = new ClaudeProvider(new ObjectMapper(), keyCapturingFactory(client));
+
+        // Confirm discovery really does report the different model, so the assertion below is proof of
+        // complete() ignoring it, not proof the stub silently didn't apply.
+        assertThat(provider.availableModels("sk-test")).extracting(ModelInfo::id).contains("claude-opus-5-1");
+
+        provider.complete(new ChatRequest(null, null, List.of(ChatMessage.user("hi")), List.of(), null, null),
+                "sk-test");
+
+        ArgumentCaptor<MessageCreateParams> captor = ArgumentCaptor.forClass(MessageCreateParams.class);
+        verify(messages).create(captor.capture());
+        assertThat(captor.getValue().model().asString()).isEqualTo(ClaudeProvider.DEFAULT_MODEL);
+    }
+
     // ---- helpers ----
 
     private AnthropicClient clientWithModels(ModelService modelService) {
@@ -113,9 +149,17 @@ class ClaudeProviderTest {
         };
     }
 
+    /**
+     * Production code now drives discovery through {@code page.autoPager().stream()} (see
+     * {@link ClaudeProvider#listModels}), not {@code page.data()} directly -- see
+     * {@code OpenAiProviderTest#pageOf}'s javadoc for why {@code items()}/{@code hasNextPage()}/
+     * {@code autoPager()} must all be stubbed on the mocked page instead.
+     */
     private ModelListPage pageOf(com.anthropic.models.models.ModelInfo... models) {
         ModelListPage page = mock(ModelListPage.class);
-        when(page.data()).thenReturn(List.of(models));
+        when(page.items()).thenReturn(List.of(models));
+        when(page.hasNextPage()).thenReturn(false);
+        when(page.autoPager()).thenReturn(AutoPager.Companion.from(page));
         return page;
     }
 

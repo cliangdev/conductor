@@ -235,14 +235,15 @@ class AgentControllerTest {
     void listAgentProviders_happyPath_returnsProvidersWithDefaultModel() throws Exception {
         when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
         when(agentService.listProviders()).thenReturn(List.of(
-                new AgentService.ProviderOption("claude", "claude-opus-4-8")));
+                new AgentService.ProviderOption("claude", "claude-opus-4-8", false)));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers")
                         .header("Authorization", "Bearer member-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].id").value("claude"))
-                .andExpect(jsonPath("$[0].defaultModel").value("claude-opus-4-8"));
+                .andExpect(jsonPath("$[0].defaultModel").value("claude-opus-4-8"))
+                .andExpect(jsonPath("$[0].defaultModelIsLive").value(false));
     }
 
     @Test
@@ -257,8 +258,11 @@ class AgentControllerTest {
     // ---- listProviderModels ----
 
     @Test
-    void listProviderModels_nonMember_returns403() throws Exception {
-        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(false);
+    void listProviderModels_nonAdmin_returns403() throws Exception {
+        // ADMIN/CREATOR-gated, not just member -- this decrypts and spends the project's key against
+        // the vendor, same trigger as verifyProviderCredential.
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.REVIEWER)));
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/openai/models")
                         .header("Authorization", "Bearer member-token"))
@@ -267,7 +271,8 @@ class AgentControllerTest {
 
     @Test
     void listProviderModels_unknownProvider_returnsEmptyListNot500() throws Exception {
-        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         when(providerRegistry.findById("not-a-provider")).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/agents/providers/not-a-provider/models")
@@ -278,7 +283,8 @@ class AgentControllerTest {
 
     @Test
     void listProviderModels_noStoredCredential_returnsEmptyListWithoutCallingProvider() throws Exception {
-        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         ChatModelProvider provider = org.mockito.Mockito.mock(ChatModelProvider.class);
         when(providerRegistry.findById("openai")).thenReturn(Optional.of(provider));
         when(providerCredentialService.resolveApiKey(PROJECT_ID, "openai")).thenReturn(Optional.empty());
@@ -293,7 +299,8 @@ class AgentControllerTest {
 
     @Test
     void listProviderModels_populated_returnsIdsAndLatestFlag() throws Exception {
-        when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
         ChatModelProvider provider = org.mockito.Mockito.mock(ChatModelProvider.class);
         when(providerRegistry.findById("openai")).thenReturn(Optional.of(provider));
         when(providerCredentialService.resolveApiKey(PROJECT_ID, "openai")).thenReturn(Optional.of("sk-test"));

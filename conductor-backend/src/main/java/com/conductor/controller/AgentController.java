@@ -225,14 +225,19 @@ public class AgentController implements AgentsApi {
     public ResponseEntity<List<AgentProviderInfo>> listAgentProviders(String projectId) {
         requireMember(projectId);
         List<AgentProviderInfo> providers = agentService.listProviders().stream()
-                .map(p -> new AgentProviderInfo().id(p.id()).defaultModel(p.defaultModel()))
+                .map(p -> new AgentProviderInfo().id(p.id()).defaultModel(p.defaultModel())
+                        .defaultModelIsLive(p.defaultModelIsLive()))
                 .toList();
         return ResponseEntity.ok(providers);
     }
 
     @Override
     public ResponseEntity<ProviderModelsResponse> listProviderModels(String projectId, String provider) {
-        requireMember(projectId);
+        // ADMIN/CREATOR, not just member: this decrypts the project's KMS-wrapped key and makes an
+        // outbound call to the vendor with it (same trigger as verifyProviderCredential below) -- a
+        // REVIEWER has no business spending that key on demand just by opening the Agents form, which
+        // is itself gated on agent.manage.
+        requireAdminOrCreator(projectId);
         // An unknown provider, a provider with no stored credential, or a key that won't decrypt is
         // not an error here -- the Agents-form model picker just falls back to free text, and a
         // broken credential already surfaces loudly under Settings -> AI Providers.

@@ -53,6 +53,12 @@ public class OpenAiProvider implements ChatModelProvider {
      * candidate set after filtering. In the common case (a working key) both {@link #defaultModel()}
      * and {@link #complete}'s blank-model substitution resolve to whatever discovery reports as
      * {@code latest}, not this constant.
+     *
+     * <p>Deliberately conservative — not the newest id the SDK knows about (already ahead of this, e.g.
+     * {@code gpt-5.5}/{@code gpt-5.6-*}): unlike {@link OpenAiApiPreflight#PROBE_MODEL} (which wants the
+     * cheapest model broadly available), this wants the model most likely to still exist and be
+     * reachable on *any* account when discovery itself couldn't be trusted — the newest id is exactly the
+     * one least likely to satisfy that on an account that hasn't been granted access to it yet.
      */
     public static final String FALLBACK_MODEL = "gpt-5.4";
 
@@ -64,26 +70,90 @@ public class OpenAiProvider implements ChatModelProvider {
     private static final long DEFAULT_MAX_COMPLETION_TOKENS = 32768;
 
     /**
-     * Substrings that mark a {@code models.list()} id as NOT "the latest general-purpose chat model"
-     * even though {@link ChatModel} recognizes it (see {@link #isCandidateChatModel}):
+     * A candidate chat-model id: the general-purpose {@code gpt-<digit>...} and {@code o<digit>...}
+     * (reasoning) families. This replaces gating on the pinned SDK's {@link ChatModel} enum — that enum
+     * is frozen at the SDK version this backend was built against, so any model OpenAI ships afterward
+     * (e.g. a same-generation {@code gpt-6}) would be permanently invisible to discovery, defeating the
+     * entire point of live discovery ("track new releases without a code change" — see
+     * {@code docs/ai-providers.md}). The tradeoff is real: an id that happens to match this shape but
+     * isn't actually a real/supported model can now surface where the SDK enum would have caught it —
+     * accepted as the price of not being capped by the SDK's release cadence.
+     *
+     * <p>Deliberately excludes ids that don't fit either shape, e.g. {@code chatgpt-4o-latest},
+     * {@code davinci-002}, {@code tts-1}, {@code whisper-1}, {@code dall-e-3}, {@code text-embedding-*},
+     * {@code omni-moderation-*} — none of those are general-purpose chat-completions models.
+     */
+    private static final Pattern CHAT_FAMILY_ID_PATTERN = Pattern.compile("^(gpt-\\d.*|o\\d.*)$");
+
+    /**
+     * Substrings that mark a {@link #CHAT_FAMILY_ID_PATTERN}-matching id as NOT a general-purpose chat
+     * *candidate* at all — filtered out of the picker entirely, not just out of "latest" contention (see
+     * {@link #isCandidateChatModel}):
      * <ul>
      *   <li>{@code -audio}, {@code -realtime}, {@code -transcribe}, {@code -tts} — voice/audio-first
      *       models, not text chat completions.</li>
      *   <li>{@code -search} — web-search-augmented variant, not the base model.</li>
      *   <li>{@code -image} — image-generation variant.</li>
-     *   <li>{@code -codex} — a coding-specialized variant, not the general-purpose flagship.</li>
-     *   <li>{@code -mini}, {@code -nano} — real, cheaper/smaller tiers, but never "the latest"
-     *       flagship a blank-model agent should be defaulted onto.</li>
+     *   <li>{@code -deep-research} — a distinct, long-running research mode, not ordinary chat.</li>
+     *   <li>{@code -preview} — pre-GA variants (also catches audio/realtime/search preview ids not
+     *       already caught above).</li>
      * </ul>
-     * Dated snapshots (e.g. {@code gpt-5.2-2025-12-11}) are excluded separately, by
-     * {@link #DATED_SNAPSHOT_ID_SUFFIX} — a pinned snapshot is never "the latest" once the rolling
-     * alias for it exists.
+     * These are excluded from the candidate set entirely (unlike {@link #FLAGSHIP_EXCLUDED_SUBSTRINGS}
+     * below): an operator can never usefully pin one for chat completions, so there's no reason to offer
+     * them in the picker.
      */
-    private static final List<String> EXCLUDED_MODEL_ID_SUBSTRINGS = List.of(
-            "-audio", "-realtime", "-search", "-transcribe", "-tts", "-image", "-codex", "-mini", "-nano");
+    private static final List<String> CANDIDATE_EXCLUDED_SUBSTRINGS = List.of(
+            "-audio", "-realtime", "-search", "-transcribe", "-tts", "-image", "-deep-research", "-preview");
 
-    /** See {@link #EXCLUDED_MODEL_ID_SUBSTRINGS}. */
+    /**
+     * Additional substrings that disqualify a *candidate* from being the {@code latest} flagship,
+     * without removing it from the candidate list the picker offers (see {@link #isFlagshipCandidate}).
+     * These are all real, pinnable models — {@code docs/ai-providers.md} explicitly recommends pinning
+     * "an older/cheaper tier than the current default" — just never the id a blank-model agent should
+     * silently resolve to:
+     * <ul>
+     *   <li>{@code -mini}, {@code -nano} — cheaper/smaller tiers.</li>
+     *   <li>{@code -pro} — a pricier tier, not the flagship default (the bug this list exists to close:
+     *       a same-day {@code -pro} release must never outrank its base model as {@code latest}).</li>
+     *   <li>{@code -codex} — a coding-specialized variant, not the general-purpose flagship.</li>
+     *   <li>{@code -chat-latest} — itself a rolling alias, but a distinct product line from the numbered
+     *       flagship (e.g. {@code gpt-5-chat-latest} vs {@code gpt-5.4}).</li>
+     * </ul>
+     * Dated snapshots (e.g. {@code gpt-5.2-2025-12-11}) are excluded the same way, via
+     * {@link #DATED_SNAPSHOT_ID_SUFFIX} — a pinned snapshot is a deliberate choice, never "the latest".
+     */
+    private static final List<String> FLAGSHIP_EXCLUDED_SUBSTRINGS = List.of(
+            "-mini", "-nano", "-pro", "-codex", "-chat-latest");
+
+    /** See {@link #FLAGSHIP_EXCLUDED_SUBSTRINGS}. */
     private static final Pattern DATED_SNAPSHOT_ID_SUFFIX = Pattern.compile("-\\d{4}-\\d{2}-\\d{2}$");
+
+    /**
+     * Bounds how many raw {@code models.list()} entries the auto-pager will fetch before filtering.
+     * OpenAI's catalog is a few hundred ids; this is generous headroom while still guaranteeing a
+     * pathological/misbehaving catalog can't make discovery page unboundedly.
+     */
+    private static final int RAW_MODEL_LIST_CAP = 200;
+
+    /**
+     * Newest-{@code created} first; among ids sharing a {@code created} timestamp, the *shorter* id
+     * sorts first, and equal-length ids break by id descending.
+     *
+     * <p>Both tie-break steps matter, in this order. A base model id is always a strict prefix of its
+     * own suffixed variants ({@code gpt-5.2} / {@code gpt-5.2-pro}), so shortest-first ranks a base
+     * model above same-day variants of itself — sorting the whole comparator (tie-break included) in
+     * descending id order does the reverse, ranking every variant above its base purely for being a
+     * longer string. Among ids of equal length, though, descending is right: {@code gpt-5.5} should
+     * outrank {@code gpt-5.4} when the two share a timestamp, and ascending would pick the older one.
+     *
+     * <p>This only narrows same-timestamp mistakes. The more common case — a variant shipped on a later
+     * date than its base — is handled by {@link #isFlagshipCandidate}, which excludes known variant
+     * suffixes from flagship contention regardless of date.
+     */
+    private static final Comparator<Model> NEWEST_FIRST_BASE_BEFORE_VARIANT = Comparator
+            .comparingLong(Model::created).reversed()
+            .thenComparingInt((Model m) -> m.id().length())
+            .thenComparing(Comparator.comparing(Model::id).reversed());
 
     private static final Duration MODEL_LIST_TTL = Duration.ofMinutes(30);
 
@@ -111,6 +181,12 @@ public class OpenAiProvider implements ChatModelProvider {
     @Override
     public String id() {
         return "openai";
+    }
+
+    /** Unlike {@link ClaudeProvider} (a fixed constant), a blank OpenAI model resolves live — see {@link #resolveDefaultModel}. */
+    @Override
+    public boolean defaultModelIsLive() {
+        return true;
     }
 
     /**
@@ -141,18 +217,26 @@ public class OpenAiProvider implements ChatModelProvider {
     private List<ModelInfo> listModels(String apiKey) {
         try {
             OpenAIClient client = clientCache.computeIfAbsent(apiKey, clientFactory);
-            List<Model> candidates = client.models().list().data().stream()
+            // autoPager(), not .data() (the first page only) -- the raw catalog is a few hundred ids,
+            // well past a single page, so .data() alone silently truncated the picker.
+            List<Model> candidates = client.models().list().autoPager().stream()
+                    .limit(RAW_MODEL_LIST_CAP)
                     .filter(m -> isCandidateChatModel(m.id()))
-                    // Newest first; id descending is an arbitrary but deterministic tie-break for
-                    // models sharing a created() timestamp.
-                    .sorted(Comparator.comparingLong(Model::created).thenComparing(Model::id).reversed())
+                    .sorted(NEWEST_FIRST_BASE_BEFORE_VARIANT)
                     .toList();
 
-            List<ModelInfo> result = new ArrayList<>(candidates.size());
-            for (int i = 0; i < candidates.size(); i++) {
-                result.add(new ModelInfo(candidates.get(i).id(), i == 0));
-            }
-            return result;
+            // latest goes to the first candidate (in the newest-first order above) that also clears the
+            // stricter flagship bar -- not necessarily index 0, e.g. a dated snapshot or -mini variant
+            // can be newest-created without ever being "the" flagship default.
+            String flagshipId = candidates.stream()
+                    .map(Model::id)
+                    .filter(this::isFlagshipCandidate)
+                    .findFirst()
+                    .orElse(null);
+
+            return candidates.stream()
+                    .map(m -> new ModelInfo(m.id(), m.id().equals(flagshipId)))
+                    .toList();
         } catch (RuntimeException e) {
             // Never let a listing failure propagate: a dead/rate-limited key or a network hiccup must
             // not break the ReAct loop's default-model resolution or an Agents-form model picker.
@@ -163,16 +247,31 @@ public class OpenAiProvider implements ChatModelProvider {
     }
 
     /**
-     * True when {@code id} is a model {@link ChatModel} recognizes (bounding the candidate set to
-     * chat/tool-calling models the SDK understands, excluding embeddings/audio-transcription/image
-     * models and Responses-API-only models Chat Completions can't run) and isn't one of the
-     * specialized/cheaper-tier/dated-snapshot variants filtered by {@link #EXCLUDED_MODEL_ID_SUBSTRINGS}.
+     * True when {@code id} matches the general-purpose chat family ({@link #CHAT_FAMILY_ID_PATTERN}) and
+     * isn't one of the non-chat/specialized-modality variants filtered by
+     * {@link #CANDIDATE_EXCLUDED_SUBSTRINGS}. This is everything the Agents-form model picker offers —
+     * broader than {@link #isFlagshipCandidate}, which additionally excludes ids nobody should be
+     * defaulted onto blind (mini/nano/pro/codex/dated-snapshot) but that remain legitimate to pin
+     * explicitly.
      */
     private boolean isCandidateChatModel(String id) {
-        if (ChatModel.of(id).value() == ChatModel.Value._UNKNOWN) {
+        if (!CHAT_FAMILY_ID_PATTERN.matcher(id).matches()) {
             return false;
         }
-        for (String excluded : EXCLUDED_MODEL_ID_SUBSTRINGS) {
+        for (String excluded : CANDIDATE_EXCLUDED_SUBSTRINGS) {
+            if (id.contains(excluded)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * True when a candidate id (already passed {@link #isCandidateChatModel}) is also eligible to be
+     * flagged {@code latest} -- see {@link #FLAGSHIP_EXCLUDED_SUBSTRINGS}.
+     */
+    private boolean isFlagshipCandidate(String id) {
+        for (String excluded : FLAGSHIP_EXCLUDED_SUBSTRINGS) {
             if (id.contains(excluded)) {
                 return false;
             }

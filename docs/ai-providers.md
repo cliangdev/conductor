@@ -62,11 +62,13 @@ An agent's `provider` is required and validated against `ModelProviderRegistry` 
 an unregistered id (including `claude-code`, see above) is rejected outright. `model` is nullable:
 
 - Left blank, the provider supplies its own default. For `openai` that's resolved live — the newest
-  model [model discovery](#model-discovery) reports for that specific key — so a project tracks new
+  *flagship* [model discovery](#model-discovery) reports for that specific key — so a project tracks new
   releases without a code change. For `claude` it's a pinned constant (`ClaudeProvider.DEFAULT_MODEL`).
   The tradeoff is real and cuts both ways: a live default keeps you current, but a vendor-side release
   can change a blank-model agent's behavior with nobody touching its config. If that matters for a given
-  agent, pin the model.
+  agent, pin the model. `GET /agents/providers` exposes which behavior a provider has as
+  `defaultModelIsLive` (`true` for `openai`, `false` for `claude`), so the Agents form can phrase the
+  blank-model hint correctly per provider instead of implying every provider tracks new releases.
 - Pinned to a specific id (e.g. `claude-opus-4-8`, `gpt-5.4`), the agent always uses exactly that model —
   useful when you've validated behavior against one version and don't want a vendor-side rollout to
   change it under you, or when you deliberately want an older/cheaper tier than the current default.
@@ -79,20 +81,37 @@ save-time validation error.
 
 `GET /api/v1/projects/{projectId}/agents/providers/{provider}/models` backs the Agents-form model
 picker: it calls the provider's live models-list API with the project's stored key and returns what that
-account can actually use today, instead of a hardcoded list going stale as vendors ship new models.
+account can actually use today, instead of a hardcoded list going stale as vendors ship new models. Only
+ADMIN/CREATOR can call it — like `verify`, it decrypts and spends the project's key against the vendor,
+so it's gated the same way, not just membership.
 
 - **Claude**: no filtering — Anthropic's models-list API only returns general-purpose Claude chat models.
-- **OpenAI**: the raw catalog mixes in embeddings, audio/realtime/transcription/TTS models, web-search
-  and image variants, the coding-specialized `codex` variant, and dated snapshots (e.g.
-  `gpt-5.2-2025-12-11`) alongside the rolling aliases that supersede them — all excluded, along with the
-  `-mini`/`-nano` cheaper tiers, since none of those are "the latest general-purpose flagship" a
-  blank-model agent should default onto. "Latest" means the newest id `ChatModel` recognizes after that
-  filter, sorted by creation date — not literally the newest id string, which could be a snapshot or a
-  specialized variant shipped after the flagship.
+- **OpenAI**: the raw catalog mixes in embeddings, audio/realtime/transcription/TTS/image/search/
+  deep-research/preview models alongside general-purpose chat models. `OpenAiProvider` answers two
+  different questions with two filter tiers instead of one, so the picker isn't limited to only what a
+  blank model could resolve to:
+  - **candidate** (the models the picker offers): ids matching the general-purpose chat families
+    (`gpt-<digit>…`, `o<digit>…`) minus the non-chat/specialized-modality substrings above. This
+    deliberately keeps real, pinnable models a blank-model agent should never *default* onto — the
+    `-mini`/`-nano` cheaper tiers, the `-codex` coding variant, and dated snapshots (e.g.
+    `gpt-5.2-2025-12-11`) — because `docs/ai-providers.md` (this doc) explicitly recommends pinning "an
+    older/cheaper tier than the current default," and the picker has to be able to offer one.
+  - **flagship** (which single candidate is flagged `latest: true`, and therefore what a blank model
+    resolves to): candidates minus `-mini`/`-nano`/`-pro`/`-codex`/`-chat-latest` and dated snapshots.
+    Sorted newest-`created` first; if no candidate qualifies as a flagship, no entry is flagged and the
+    blank-model path falls back to `OpenAiProvider.FALLBACK_MODEL` instead.
+
+  Discovery no longer gates on the SDK's pinned `ChatModel` enum (dropped because it caps discovery at
+  whatever models existed when this backend's SDK dependency was last bumped — defeating the point of
+  live discovery) in favor of the family-pattern match above; the tradeoff is that an id merely shaped
+  like a real model, but not actually one, can now surface where the SDK enum would have caught it.
 
 Both providers cache a successful listing for 30 minutes and an empty/failed one for 5 (so a dead or
 rate-limited key doesn't get retried on every keystroke), and neither ever throws for a listing failure —
-an unreachable vendor API degrades to an empty suggestion list, never a broken picker.
+an unreachable vendor API degrades to an empty suggestion list, never a broken picker. Both also page
+through the vendor's full catalog via the SDK's auto-pager (capped at 200 raw ids) rather than reading
+only the first page, so a catalog larger than one page (Anthropic defaults to 20 per page) doesn't
+silently truncate the picker.
 
 ## Runtime interaction
 

@@ -6,6 +6,7 @@ import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.errors.BadRequestException;
 import com.openai.errors.InternalServerException;
+import com.openai.errors.NotFoundException;
 import com.openai.errors.OpenAIIoException;
 import com.openai.errors.OpenAIServiceException;
 import com.openai.errors.PermissionDeniedException;
@@ -39,7 +40,13 @@ import java.util.function.Function;
 @Component
 public class OpenAiApiPreflight {
 
-    /** Cheapest current model — this call exists to prove auth + reachability, not capability. */
+    /**
+     * Deliberately conservative — the cheapest broadly-available model, not the newest one the SDK
+     * knows about (which is already ahead of this, e.g. {@code gpt-5.5}/{@code gpt-5.6-*}). A preflight's
+     * job is proving auth + reachability as cheaply as possible on the widest range of accounts, not
+     * exercising the flagship tier -- a newer/pricier probe model risks failing on an account that
+     * simply hasn't been granted access to it yet, which would misreport a working key as broken.
+     */
     private static final String PROBE_MODEL = "gpt-5.4-nano";
     private static final Duration PROBE_TIMEOUT = Duration.ofSeconds(10);
     private static final String CHECK_NAME = "openai-api";
@@ -81,6 +88,12 @@ public class OpenAiApiPreflight {
             return List.of(fail("OpenAI rejected the API key (401 unauthorized) — check the key and re-enter it"));
         } catch (PermissionDeniedException e) {
             return List.of(fail("The API key is valid but lacks permission for this request (403 forbidden)"));
+        } catch (NotFoundException e) {
+            // Names PROBE_MODEL explicitly -- without this, a 404 (e.g. an account tier that can't
+            // reach the probe model) fell through to the generic OpenAIServiceException branch below and
+            // reported only a bare HTTP status, leaving the operator with nothing to act on.
+            return List.of(fail("OpenAI returned 404 for the probe model '" + PROBE_MODEL
+                    + "' — this account may not have access to it"));
         } catch (BadRequestException e) {
             return List.of(fail(billingAware(e.getMessage())));
         } catch (RateLimitException e) {

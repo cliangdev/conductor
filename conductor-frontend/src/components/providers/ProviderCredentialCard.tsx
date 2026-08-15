@@ -28,12 +28,10 @@ export interface ProviderCredentialRowCopy {
   removeFail: string
 }
 
-/** Handed to a row's `extra` render prop so it can react to (and, via `setVerification`, correct)
- *  this row's own connection state — see {@link ClaudeRuntimeSection}, whose designation change
- *  re-verifies and needs to push the fresh result back into the card's badge. */
+/** Handed to a row's `extra` render prop so it can push a fresh verification result back into this
+ *  row's badge — see {@link ClaudeRuntimeSection}, whose designation change re-verifies and needs
+ *  to correct the card's claude-code badge in place. */
 export interface ProviderCredentialRowContext {
-  configured: boolean
-  verification: ProviderVerificationSummary | null
   setVerification: (v: ProviderVerificationSummary | null) => void
 }
 
@@ -289,8 +287,6 @@ export function ProviderCredentialCard({ projectId, title, subtitle, rows, foote
         )}
         {typeof extra === 'function'
           ? extra({
-              configured: isConfigured,
-              verification: v,
               setVerification: (next) => setVerification((prev) => ({ ...prev, [id]: next })),
             })
           : extra}

@@ -84,6 +84,9 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
   useEffect(() => {
     if (!accessToken || !projectId || !provider) return
     let cancelled = false
+    // Clear immediately so a provider switch never shows the previous provider's model ids (and,
+    // via defaultModelIsLive below, its copy) while the new fetch is in flight.
+    setModels([])
     // Suggestions only — the Model field stays free text, so a fetch failure or empty discovery
     // list must never block the form or surface an error toast, just fall back silently.
     listProviderModels(projectId, provider, accessToken)
@@ -98,10 +101,15 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
     }
   }, [projectId, accessToken, provider])
 
-  const defaultModel = useMemo(
-    () => providers.find((p) => p.id === provider)?.defaultModel ?? null,
+  const selectedProviderInfo = useMemo(
+    () => providers.find((p) => p.id === provider) ?? null,
     [providers, provider],
   )
+  const defaultModel = selectedProviderInfo?.defaultModel ?? null
+  // Whether leaving the field blank resolves to the newest discovered model (true, e.g. OpenAI) or
+  // a fixed pinned constant (false, e.g. Claude) — drives the copy below. Never infer this from
+  // whether discovery returned suggestions; a live provider can still return an empty list.
+  const defaultModelIsLive = selectedProviderInfo?.defaultModelIsLive ?? false
 
   const toolsBySource = useMemo(() => {
     const groups: Record<string, AvailableAgentTool[]> = {}
@@ -228,7 +236,10 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
             className={INPUT}
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder={defaultModel ? `${defaultModel} (default)` : 'Provider default'}
+            placeholder={
+              // Live resolution has no single "the default" id to show — naming one would overclaim.
+              defaultModelIsLive ? 'Latest supported model' : defaultModel ? `${defaultModel} (default)` : 'Provider default'
+            }
             list={models.length > 0 ? 'agent-model-options' : undefined}
           />
           {models.length > 0 && (
@@ -239,7 +250,7 @@ export function AgentForm({ projectId, initial, submitLabel, saving, error, onSu
             </datalist>
           )}
           <p className="text-xs text-muted-foreground mt-1">
-            {models.length > 0
+            {defaultModelIsLive
               ? "Leave blank to use the provider's latest supported model."
               : 'Leave blank to use the provider default.'}
           </p>

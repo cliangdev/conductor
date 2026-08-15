@@ -171,9 +171,10 @@ class OpenAiApiPreflightTest {
     }
 
     @Test
-    void check_otherServiceException_returnsFailNamingHttpStatus() {
-        // e.g. an account with no access to the probe model — falls through to the generic
-        // OpenAIServiceException branch rather than a dedicated catch, per the class's exception mapping.
+    void check_notFound_returnsFailNamingTheProbeModel() {
+        // e.g. an account tier that can't reach the probe model -- a dedicated catch names PROBE_MODEL
+        // explicitly rather than falling through to the generic OpenAIServiceException branch's bare
+        // HTTP-status message, which left the operator with nothing to act on.
         OpenAiApiPreflight preflight = preflightThatThrows(NotFoundException.builder().headers(emptyHeaders()).build());
 
         List<Check> checks = preflight.check(SECRET_KEY);
@@ -181,6 +182,22 @@ class OpenAiApiPreflightTest {
         assertThat(checks).hasSize(1);
         assertThat(checks.get(0).status()).isEqualTo(CheckStatus.FAIL);
         assertThat(checks.get(0).message()).containsIgnoringCase("404");
+        assertThat(checks.get(0).message()).contains("gpt-5.4-nano");
+        assertKeyNeverLeaked(checks);
+    }
+
+    @Test
+    void check_otherServiceException_returnsFailNamingHttpStatus() {
+        // A service exception with no dedicated catch (e.g. a 422) falls through to the generic
+        // OpenAIServiceException branch and reports only the bare HTTP status.
+        OpenAiApiPreflight preflight = preflightThatThrows(
+                com.openai.errors.UnprocessableEntityException.builder().headers(emptyHeaders()).build());
+
+        List<Check> checks = preflight.check(SECRET_KEY);
+
+        assertThat(checks).hasSize(1);
+        assertThat(checks.get(0).status()).isEqualTo(CheckStatus.FAIL);
+        assertThat(checks.get(0).message()).containsIgnoringCase("422");
         assertKeyNeverLeaked(checks);
     }
 

@@ -555,6 +555,9 @@ export interface AvailableAgentTool {
 export interface AgentProviderInfo {
   id: string
   defaultModel?: string | null
+  /** True when leaving `model` blank resolves to the newest discovered model at run time (e.g.
+   *  OpenAI); false when it resolves to the fixed `defaultModel` (e.g. Claude's pinned constant). */
+  defaultModelIsLive: boolean
 }
 
 export interface ProviderVerificationSummary {
@@ -629,7 +632,7 @@ export function listProviderModels(
   token: string,
 ): Promise<{ models: ProviderModelInfo[] }> {
   return apiGet<{ models: ProviderModelInfo[] }>(
-    `/api/v1/projects/${projectId}/agents/providers/${provider}/models`,
+    `/api/v1/projects/${projectId}/agents/providers/${encodeURIComponent(provider)}/models`,
     token,
   )
 }

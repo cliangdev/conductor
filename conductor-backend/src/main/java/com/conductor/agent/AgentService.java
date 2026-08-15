@@ -53,8 +53,12 @@ public class AgentService {
         this.workflowYamlParser = workflowYamlParser;
     }
 
-    /** A model provider available to agents: its id and the model applied when none is pinned. */
-    public record ProviderOption(String id, String defaultModel) {}
+    /**
+     * A model provider available to agents: its id, the model applied when none is pinned, and whether
+     * that blank-model substitution tracks live discovery ({@code defaultModelIsLive}) or is a fixed
+     * constant — see {@link com.conductor.agent.provider.ChatModelProvider#defaultModelIsLive()}.
+     */
+    public record ProviderOption(String id, String defaultModel, boolean defaultModelIsLive) {}
 
     /** A tool an agent can be bound to, tagged with its canonical source. */
     public record ToolOption(String id, String name, String description, String source) {}
@@ -62,7 +66,7 @@ public class AgentService {
     /** Providers registered with the gateway, id + default model — for the authoring UI. */
     public List<ProviderOption> listProviders() {
         return providerRegistry.providers().stream()
-                .map(p -> new ProviderOption(p.id(), p.defaultModel()))
+                .map(p -> new ProviderOption(p.id(), p.defaultModel(), p.defaultModelIsLive()))
                 .toList();
     }
 

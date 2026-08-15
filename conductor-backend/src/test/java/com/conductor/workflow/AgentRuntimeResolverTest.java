@@ -99,6 +99,24 @@ class AgentRuntimeResolverTest {
     }
 
     @Test
+    void neverPicksClaudeCodeForNonClaudeProviderEvenWhenTheSubscriptionCredentialExists() {
+        // Pins the "claude".equals(agent.provider()) &&" guard on AgentRuntimeResolver#resolve: without
+        // it, a project with a Claude Code subscription credential but no gemini key would wrongly
+        // auto-detect a gemini agent onto the Claude-only container instead of throwing. Stubbing BOTH
+        // credentials here (unlike autoNeverPicksClaudeCodeForNonClaudeProviderAgent above, which never
+        // stubs claude-code at all and so can't tell "guard present" from "guard absent, but Mockito's
+        // default is false anyway") is what actually exercises the guard. With the guard intact this
+        // stub is never even consulted (the `&&` short-circuits on the provider check first) -- that's
+        // exactly the point, so it's marked lenient rather than tripping Mockito's unnecessary-stubbing
+        // check on the passing case.
+        org.mockito.Mockito.lenient().when(credentialService.hasCredential(PROJECT_ID, "claude-code")).thenReturn(true);
+        when(credentialService.hasCredential(PROJECT_ID, "gemini")).thenReturn(false);
+
+        assertThatThrownBy(() -> resolver.resolve(PROJECT_ID, definition("gemini", null)))
+                .isInstanceOf(AgentRuntimeUnresolvedException.class);
+    }
+
+    @Test
     void noCredentialForNonClaudeProviderNamesOnlyItsOwnApiKeyNotClaudeCode() {
         // The container always runs Claude, so offering the claude-code option for a non-claude
         // provider agent would be actively wrong -- the message must name only that provider's key.

@@ -59,7 +59,7 @@ class ProviderVerificationServiceTest {
     @Test
     void verify_claude_allChecksPass_reportsVerifiedAndPersists() {
         when(claudePreflight.check(PROJECT_ID))
-                .thenReturn(List.of(new Check("openai-api", CheckStatus.PASS, "ok")));
+                .thenReturn(List.of(new Check("anthropic-api", CheckStatus.PASS, "ok")));
 
         VerificationReport report = service.verify(PROJECT_ID, "claude");
 

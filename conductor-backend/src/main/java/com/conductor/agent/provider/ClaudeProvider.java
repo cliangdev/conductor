@@ -51,6 +51,14 @@ public class ClaudeProvider implements ChatModelProvider {
     /** Shorter TTL for a failed/empty listing, so a dead or rate-limited key doesn't get retried on every turn. */
     private static final Duration MODEL_LIST_NEGATIVE_TTL = Duration.ofMinutes(5);
 
+    /**
+     * Bounds how many raw {@code models.list()} entries the auto-pager will fetch. Anthropic's
+     * models-list defaults to 20 per page, so reading only the first page (as this used to) silently
+     * truncated the picker for a larger catalog; this is generous headroom while still guaranteeing a
+     * pathological/misbehaving catalog can't make discovery page unboundedly.
+     */
+    private static final int RAW_MODEL_LIST_CAP = 200;
+
     private record ModelCacheEntry(List<ModelInfo> models, Instant expiresAt) {}
 
     private final ObjectMapper objectMapper;
@@ -109,12 +117,17 @@ public class ClaudeProvider implements ChatModelProvider {
     private List<ModelInfo> listModels(String apiKey) {
         try {
             AnthropicClient client = clientCache.computeIfAbsent(apiKey, clientFactory);
-            List<com.anthropic.models.models.ModelInfo> candidates = client.models().list().data().stream()
-                    // Newest first; id descending is an arbitrary but deterministic tie-break for
-                    // models sharing a createdAt timestamp.
-                    .sorted(Comparator.comparing(com.anthropic.models.models.ModelInfo::createdAt)
-                            .thenComparing(com.anthropic.models.models.ModelInfo::id)
-                            .reversed())
+            // autoPager(), not .data() (the first page only) -- Anthropic's default page size (20) is
+            // smaller than a large catalog, so .data() alone could silently truncate the picker.
+            List<com.anthropic.models.models.ModelInfo> candidates = client.models().list().autoPager().stream()
+                    .limit(RAW_MODEL_LIST_CAP)
+                    // Newest first, then shortest id, then id descending — see
+                    // OpenAiProvider#NEWEST_FIRST_BASE_BEFORE_VARIANT for why the tie-break isn't
+                    // simply id-descending: a base id is a prefix of its own dated snapshots, so
+                    // pure descending order ranks every snapshot above the alias it points at.
+                    .sorted(Comparator.comparing(com.anthropic.models.models.ModelInfo::createdAt).reversed()
+                            .thenComparingInt((com.anthropic.models.models.ModelInfo m) -> m.id().length())
+                            .thenComparing(Comparator.comparing(com.anthropic.models.models.ModelInfo::id).reversed()))
                     .toList();
 
             List<ModelInfo> result = new ArrayList<>(candidates.size());

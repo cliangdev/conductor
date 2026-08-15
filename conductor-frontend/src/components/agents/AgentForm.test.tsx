@@ -13,8 +13,8 @@ vi.mock('@/contexts/AuthContext', () => ({
 // Plain (non-vi.fn) stubs so rejected-promise paths aren't flagged as unhandled — see
 // reference_vitest_rejected_promise_mock memory. Not exercised here, but kept consistent with the
 // repo convention for lib/api mocks.
-let listAgentProvidersBehavior: () => Promise<{ id: string; defaultModel?: string | null }[]> = () =>
-  Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8' }])
+let listAgentProvidersBehavior: () => Promise<{ id: string; defaultModel?: string | null; defaultModelIsLive: boolean }[]> = () =>
+  Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8', defaultModelIsLive: false }])
 let listAgentToolsBehavior: () => Promise<unknown[]> = () => Promise.resolve([])
 let listProviderModelsBehavior: () => Promise<{ models: { id: string; latest: boolean }[] }> = () =>
   Promise.resolve({ models: [] })
@@ -54,7 +54,8 @@ function baseAgent(overrides: Partial<Agent> = {}): Agent {
 
 describe('AgentForm avatar payload', () => {
   beforeEach(() => {
-    listAgentProvidersBehavior = () => Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8' }])
+    listAgentProvidersBehavior = () =>
+      Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8', defaultModelIsLive: false }])
     listAgentToolsBehavior = () => Promise.resolve([])
     listProviderModelsBehavior = () => Promise.resolve({ models: [] })
   })
@@ -118,7 +119,8 @@ describe('AgentForm avatar payload', () => {
 
 describe('AgentForm model picker', () => {
   beforeEach(() => {
-    listAgentProvidersBehavior = () => Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8' }])
+    listAgentProvidersBehavior = () =>
+      Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8', defaultModelIsLive: false }])
     listAgentToolsBehavior = () => Promise.resolve([])
     listProviderModelsBehavior = () => Promise.resolve({ models: [] })
   })
@@ -134,9 +136,6 @@ describe('AgentForm model picker', () => {
       expect(screen.getByText('claude-sonnet-5')).toBeInTheDocument()
     })
     expect(modelInput).toHaveAttribute('list', 'agent-model-options')
-    expect(
-      screen.getByText("Leave blank to use the provider's latest supported model."),
-    ).toBeInTheDocument()
   })
 
   it('leaves the plain free-text field when the model list is empty', async () => {
@@ -146,7 +145,6 @@ describe('AgentForm model picker', () => {
     const modelInput = await screen.findByLabelText('Model')
     await waitFor(() => expect((screen.getByLabelText('Provider') as HTMLSelectElement).value).toBe('claude'))
     expect(modelInput).not.toHaveAttribute('list')
-    expect(screen.getByText('Leave blank to use the provider default.')).toBeInTheDocument()
   })
 
   it('does not throw and falls back to free text when the model request rejects', async () => {
@@ -157,6 +155,41 @@ describe('AgentForm model picker', () => {
     const modelInput = await screen.findByLabelText('Model')
     await waitFor(() => expect((screen.getByLabelText('Provider') as HTMLSelectElement).value).toBe('claude'))
     expect(modelInput).not.toHaveAttribute('list')
+  })
+})
+
+// Blank-model copy must be driven by defaultModelIsLive, never by whether discovery returned
+// suggestions — see the finding this covers: the two are independent (a live provider can return
+// zero models; a pinned provider can still populate a datalist).
+describe('AgentForm blank-model copy', () => {
+  beforeEach(() => {
+    listAgentToolsBehavior = () => Promise.resolve([])
+  })
+
+  it('a pinned-default provider (defaultModelIsLive: false) gets the fixed-default copy', async () => {
+    listAgentProvidersBehavior = () =>
+      Promise.resolve([{ id: 'claude', defaultModel: 'claude-opus-4-8', defaultModelIsLive: false }])
+    listProviderModelsBehavior = () =>
+      Promise.resolve({ models: [{ id: 'claude-opus-5', latest: true }] })
+    render(<AgentForm projectId="proj-1" submitLabel="Create Agent" saving={false} error={null} onSubmit={vi.fn()} />)
+
+    const modelInput = await screen.findByLabelText('Model')
+    await waitFor(() => expect(modelInput).toHaveAttribute('placeholder', 'claude-opus-4-8 (default)'))
     expect(screen.getByText('Leave blank to use the provider default.')).toBeInTheDocument()
+  })
+
+  it('a live-default provider (defaultModelIsLive: true) gets the latest-model copy, not a named default', async () => {
+    listAgentProvidersBehavior = () =>
+      Promise.resolve([{ id: 'openai', defaultModel: 'gpt-5.4', defaultModelIsLive: true }])
+    listProviderModelsBehavior = () => Promise.resolve({ models: [] })
+    render(<AgentForm projectId="proj-1" submitLabel="Create Agent" saving={false} error={null} onSubmit={vi.fn()} />)
+
+    const modelInput = await screen.findByLabelText('Model')
+    await waitFor(() => expect(modelInput).toHaveAttribute('placeholder', 'Latest supported model'))
+    expect(
+      screen.getByText("Leave blank to use the provider's latest supported model."),
+    ).toBeInTheDocument()
+    // Must never present gpt-5.4 as "the default" — it's only a last-resort fallback for a live provider.
+    expect(screen.queryByText('gpt-5.4 (default)')).not.toBeInTheDocument()
   })
 })

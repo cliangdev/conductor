@@ -1,6 +1,7 @@
 package com.conductor.agent.provider;
 
 import com.openai.client.OpenAIClient;
+import com.openai.core.AutoPager;
 import com.openai.core.http.Headers;
 import com.openai.errors.BadRequestException;
 import com.openai.errors.RateLimitException;
@@ -308,19 +309,19 @@ class OpenAiProviderTest {
     // ---- model discovery (availableModels) ----
 
     @Test
-    void availableModelsFiltersUnknownAndExcludedVariantIdsThenOrdersByCreatedDescending() {
-        // Built before when(models.list()) starts -- nesting a when(page.data()) call (inside pageOf)
+    void availableModelsIncludesPinnableVariantsButExcludesNonChatModelsAndFlagsOnlyTheFlagship() {
+        // Built before when(models.list()) starts -- nesting a when(page.items()) call (inside pageOf)
         // as an argument of an unfinished outer when(models.list()) confuses Mockito's ongoing-stubbing
         // state (it reports the OUTER when() as "unfinished").
         ModelListPage page = pageOf(
-                model("gpt-5.6-sol", 6000),          // kept, newest -> latest
-                model("gpt-5.4", 5000),               // kept
-                model("gpt-5.4-mini", 5500),          // excluded: -mini (cheaper tier), despite being newer
-                model("gpt-4o-audio-preview", 4000),  // excluded: -audio
-                model("gpt-4o-search-preview", 4000), // excluded: -search
-                model("gpt-5.1-codex", 4500),         // excluded: -codex
-                model("gpt-5.2-2025-12-11", 4900),    // excluded: dated snapshot
-                model("text-embedding-3-large", 7000) // excluded: not a known ChatModel id at all
+                model("gpt-5.6-sol", 6000),          // candidate + flagship: newest -> latest
+                model("gpt-5.4", 5000),               // candidate + flagship, but not newest
+                model("gpt-5.4-mini", 5500),          // candidate (real, pinnable) but never flagship: -mini
+                model("gpt-4o-audio-preview", 4000),  // excluded entirely: -audio, not chat
+                model("gpt-4o-search-preview", 4000), // excluded entirely: -search, not chat
+                model("gpt-5.1-codex", 4500),         // candidate but never flagship: -codex
+                model("gpt-5.2-2025-12-11", 4900),    // candidate but never flagship: dated snapshot
+                model("text-embedding-3-large", 7000) // excluded entirely: doesn't match the chat family pattern
         );
         ModelService models = mock(ModelService.class);
         when(models.list()).thenReturn(page);
@@ -328,13 +329,34 @@ class OpenAiProviderTest {
 
         List<ModelInfo> result = provider.availableModels("sk-test");
 
-        assertThat(result).extracting(ModelInfo::id).containsExactly("gpt-5.6-sol", "gpt-5.4");
-        assertThat(result.get(0).latest()).isTrue();
-        assertThat(result.get(1).latest()).isFalse();
+        // Newest-created first; audio/search/embedding ids never appear at all.
+        assertThat(result).extracting(ModelInfo::id).containsExactly(
+                "gpt-5.6-sol", "gpt-5.4-mini", "gpt-5.4", "gpt-5.2-2025-12-11", "gpt-5.1-codex");
+        // Exactly one entry is latest -- the newest candidate that ALSO clears the flagship bar.
+        assertThat(result).filteredOn(ModelInfo::latest).extracting(ModelInfo::id).containsExactly("gpt-5.6-sol");
     }
 
     @Test
-    void availableModelsTieBreaksEqualCreatedTimestampsByIdDescending() {
+    void availableModelsNeverFlagsAVariantAsLatestEvenWhenItIsTheNewestCandidate() {
+        // The BLOCKER case this guards: a same-tier variant released AFTER its base model must never
+        // outrank the base as "latest" -- a blank-model agent must never silently default onto it.
+        ModelListPage page = pageOf(model("gpt-5.4", 1000), model("gpt-5.4-pro", 2000)); // see note above
+        ModelService models = mock(ModelService.class);
+        when(models.list()).thenReturn(page);
+        OpenAiProvider provider = new OpenAiProvider(keyCapturingFactory(clientWithModels(models)));
+
+        List<ModelInfo> result = provider.availableModels("sk-test");
+
+        // Both are candidates (the picker may still offer -pro to pin deliberately)...
+        assertThat(result).extracting(ModelInfo::id).containsExactly("gpt-5.4-pro", "gpt-5.4");
+        // ...but only the base model is ever flagged latest, regardless of creation date.
+        assertThat(result).filteredOn(ModelInfo::latest).extracting(ModelInfo::id).containsExactly("gpt-5.4");
+    }
+
+    @Test
+    void availableModelsTieBreaksEqualLengthIdsAtTheSameTimestampByIdDescending() {
+        // Same length, neither a prefix of the other, so the length step can't separate them: the
+        // higher version has to win, or a same-day pair would hand `latest` to the older model.
         ModelListPage page = pageOf(model("gpt-5.4", 1000), model("gpt-5.5", 1000)); // built before when() -- see note above
         ModelService models = mock(ModelService.class);
         when(models.list()).thenReturn(page);
@@ -343,6 +365,23 @@ class OpenAiProviderTest {
 
         assertThat(result).extracting(ModelInfo::id).containsExactly("gpt-5.5", "gpt-5.4");
         assertThat(result.get(0).latest()).isTrue();
+    }
+
+    @Test
+    void availableModelsTieBreaksABaseModelBeforeItsOwnVariantAtEqualCreated() {
+        // The exact BLOCKER regression: gpt-5.2 and gpt-5.2-pro share a created() timestamp (a same-day
+        // release). Since "gpt-5.2" is a strict prefix of "gpt-5.2-pro", sorting the WHOLE comparator
+        // (including the tie-break) by id descending would rank the longer variant id first and hand it
+        // `latest`. The fix breaks ties by id LENGTH ascending, so the base model always wins the tie.
+        ModelListPage page = pageOf(model("gpt-5.2-pro", 1000), model("gpt-5.2", 1000)); // see note above
+        ModelService models = mock(ModelService.class);
+        when(models.list()).thenReturn(page);
+        OpenAiProvider provider = new OpenAiProvider(keyCapturingFactory(clientWithModels(models)));
+
+        List<ModelInfo> result = provider.availableModels("sk-test");
+
+        assertThat(result).extracting(ModelInfo::id).containsExactly("gpt-5.2", "gpt-5.2-pro");
+        assertThat(result).filteredOn(ModelInfo::latest).extracting(ModelInfo::id).containsExactly("gpt-5.2");
     }
 
     @Test
@@ -445,9 +484,20 @@ class OpenAiProviderTest {
         return client;
     }
 
+    /**
+     * Production code now drives discovery through {@code page.autoPager().stream()} (see
+     * {@link OpenAiProvider#listModels}), not {@code page.data()} directly, so the page must stub the
+     * {@link com.openai.core.Page} contract {@link AutoPager} actually walks: {@code items()} for the
+     * current page's contents and {@code hasNextPage()} to stop after this one (every test here fits on
+     * a single page). {@code autoPager()} on a real {@link ModelListPage} would build the real
+     * {@link AutoPager} wrapping {@code this}; since the page itself is a mock, that has to be stubbed
+     * explicitly via the same {@code AutoPager.Companion.from(...)} factory the real method uses.
+     */
     private ModelListPage pageOf(Model... models) {
         ModelListPage page = mock(ModelListPage.class);
-        when(page.data()).thenReturn(List.of(models));
+        when(page.items()).thenReturn(List.of(models));
+        when(page.hasNextPage()).thenReturn(false);
+        when(page.autoPager()).thenReturn(AutoPager.Companion.from(page));
         return page;
     }
 

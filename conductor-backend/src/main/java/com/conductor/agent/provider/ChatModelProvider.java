@@ -41,6 +41,18 @@ public interface ChatModelProvider {
     }
 
     /**
+     * Does a blank {@code model} resolve to the newest model {@link #availableModels} discovered (true),
+     * or to a fixed {@link #defaultModel()} (false)? Surfaced to clients (the Agents form) so they can
+     * phrase the blank-model hint correctly per provider — e.g. OpenAI's blank-model substitution really
+     * does track the account's newest supported model, while Claude's is a pinned constant regardless of
+     * what discovery reports; telling operators "leave blank to use the latest" would be true for one and
+     * a lie for the other. Defaults to {@code false} (the safer claim when a provider hasn't opted in).
+     */
+    default boolean defaultModelIsLive() {
+        return false;
+    }
+
+    /**
      * Run one model turn. Returns either a final answer or a set of tool calls (see
      * {@link ChatResponse.StopReason}). May throw — the runner classifies and retries transient
      * failures.

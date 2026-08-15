@@ -4666,10 +4666,15 @@ paths:
       tags: [agents]
       summary: List the models a provider currently supports
       description: >-
-        Live model discovery for the Agents form's model picker. Returns an empty list — never an
-        error — when the provider is unknown, has no stored BYO credential for this project, or its
-        discovery call fails or reports nothing; callers should fall back to free text, not treat an
-        empty list as failure. At most one returned model has `latest: true`.
+        Live model discovery for the Agents form's model picker. Returns every general-purpose chat
+        model the account can currently use — including cheaper/specialized tiers (e.g. `-mini`,
+        `-codex`) and dated snapshots that are real, pinnable choices but never the blank-model default.
+        `latest: true` marks the newest general-purpose flagship — the id a blank-model agent resolves
+        to for providers whose default tracks discovery (see `AgentProviderInfo.defaultModelIsLive`); at
+        most one returned model has `latest: true`, and none does if no candidate qualifies as a
+        flagship. Returns an empty list — never an error — when the provider is unknown, has no stored
+        BYO credential for this project, or its discovery call fails or reports nothing; callers should
+        fall back to free text, not treat an empty list as failure.
       operationId: listProviderModels
       parameters:
         - name: projectId
@@ -8284,6 +8289,7 @@ components:
       type: object
       required:
         - id
+        - defaultModelIsLive
       properties:
         id:
           type: string
@@ -8292,6 +8298,13 @@ components:
           type: string
           nullable: true
           description: The model used when an agent does not pin one.
+        defaultModelIsLive:
+          type: boolean
+          description: >-
+            Whether `defaultModel` tracks live model discovery (true — a blank model always resolves to
+            whatever the provider currently reports as newest) or is a fixed constant (false). Lets the
+            Agents form phrase the blank-model hint correctly per provider instead of implying every
+            provider's blank-model behavior tracks new releases.
 
     ProviderModelsResponse:
       type: object
