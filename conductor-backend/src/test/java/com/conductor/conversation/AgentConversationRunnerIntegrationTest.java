@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -129,7 +130,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
         Conversation conversation = fixture.conversation();
         OffsetDateTime before = conversation.getLastMessageAt();
 
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-1", "All green.", null, TokenUsage.ZERO,
                         AgentRun.Status.SUCCEEDED.name()));
 
@@ -147,11 +148,57 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
                 org.springframework.data.domain.PageRequest.of(0, 100))).hasSize(2); // user + assistant
     }
 
+    /**
+     * The plain {@code runNow(conversationId, assistantMessageId)} overload withholds nothing -- it
+     * passes an empty denied set, so an ordinary conversation turn still gets the agent's full tool
+     * set. That's the invariant worth pinning: which overload it reaches is an implementation detail,
+     * but a stray non-empty denial here would silently strip tools from every non-Discord turn.
+     */
+    @Test
+    void plainRunNowDeniesNoTools() {
+        ReservedTurnFixture fixture = conversationWithPendingUserTurn("What's the status?");
+
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
+                .thenReturn(new AgentRunResult("run-1", "All green.", null, TokenUsage.ZERO,
+                        AgentRun.Status.SUCCEEDED.name()));
+
+        runner.runNow(fixture.conversation().getId(), fixture.assistantMessageId());
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.Set<String>> deniedCaptor =
+                org.mockito.ArgumentCaptor.forClass(java.util.Set.class);
+        org.mockito.Mockito.verify(agentExecutionService)
+                .run(any(AgentRunRequest.class), anyList(), any(), deniedCaptor.capture());
+        assertThat(deniedCaptor.getValue()).isEmpty();
+    }
+
+    /**
+     * {@code runNow(conversationId, assistantMessageId, deniedToolIds)} -- the Discord {@code /ask}
+     * write-action toggle's entry point -- must thread a genuinely non-empty denied set straight through
+     * to {@code AgentExecutionService}'s 4-arg {@code run} overload.
+     */
+    @Test
+    void runNowWithDeniedToolIdsThreadsThemThroughToTheAgentRun() {
+        ReservedTurnFixture fixture = conversationWithPendingUserTurn("Create a work item for this");
+        java.util.Set<String> denied = java.util.Set.of("coordinator:create_work_item", "coordinator:dispatch_workflow");
+
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), eq(denied)))
+                .thenReturn(new AgentRunResult("run-1", "Done (read-only).", null, TokenUsage.ZERO,
+                        AgentRun.Status.SUCCEEDED.name()));
+
+        ConversationMessage reply = runner.runNow(fixture.conversation().getId(), fixture.assistantMessageId(), denied);
+
+        assertThat(reply.getStatus()).isEqualTo(ConversationMessage.Status.COMPLETED);
+        assertThat(reply.getContent()).isEqualTo("Done (read-only).");
+        org.mockito.Mockito.verify(agentExecutionService)
+                .run(any(AgentRunRequest.class), anyList(), any(), eq(denied));
+    }
+
     @Test
     void agentRunResultStatusFailedPersistsFailedMessageWithoutThrowing() {
         ReservedTurnFixture fixture = conversationWithPendingUserTurn("Break please");
 
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-2", "", null, TokenUsage.ZERO, AgentRun.Status.FAILED.name()));
 
         ConversationMessage reply = runner.runNow(fixture.conversation().getId(), fixture.assistantMessageId());
@@ -165,7 +212,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
     void agentExecutionServiceThrowingPersistsFailedMessageWithoutPropagating() {
         ReservedTurnFixture fixture = conversationWithPendingUserTurn("Throw please");
 
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenThrow(new RuntimeException("provider unreachable"));
 
         ConversationMessage reply = runner.runNow(fixture.conversation().getId(), fixture.assistantMessageId());
@@ -226,7 +273,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
         pending.setStatus(ConversationMessage.Status.PENDING);
         messageRepository.saveAndFlush(pending);
 
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-3", "second answer", null, TokenUsage.ZERO,
                         AgentRun.Status.SUCCEEDED.name()));
 
@@ -234,7 +281,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
 
         org.mockito.ArgumentCaptor<List> windowCaptor = org.mockito.ArgumentCaptor.forClass(List.class);
         org.mockito.ArgumentCaptor<AgentRunRequest> requestCaptor = org.mockito.ArgumentCaptor.forClass(AgentRunRequest.class);
-        org.mockito.Mockito.verify(agentExecutionService).run(requestCaptor.capture(), windowCaptor.capture(), any());
+        org.mockito.Mockito.verify(agentExecutionService).run(requestCaptor.capture(), windowCaptor.capture(), any(), any());
 
         assertThat(requestCaptor.getValue().task()).isEqualTo("second question");
         List<?> window = windowCaptor.getValue();
@@ -274,7 +321,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
         pending.setStatus(ConversationMessage.Status.PENDING);
         messageRepository.saveAndFlush(pending);
 
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-window-1", "ok", null, TokenUsage.ZERO,
                         AgentRun.Status.SUCCEEDED.name()));
 
@@ -282,7 +329,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
 
         org.mockito.ArgumentCaptor<List> windowCaptor = org.mockito.ArgumentCaptor.forClass(List.class);
         org.mockito.ArgumentCaptor<AgentRunRequest> requestCaptor = org.mockito.ArgumentCaptor.forClass(AgentRunRequest.class);
-        org.mockito.Mockito.verify(agentExecutionService).run(requestCaptor.capture(), windowCaptor.capture(), any());
+        org.mockito.Mockito.verify(agentExecutionService).run(requestCaptor.capture(), windowCaptor.capture(), any(), any());
         assertThat(requestCaptor.getValue().task()).isEqualTo(task.getContent());
 
         List<ChatMessage> window = windowCaptor.getValue();
@@ -338,7 +385,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
         pending.setStatus(ConversationMessage.Status.PENDING);
         messageRepository.saveAndFlush(pending);
 
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-window-2", "ok", null, TokenUsage.ZERO,
                         AgentRun.Status.SUCCEEDED.name()));
 
@@ -346,7 +393,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
 
         org.mockito.ArgumentCaptor<List> windowCaptor = org.mockito.ArgumentCaptor.forClass(List.class);
         org.mockito.ArgumentCaptor<AgentRunRequest> requestCaptor = org.mockito.ArgumentCaptor.forClass(AgentRunRequest.class);
-        org.mockito.Mockito.verify(agentExecutionService).run(requestCaptor.capture(), windowCaptor.capture(), any());
+        org.mockito.Mockito.verify(agentExecutionService).run(requestCaptor.capture(), windowCaptor.capture(), any(), any());
         assertThat(requestCaptor.getValue().task()).isEqualTo(task.getContent());
 
         List<ChatMessage> window = windowCaptor.getValue();
@@ -375,7 +422,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
     void systemPromptSuffixNamesTheCurrentAgent() {
         ReservedTurnFixture fixture = conversationWithPendingUserTurn("Who are you?");
 
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-4", "I'm the agent.", null, TokenUsage.ZERO,
                         AgentRun.Status.SUCCEEDED.name()));
 
@@ -383,7 +430,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
 
         Agent agent = agentRepository.findById(agentId).orElseThrow();
         org.mockito.ArgumentCaptor<String> suffixCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), suffixCaptor.capture());
+        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), suffixCaptor.capture(), any());
 
         assertThat(suffixCaptor.getValue()).contains(agent.getName()).contains(agent.getSlug());
     }
@@ -398,14 +445,14 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
         agent.setName("Renamed Agent");
         agentRepository.save(agent);
 
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-5", "I'm renamed.", null, TokenUsage.ZERO,
                         AgentRun.Status.SUCCEEDED.name()));
 
         runner.runNow(fixture.conversation().getId(), fixture.assistantMessageId());
 
         org.mockito.ArgumentCaptor<String> suffixCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), suffixCaptor.capture());
+        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), suffixCaptor.capture(), any());
 
         assertThat(suffixCaptor.getValue()).contains("Renamed Agent");
     }
@@ -416,11 +463,11 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
     @Test
     void nonBlankAddendumIsAppendedToTheSystemPromptSuffix() {
         ReservedTurnFixture plain = conversationWithPendingUserTurn("Plain turn");
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-6", "ok", null, TokenUsage.ZERO, AgentRun.Status.SUCCEEDED.name()));
         runner.runNow(plain.conversation().getId(), plain.assistantMessageId());
         org.mockito.ArgumentCaptor<String> plainSuffixCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), plainSuffixCaptor.capture());
+        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), plainSuffixCaptor.capture(), any());
         String plainSuffix = plainSuffixCaptor.getValue();
 
         ReservedTurnFixture augmented = conversationWithPendingUserTurn("Augmented turn");
@@ -429,13 +476,13 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
                 .thenAnswer(inv -> new MemoryAugmentor.Augmentation(inv.getArgument(4),
                         "## Long-term memory\n- [fact · 2026-08-01] the sky is blue"));
         org.mockito.Mockito.reset(agentExecutionService);
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-7", "ok", null, TokenUsage.ZERO, AgentRun.Status.SUCCEEDED.name()));
 
         runner.runNow(augmented.conversation().getId(), augmented.assistantMessageId());
 
         org.mockito.ArgumentCaptor<String> augmentedSuffixCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), augmentedSuffixCaptor.capture());
+        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), augmentedSuffixCaptor.capture(), any());
         assertThat(augmentedSuffixCaptor.getValue())
                 .isEqualTo(plainSuffix + "\n\n## Long-term memory\n- [fact · 2026-08-01] the sky is blue");
     }
@@ -447,13 +494,13 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
         ReservedTurnFixture fixture = conversationWithPendingUserTurn("Anything");
         when(memoryAugmentor.augment(anyString(), anyString(), anyString(), any(), anyList()))
                 .thenAnswer(inv -> new MemoryAugmentor.Augmentation(inv.getArgument(4), "   "));
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-8", "ok", null, TokenUsage.ZERO, AgentRun.Status.SUCCEEDED.name()));
 
         runner.runNow(fixture.conversation().getId(), fixture.assistantMessageId());
 
         org.mockito.ArgumentCaptor<String> suffixCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
-        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), suffixCaptor.capture());
+        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), suffixCaptor.capture(), any());
         assertThat(suffixCaptor.getValue()).doesNotContain("\n\n\n").doesNotContain("Long-term memory");
     }
 
@@ -468,7 +515,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
         ReservedTurnFixture fixture = conversationWithPendingUserTurn("Break the augmentor");
         when(memoryAugmentor.augment(anyString(), anyString(), anyString(), any(), anyList()))
                 .thenThrow(new RuntimeException("augmentor bug"));
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-9", "ok", null, TokenUsage.ZERO, AgentRun.Status.SUCCEEDED.name()));
 
         ConversationMessage reply = runner.runNow(fixture.conversation().getId(), fixture.assistantMessageId());
@@ -483,7 +530,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
     @Test
     void completedTurnFiresTurnCompletionListenerWithExpectedArgs() {
         ReservedTurnFixture fixture = conversationWithPendingUserTurn("What's the deploy status?");
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-10", "All green.", null, TokenUsage.ZERO,
                         AgentRun.Status.SUCCEEDED.name()));
 
@@ -498,7 +545,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
     @Test
     void failedTurnResultDoesNotFireTurnCompletionListener() {
         ReservedTurnFixture fixture = conversationWithPendingUserTurn("Break please");
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-11", "", null, TokenUsage.ZERO, AgentRun.Status.FAILED.name()));
 
         runner.runNow(fixture.conversation().getId(), fixture.assistantMessageId());
@@ -511,7 +558,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
     @Test
     void executionServiceThrowingDoesNotFireTurnCompletionListener() {
         ReservedTurnFixture fixture = conversationWithPendingUserTurn("Throw please");
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenThrow(new RuntimeException("provider unreachable"));
 
         runner.runNow(fixture.conversation().getId(), fixture.assistantMessageId());
@@ -524,7 +571,7 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
     @Test
     void listenerThrowingDoesNotChangePersistedMessageOrReturnedStatus() {
         ReservedTurnFixture fixture = conversationWithPendingUserTurn("Fire and forget");
-        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any(), any()))
                 .thenReturn(new AgentRunResult("run-12", "ok", null, TokenUsage.ZERO,
                         AgentRun.Status.SUCCEEDED.name()));
         doThrow(new RuntimeException("listener bug")).when(turnCompletionListener)

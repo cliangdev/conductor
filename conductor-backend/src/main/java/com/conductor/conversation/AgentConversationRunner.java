@@ -18,15 +18,17 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
 /**
  * Drives one conversation turn: loads history, builds the recent-turns window, hands it to
  * {@link AgentExecutionService#run(AgentRunRequest, List, String)}, and persists the result. {@link
- * #submit} is the async entry point (runs on {@code ConversationExecutorConfig}'s bounded pool); {@link
- * #runNow} is the synchronous core, exposed separately so a caller already off the request thread can
- * skip the pool.
+ * #submit} is the async entry point (runs on {@code ConversationExecutorConfig}'s REST-side bounded
+ * pool -- Discord's {@code /ask} flow enqueues onto its own separate pool and calls {@link #runNow}
+ * directly, see that config class's javadoc); {@link #runNow} is the synchronous core, exposed separately
+ * so a caller already off the request thread can skip the pool.
  */
 @Component
 public class AgentConversationRunner {
@@ -65,7 +67,7 @@ public class AgentConversationRunner {
                                    AgentExecutionService agentExecutionService,
                                    MemoryAugmentor memoryAugmentor,
                                    List<TurnCompletionListener> turnCompletionListeners,
-                                   @Qualifier("conversationExecutor") ExecutorService conversationExecutor) {
+                                   @Qualifier("restConversationExecutor") ExecutorService conversationExecutor) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
         this.agentRepository = agentRepository;
@@ -100,6 +102,17 @@ public class AgentConversationRunner {
      * == FAILED -- see {@code AgentExecutionService#runForAgent}'s javadoc. Both are handled here.
      */
     public ConversationMessage runNow(String conversationId, String assistantMessageId) {
+        return runNow(conversationId, assistantMessageId, Set.of());
+    }
+
+    /**
+     * Same as {@link #runNow(String, String)}, plus {@code deniedToolIds} -- tool ids withheld from the
+     * model for this run only, passed straight through to {@link
+     * AgentExecutionService#run(AgentRunRequest, List, String, Set)}. The Discord {@code /ask}
+     * write-action toggle (see {@code DiscordAppConnector}) is the only caller today; {@link
+     * #runNow(String, String)} delegates here with an empty set, which withholds nothing.
+     */
+    public ConversationMessage runNow(String conversationId, String assistantMessageId, Set<String> deniedToolIds) {
         Conversation conversation = conversationRepository.findById(conversationId)
                 .orElseThrow(() -> new ConversationNotFoundException(conversationId));
 
@@ -151,7 +164,7 @@ public class AgentConversationRunner {
                 Map.of(), null);
 
         try {
-            AgentRunResult result = agentExecutionService.run(request, window, suffix);
+            AgentRunResult result = agentExecutionService.run(request, window, suffix, deniedToolIds);
             pending.setAgentRunId(result.runId());
             if (AgentRun.Status.FAILED.name().equals(result.status())) {
                 pending.setStatus(ConversationMessage.Status.FAILED);

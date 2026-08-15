@@ -1,6 +1,7 @@
 package com.conductor.integration.connector.discordapp;
 
 import com.conductor.agent.Agent;
+import com.conductor.agent.tool.coordinator.CoordinatorToolProvider;
 import com.conductor.conversation.AddressableAgentResolver;
 import com.conductor.conversation.AgentConversationRunner;
 import com.conductor.conversation.AgentNotAddressableException;
@@ -42,6 +43,7 @@ import java.security.spec.NamedParameterSpec;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 
@@ -50,16 +52,17 @@ import java.util.concurrent.RejectedExecutionException;
  * an addressable agent (default: the project's CEO coordinator) a question from Discord, threading the
  * reply per conversation. One connection is one Discord application bound to one guild.
  *
- * <p><b>Access control (iteration 1, accepted posture):</b> any member of the connected Discord guild
- * who can invoke {@code /ask} can query the project through whichever agent they name -- there is no
- * per-user allowlist or role gate today. This mirrors the guild's own permission model (an admin who
- * doesn't want a channel/role able to ask should restrict who can use the command via Discord's own
- * command permissions), but a project-side allowlist config field is a reasonable future iteration if
- * that turns out to be insufficient. The blast radius is real, not just "read access": the resolved
- * agent's full tool set runs on the asker's behalf, so a guild member can also cause Work Item creation
- * and dispatch of published workflows through whichever agent they address -- not merely query the
- * project read-only. A future per-connection allowlist or per-channel tool-scoping seam would narrow
- * this; neither exists today (see {@code docs/conversations.md}'s non-goals list).
+ * <p><b>Access control:</b> any member of the connected Discord guild who can invoke {@code /ask} can
+ * query the project through whichever agent they name -- there is no per-user allowlist or role gate
+ * today. This mirrors the guild's own permission model (an admin who doesn't want a channel/role able to
+ * ask should restrict who can use the command via Discord's own command permissions), but a project-side
+ * allowlist config field is a reasonable future iteration if that turns out to be insufficient. The blast
+ * radius used to be bigger than "read access": the resolved agent's full tool set ran on the asker's
+ * behalf, including {@code create_work_item} and {@code dispatch_workflow}. That is now gated by the
+ * {@value #ALLOW_WRITE_ACTIONS_KEY} connection field, off by default -- see {@link #runAskFlow} and
+ * {@link CoordinatorToolProvider#WRITE_CAPABLE_TOOL_IDS}. A future per-connection allowlist or
+ * finer-grained per-channel tool-scoping seam would narrow this further; neither exists today (see
+ * {@code docs/conversations.md}'s non-goals list).
  *
  * <p>Verification is Ed25519 over {@code timestamp + rawBody}, using the JDK's native {@code
  * Signature}/{@code KeyFactory} "Ed25519" support (Java 15+, no external crypto dependency). Discord
@@ -86,6 +89,13 @@ public class DiscordAppConnector implements WebhookConnector {
     private static final int MAX_TITLE_CHARS = 200;
     /** Discord's ephemeral-response flag (visible only to the invoking user). */
     private static final int EPHEMERAL_FLAG = 64;
+    /** Config key for the per-connection write-action toggle -- see {@link #getSpec} and {@link
+     *  #runAskFlow}. */
+    static final String ALLOW_WRITE_ACTIONS_KEY = "allow_write_actions";
+    /** Caps the sanitized Discord display name well under both {@code conversations.created_by_label}
+     *  (255) and {@code conversation_messages.author_label} (100) -- this one sanitized value seeds both,
+     *  wrapped in {@code "Discord (…)"} for the former. See {@link #sanitizeDisplayName}. */
+    static final int MAX_DISPLAY_NAME_CHARS = 60;
 
     private final ConversationService conversationService;
     private final AddressableAgentResolver addressableAgentResolver;
@@ -113,7 +123,7 @@ public class DiscordAppConnector implements WebhookConnector {
                                DiscordInteractionClient interactionClient,
                                DiscordCommandRegistrar commandRegistrar,
                                ObjectMapper objectMapper,
-                               @Qualifier("conversationExecutor") ExecutorService conversationExecutor) {
+                               @Qualifier("discordConversationExecutor") ExecutorService conversationExecutor) {
         this.conversationService = conversationService;
         this.addressableAgentResolver = addressableAgentResolver;
         this.runner = runner;
@@ -148,7 +158,13 @@ public class DiscordAppConnector implements WebhookConnector {
                 ConnectorConfigField.userInput("guild_id", "Server (Guild) ID",
                         "Enable Developer Mode in Discord (User Settings -> Advanced), then right-click "
                                 + "your server's icon -> Copy Server ID.",
-                        FieldType.STRING, true)
+                        FieldType.STRING, true),
+                ConnectorConfigField.userInput(ALLOW_WRITE_ACTIONS_KEY, "Allow write actions",
+                        "Off by default: /ask can only read the project -- write-capable coordinator "
+                                + "tools (creating a Work Item, dispatching a Workflow) are withheld from "
+                                + "the resolved agent for this connection. Turn on to let any guild member "
+                                + "who can invoke /ask cause those writes too.",
+                        FieldType.BOOLEAN, false)
         ));
     }
 
@@ -310,13 +326,18 @@ public class DiscordAppConnector implements WebhookConnector {
         }
         String username = userNode.path("username").asText("someone");
         String globalName = userNode.hasNonNull("global_name") ? userNode.get("global_name").asText() : null;
-        String displayName = globalName != null && !globalName.isBlank() ? globalName : username;
+        // Sanitized here, at the one place a raw Discord display name enters the system -- everything
+        // downstream (the actor label, the message author label, the eventual Work Item byline) only
+        // ever sees the sanitized value. See sanitizeDisplayName's javadoc.
+        String displayName = sanitizeDisplayName(globalName != null && !globalName.isBlank() ? globalName : username);
+        boolean allowWriteActions = asBoolean(ctx.configValue(ALLOW_WRITE_ACTIONS_KEY));
 
         String finalQuestion = question;
         String finalAgentOption = agentOption;
         try {
             conversationExecutor.execute(() -> runAskFlow(projectId, applicationId, interactionToken,
-                    interactionId, botToken, finalQuestion, finalAgentOption, guildId, channelId, isThread, displayName));
+                    interactionId, botToken, finalQuestion, finalAgentOption, guildId, channelId, isThread,
+                    displayName, allowWriteActions));
         } catch (RejectedExecutionException e) {
             // Nothing to reply with -- the whole point of enqueueing is that the reply itself happens
             // inside the queued task. A rejection here (pool + 50-deep queue both full) means the user's
@@ -336,7 +357,7 @@ public class DiscordAppConnector implements WebhookConnector {
      */
     private void runAskFlow(String projectId, String applicationId, String interactionToken, String interactionId,
                             String botToken, String question, String agentOption, String guildId, String channelId,
-                            boolean isThread, String displayName) {
+                            boolean isThread, String displayName, boolean allowWriteActions) {
         // CEO self-heal happens inside resolve() -- the shared chokepoint for every conversation flow.
         Agent target;
         try {
@@ -384,10 +405,14 @@ public class DiscordAppConnector implements WebhookConnector {
         }
 
         String conversationId = conversation.getId();
+        // Off by default: withhold the coordinator's write-capable tools (create_work_item,
+        // dispatch_workflow) from this run unless the connection has explicitly opted in. An empty set
+        // withholds nothing, so the opted-in path needs no separate branch.
+        Set<String> deniedToolIds = allowWriteActions ? Set.of() : CoordinatorToolProvider.WRITE_CAPABLE_TOOL_IDS;
         ConversationMessage reply = null;
         Throwable error = null;
         try {
-            reply = runner.runNow(conversationId, reserved.assistantMessage().getId());
+            reply = runner.runNow(conversationId, reserved.assistantMessage().getId(), deniedToolIds);
         } catch (Exception e) {
             error = e;
             // runNow only ever throws for a precondition it never got as far as recording as a FAILED
@@ -469,6 +494,42 @@ public class DiscordAppConnector implements WebhookConnector {
         }
         String suffix = "…";
         return trimmed.substring(0, maxChars - suffix.length()) + suffix;
+    }
+
+    /**
+     * Discord's {@code global_name}/{@code username} are attacker-controlled -- this is the single choke
+     * point every raw display name passes through before it can become a persisted label ({@code
+     * conversations.created_by_label} via the {@code ProjectActor}, {@code
+     * conversation_messages.author_label} via {@code appendUserMessage}) or reach the model (the
+     * "with &lt;label&gt;" clause {@code AgentConversationRunner} adds to the system prompt). Strips
+     * control characters (including newlines/tabs, not just trims them off the ends -- an embedded
+     * newline mid-name would otherwise survive), collapses the whitespace runs that leaves behind into a
+     * single space, trims, and caps at {@link #MAX_DISPLAY_NAME_CHARS}. Falls back to a neutral
+     * placeholder if nothing usable survives (e.g. a name made entirely of control characters). Does NOT
+     * strip ordinary printable Unicode/emoji -- only control characters and excess whitespace/length are
+     * a structural risk to a persisted column or a prompt; a normal display name should render as typed.
+     * Package-visible for the direct sanitizer unit test.
+     */
+    static String sanitizeDisplayName(String raw) {
+        if (raw == null) {
+            return "someone";
+        }
+        String stripped = raw.replaceAll("\\p{Cntrl}", " ").trim().replaceAll("\\s+", " ");
+        if (stripped.isBlank()) {
+            return "someone";
+        }
+        return stripped.length() > MAX_DISPLAY_NAME_CHARS ? stripped.substring(0, MAX_DISPLAY_NAME_CHARS) : stripped;
+    }
+
+    /** {@code allow_write_actions} round-trips as a real JSON boolean once the connect form submits one,
+     *  but tolerates a stringified {@code "true"}/{@code "false"} defensively -- and a connection created
+     *  before this field existed has no stored value at all, which must mean "off" (the safe default),
+     *  not "on". */
+    private boolean asBoolean(Object raw) {
+        if (raw instanceof Boolean b) {
+            return b;
+        }
+        return raw != null && Boolean.parseBoolean(raw.toString());
     }
 
     private JsonNode tryParse(byte[] rawBody) {

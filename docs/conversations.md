@@ -62,9 +62,11 @@ differently for each: the REST controller sends its HTTP response once the run f
 90s, see [REST endpoints](#rest-endpoints)) -- there is nothing to enqueue, the caller IS the request
 thread. Discord's connector cannot do that (Discord's own ack budget for the deferred response is far
 shorter than a model run) -- `DiscordAppConnector.handleEvent` only parses the interaction and enqueues
-the entire rest of the flow (provisioning through every reply, success or error) onto the same bounded
-executor `AgentConversationRunner#submit` uses, then returns immediately; the "reply" happens later, as
-an outbound Discord API call (`editOriginal`) from that queued task, not as this request's HTTP response.
+the entire rest of the flow (provisioning through every reply, success or error) onto its own bounded
+executor -- a separate pool from the one `AgentConversationRunner#submit` uses for the REST path, so a
+burst on one channel can't starve the other (`ConversationExecutorConfig`) -- then returns immediately;
+the "reply" happens later, as an outbound Discord API call (`editOriginal`) from that queued task, not as
+this request's HTTP response.
 
 ## Addressable agents
 
@@ -207,8 +209,11 @@ one guild, gets its own Conductor connection and its own Interactions Endpoint U
    interaction token, but creating the per-conversation thread needs the bot token + these permissions).
 3. **Create the connection** in Conductor: **Integrations → Discord App → Connect**, filling in
    **Application ID**, **Public Key**, **Server (Guild) ID** (enable Developer Mode in Discord, then
-   right-click the server icon → Copy Server ID), and the bot token as the API key. On save, Conductor
-   registers the guild-scoped `/ask` command automatically (`Connector#onConnectionCreated` →
+   right-click the server icon → Copy Server ID), and the bot token as the API key. **Allow write
+   actions** is off by default — leave it off unless every member of the guild who can invoke `/ask`
+   should be able to create Work Items and dispatch published workflows through the resolved agent, not
+   just query the project (see [Access control](#access-control)). On save, Conductor registers the
+   guild-scoped `/ask` command automatically (`Connector#onConnectionCreated` →
    `DiscordCommandRegistrar`) — a bad token or missing permission fails connection creation outright
    rather than silently leaving a broken `/ask`.
 4. **Paste the Interactions Endpoint URL.** Find the new connection's id in the connections list, then
@@ -231,15 +236,26 @@ connected guild who can invoke `/ask` can query the project through whichever ad
 name.** There is no per-user allowlist or role gate today; this mirrors the guild's own permission model
 (an admin who wants to restrict who can use `/ask` does so via Discord's own command permissions).
 
-**The blast radius is bigger than "read access."** The resolved agent's full tool set runs on the
-asker's behalf — for the default CEO coordinator, that includes `create_work_item` and
-`dispatch_workflow` (see [Coordinator tools](#coordinator-tools)). A guild member who can invoke `/ask`
-can therefore cause Work Item creation and dispatch of published workflows in the project, not merely
-query it. Stated plainly rather than glossed over: today's posture trusts every member of the connected
-guild with everything the addressed agent's tools can do. A project-side allowlist config field, or
-per-channel/per-connection tool scoping (letting an admin bind a narrower tool set to the Discord surface
-than the same agent gets over the REST API), are reasonable future iterations if that turns out to be
-insufficient — see [Non-goals](#non-goals--future-seams).
+**Write actions are gated separately, off by default.** The resolved agent's tool set otherwise runs on
+the asker's behalf — for the default CEO coordinator, that would include `create_work_item` and
+`dispatch_workflow` (see [Coordinator tools](#coordinator-tools)), letting any guild member cause Work
+Item creation and workflow dispatch, not merely query the project. The `discord-app` connection's **Allow
+write actions** field (off by default, including for a connection created before this field existed)
+controls this: while off, `DiscordAppConnector` passes `CoordinatorToolProvider.WRITE_CAPABLE_TOOL_IDS`
+as a denied-tool-id set through `AgentConversationRunner#runNow` to
+`AgentExecutionService#run(AgentRunRequest, List, String, Set)`, which withholds those tools from the
+model entirely for that run — not a system-prompt instruction the model could ignore, an actual
+enforcement point at tool resolution. A guild member can still cause writes if an admin explicitly turns
+the field on. A project-side per-user allowlist, or finer-grained per-channel/per-connection tool scoping
+beyond this coarse read/write split, are reasonable future iterations if that turns out to be insufficient
+— see [Non-goals](#non-goals--future-seams).
+
+**The Discord display name behind a turn is sanitized before it becomes a label.** `global_name`/
+`username` are attacker-controlled and end up as the `Discord (…)`-wrapped actor label persisted on
+`conversations.created_by_label` and `conversation_messages.author_label` (rendered as a Work Item/
+conversation byline, and fed into the model's system prompt). `DiscordAppConnector#sanitizeDisplayName`
+strips control characters, collapses whitespace, and caps the length before any of that happens, so a
+crafted display name can't inject formatting or impersonate another label.
 
 ## Non-goals / future seams
 
@@ -248,10 +264,11 @@ Deliberately out of scope for this iteration, each a plausible next step:
 - **Per-connection allowlist** — restricting *who* (which Discord user ids, or roles) may invoke `/ask`
   on a given connection, narrower than "any guild member." Today the only lever is Discord's own
   command-permissions UI, outside Conductor entirely.
-- **Per-channel/per-connection tool scoping** — letting an agent expose a narrower tool set over Discord
-  than it exposes over the REST API (e.g. read-only project-doc search via `/ask`, but no
-  `create_work_item`/`dispatch_workflow`), rather than the same full tool set on every addressable
-  surface. See [Access control](#access-control) for why this matters.
+- **Finer-grained per-channel/per-connection tool scoping** — the `discord-app` connection's **Allow
+  write actions** field (see [Access control](#access-control)) is a coarse read/write split
+  (`CoordinatorToolProvider.WRITE_CAPABLE_TOOL_IDS` withheld or not); letting an agent expose an
+  arbitrary narrower tool set over Discord than it exposes over the REST API (e.g. read-only
+  project-doc search via `/ask`, but nothing else) is a further-out seam this doesn't attempt.
 - **Slack** — no Slack connector exists yet; the webhook SPI's `synchronousResponse` extension (built for
   Discord's PING/deferred-ack contract) generalizes to Slack's `url_verification` challenge the same way.
 - **Gateway `@mentions`** — the Discord integration is slash-command-only (`/ask`); reacting to a plain

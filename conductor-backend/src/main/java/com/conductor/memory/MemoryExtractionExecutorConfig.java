@@ -10,9 +10,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Bounded pool for {@link MemoryExtractionService}'s post-turn extraction jobs. Deliberately NOT the
- * {@code conversationExecutor} ({@code ConversationExecutorConfig}) — extraction is best-effort
- * background work that must never compete with live conversation turns for threads. Also deliberately
+ * Bounded pool for {@link MemoryExtractionService}'s post-turn extraction jobs. Deliberately NOT either
+ * of {@code ConversationExecutorConfig}'s pools -- extraction is best-effort background work that must
+ * never compete with live conversation turns for threads, on either surface. Also deliberately
  * NOT that pool's {@code AbortPolicy}: no human is waiting on an extraction the way a conversation
  * turn's caller is, so a full queue silently drops the oldest queued (not yet started) extraction job
  * via {@link ThreadPoolExecutor.DiscardOldestPolicy} rather than rejecting (and having to be handled

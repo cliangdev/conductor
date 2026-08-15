@@ -33,7 +33,8 @@ import java.util.concurrent.ExecutorService;
  * such listener after a turn persists as COMPLETED. This class must never affect that turn's latency or
  * outcome: {@link #onTurnCompleted} only validates flags/cheap heuristics inline and submits the actual
  * work to {@link MemoryExtractionExecutorConfig#memoryExtractionExecutor()} — a small, separate pool
- * from {@code conversationExecutor} — so extraction runs fully off the request/turn path. Every failure
+ * from either of {@code ConversationExecutorConfig}'s pools — so extraction runs fully off the
+ * request/turn path. Every failure
  * mode (missing agent, unknown provider, no credential, a bad or unparseable model response) is logged
  * and dropped rather than surfaced, since nothing is waiting on this result.
  */

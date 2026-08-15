@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -210,6 +211,79 @@ class AgentExecutionServiceTest {
         service.run(request, List.of(), null);
 
         assertThat(provider.requests.get(0)).isEqualTo(provider.requests.get(1));
+    }
+
+    // ---- deniedToolIds: withheld from the model, and answered distinctly if called anyway ----
+
+    @Test
+    void deniedToolIdsAreWithheldFromTheToolDefsSentToTheProvider() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+
+        service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null),
+                List.of(), null, Set.of("fake:t1"));
+
+        assertThat(provider.requests.get(0).tools()).isEmpty();
+    }
+
+    @Test
+    void emptyDeniedToolIdsBehavesIdenticallyToTheThreeArgOverload() {
+        CapturingProvider provider = new CapturingProvider();
+        AgentExecutionService service = serviceWith(agent("{}"), provider, new RecordingTool());
+        AgentRunRequest request = new AgentRunRequest("agent-1", "Do the thing", Map.of(), null);
+
+        service.run(request, List.of(), null);
+        service.run(request, List.of(), null, Set.of());
+
+        assertThat(provider.requests.get(0)).isEqualTo(provider.requests.get(1));
+    }
+
+    /**
+     * If the model calls a denied tool anyway (e.g. it saw the name earlier in the conversation window,
+     * before this run's denial applied), the tool must never actually execute, and the error fed back to
+     * the model must be distinguishable from "unknown tool" -- clear enough for the agent to relay to the
+     * human on the other end. Asserted on the persisted {@code agent_runs.tool_calls_json}, the actual
+     * payload the model saw, not just on the run's overall status.
+     */
+    @Test
+    void deniedToolCalledAnywayIsNeverExecutedAndGetsADisabledErrorNotUnknownTool() {
+        RecordingTool tool = new RecordingTool();
+        AtomicInteger turns = new AtomicInteger();
+        ChatModelProvider provider = new ChatModelProvider() {
+            public String id() { return "fake"; }
+            public ChatResponse complete(ChatRequest request, String apiKey) {
+                if (turns.getAndIncrement() == 0) {
+                    return new ChatResponse(ChatResponse.StopReason.TOOL_USE, "let me check",
+                            List.of(new ToolCall("call-1", "fake_tool", "{}")), new TokenUsage(10, 5));
+                }
+                return new ChatResponse(ChatResponse.StopReason.COMPLETE, "Final answer",
+                        List.of(), new TokenUsage(3, 2));
+            }
+        };
+
+        Agent agent = agent("{}");
+        AgentRepository agentRepo = mock(AgentRepository.class);
+        when(agentRepo.findById("agent-1")).thenReturn(Optional.of(agent));
+        ArgumentCaptor<AgentRun> savedRun = ArgumentCaptor.forClass(AgentRun.class);
+        AgentRunRepository runRepo = mock(AgentRunRepository.class);
+        when(runRepo.save(savedRun.capture())).thenAnswer(inv -> inv.getArgument(0));
+        ProviderCredentialService credentials = mock(ProviderCredentialService.class);
+        when(credentials.resolveApiKey("p1", "fake")).thenReturn(Optional.of("sk-test"));
+        LogRedactionService redaction = mock(LogRedactionService.class);
+        when(redaction.redact(any(), any())).thenAnswer(inv -> inv.getArgument(1));
+        AgentExecutionService service = new AgentExecutionService(agentRepo, registryFor(provider), credentials,
+                registryFor(tool), runRepo, redaction, MAPPER);
+
+        AgentRunResult result = service.run(new AgentRunRequest("agent-1", "Do the thing", Map.of(), null),
+                List.of(), null, Set.of("fake:t1"));
+
+        assertThat(tool.calls.get()).isZero();
+        assertThat(result.status()).isEqualTo(AgentRun.Status.SUCCEEDED.name());
+        List<AgentRun> saved = savedRun.getAllValues();
+        String toolCallsJson = saved.get(saved.size() - 1).getToolCallsJson();
+        assertThat(toolCallsJson)
+                .contains("disabled for this conversation")
+                .doesNotContain("Unknown or unavailable tool");
     }
 
     // ---- maxTokens: unset stays null so each provider applies its own cap ----

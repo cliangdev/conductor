@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Tool source {@code "coordinator"} — the hub-and-spoke surface for an addressable agent (e.g. the CEO
@@ -53,6 +54,19 @@ public class CoordinatorToolProvider implements AgentToolProvider {
     private static final String DISPATCH_WORKFLOW = WorkflowCoordinatorTools.DISPATCH_WORKFLOW;
     private static final String GET_WORKFLOW_RUN = WorkflowCoordinatorTools.GET_WORKFLOW_RUN;
     private static final String LIST_AGENTS = AgentCoordinatorTools.LIST_AGENTS;
+
+    /**
+     * The subset of {@code coordinator:*} tool ids that write rather than merely read -- Work Item
+     * creation and workflow dispatch. Sourced from the same bare-name constants every other id in this
+     * class is, not re-typed string literals, so a future write-capable coordinator tool added anywhere
+     * in this package can't be silently left out of a caller's write-action gate just by forgetting a
+     * second place to list it. This lives here (the coordinator package owns which of its own tools
+     * write) rather than in a caller like {@code DiscordAppConnector}, which has no business being the
+     * authority on that -- see its Discord {@code /ask} write-action toggle, the first consumer.
+     */
+    public static final Set<String> WRITE_CAPABLE_TOOL_IDS = Set.of(
+            SOURCE_ID + ":" + CREATE_WORK_ITEM,
+            SOURCE_ID + ":" + DISPATCH_WORKFLOW);
 
     /** The ten built {@code coordinator:*} tools -- built once in the constructor rather than per call:
      *  every tool class is stateless (each invocation is scoped entirely by its {@code

@@ -1,6 +1,7 @@
 package com.conductor.integration.connector.discordapp;
 
 import com.conductor.agent.Agent;
+import com.conductor.agent.tool.coordinator.CoordinatorToolProvider;
 import com.conductor.conversation.AddressableAgentResolver;
 import com.conductor.conversation.AgentConversationRunner;
 import com.conductor.conversation.AgentNotAddressableException;
@@ -11,12 +12,16 @@ import com.conductor.conversation.ConversationService;
 import com.conductor.entity.Connection;
 import com.conductor.exception.ConflictException;
 import com.conductor.integration.ConnectionContext;
+import com.conductor.integration.ConnectorConfigField;
+import com.conductor.integration.FieldType;
 import com.conductor.integration.InboundEvent;
 import com.conductor.integration.WebhookConnector;
 import com.conductor.integration.WebhookVerification;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpHeaders;
 
@@ -205,7 +210,7 @@ class DiscordAppConnectorTest {
         stubAppendUserMessage();
 
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "the answer", null);
-        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenReturn(reply);
+        stubRunNowDenied(reply);
         when(interactionClient.editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef("msg-1", "chan-1"));
         when(interactionClient.createThread(eq(BOT_TOKEN), eq("chan-1"), eq("msg-1"), anyString()))
@@ -237,7 +242,7 @@ class DiscordAppConnectorTest {
                 eq(ConversationChannel.DISCORD), anyString(), anyString(), any())).thenReturn(conversation);
         stubAppendUserMessage();
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null);
-        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenReturn(reply);
+        stubRunNowDenied(reply);
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
@@ -266,7 +271,7 @@ class DiscordAppConnectorTest {
         stubAppendUserMessage();
 
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null);
-        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenReturn(reply);
+        stubRunNowDenied(reply);
         when(interactionClient.editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef("msg-1", "thread-9"));
 
@@ -355,7 +360,7 @@ class DiscordAppConnectorTest {
 
         verify(interactionClient).editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN),
                 org.mockito.ArgumentMatchers.contains("Still working on the previous message"));
-        verify(runner, never()).runNow(anyString(), anyString());
+        verifyNoInteractions(runner);
     }
 
     /** RejectedExecutionException can now only happen at ENQUEUE time (the executor + its queue both
@@ -382,7 +387,7 @@ class DiscordAppConnectorTest {
                 .thenReturn(conversation);
         stubAppendUserMessage();
         ConversationMessage failed = assistantMessage(ConversationMessage.Status.FAILED, "", "run-9");
-        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenReturn(failed);
+        stubRunNowDenied(failed);
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
@@ -407,7 +412,8 @@ class DiscordAppConnectorTest {
         when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
                 .thenReturn(conversation);
         stubAppendUserMessage();
-        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenThrow(new RuntimeException("boom"));
+        when(runner.runNow(eq("conv-1"), eq(RESERVED_ASSISTANT_ID), eq(CoordinatorToolProvider.WRITE_CAPABLE_TOOL_IDS)))
+                .thenThrow(new RuntimeException("boom"));
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
@@ -429,7 +435,7 @@ class DiscordAppConnectorTest {
         stubAppendUserMessage();
         String longContent = "x".repeat(2500);
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, longContent, null);
-        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenReturn(reply);
+        stubRunNowDenied(reply);
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
@@ -456,6 +462,165 @@ class DiscordAppConnectorTest {
         verify(commandRegistrar).registerAskCommand(BOT_TOKEN, APPLICATION_ID, GUILD_ID);
     }
 
+    // ---- getSpec: write-action toggle field ----
+
+    @Test
+    void getSpec_includesAllowWriteActionsAsAnOptionalBooleanField() {
+        ConnectorConfigField field = connector.getSpec().fields().stream()
+                .filter(f -> f.key().equals(DiscordAppConnector.ALLOW_WRITE_ACTIONS_KEY))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("allow_write_actions field not found"));
+
+        assertThat(field.type()).isEqualTo(FieldType.BOOLEAN);
+        assertThat(field.required()).isFalse();
+    }
+
+    // ---- write-action toggle: denies coordinator write tools unless explicitly enabled ----
+
+    /** No stored value at all -- the case an existing pre-toggle connection is in -- must deny, the same
+     *  as an explicit {@code false}, not silently behave as "on". */
+    @Test
+    void handleEvent_noStoredWriteActionsValue_deniesWriteCapableCoordinatorTools() {
+        Agent target = agent("agent-1", "ceo", "CEO");
+        when(addressableAgentResolver.resolve(PROJECT_ID, null)).thenReturn(target);
+        Conversation conversation = conversation("conv-1", "agent-1");
+        when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
+                .thenReturn(conversation);
+        stubAppendUserMessage();
+        ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null);
+        stubRunNowDenied(reply);
+        when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
+                .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
+
+        InboundEvent event = event(askInteractionJson(null, "question", false, "chan-1", null));
+        connector.handleEvent(event, ctxWithBotToken(null));
+
+        verify(runner).runNow(eq("conv-1"), eq(RESERVED_ASSISTANT_ID), eq(CoordinatorToolProvider.WRITE_CAPABLE_TOOL_IDS));
+    }
+
+    @Test
+    void handleEvent_writeActionsExplicitlyFalse_deniesWriteCapableCoordinatorTools() {
+        Agent target = agent("agent-1", "ceo", "CEO");
+        when(addressableAgentResolver.resolve(PROJECT_ID, null)).thenReturn(target);
+        Conversation conversation = conversation("conv-1", "agent-1");
+        when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
+                .thenReturn(conversation);
+        stubAppendUserMessage();
+        ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null);
+        stubRunNowDenied(reply);
+        when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
+                .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
+
+        InboundEvent event = event(askInteractionJson(null, "question", false, "chan-1", null));
+        connector.handleEvent(event, ctxWithBotToken(Boolean.FALSE));
+
+        verify(runner).runNow(eq("conv-1"), eq(RESERVED_ASSISTANT_ID), eq(CoordinatorToolProvider.WRITE_CAPABLE_TOOL_IDS));
+    }
+
+    @Test
+    void handleEvent_writeActionsExplicitlyTrue_runsWithTheFullToolSet() {
+        Agent target = agent("agent-1", "ceo", "CEO");
+        when(addressableAgentResolver.resolve(PROJECT_ID, null)).thenReturn(target);
+        Conversation conversation = conversation("conv-1", "agent-1");
+        when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
+                .thenReturn(conversation);
+        stubAppendUserMessage();
+        ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null);
+        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID, java.util.Set.of())).thenReturn(reply);
+        when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
+                .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
+
+        InboundEvent event = event(askInteractionJson(null, "question", false, "chan-1", null));
+        connector.handleEvent(event, ctxWithBotToken(Boolean.TRUE));
+
+        verify(runner).runNow("conv-1", RESERVED_ASSISTANT_ID, java.util.Set.of());
+    }
+
+    /** Config round-trips as a real JSON boolean once the connect form submits one, but a stringified
+     *  {@code "true"} is tolerated defensively. */
+    @Test
+    void handleEvent_writeActionsAsStringTrue_runsWithTheFullToolSet() {
+        Agent target = agent("agent-1", "ceo", "CEO");
+        when(addressableAgentResolver.resolve(PROJECT_ID, null)).thenReturn(target);
+        Conversation conversation = conversation("conv-1", "agent-1");
+        when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
+                .thenReturn(conversation);
+        stubAppendUserMessage();
+        ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null);
+        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID, java.util.Set.of())).thenReturn(reply);
+        when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
+                .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
+
+        InboundEvent event = event(askInteractionJson(null, "question", false, "chan-1", null));
+        connector.handleEvent(event, ctxWithBotToken("true"));
+
+        verify(runner).runNow("conv-1", RESERVED_ASSISTANT_ID, java.util.Set.of());
+    }
+
+    // ---- display name sanitization ----
+
+    @Test
+    void sanitizeDisplayName_stripsControlCharactersAndCollapsesTheWhitespaceLeftBehind() {
+        assertThat(DiscordAppConnector.sanitizeDisplayName("Evil\u0000Admin\u0007Name"))
+                .isEqualTo("Evil Admin Name");
+    }
+
+    @Test
+    void sanitizeDisplayName_stripsEmbeddedNewlinesAndTabsNotJustLeadingOrTrailingOnes() {
+        assertThat(DiscordAppConnector.sanitizeDisplayName("Evil\nAdmin\tName\r\n"))
+                .isEqualTo("Evil Admin Name");
+    }
+
+    @Test
+    void sanitizeDisplayName_capsOverLengthInputWellUnderTheColumnLimits() {
+        String sanitized = DiscordAppConnector.sanitizeDisplayName("x".repeat(500));
+        assertThat(sanitized).hasSize(DiscordAppConnector.MAX_DISPLAY_NAME_CHARS);
+    }
+
+    @Test
+    void sanitizeDisplayName_fallsBackToANeutralPlaceholderWhenNothingUsableSurvives() {
+        assertThat(DiscordAppConnector.sanitizeDisplayName("\u0000\u0001\u0002")).isEqualTo("someone");
+        assertThat(DiscordAppConnector.sanitizeDisplayName("   ")).isEqualTo("someone");
+        assertThat(DiscordAppConnector.sanitizeDisplayName("")).isEqualTo("someone");
+        assertThat(DiscordAppConnector.sanitizeDisplayName(null)).isEqualTo("someone");
+    }
+
+    @Test
+    void sanitizeDisplayName_leavesOrdinaryPrintableNamesUntouched() {
+        assertThat(DiscordAppConnector.sanitizeDisplayName("Jane Doe")).isEqualTo("Jane Doe");
+    }
+
+    /** End-to-end: a malicious username must come out sanitized on the actual persisted author label,
+     *  not just when {@code sanitizeDisplayName} is called directly. The control characters are JSON-
+     *  escaped ({@code \\u0000}, {@code \\n}) so the payload itself stays valid JSON; Jackson decodes
+     *  them back to real control characters before {@code sanitizeDisplayName} ever sees the value. */
+    @Test
+    void handleEvent_maliciousUsername_reachesAppendUserMessageAlreadySanitized() {
+        Agent target = agent("agent-1", "ceo", "CEO");
+        when(addressableAgentResolver.resolve(PROJECT_ID, null)).thenReturn(target);
+        Conversation conversation = conversation("conv-1", "agent-1");
+        when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
+                .thenReturn(conversation);
+        stubAppendUserMessage();
+        stubRunNowDenied(assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null));
+        when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
+                .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
+
+        String payload = "{"
+                + "\"type\":2,\"id\":\"interaction-1\",\"token\":\"" + INTERACTION_TOKEN + "\","
+                + "\"guild_id\":\"" + GUILD_ID + "\","
+                + "\"channel\":{\"id\":\"chan-1\",\"type\":0},"
+                + "\"member\":{\"user\":{\"username\":\"Evil\\nAdmin\\u0000Name\"}},"
+                + "\"data\":{\"name\":\"ask\",\"options\":[{\"name\":\"question\",\"value\":\"question\"}]}"
+                + "}";
+
+        connector.handleEvent(event(payload), ctxWithBotToken());
+
+        ArgumentCaptor<String> authorLabelCaptor = ArgumentCaptor.forClass(String.class);
+        verify(conversationService).appendUserMessage(any(), any(), any(), authorLabelCaptor.capture(), any(), any());
+        assertThat(authorLabelCaptor.getValue()).isEqualTo("Evil Admin Name");
+    }
+
     // ---- fixtures ----
 
     private ConnectionContext ctxWithPublicKey(String publicKeyHex) {
@@ -466,6 +631,17 @@ class DiscordAppConnectorTest {
     private ConnectionContext ctxWithBotToken() {
         return new ConnectionContext(PROJECT_ID, "discord-app", "conn-1", BOT_TOKEN, null, null,
                 Map.of("application_id", APPLICATION_ID, "public_key", "aa", "guild_id", GUILD_ID), null);
+    }
+
+    /** Same as {@link #ctxWithBotToken()} but with an explicit {@code allow_write_actions} config value --
+     *  {@code null} omits the key entirely (an existing connection with nothing stored for it). */
+    private ConnectionContext ctxWithBotToken(Object allowWriteActions) {
+        Map<String, Object> config = new java.util.LinkedHashMap<>(
+                Map.of("application_id", APPLICATION_ID, "public_key", "aa", "guild_id", GUILD_ID));
+        if (allowWriteActions != null) {
+            config.put("allow_write_actions", allowWriteActions);
+        }
+        return new ConnectionContext(PROJECT_ID, "discord-app", "conn-1", BOT_TOKEN, null, null, config, null);
     }
 
     private InboundEvent event(String payload) {
@@ -500,6 +676,15 @@ class DiscordAppConnectorTest {
         reservedAssistant.setStatus(ConversationMessage.Status.PENDING);
         when(conversationService.appendUserMessage(any(), any(), any(), any(), any(), any()))
                 .thenReturn(new ConversationService.ReservedTurn(userMessage, reservedAssistant));
+    }
+
+    /** Stubs the 3-arg {@code runner.runNow} overload with {@code
+     *  CoordinatorToolProvider.WRITE_CAPABLE_TOOL_IDS} denied -- what every test using {@link
+     *  #ctxWithBotToken()}'s default (write actions off) reaches, since {@code runAskFlow} only calls the
+     *  plain 2-arg {@code runNow} once denial is genuinely empty. */
+    private void stubRunNowDenied(ConversationMessage reply) {
+        when(runner.runNow(eq("conv-1"), eq(RESERVED_ASSISTANT_ID), eq(CoordinatorToolProvider.WRITE_CAPABLE_TOOL_IDS)))
+                .thenReturn(reply);
     }
 
     private ConversationMessage assistantMessage(ConversationMessage.Status status, String content, String runId) {
