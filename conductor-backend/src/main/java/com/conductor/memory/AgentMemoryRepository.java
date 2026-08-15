@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.Collection;
@@ -46,7 +47,11 @@ public interface AgentMemoryRepository extends JpaRepository<AgentMemory, String
     /** Importance/recency floor pool for retrieval -- live rows, highest importance and most recent first. */
     List<AgentMemory> findByProjectIdAndValidToIsNullOrderByImportanceDescCreatedAtDesc(String projectId, Pageable pageable);
 
+    /** {@code @Transactional} directly on the method (mirrors {@code DaemonEventRepository.acknowledgeEvents})
+     *  since callers -- {@code DatabaseMemoryAugmentor} and {@code MemoryToolProvider}'s tool -- invoke it
+     *  outside any request-thread transaction. */
     @Modifying
+    @Transactional
     @Query("UPDATE AgentMemory m SET m.lastAccessedAt = CURRENT_TIMESTAMP, m.accessCount = m.accessCount + 1 "
             + "WHERE m.id IN :ids")
     void bumpAccess(@Param("ids") Collection<String> ids);

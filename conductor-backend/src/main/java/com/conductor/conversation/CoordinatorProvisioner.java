@@ -75,10 +75,15 @@ public class CoordinatorProvisioner {
             "coordinator:list_agents", "coordinator:search_project_docs", "coordinator:read_project_doc",
             "coordinator:ask_agent");
 
+    /** {@code memory:*} tools (see {@code MemoryToolProvider}) -- read-only, same rationale as {@link
+     *  #KNOWLEDGE_TOOL_IDS}: the CEO can search long-term memory, but extraction/consolidation is a
+     *  background process's job, not the coordinator's. */
+    private static final List<String> MEMORY_TOOL_IDS = List.of("memory:search_memory");
+
     /** Seeded/backfilled tool ids, knowledge tools first for readability -- order has no functional
      *  meaning (the merge in {@link #backfillToolIdsIfMissing} is order-preserving but set-based). */
-    private static final List<String> CEO_TOOL_IDS =
-            Stream.concat(KNOWLEDGE_TOOL_IDS.stream(), COORDINATOR_TOOL_IDS.stream()).toList();
+    private static final List<String> CEO_TOOL_IDS = Stream.of(KNOWLEDGE_TOOL_IDS, COORDINATOR_TOOL_IDS, MEMORY_TOOL_IDS)
+            .flatMap(List::stream).toList();
 
     private final AgentRepository agentRepository;
     private final ObjectMapper objectMapper;

@@ -129,7 +129,8 @@ class CoordinatorProvisionerIntegrationTest extends AbstractNoneWebIntegrationTe
                 .contains("coordinator:list_agents")
                 .contains("coordinator:search_project_docs")
                 .contains("coordinator:read_project_doc")
-                .contains("coordinator:ask_agent");
+                .contains("coordinator:ask_agent")
+                .contains("memory:search_memory");
     }
 
     @Test

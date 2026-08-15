@@ -8,6 +8,9 @@ import com.conductor.knowledge.domain.KnowledgeDomainService;
 import com.conductor.knowledge.page.KnowledgePageService;
 import com.conductor.knowledge.page.KnowledgeSearchService;
 import com.conductor.knowledge.tool.KnowledgeToolProvider;
+import com.conductor.memory.AgentMemoryRepository;
+import com.conductor.memory.MemoryRetriever;
+import com.conductor.memory.tool.MemoryToolProvider;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkflowJobRunRepository;
@@ -34,11 +37,11 @@ import static org.mockito.Mockito.when;
  * every built-in {@link AgentTool}'s bare {@code name()} — {@code AgentExecutionService} advertises the
  * bare name, not the namespaced {@code id()}, to the model.
  *
- * <p>Scoped to the two static, project-agnostic providers ({@link CoordinatorToolProvider},
- * {@link KnowledgeToolProvider}): their tool sets are fixed Java classes, so this is a compile-time-ish
- * guarantee. {@code ConnectorToolProvider} and {@code HttpToolProvider} tool names are dynamic
- * (connector-defined / user-defined per project) and are intentionally out of scope here — those are
- * validated at creation time instead, not pinned by a static test.
+ * <p>Scoped to the three static, project-agnostic providers ({@link CoordinatorToolProvider},
+ * {@link KnowledgeToolProvider}, {@link MemoryToolProvider}): their tool sets are fixed Java classes, so
+ * this is a compile-time-ish guarantee. {@code ConnectorToolProvider} and {@code HttpToolProvider} tool
+ * names are dynamic (connector-defined / user-defined per project) and are intentionally out of scope
+ * here — those are validated at creation time instead, not pinned by a static test.
  */
 class ToolNameFormatTest {
 
@@ -75,6 +78,14 @@ class ToolNameFormatTest {
         KnowledgeToolProvider provider = new KnowledgeToolProvider(projectSettingsService,
                 mock(KnowledgePageService.class), mock(KnowledgeIngestionService.class),
                 mock(KnowledgeSearchService.class), mock(KnowledgeDomainService.class), new ObjectMapper());
+
+        assertToolNamesAreOpenAiSafe(provider.available("p1"));
+    }
+
+    @Test
+    void everyMemoryToolNameIsOpenAiSafe() {
+        MemoryToolProvider provider = new MemoryToolProvider(mock(MemoryRetriever.class),
+                mock(AgentMemoryRepository.class), new ObjectMapper(), true);
 
         assertToolNamesAreOpenAiSafe(provider.available("p1"));
     }

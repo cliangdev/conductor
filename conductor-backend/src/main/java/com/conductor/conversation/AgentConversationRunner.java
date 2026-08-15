@@ -93,7 +93,18 @@ public class AgentConversationRunner {
         }
         ConversationMessage latestUser = history.get(history.size() - 1);
         List<ChatMessage> window = buildWindow(history.subList(0, history.size() - 1));
-        window = memoryAugmentor.augment(conversation.getProjectId(), conversation.getAgentId(), conversationId, window);
+        MemoryAugmentor.Augmentation augmentation;
+        try {
+            augmentation = memoryAugmentor.augment(conversation.getProjectId(),
+                    conversation.getAgentId(), conversationId, latestUser.getContent(), window);
+        } catch (Exception e) {
+            // Memory must never fail a turn. DatabaseMemoryAugmentor already catches internally; this is
+            // defense-in-depth against a future implementation that doesn't honor that contract.
+            log.warn("Memory augmentation threw for conversation {}; continuing without memory: {}",
+                    conversationId, e.getMessage());
+            augmentation = MemoryAugmentor.Augmentation.unchanged(window);
+        }
+        window = augmentation.window();
 
         ConversationMessage pending = new ConversationMessage();
         pending.setConversationId(conversationId);
@@ -103,6 +114,9 @@ public class AgentConversationRunner {
         pending = messageRepository.save(pending);
 
         String suffix = buildSystemPromptSuffix(conversation, latestUser);
+        if (augmentation.systemPromptAddendum() != null && !augmentation.systemPromptAddendum().isBlank()) {
+            suffix = suffix + "\n\n" + augmentation.systemPromptAddendum();
+        }
         AgentRunRequest request = new AgentRunRequest(conversation.getAgentId(), latestUser.getContent(),
                 Map.of(), null);
 

@@ -22,8 +22,10 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
 /**
@@ -51,12 +53,18 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
 
     @MockitoBean
     private AgentExecutionService agentExecutionService;
+    @MockitoBean
+    private MemoryAugmentor memoryAugmentor;
 
     private String projectId;
     private String agentId;
 
     @BeforeEach
     void setUp() {
+        // Default stub: pass the window through unchanged with no addendum, mirroring the removed
+        // NoopMemoryAugmentor -- individual tests below override this to exercise the addendum path.
+        when(memoryAugmentor.augment(anyString(), anyString(), anyString(), any(), anyList()))
+                .thenAnswer(inv -> MemoryAugmentor.Augmentation.unchanged(inv.getArgument(4)));
         User user = new User();
         user.setFirebaseUid("test-uid-" + UUID.randomUUID());
         user.setEmail("test-" + UUID.randomUUID() + "@example.com");
@@ -242,5 +250,72 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
         org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), suffixCaptor.capture());
 
         assertThat(suffixCaptor.getValue()).contains("Renamed Agent");
+    }
+
+    /** {@link MemoryAugmentor#augment}'s {@code systemPromptAddendum} must reach the suffix argument
+     *  handed to {@code AgentExecutionService#run}, appended after the base suffix with a blank-line
+     *  separator -- proven by comparing against the plain (no-addendum) suffix from the default stub. */
+    @Test
+    void nonBlankAddendumIsAppendedToTheSystemPromptSuffix() {
+        Conversation plain = conversationWithPendingUserTurn("Plain turn");
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-6", "ok", null, TokenUsage.ZERO, AgentRun.Status.SUCCEEDED.name()));
+        runner.runNow(plain.getId());
+        org.mockito.ArgumentCaptor<String> plainSuffixCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), plainSuffixCaptor.capture());
+        String plainSuffix = plainSuffixCaptor.getValue();
+
+        Conversation augmented = conversationWithPendingUserTurn("Augmented turn");
+        when(memoryAugmentor.augment(anyString(), anyString(), org.mockito.ArgumentMatchers.eq(augmented.getId()),
+                any(), anyList()))
+                .thenAnswer(inv -> new MemoryAugmentor.Augmentation(inv.getArgument(4),
+                        "## Long-term memory\n- [fact · 2026-08-01] the sky is blue"));
+        org.mockito.Mockito.reset(agentExecutionService);
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-7", "ok", null, TokenUsage.ZERO, AgentRun.Status.SUCCEEDED.name()));
+
+        runner.runNow(augmented.getId());
+
+        org.mockito.ArgumentCaptor<String> augmentedSuffixCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), augmentedSuffixCaptor.capture());
+        assertThat(augmentedSuffixCaptor.getValue())
+                .isEqualTo(plainSuffix + "\n\n## Long-term memory\n- [fact · 2026-08-01] the sky is blue");
+    }
+
+    /** Null/blank {@code systemPromptAddendum} leaves the suffix byte-identical to the no-augmentation
+     *  case -- no stray separator appended when there's nothing to add. */
+    @Test
+    void blankAddendumLeavesSuffixUnchanged() {
+        Conversation conversation = conversationWithPendingUserTurn("Anything");
+        when(memoryAugmentor.augment(anyString(), anyString(), anyString(), any(), anyList()))
+                .thenAnswer(inv -> new MemoryAugmentor.Augmentation(inv.getArgument(4), "   "));
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-8", "ok", null, TokenUsage.ZERO, AgentRun.Status.SUCCEEDED.name()));
+
+        runner.runNow(conversation.getId());
+
+        org.mockito.ArgumentCaptor<String> suffixCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(agentExecutionService).run(any(AgentRunRequest.class), anyList(), suffixCaptor.capture());
+        assertThat(suffixCaptor.getValue()).doesNotContain("\n\n\n").doesNotContain("Long-term memory");
+    }
+
+    /**
+     * {@link MemoryAugmentor} is contractually never allowed to throw ({@code DatabaseMemoryAugmentor}
+     * has its own internal try/catch), but {@link AgentConversationRunner#runNow} additionally wraps the
+     * {@code augment} call as defense-in-depth: memory must never fail a turn, even against a future
+     * implementation that doesn't honor the contract. The turn proceeds without memory.
+     */
+    @Test
+    void augmentorThrowingIsSwallowedAndTurnStillRuns() {
+        Conversation conversation = conversationWithPendingUserTurn("Break the augmentor");
+        when(memoryAugmentor.augment(anyString(), anyString(), anyString(), any(), anyList()))
+                .thenThrow(new RuntimeException("augmentor bug"));
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-9", "ok", null, TokenUsage.ZERO, AgentRun.Status.SUCCEEDED.name()));
+
+        ConversationMessage reply = runner.runNow(conversation.getId());
+
+        assertThat(reply.getStatus()).isEqualTo(ConversationMessage.Status.COMPLETED);
+        assertThat(reply.getContent()).isEqualTo("ok");
     }
 }

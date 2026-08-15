@@ -5,28 +5,42 @@ import com.conductor.agent.provider.ChatMessage;
 import java.util.List;
 
 /**
- * The long-term-memory seam for {@link AgentConversationRunner}: given the recent-turns window it's
- * about to hand to {@code AgentExecutionService}, an implementation may prepend additional context
- * drawn from a longer memory than the window covers.
+ * The long-term-memory seam for {@link AgentConversationRunner}: given the latest user message and the
+ * recent-turns window it's about to hand to {@code AgentExecutionService}, an implementation may draw on
+ * a longer memory than the window covers and return an {@link Augmentation} carrying whatever it found.
  *
- * <p>Intended layering (not yet built): recent turns verbatim (this interface's input {@code window}),
- * plus summarized older dialogue once a conversation outgrows the window, plus durable facts extracted
- * from past conversations and prepended as synthetic leading context messages. The target shape for
- * that store, sketched here so the eventual migration is copy-paste:
- * <pre>
- * CREATE TABLE agent_memories (
- *     id                     VARCHAR(36)  PRIMARY KEY,
- *     agent_id               VARCHAR(36)  NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
- *     project_id             VARCHAR(36)  NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
- *     scope                  VARCHAR(20)  NOT NULL,   -- e.g. 'conversation' | 'project' | 'global'
- *     content                TEXT         NOT NULL,
- *     source_conversation_id VARCHAR(36),
- *     superseded_by          VARCHAR(36)  REFERENCES agent_memories(id),
- *     created_at             TIMESTAMPTZ  NOT NULL DEFAULT now()
- * );
- * </pre>
+ * <p>Two distinct channels, deliberately kept apart:
+ * <ul>
+ *   <li>{@link Augmentation#window()} — reserved for a future layer that prepends <em>summarized older
+ *   dialogue</em> once a conversation outgrows the window, as synthetic leading {@link ChatMessage}s. Not
+ *   built yet ({@link com.conductor.memory.DatabaseMemoryAugmentor} passes {@code window} through
+ *   unchanged) — this is the seam it will use.</li>
+ *   <li>{@link Augmentation#systemPromptAddendum()} — durable facts/decisions/preferences/events pulled
+ *   from {@code com.conductor.memory}, appended to the turn's system prompt suffix instead of injected as
+ *   window messages. Two reasons: {@link AgentConversationRunner#MAX_WINDOW_CHARS}'s prior-message cap
+ *   governs {@code window} only, so memory content would silently eat into a budget meant for actual
+ *   conversation history; and a synthetic USER/ASSISTANT pair never actually said by either party would
+ *   pollute the persisted transcript and fight {@code AgentConversationRunner}'s strict-alternation
+ *   invariant (see {@code dropOrphanUserTurns}) the moment it needed to be reconstructed from {@code
+ *   ConversationMessage} rows.</li>
+ * </ul>
+ *
+ * <p>The {@code agent_memories} table this reads from is described in {@code docs/memory.md} (Phase 6).
  */
 public interface MemoryAugmentor {
 
-    List<ChatMessage> augment(String projectId, String agentId, String conversationId, List<ChatMessage> window);
+    Augmentation augment(String projectId, String agentId, String conversationId, String latestUserContent,
+                          List<ChatMessage> window);
+
+    /**
+     * @param window the (possibly unchanged) recent-turns window
+     * @param systemPromptAddendum text to append to the turn's system prompt suffix, or null/blank for
+     *                             nothing to add
+     */
+    record Augmentation(List<ChatMessage> window, String systemPromptAddendum) {
+
+        public static Augmentation unchanged(List<ChatMessage> window) {
+            return new Augmentation(window, null);
+        }
+    }
 }
