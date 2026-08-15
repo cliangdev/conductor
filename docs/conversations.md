@@ -14,7 +14,7 @@ provider from **Automation → Agents** — see [`docs/ai-providers.md`](ai-prov
 - [Addressable agents](#addressable-agents)
 - [The conversation bounded context](#the-conversation-bounded-context)
 - [Coordinator tools](#coordinator-tools)
-- [Memory (future seam)](#memory-future-seam)
+- [Memory](#memory)
 - [REST endpoints](#rest-endpoints)
 - [Discord setup guide](#discord-setup-guide)
 - [Access control](#access-control)
@@ -30,7 +30,10 @@ Each turn is a `ConversationMessage`: a `USER` row (whatever the human/channel s
 `FAILED`). `AgentConversationRunner` drives one turn end to end: load recent history, build a bounded
 window, hand it to the same `AgentExecutionService` a workflow's `agent` step uses, persist the result.
 A conversation is not a new execution engine — it's a thin, stateful front end onto the agent-run
-machinery Conductor already has.
+machinery Conductor already has. Once a reply persists as `COMPLETED` (never for a `FAILED` turn),
+`runNow` fans out to every registered `TurnCompletionListener` — today just
+`MemoryExtractionService`'s fast-lane memory extraction (see [Memory](#memory)) — each isolated in its
+own try/catch so a listener failure can never affect the turn's own outcome.
 
 ```mermaid
 sequenceDiagram
@@ -87,6 +90,7 @@ conductor-backend/src/main/java/com/conductor/conversation/
 ├── AgentNotAddressableException.java
 ├── CoordinatorProvisioner.java                       # self-heals the ceo agent
 ├── MemoryAugmentor.java                               # long-term-memory seam (see below)
+├── TurnCompletionListener.java                        # post-turn extraction hook (see below)
 └── controller/ConversationController.java             # REST surface
 ```
 
@@ -122,14 +126,20 @@ Project-doc search itself was upgraded from a LIKE scan to ranked Postgres full-
 [`docs/knowledge.md`](knowledge.md#page-model)); `ProjectDocService#searchDocs` now takes a `limit`
 enforced at the query, not client-side.
 
-## Memory (future seam)
+## Memory
 
-`MemoryAugmentor` is the long-term-memory seam `AgentConversationRunner` calls before every run: given
-the recent-turns window it's about to send, an implementation may prepend additional context from a
-longer history than the window covers. Today's only implementation is a no-op passthrough. The intended
-(not yet built) layering: recent turns verbatim, plus summarized older dialogue once a conversation
-outgrows the window, plus durable facts extracted from past conversations — sketched as an
-`agent_memories` table in the interface's own javadoc so the eventual migration is close to copy-paste.
+`MemoryAugmentor` is the seam `AgentConversationRunner` calls before every run: given the recent-turns
+window it's about to send, an implementation may add durable context from beyond what the window covers.
+`DatabaseMemoryAugmentor` is the one implementation — it retrieves scored long-term memories
+(`agent_memories`, see [`docs/memory.md`](memory.md)) and renders them into a system-prompt addendum,
+never into the message window itself, so memory context can never masquerade as something the user or
+agent actually said.
+
+Memory is written by a dual-phase pipeline that sits alongside, not inside, the turn flow described
+above: `MemoryExtractionService` (a `TurnCompletionListener`, see [Concept](#concept)) extracts raw
+candidates from each turn on a background executor, and a nightly consolidation pass reviews them into
+durable memory — see [`docs/memory.md`](memory.md#the-write-path) for the full pipeline, retrieval
+scoring, retention, and the Memory frontend surface.
 
 ## REST endpoints
 
@@ -218,7 +228,5 @@ Deliberately out of scope for this iteration, each a plausible next step:
   `@bot` mention in a channel would need the Discord Gateway (a persistent websocket connection), a
   different integration shape than this webhook-based connector.
 - **Web chat** — no in-app chat widget; the REST API is the only first-party non-Discord surface today.
-- **Long-term memory** — see [Memory](#memory-future-seam) above; `MemoryAugmentor` is a seam, not yet an
-  implementation.
 - **Server-sent events** — `POST .../messages`' `PENDING` + poll contract is a placeholder for push;
   noted explicitly in the endpoint's own API description.

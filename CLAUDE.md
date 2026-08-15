@@ -122,6 +122,7 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 `connector_feed` (scheduled per-connection pull binding, declared via a connector's `ingest[]`) → `connector_feed_digest` (per-period change report); `disposition_policy` (routes a signal type to a handling lane) — see [`docs/knowledge.md`](docs/knowledge.md#metrics-digests)  
 `agents` → `agent_runs` (ReAct transcripts); `provider_credentials` (BYO model keys, KMS envelope); `config.addressable` opts an agent into direct conversation  
 `conversations` → `conversation_messages` (USER/ASSISTANT turns) — multi-turn chat with an addressable agent over the REST API or Discord's `/ask`, see [`docs/conversations.md`](docs/conversations.md)  
+`agent_memories` — durable facts/decisions/preferences/events an agent accumulates across conversations, bi-temporal (`valid_from`/`valid_to`/`superseded_by`), see [`docs/memory.md`](docs/memory.md)  
 `knowledge_sources` → `knowledge_pages`/`knowledge_page_revisions` (+ links) — agent-maintained wiki, see [`docs/knowledge.md`](docs/knowledge.md)
 
 **Future eng/marketing grouping** should use **labels + saved views** (or a nullable `group` tag on `project_members`), *not* a nested container above projects — that two-level org→project model was deliberately removed for simplicity.
@@ -164,6 +165,7 @@ See `scripts/gcloud-alias-example.sh` for a persistent shell alias.
 - [`docs/workflows.md`](docs/workflows.md) — Workflow YAML format, trigger types, step types, execution modes, self-hosted runner setup.
 - [`docs/knowledge.md`](docs/knowledge.md) — Knowledge Center: ingestion envelope, wiki page model, librarian workflows.
 - [`docs/conversations.md`](docs/conversations.md) — Conversations & the CEO agent: addressable agents, the conversation REST API, Discord `/ask` setup.
+- [`docs/memory.md`](docs/memory.md) — Agent memory: dual-phase extraction/consolidation write path, retrieval scoring, bi-temporal lifecycle, memory-vs-knowledge promotion.
 - [`docs/ai-providers.md`](docs/ai-providers.md) — AI Providers: BYO-key model, registered providers, connection states, model discovery, extending with a new provider.
 - [`docs/mcp-tool-guidelines.md`](docs/mcp-tool-guidelines.md) — MCP tool design principles: context budget, action–verify pattern, dispatch–status pattern, checklist. **Read before creating or updating any MCP tool.**
 - [`docs/design-system.md`](docs/design-system.md) — Frontend design system: tokens (light + dark), typography, status ramp, required primitives, page-chrome patterns, anti-patterns. **Read before any UI work.**

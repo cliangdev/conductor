@@ -14,7 +14,7 @@ The coordination layer for an agentic organization. AI agents do the work — au
 - **Workflows** — two complementary kinds:
   - *Lifecycle statecharts* define how a Work Item moves through states (draft → review → approved → build), including which agent or human acts at each step.
   - *YAML automation* runs jobs on schedule, webhook, or event triggers — with agent, claude-code, docker, http, and integration action steps, artifacts, secrets, and loops. See [docs/workflows.md](docs/workflows.md).
-- **Agents** — bring-your-own-key model personas with tools drawn from connectors and custom HTTP tools. Agent runs are fully transcripted for observability. Any agent can opt into **conversations** — multi-turn, addressable-by-name chat via the REST API or Discord's `/ask`, defaulting to a project's self-healing CEO coordinator. See [docs/conversations.md](docs/conversations.md).
+- **Agents** — bring-your-own-key model personas with tools drawn from connectors and custom HTTP tools. Agent runs are fully transcripted for observability. Any agent can opt into **conversations** — multi-turn, addressable-by-name chat via the REST API or Discord's `/ask`, defaulting to a project's self-healing CEO coordinator. Conversations feed a workspace-scoped **memory** — durable facts and decisions extracted, consolidated nightly, and injected back into future turns. See [docs/conversations.md](docs/conversations.md) and [docs/memory.md](docs/memory.md).
 - **Knowledge Center** — an ingestion inbox feeding an agent-maintained wiki. Librarian workflows organize incoming knowledge into reviewed, versioned pages. See [docs/knowledge.md](docs/knowledge.md).
 - **Integrations** — a unified connector framework (OAuth, webhooks, fetch, actions): GitHub, Discord, GCP, Apple Search Ads, Google Search Console, PostHog, RevenueCat, and more. See [docs/integrations-adding-a-connector.md](docs/integrations-adding-a-connector.md).
 
@@ -104,6 +104,7 @@ CLI + MCP for agent use: see the [conductor-tools README](conductor-tools/README
 | [docs/workflows.md](docs/workflows.md) | Workflow YAML, triggers, step types, execution modes, self-hosted runners |
 | [docs/knowledge.md](docs/knowledge.md) | Knowledge Center: ingestion, wiki model, librarian workflows |
 | [docs/conversations.md](docs/conversations.md) | Conversations & the CEO agent: addressable agents, REST API, Discord `/ask` setup |
+| [docs/memory.md](docs/memory.md) | Agent memory: extraction/consolidation write path, retrieval scoring, memory-vs-knowledge |
 | [docs/ai-providers.md](docs/ai-providers.md) | AI Providers: BYO-key model, registered providers, model discovery, adding a provider |
 | [docs/api-guidelines.md](docs/api-guidelines.md) | OpenAPI-first workflow, external vs internal API split |
 | [docs/mcp-tool-guidelines.md](docs/mcp-tool-guidelines.md) | MCP tool design principles |
