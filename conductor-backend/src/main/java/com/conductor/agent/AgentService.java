@@ -2,6 +2,7 @@ package com.conductor.agent;
 
 import com.conductor.agent.provider.ModelProviderRegistry;
 import com.conductor.agent.tool.AgentToolRegistry;
+import com.conductor.conversation.ConversationRepository;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
@@ -38,19 +39,22 @@ public class AgentService {
     private final ObjectMapper objectMapper;
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowYamlParser workflowYamlParser;
+    private final ConversationRepository conversationRepository;
 
     public AgentService(AgentRepository repository,
                         ModelProviderRegistry providerRegistry,
                         AgentToolRegistry toolRegistry,
                         ObjectMapper objectMapper,
                         WorkflowDefinitionRepository workflowRepository,
-                        WorkflowYamlParser workflowYamlParser) {
+                        WorkflowYamlParser workflowYamlParser,
+                        ConversationRepository conversationRepository) {
         this.repository = repository;
         this.providerRegistry = providerRegistry;
         this.toolRegistry = toolRegistry;
         this.objectMapper = objectMapper;
         this.workflowRepository = workflowRepository;
         this.workflowYamlParser = workflowYamlParser;
+        this.conversationRepository = conversationRepository;
     }
 
     /**
@@ -195,6 +199,18 @@ public class AgentService {
         if (!"DRAFT".equals(agent.getState())) {
             throw new BusinessException("Cannot delete an agent in state " + agent.getState()
                     + ". Set the agent to Draft first, then delete it.");
+        }
+        // conversations.agent_id has no ON DELETE clause -- conversation history must survive an agent's
+        // deletion, not be silently destroyed with it (no CASCADE), and an unguarded delete would
+        // otherwise surface as a bare 500 from the FK violation instead of an actionable message. Unlike
+        // the workflow-reference block below, there's no "unbind and retry" escape hatch here -- deleting
+        // is permanently off the table for this agent, full stop, so the message says that plainly rather
+        // than implying a sequencing fix the operator could make (like the DRAFT-state check above does).
+        long conversationCount = conversationRepository.countByAgentId(agentId);
+        if (conversationCount > 0) {
+            throw new BusinessException("Cannot delete an agent referenced by " + conversationCount
+                    + " conversation(s) -- its conversation history must be preserved and can never be "
+                    + "unbound from the agent that produced it.");
         }
         List<AgentReferencedByWorkflowsException.Reference> references = referencingWorkflows(projectId, agent);
         if (!references.isEmpty()) {

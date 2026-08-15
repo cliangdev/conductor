@@ -27,13 +27,18 @@ provider from **Automation → Agents** — see [`docs/ai-providers.md`](ai-prov
 A conversation belongs to exactly one project, one agent, and one **channel** (`api` or `discord`).
 Each turn is a `ConversationMessage`: a `USER` row (whatever the human/channel sent) followed by an
 `ASSISTANT` row (the agent's reply, `PENDING` while the run is still in flight, then `COMPLETED` or
-`FAILED`). `AgentConversationRunner` drives one turn end to end: load recent history, build a bounded
-window, hand it to the same `AgentExecutionService` a workflow's `agent` step uses, persist the result.
-A conversation is not a new execution engine — it's a thin, stateful front end onto the agent-run
-machinery Conductor already has. Once a reply persists as `COMPLETED` (never for a `FAILED` turn),
-`runNow` fans out to every registered `TurnCompletionListener` — today just
-`MemoryExtractionService`'s fast-lane memory extraction (see [Memory](#memory)) — each isolated in its
-own try/catch so a listener failure can never affect the turn's own outcome.
+`FAILED`). `ConversationService.appendUserMessage` reserves both halves of the turn atomically — the
+`USER` row and the `PENDING` `ASSISTANT` placeholder — in the same locked transaction, so the very next
+caller's one-turn-in-flight guard always has something to see; a placeholder inserted later,
+asynchronously, would leave a window where two callers milliseconds apart both pass the guard before
+either has reserved anything. `AgentConversationRunner.runNow` then drives the turn end to end: load
+recent history, build a bounded window, hand it to the same `AgentExecutionService` a workflow's `agent`
+step uses, and fill in the reserved placeholder with the result. A conversation is not a new execution
+engine — it's a thin, stateful front end onto the agent-run machinery Conductor already has. Once a
+reply persists as `COMPLETED` (never for a `FAILED` turn), `runNow` fans out to every registered
+`TurnCompletionListener` — today just `MemoryExtractionService`'s fast-lane memory extraction (see
+[Memory](#memory)) — each isolated in its own try/catch so a listener failure can never affect the
+turn's own outcome.
 
 ```mermaid
 sequenceDiagram
@@ -44,8 +49,8 @@ sequenceDiagram
     participant AES as AgentExecutionService
 
     Caller->>CC: post a message
-    CC->>CS: appendUserMessage (409 if a turn is already PENDING)
-    CC->>Runner: submit(conversationId)
+    CC->>CS: appendUserMessage (409 if a turn is already PENDING;<br/>else reserves USER + PENDING ASSISTANT together)
+    CC->>Runner: submit(conversationId, assistantMessageId)
     Runner->>AES: run(window + task, system prompt suffix)
     AES-->>Runner: reply (COMPLETED or FAILED)
     Runner-->>CC: persisted ASSISTANT message
@@ -98,7 +103,9 @@ conductor-backend/src/main/java/com/conductor/conversation/
 self-heals the `ceo` agent, then finds-or-creates a conversation keyed by `(project, channel,
 channelKey)` under a partial unique index, retrying on the losing side of a create race rather than
 erroring. `appendUserMessage` rejects with `409` if the conversation's latest turn is a still-`PENDING`
-assistant reply — only one turn runs at a time per conversation.
+assistant reply — only one turn runs at a time per conversation — and otherwise returns a `ReservedTurn`
+(the `USER` message plus the reserved `PENDING` `ASSISTANT` placeholder), both inserted under the same
+`PESSIMISTIC_WRITE`-locked transaction so the guard closes cleanly against concurrent callers.
 
 ## Coordinator tools
 
@@ -154,14 +161,14 @@ All under `/api/v1/projects/{projectId}/conversations`, membership-gated via `Pr
 | `GET` | `/conversations/{id}/messages` | List messages, oldest first. |
 | `POST` | `/conversations/{id}/messages` | Append a `USER` message and run the agent's reply. |
 
-**Sync-with-timeout + `PENDING` poll contract.** `POST .../messages` appends the user turn, then runs the
-agent synchronously up to a **90s** budget. If the run finishes in time, the response carries the
-completed (or failed) assistant message. If it hasn't finished by 90s, `assistantMessage` comes back with
-`status: PENDING` and the run keeps completing in the background — poll `GET .../messages` to see the
-final result. If the conversation's latest message isn't actually an assistant row when the timeout
-fires (a caller-ordering edge case), `assistantMessage` is `null` rather than a misleading placeholder.
-Server-sent events are a future upgrade for this; there is no push notification today. Only one turn may
-be in flight per conversation (`409` otherwise).
+**Sync-with-timeout + `PENDING` poll contract.** `POST .../messages` appends the user turn (which also
+reserves the assistant placeholder — see [Concept](#concept)), then runs the agent synchronously up to a
+**90s** budget. If the run finishes in time, the response carries the completed (or failed) assistant
+message. If it hasn't finished by 90s, `assistantMessage` comes back with `status: PENDING` and the run
+keeps completing in the background — poll `GET .../messages` to see the final result. `assistantMessage`
+is always present in the response (it's the reserved placeholder at minimum), never `null`. Server-sent
+events are a future upgrade for this; there is no push notification today. Only one turn may be in
+flight per conversation (`409` otherwise).
 
 ## Discord setup guide
 

@@ -140,14 +140,29 @@ class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
         OffsetDateTime before = conversation.getLastMessageAt();
         Thread.sleep(5); // ensure a measurable clock tick between create and append
 
-        ConversationMessage message = conversationService.appendUserMessage(
+        ConversationService.ReservedTurn reserved = conversationService.appendUserMessage(
                 projectId, conversation.getId(), "hello", "Alice", null, actor);
 
-        assertThat(message.getRole()).isEqualTo(ConversationMessage.Role.USER);
-        assertThat(message.getStatus()).isEqualTo(ConversationMessage.Status.COMPLETED);
-        assertThat(message.getAuthorLabel()).isEqualTo("Alice");
+        assertThat(reserved.userMessage().getRole()).isEqualTo(ConversationMessage.Role.USER);
+        assertThat(reserved.userMessage().getStatus()).isEqualTo(ConversationMessage.Status.COMPLETED);
+        assertThat(reserved.userMessage().getAuthorLabel()).isEqualTo("Alice");
         Conversation reloaded = conversationRepository.findById(conversation.getId()).orElseThrow();
         assertThat(reloaded.getLastMessageAt()).isAfter(before);
+    }
+
+    /** Pins the reservation itself -- the fix's core contract -- so the next caller's guard always has
+     *  something to see: the PENDING placeholder must exist, in the same call, alongside the USER turn. */
+    @Test
+    void appendUserMessageReservesAPendingAssistantPlaceholderInTheSameCall() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+
+        ConversationService.ReservedTurn reserved = conversationService.appendUserMessage(
+                projectId, conversation.getId(), "hello", "Alice", null, actor);
+
+        assertThat(reserved.assistantMessage().getRole()).isEqualTo(ConversationMessage.Role.ASSISTANT);
+        assertThat(reserved.assistantMessage().getStatus()).isEqualTo(ConversationMessage.Status.PENDING);
+        assertThat(messageRepository.findById(reserved.assistantMessage().getId())).isPresent();
     }
 
     @Test
@@ -156,10 +171,10 @@ class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
         Conversation conversation = conversationService.create(
                 projectId, agentId, ConversationChannel.API, null, "Title", machineActor);
 
-        ConversationMessage message = conversationService.appendUserMessage(
+        ConversationService.ReservedTurn reserved = conversationService.appendUserMessage(
                 projectId, conversation.getId(), "hello", "   ", null, machineActor);
 
-        assertThat(message.getAuthorLabel()).isEqualTo("project-api-key");
+        assertThat(reserved.userMessage().getAuthorLabel()).isEqualTo("project-api-key");
     }
 
     @Test
@@ -178,6 +193,90 @@ class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
         assertThatThrownBy(() -> conversationService.appendUserMessage(
                 projectId, conversation.getId(), "second", "Alice", null, actor))
                 .isInstanceOf(ConflictException.class);
+    }
+
+    /**
+     * The race the fix closes: before it, the guard's PENDING row only ever came from {@code
+     * AgentConversationRunner#runNow}, inserted asynchronously well after {@code appendUserMessage}
+     * itself returned -- so a second {@code appendUserMessage} call issued right after the first
+     * returns (no runner involved yet) would see "latest turn is COMPLETED" and sail through, exactly
+     * like two concurrent POSTs racing before either runner started. Now the placeholder is reserved
+     * inside {@code appendUserMessage} itself, so this exact sequence -- append, then immediately append
+     * again, with NO runner call in between -- must already 409. The pre-existing
+     * {@code appendUserMessageRejectsWhenLatestTurnIsAPendingAssistantReply} test above only ever
+     * exercised a PENDING row inserted by hand, which is why this gap survived undetected.
+     */
+    @Test
+    void secondAppendUserMessageImmediatelyAfterTheFirstIsRejectedWithoutARunnerEverStarting() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+
+        conversationService.appendUserMessage(projectId, conversation.getId(), "first", "Alice", null, actor);
+
+        assertThatThrownBy(() -> conversationService.appendUserMessage(
+                projectId, conversation.getId(), "second", "Alice", null, actor))
+                .isInstanceOf(ConflictException.class);
+    }
+
+    // ---- abandonReservedTurn (post-review fix: a rejected/never-run reservation must not wedge the
+    // conversation in the one-turn-in-flight guard) ----
+
+    /**
+     * The exact scenario the fix addresses: a caller reserves a turn (e.g. via {@code
+     * appendUserMessage}) but the run is rejected/fails before ever starting (pool saturation, the
+     * conversation vanishing mid-flight). Before {@code abandonReservedTurn} existed, the reserved row
+     * stayed PENDING forever, and the next {@code appendUserMessage} on that conversation 409'd for up to
+     * {@code STALE_PENDING_MINUTES} -- overload is a normal, expected condition, not a caller bug, so it
+     * must not cost the caller a 10-minute lockout. Pins both halves: the row itself flips to FAILED, and
+     * a subsequent {@code appendUserMessage} succeeds rather than 409ing.
+     */
+    @Test
+    void abandonReservedTurnFailsThePlaceholderAndUnblocksTheNextAppendUserMessage() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+        ConversationService.ReservedTurn reserved = conversationService.appendUserMessage(
+                projectId, conversation.getId(), "first", "Alice", null, actor);
+
+        conversationService.abandonReservedTurn(reserved.assistantMessage().getId(),
+                "Too many conversations running right now -- the turn was never started");
+
+        ConversationMessage reloaded = messageRepository.findById(reserved.assistantMessage().getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ConversationMessage.Status.FAILED);
+        assertThat(reloaded.getErrorReason()).contains("Too many conversations");
+
+        ConversationService.ReservedTurn second = conversationService.appendUserMessage(
+                projectId, conversation.getId(), "second", "Alice", null, actor);
+        assertThat(second.userMessage().getContent()).isEqualTo("second");
+    }
+
+    /** Defensive against a race with the run actually finishing: if the reserved row already resolved
+     *  (the async run completed between the caller's timeout/rejection and this call), abandoning it must
+     *  be a no-op rather than clobbering a real result. */
+    @Test
+    void abandonReservedTurnLeavesAnAlreadyResolvedRowAlone() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+        ConversationService.ReservedTurn reserved = conversationService.appendUserMessage(
+                projectId, conversation.getId(), "first", "Alice", null, actor);
+        ConversationMessage resolved = messageRepository.findById(reserved.assistantMessage().getId()).orElseThrow();
+        resolved.setStatus(ConversationMessage.Status.COMPLETED);
+        resolved.setContent("already answered");
+        messageRepository.saveAndFlush(resolved);
+
+        conversationService.abandonReservedTurn(reserved.assistantMessage().getId(), "should not apply");
+
+        ConversationMessage reloaded = messageRepository.findById(reserved.assistantMessage().getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ConversationMessage.Status.COMPLETED);
+        assertThat(reloaded.getContent()).isEqualTo("already answered");
+        assertThat(reloaded.getErrorReason()).isNull();
+    }
+
+    /** An unknown id is silently ignored -- a best-effort cleanup call must never itself become a new
+     *  source of errors. */
+    @Test
+    void abandonReservedTurnSilentlyIgnoresAnUnknownId() {
+        conversationService.abandonReservedTurn("does-not-exist", "reason");
+        // No exception -- nothing to assert beyond that.
     }
 
     @Test
@@ -201,7 +300,7 @@ class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
         messageRepository.saveAndFlush(stalePending);
 
         ConversationMessage second = conversationService.appendUserMessage(
-                projectId, conversation.getId(), "second", "Alice", null, actor);
+                projectId, conversation.getId(), "second", "Alice", null, actor).userMessage();
 
         assertThat(second.getContent()).isEqualTo("second");
         ConversationMessage reloadedStale = messageRepository.findById(stalePending.getId()).orElseThrow();
@@ -223,7 +322,7 @@ class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
         messageRepository.saveAndFlush(completedAssistant);
 
         ConversationMessage second = conversationService.appendUserMessage(
-                projectId, conversation.getId(), "second", "Alice", null, actor);
+                projectId, conversation.getId(), "second", "Alice", null, actor).userMessage();
 
         assertThat(second.getContent()).isEqualTo("second");
     }

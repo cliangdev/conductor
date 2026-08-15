@@ -122,11 +122,17 @@ public class ConversationService {
      *  #appendUserMessage}. */
     static final long STALE_PENDING_MINUTES = 10;
 
+    /** Both halves of one turn, reserved together by {@link #appendUserMessage} -- {@code
+     *  assistantMessage} is the PENDING placeholder a caller hands to {@link
+     *  AgentConversationRunner#runNow}/{@link AgentConversationRunner#submit} to run and fill in. */
+    public record ReservedTurn(ConversationMessage userMessage, ConversationMessage assistantMessage) {}
+
     /**
-     * Appends a USER-role, COMPLETED message and bumps {@code last_message_at} -- the human/external
-     * side of a turn. {@code authorLabel} is the display name shown for this turn (e.g. a Discord
-     * username); when absent, falls back to {@code actor.label()} for a machine actor (e.g. a project
-     * API key posting on behalf of an integration with no per-message display name of its own).
+     * Appends a USER-role, COMPLETED message, reserves the ASSISTANT-role, PENDING placeholder reply
+     * that the turn will fill in, and bumps {@code last_message_at} -- the human/external side of a turn
+     * plus its not-yet-run counterpart. {@code authorLabel} is the display name shown for this turn (e.g.
+     * a Discord username); when absent, falls back to {@code actor.label()} for a machine actor (e.g. a
+     * project API key posting on behalf of an integration with no per-message display name of its own).
      *
      * <p>Rejects with {@link ConflictException} (409) when the conversation's most recent turn is a
      * still-PENDING assistant reply -- only one turn may be in flight at a time. Enforced here (not in
@@ -140,12 +146,20 @@ public class ConversationService {
      * ConversationRepository#findWithLockByIdAndProjectId}) held for the rest of this transaction --
      * without it, two concurrent POSTs against the same conversation can both read "latest turn is
      * COMPLETED" before either has inserted its USER message, both pass the guard above, and both then
-     * kick off a run. The lock serializes them: the second caller blocks here until the first commits
-     * (by which point its new PENDING assistant row is what the second caller's own guard check sees).
+     * kick off a run. The lock serializes them: the second caller blocks here until the first commits.
+     *
+     * <p>Reserving the PENDING assistant row here -- inside this same locked transaction, rather than
+     * later inside {@link AgentConversationRunner#runNow} once a run actually starts -- is what makes the
+     * lock airtight. Before this, the placeholder was only inserted asynchronously once the runner
+     * started, which left a window between this method committing and that later insert: two POSTs
+     * milliseconds apart could each acquire the lock in turn, each see "latest turn is COMPLETED"
+     * (neither's placeholder existed yet), and each pass the guard -- two concurrent runs, two replies,
+     * double token spend. Reserving the placeholder here means the second caller's own guard check now
+     * always sees this row (still PENDING, or already resolved) rather than nothing at all.
      */
     @Transactional
-    public ConversationMessage appendUserMessage(String projectId, String conversationId, String content,
-                                                  String authorLabel, String externalMessageId, ProjectActor actor) {
+    public ReservedTurn appendUserMessage(String projectId, String conversationId, String content,
+                                          String authorLabel, String externalMessageId, ProjectActor actor) {
         Conversation conversation = conversationRepository.findWithLockByIdAndProjectId(conversationId, projectId)
                 .orElseThrow(() -> new ConversationNotFoundException(projectId, conversationId));
 
@@ -163,18 +177,53 @@ public class ConversationService {
             throw new ConflictException("A turn is already in progress for this conversation");
         });
 
-        ConversationMessage message = new ConversationMessage();
-        message.setConversationId(conversation.getId());
-        message.setRole(ConversationMessage.Role.USER);
-        message.setContent(content);
-        message.setStatus(ConversationMessage.Status.COMPLETED);
-        message.setAuthorLabel(authorLabel != null && !authorLabel.isBlank() ? authorLabel : actor.label());
-        message.setExternalMessageId(externalMessageId);
-        ConversationMessage saved = messageRepository.save(message);
+        ConversationMessage userMessage = new ConversationMessage();
+        userMessage.setConversationId(conversation.getId());
+        userMessage.setRole(ConversationMessage.Role.USER);
+        userMessage.setContent(content);
+        userMessage.setStatus(ConversationMessage.Status.COMPLETED);
+        userMessage.setAuthorLabel(authorLabel != null && !authorLabel.isBlank() ? authorLabel : actor.label());
+        userMessage.setExternalMessageId(externalMessageId);
+        userMessage = messageRepository.save(userMessage);
+
+        ConversationMessage assistantMessage = new ConversationMessage();
+        assistantMessage.setConversationId(conversation.getId());
+        assistantMessage.setRole(ConversationMessage.Role.ASSISTANT);
+        assistantMessage.setContent("");
+        assistantMessage.setStatus(ConversationMessage.Status.PENDING);
+        assistantMessage = messageRepository.save(assistantMessage);
 
         conversation.setLastMessageAt(OffsetDateTime.now());
         conversationRepository.save(conversation);
-        return saved;
+        return new ReservedTurn(userMessage, assistantMessage);
+    }
+
+    /**
+     * Marks a reserved-but-never-run ASSISTANT placeholder FAILED with {@code reason}, for a caller that
+     * reserved a turn (via {@link #appendUserMessage}) but never got as far as actually running it -- a
+     * rejected/failed submission, or a precondition failure ({@code ConversationNotFoundException}, the
+     * caller-ordering {@link IllegalStateException}s {@link AgentConversationRunner#runNow} throws before
+     * its own try/catch) that never reached {@code runNow}'s own FAILED-on-exception handling. Without
+     * this, the reserved row stays PENDING forever, and the very guard {@link #appendUserMessage} enforces
+     * then wedges the conversation in a 409 for up to {@link #STALE_PENDING_MINUTES} until the
+     * stale-PENDING escape hatch kicks in -- overload/rejection is a normal, expected condition, not a
+     * caller bug, so it must not cost the caller a 10-minute lockout.
+     *
+     * <p>Defensive against a race with the run actually finishing: if the row is no longer PENDING (the
+     * async run completed, or failed on its own, between the caller's timeout/rejection and this call),
+     * this is a no-op rather than clobbering a real result. Silently ignores an unknown id for the same
+     * reason a best-effort cleanup call should never itself become a new source of errors.
+     */
+    @Transactional
+    public void abandonReservedTurn(String assistantMessageId, String reason) {
+        messageRepository.findById(assistantMessageId).ifPresent(message -> {
+            if (message.getStatus() != ConversationMessage.Status.PENDING) {
+                return;
+            }
+            message.setStatus(ConversationMessage.Status.FAILED);
+            message.setErrorReason(ConversationMessage.truncateErrorReason(reason));
+            messageRepository.save(message);
+        });
     }
 
     /**

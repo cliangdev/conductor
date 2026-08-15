@@ -373,8 +373,9 @@ public class DiscordAppConnector implements WebhookConnector {
             needsThreadCreation = true;
         }
 
+        ConversationService.ReservedTurn reserved;
         try {
-            conversationService.appendUserMessage(
+            reserved = conversationService.appendUserMessage(
                     projectId, conversation.getId(), question, displayName, interactionId, actor);
         } catch (ConflictException e) {
             safeEditOriginal(applicationId, interactionToken,
@@ -386,9 +387,15 @@ public class DiscordAppConnector implements WebhookConnector {
         ConversationMessage reply = null;
         Throwable error = null;
         try {
-            reply = runner.runNow(conversationId);
+            reply = runner.runNow(conversationId, reserved.assistantMessage().getId());
         } catch (Exception e) {
             error = e;
+            // runNow only ever throws for a precondition it never got as far as recording as a FAILED
+            // message itself -- left alone, the reservation stays PENDING forever, and a wedged Discord
+            // thread is worse than the REST API's equivalent case, since nothing here can even surface
+            // the resulting 409 to the user beyond "Still working on the previous message".
+            conversationService.abandonReservedTurn(reserved.assistantMessage().getId(),
+                    e.getMessage() == null ? e.toString() : e.getMessage());
         }
         onTurnComplete(reply, error, applicationId, interactionToken, botToken, needsThreadCreation,
                 question, projectId, conversationId, guildId);

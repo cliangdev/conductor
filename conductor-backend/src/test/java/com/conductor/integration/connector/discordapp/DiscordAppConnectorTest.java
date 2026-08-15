@@ -53,6 +53,11 @@ class DiscordAppConnectorTest {
     private static final String INTERACTION_TOKEN = "tok-1";
     private static final String GUILD_ID = "guild-1";
     private static final String BOT_TOKEN = "bot-token";
+    /** The id of the reserved PENDING placeholder {@code ConversationService#appendUserMessage} now
+     *  returns alongside the USER message -- {@link #stubAppendUserMessage()} stubs that return value,
+     *  and {@code runner.runNow} is stubbed/verified against this same id, mirroring how {@code
+     *  DiscordAppConnector#runAskFlow} threads it through. */
+    private static final String RESERVED_ASSISTANT_ID = "reserved-a1";
 
     private ConversationService conversationService;
     private AddressableAgentResolver addressableAgentResolver;
@@ -197,9 +202,10 @@ class DiscordAppConnectorTest {
         Conversation conversation = conversation("conv-1", "agent-1");
         when(conversationService.findOrCreateByChannelKey(eq(PROJECT_ID), eq("agent-1"),
                 eq(ConversationChannel.DISCORD), anyString(), anyString(), any())).thenReturn(conversation);
+        stubAppendUserMessage();
 
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "the answer", null);
-        when(runner.runNow("conv-1")).thenReturn(reply);
+        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenReturn(reply);
         when(interactionClient.editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef("msg-1", "chan-1"));
         when(interactionClient.createThread(eq(BOT_TOKEN), eq("chan-1"), eq("msg-1"), anyString()))
@@ -229,8 +235,9 @@ class DiscordAppConnectorTest {
         Conversation conversation = conversation("conv-1", "agent-1");
         when(conversationService.findOrCreateByChannelKey(eq(PROJECT_ID), eq("agent-1"),
                 eq(ConversationChannel.DISCORD), anyString(), anyString(), any())).thenReturn(conversation);
+        stubAppendUserMessage();
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null);
-        when(runner.runNow("conv-1")).thenReturn(reply);
+        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenReturn(reply);
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
@@ -256,9 +263,10 @@ class DiscordAppConnectorTest {
         when(conversationService.findOrCreateByChannelKey(eq(PROJECT_ID), eq("agent-1"),
                 eq(ConversationChannel.DISCORD), eq(GUILD_ID + ":thread-9"), eq(null), any()))
                 .thenReturn(conversation);
+        stubAppendUserMessage();
 
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, "answer", null);
-        when(runner.runNow("conv-1")).thenReturn(reply);
+        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenReturn(reply);
         when(interactionClient.editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef("msg-1", "thread-9"));
 
@@ -347,7 +355,7 @@ class DiscordAppConnectorTest {
 
         verify(interactionClient).editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN),
                 org.mockito.ArgumentMatchers.contains("Still working on the previous message"));
-        verify(runner, never()).runNow(anyString());
+        verify(runner, never()).runNow(anyString(), anyString());
     }
 
     /** RejectedExecutionException can now only happen at ENQUEUE time (the executor + its queue both
@@ -372,8 +380,9 @@ class DiscordAppConnectorTest {
         Conversation conversation = conversation("conv-1", "agent-1");
         when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
                 .thenReturn(conversation);
+        stubAppendUserMessage();
         ConversationMessage failed = assistantMessage(ConversationMessage.Status.FAILED, "", "run-9");
-        when(runner.runNow("conv-1")).thenReturn(failed);
+        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenReturn(failed);
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
@@ -384,14 +393,21 @@ class DiscordAppConnectorTest {
                 org.mockito.ArgumentMatchers.contains("run-9"));
     }
 
+    /**
+     * Post-review fix: {@code runNow} throwing must also abandon the reservation ({@code
+     * conversationService.abandonReservedTurn}) -- a wedged Discord thread is worse than the REST API's
+     * equivalent case, since nothing on this async path can even surface the resulting 409 to the user
+     * beyond the generic "Still working on the previous message" reply.
+     */
     @Test
-    void handleEvent_turnErrorsUnexpectedly_editsOriginalWithGenericError() {
+    void handleEvent_turnErrorsUnexpectedly_editsOriginalWithGenericErrorAndAbandonsTheReservation() {
         Agent target = agent("agent-1", "ceo", "CEO");
         when(addressableAgentResolver.resolve(PROJECT_ID, null)).thenReturn(target);
         Conversation conversation = conversation("conv-1", "agent-1");
         when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
                 .thenReturn(conversation);
-        when(runner.runNow("conv-1")).thenThrow(new RuntimeException("boom"));
+        stubAppendUserMessage();
+        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenThrow(new RuntimeException("boom"));
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
@@ -400,6 +416,7 @@ class DiscordAppConnectorTest {
 
         verify(interactionClient).editOriginal(eq(APPLICATION_ID), eq(INTERACTION_TOKEN),
                 eq("Sorry — I hit an error answering that."));
+        verify(conversationService).abandonReservedTurn(eq(RESERVED_ASSISTANT_ID), anyString());
     }
 
     @Test
@@ -409,9 +426,10 @@ class DiscordAppConnectorTest {
         Conversation conversation = conversation("conv-1", "agent-1");
         when(conversationService.findOrCreateByChannelKey(any(), any(), any(), any(), any(), any()))
                 .thenReturn(conversation);
+        stubAppendUserMessage();
         String longContent = "x".repeat(2500);
         ConversationMessage reply = assistantMessage(ConversationMessage.Status.COMPLETED, longContent, null);
-        when(runner.runNow("conv-1")).thenReturn(reply);
+        when(runner.runNow("conv-1", RESERVED_ASSISTANT_ID)).thenReturn(reply);
         when(interactionClient.editOriginal(anyString(), anyString(), anyString()))
                 .thenReturn(new DiscordInteractionClient.MessageRef(null, null));
 
@@ -468,6 +486,20 @@ class DiscordAppConnectorTest {
         c.setId(id);
         c.setAgentId(agentId);
         return c;
+    }
+
+    /** Stubs {@code conversationService.appendUserMessage} to return a reserved turn whose assistant
+     *  placeholder id is {@link #RESERVED_ASSISTANT_ID} -- every test that reaches {@code runAskFlow}'s
+     *  {@code runner.runNow} call needs this, since that id is what gets threaded through. */
+    private void stubAppendUserMessage() {
+        ConversationMessage userMessage = new ConversationMessage();
+        userMessage.setRole(ConversationMessage.Role.USER);
+        ConversationMessage reservedAssistant = new ConversationMessage();
+        reservedAssistant.setId(RESERVED_ASSISTANT_ID);
+        reservedAssistant.setRole(ConversationMessage.Role.ASSISTANT);
+        reservedAssistant.setStatus(ConversationMessage.Status.PENDING);
+        when(conversationService.appendUserMessage(any(), any(), any(), any(), any(), any()))
+                .thenReturn(new ConversationService.ReservedTurn(userMessage, reservedAssistant));
     }
 
     private ConversationMessage assistantMessage(ConversationMessage.Status status, String content, String runId) {

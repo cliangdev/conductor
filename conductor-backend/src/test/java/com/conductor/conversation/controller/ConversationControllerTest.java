@@ -8,7 +8,6 @@ import com.conductor.conversation.AgentConversationRunner;
 import com.conductor.conversation.AgentNotAddressableException;
 import com.conductor.conversation.Conversation;
 import com.conductor.conversation.ConversationMessage;
-import com.conductor.conversation.ConversationMessageRepository;
 import com.conductor.conversation.ConversationService;
 import com.conductor.entity.User;
 import com.conductor.exception.ConflictException;
@@ -44,6 +43,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -69,7 +69,6 @@ class ConversationControllerTest {
     @Autowired private MockMvc mockMvc;
 
     @MockitoBean private ConversationService conversationService;
-    @MockitoBean private ConversationMessageRepository messageRepository;
     @MockitoBean private AddressableAgentResolver agentResolver;
     @MockitoBean private AgentConversationRunner runner;
     @MockitoBean private AgentRepository agentRepository;
@@ -243,16 +242,22 @@ class ConversationControllerTest {
 
     // ---- postConversationMessage ----
 
+    private ConversationService.ReservedTurn reservedTurn(ConversationMessage userMsg, ConversationMessage assistantMsg) {
+        return new ConversationService.ReservedTurn(userMsg, assistantMsg);
+    }
+
     @Test
     void postMessageHappyPathReturnsUserAndAssistantMessages() throws Exception {
         asMember();
         ConversationMessage userMsg = message("u1", ConversationMessage.Role.USER, "hello",
                 ConversationMessage.Status.COMPLETED);
-        ConversationMessage assistantMsg = message("a1", ConversationMessage.Role.ASSISTANT, "hi there",
+        ConversationMessage reservedAssistant = message("a1", ConversationMessage.Role.ASSISTANT, "",
+                ConversationMessage.Status.PENDING);
+        ConversationMessage finishedAssistant = message("a1", ConversationMessage.Role.ASSISTANT, "hi there",
                 ConversationMessage.Status.COMPLETED);
         when(conversationService.appendUserMessage(eq(PROJECT_ID), eq(CONVERSATION_ID), eq("hello"),
-                anyString(), eq(null), any())).thenReturn(userMsg);
-        when(runner.submit(CONVERSATION_ID)).thenReturn(CompletableFuture.completedFuture(assistantMsg));
+                anyString(), eq(null), any())).thenReturn(reservedTurn(userMsg, reservedAssistant));
+        when(runner.submit(CONVERSATION_ID, "a1")).thenReturn(CompletableFuture.completedFuture(finishedAssistant));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/conversations/" + CONVERSATION_ID + "/messages")
                         .header("Authorization", "Bearer valid-token")
@@ -289,22 +294,68 @@ class ConversationControllerTest {
                 .andExpect(status().isConflict());
     }
 
+    /**
+     * Post-review fix: a rejected submission must abandon the reservation ({@code
+     * conversationService.abandonReservedTurn}) before the 503 propagates -- otherwise the reserved
+     * PENDING row is orphaned and the next POST to this conversation 409s for up to
+     * {@code STALE_PENDING_MINUTES}, turning an ordinary overload condition into a caller-visible lockout.
+     */
     @Test
     void postMessageSaturatedExecutorReturns503() throws Exception {
         asMember();
         ConversationMessage userMsg = message("u1", ConversationMessage.Role.USER, "hello",
                 ConversationMessage.Status.COMPLETED);
+        ConversationMessage reservedAssistant = message("a1", ConversationMessage.Role.ASSISTANT, "",
+                ConversationMessage.Status.PENDING);
         when(conversationService.appendUserMessage(eq(PROJECT_ID), eq(CONVERSATION_ID), anyString(),
-                anyString(), eq(null), any())).thenReturn(userMsg);
-        when(runner.submit(CONVERSATION_ID)).thenThrow(new RejectedExecutionException("pool saturated"));
+                anyString(), eq(null), any())).thenReturn(reservedTurn(userMsg, reservedAssistant));
+        when(runner.submit(CONVERSATION_ID, "a1")).thenThrow(new RejectedExecutionException("pool saturated"));
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/conversations/" + CONVERSATION_ID + "/messages")
                         .header("Authorization", "Bearer valid-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"content\":\"hello\"}"))
                 .andExpect(status().isServiceUnavailable());
+
+        verify(conversationService).abandonReservedTurn(eq("a1"), anyString());
     }
 
+    /**
+     * {@code runNow} records its own agent-side failures internally and never throws for them -- an
+     * exception escaping the future (here, an {@code IllegalStateException} the way {@code runNow}'s own
+     * precondition checks would throw) means a caller-ordering bug happened before that handling was ever
+     * reached, so the reservation must be abandoned here too rather than left PENDING forever.
+     */
+    @Test
+    void postMessageExecutionExceptionAbandonsTheReservationBeforeRethrowing() throws Exception {
+        asMember();
+        ConversationMessage userMsg = message("u1", ConversationMessage.Role.USER, "hello",
+                ConversationMessage.Status.COMPLETED);
+        ConversationMessage reservedAssistant = message("a1", ConversationMessage.Role.ASSISTANT, "",
+                ConversationMessage.Status.PENDING);
+        when(conversationService.appendUserMessage(eq(PROJECT_ID), eq(CONVERSATION_ID), anyString(),
+                anyString(), eq(null), any())).thenReturn(reservedTurn(userMsg, reservedAssistant));
+        CompletableFuture<ConversationMessage> future = CompletableFuture.failedFuture(
+                new IllegalStateException("reserved assistant turn no longer PENDING"));
+        when(runner.submit(CONVERSATION_ID, "a1")).thenReturn(future);
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/conversations/" + CONVERSATION_ID + "/messages")
+                        .header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"content\":\"hello\"}"))
+                .andExpect(status().isInternalServerError());
+
+        verify(conversationService).abandonReservedTurn(eq("a1"), anyString());
+    }
+
+    /**
+     * The reserved PENDING placeholder is returned as-is on timeout, whether the queued task simply
+     * hasn't finished or hasn't even started yet -- both cases now look identical from the controller's
+     * side, since {@code appendUserMessage} reserves the row up front rather than the runner inserting it
+     * once a run actually begins. That used to matter (a not-yet-started run left no PENDING row to
+     * report, so the response's {@code assistantMessage} came back null) -- with the row now guaranteed
+     * to exist, {@code assistantMessage} is never null (see the {@code PostMessageResponse} schema).
+     */
     @SuppressWarnings("unchecked")
     @Test
     void postMessageTimeoutReturnsThePendingAssistantRowAsIs() throws Exception {
@@ -314,38 +365,11 @@ class ConversationControllerTest {
         ConversationMessage pendingAssistant = message("a1", ConversationMessage.Role.ASSISTANT, "",
                 ConversationMessage.Status.PENDING);
         when(conversationService.appendUserMessage(eq(PROJECT_ID), eq(CONVERSATION_ID), anyString(),
-                anyString(), eq(null), any())).thenReturn(userMsg);
+                anyString(), eq(null), any())).thenReturn(reservedTurn(userMsg, pendingAssistant));
 
         CompletableFuture<ConversationMessage> future = mock(CompletableFuture.class);
         when(future.get(90L, TimeUnit.SECONDS)).thenThrow(new TimeoutException());
-        when(runner.submit(CONVERSATION_ID)).thenReturn(future);
-        when(messageRepository.findTopByConversationIdOrderByCreatedAtDesc(CONVERSATION_ID))
-                .thenReturn(Optional.of(pendingAssistant));
-
-        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/conversations/" + CONVERSATION_ID + "/messages")
-                        .header("Authorization", "Bearer valid-token")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"content\":\"hello\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.assistantMessage.id").value("a1"))
-                .andExpect(jsonPath("$.assistantMessage.status").value("PENDING"));
-    }
-
-    @SuppressWarnings("unchecked")
-    @Test
-    void postMessageTimeoutBeforeTheQueuedTaskEvenStartedReturnsNullAssistantMessage() throws Exception {
-        asMember();
-        ConversationMessage userMsg = message("u1", ConversationMessage.Role.USER, "hello",
-                ConversationMessage.Status.COMPLETED);
-        when(conversationService.appendUserMessage(eq(PROJECT_ID), eq(CONVERSATION_ID), anyString(),
-                anyString(), eq(null), any())).thenReturn(userMsg);
-
-        CompletableFuture<ConversationMessage> future = mock(CompletableFuture.class);
-        when(future.get(90L, TimeUnit.SECONDS)).thenThrow(new TimeoutException());
-        when(runner.submit(CONVERSATION_ID)).thenReturn(future);
-        // The queued task never started -- the conversation's latest row is still the user's own message.
-        when(messageRepository.findTopByConversationIdOrderByCreatedAtDesc(CONVERSATION_ID))
-                .thenReturn(Optional.of(userMsg));
+        when(runner.submit(CONVERSATION_ID, "a1")).thenReturn(future);
 
         mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/conversations/" + CONVERSATION_ID + "/messages")
                         .header("Authorization", "Bearer valid-token")
@@ -353,6 +377,7 @@ class ConversationControllerTest {
                         .content("{\"content\":\"hello\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.userMessage.id").value("u1"))
-                .andExpect(jsonPath("$.assistantMessage").doesNotExist());
+                .andExpect(jsonPath("$.assistantMessage.id").value("a1"))
+                .andExpect(jsonPath("$.assistantMessage.status").value("PENDING"));
     }
 }

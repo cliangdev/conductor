@@ -9246,9 +9246,9 @@ components:
           $ref: '#/components/schemas/ConversationMessageResponse'
         assistantMessage:
           description: >-
-            Null when the run hadn't even started within the response budget (queue backlog) -- there's
-            no assistant reply to describe yet. Poll GET .../messages once it exists.
-          nullable: true
+            The agent's reply, reserved atomically alongside userMessage so it always exists in the
+            response -- status PENDING when the 90s response budget expires before the run finishes.
+            Poll GET .../messages to see it reach its final status.
           allOf:
             - $ref: '#/components/schemas/ConversationMessageResponse'
 

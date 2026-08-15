@@ -27,6 +27,19 @@ public class ConversationMessage {
      *  is still generating it; USER turns are always inserted already COMPLETED. */
     public enum Status { PENDING, COMPLETED, FAILED }
 
+    /** Column cap on {@code error_reason} (V110). Lives here, on the entity that owns the column, rather
+     *  than beside each writer -- both writers ({@link AgentConversationRunner} recording a run's own
+     *  failure, {@link ConversationService#abandonReservedTurn} abandoning a turn that never ran) clip
+     *  through {@link #truncateErrorReason}, so neither can overflow it. */
+    static final int MAX_ERROR_REASON_LENGTH = 500;
+
+    /** Clips {@code reason} to {@link #MAX_ERROR_REASON_LENGTH}. Null in, null out. */
+    static String truncateErrorReason(String reason) {
+        return reason != null && reason.length() > MAX_ERROR_REASON_LENGTH
+                ? reason.substring(0, MAX_ERROR_REASON_LENGTH)
+                : reason;
+    }
+
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
     private String id;

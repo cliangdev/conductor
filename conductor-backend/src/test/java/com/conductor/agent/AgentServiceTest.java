@@ -4,6 +4,7 @@ import com.conductor.agent.provider.ChatModelProvider;
 import com.conductor.agent.provider.ModelProviderRegistry;
 import com.conductor.agent.tool.AgentTool;
 import com.conductor.agent.tool.AgentToolRegistry;
+import com.conductor.conversation.ConversationRepository;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.exception.BusinessException;
 import com.conductor.repository.WorkflowDefinitionRepository;
@@ -35,6 +36,7 @@ class AgentServiceTest {
     private ModelProviderRegistry providerRegistry;
     private AgentToolRegistry toolRegistry;
     private WorkflowDefinitionRepository workflowRepository;
+    private ConversationRepository conversationRepository;
     private AgentService service;
 
     @BeforeEach
@@ -43,8 +45,9 @@ class AgentServiceTest {
         providerRegistry = mock(ModelProviderRegistry.class);
         toolRegistry = mock(AgentToolRegistry.class);
         workflowRepository = mock(WorkflowDefinitionRepository.class);
+        conversationRepository = mock(ConversationRepository.class);
         service = new AgentService(repository, providerRegistry, toolRegistry, new ObjectMapper(),
-                workflowRepository, new WorkflowYamlParser());
+                workflowRepository, new WorkflowYamlParser(), conversationRepository);
         when(repository.save(any(Agent.class))).thenAnswer(inv -> inv.getArgument(0));
         when(workflowRepository.findByProjectId(PROJECT_ID)).thenReturn(List.of());
     }
@@ -247,6 +250,37 @@ class AgentServiceTest {
     void delete_draftAgent_removesIt() {
         Agent agent = existingAgent();
         agent.setState("DRAFT");
+
+        service.delete(PROJECT_ID, AGENT_ID);
+
+        Mockito.verify(repository).delete(agent);
+    }
+
+    /**
+     * {@code conversations.agent_id} has no {@code ON DELETE} clause -- deleting a referenced agent
+     * unguarded would surface as a bare FK-violation 500. The service must refuse with an actionable
+     * {@link BusinessException} instead, before ever reaching the {@code repository.delete} call. The
+     * message must give the operator something to act on -- how many conversations, and that this is a
+     * permanent block (unlike the DRAFT-state check's "set it to Draft first" sequencing fix).
+     */
+    @Test
+    void delete_draftAgentWithExistingConversations_isRejectedWithAnActionableMessage() {
+        Agent agent = existingAgent();
+        agent.setState("DRAFT");
+        when(conversationRepository.countByAgentId(AGENT_ID)).thenReturn(3L);
+
+        assertThatThrownBy(() -> service.delete(PROJECT_ID, AGENT_ID))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("3")
+                .hasMessageContaining("conversation");
+        Mockito.verify(repository, Mockito.never()).delete(any(Agent.class));
+    }
+
+    @Test
+    void delete_draftAgentWithNoConversations_removesIt() {
+        Agent agent = existingAgent();
+        agent.setState("DRAFT");
+        when(conversationRepository.countByAgentId(AGENT_ID)).thenReturn(0L);
 
         service.delete(PROJECT_ID, AGENT_ID);
 

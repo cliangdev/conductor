@@ -8,7 +8,6 @@ import com.conductor.conversation.Conversation;
 import com.conductor.conversation.ConversationBusyException;
 import com.conductor.conversation.ConversationChannel;
 import com.conductor.conversation.ConversationMessage;
-import com.conductor.conversation.ConversationMessageRepository;
 import com.conductor.conversation.ConversationService;
 import com.conductor.entity.User;
 import com.conductor.generated.api.ConversationsApi;
@@ -46,20 +45,17 @@ public class ConversationController implements ConversationsApi {
     private static final int DEFAULT_MESSAGES_LIMIT = 50;
 
     private final ConversationService conversationService;
-    private final ConversationMessageRepository messageRepository;
     private final AddressableAgentResolver agentResolver;
     private final AgentConversationRunner runner;
     private final AgentRepository agentRepository;
     private final ProjectSecurityService projectSecurityService;
 
     public ConversationController(ConversationService conversationService,
-                                  ConversationMessageRepository messageRepository,
                                   AddressableAgentResolver agentResolver,
                                   AgentConversationRunner runner,
                                   AgentRepository agentRepository,
                                   ProjectSecurityService projectSecurityService) {
         this.conversationService = conversationService;
-        this.messageRepository = messageRepository;
         this.agentResolver = agentResolver;
         this.runner = runner;
         this.agentRepository = agentRepository;
@@ -113,9 +109,17 @@ public class ConversationController implements ConversationsApi {
     /**
      * Appends the user's message, then drives the agent's reply synchronously up to {@value
      * #RUN_TIMEOUT_SECONDS}s. {@link ConversationService#appendUserMessage} itself enforces the
-     * one-turn-in-flight guard (409, via {@code ConflictException}) before this method ever calls
-     * {@link AgentConversationRunner#submit} -- so a rejected/timed-out/failed submission never leaves
-     * two turns racing.
+     * one-turn-in-flight guard (409, via {@code ConflictException}) and reserves the PENDING assistant
+     * row in the same transaction as the USER message -- so a rejected/timed-out/failed submission never
+     * leaves two turns racing, and {@code assistantMessage} is always present in the response (PENDING
+     * when the budget expires, never null).
+     *
+     * <p>A rejected submission or a precondition failure that escapes {@code runner.submit} both abandon
+     * the reservation via {@link ConversationService#abandonReservedTurn} before propagating -- overload
+     * is a normal, expected condition, not a caller bug, so it must not leave the reserved row PENDING
+     * and wedge the conversation in the same one-turn-in-flight guard for the next {@code
+     * STALE_PENDING_MINUTES}. A timeout is NOT abandoned: the run is still progressing in the background
+     * (not cancelled), so the reservation staying PENDING is exactly correct there.
      */
     @Override
     public ResponseEntity<PostMessageResponse> postConversationMessage(
@@ -123,28 +127,32 @@ public class ConversationController implements ConversationsApi {
         ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
         String authorLabel = actor.isMachine() ? actor.label() : displayLabel(actor.user());
 
-        ConversationMessage userMessage = conversationService.appendUserMessage(
+        ConversationService.ReservedTurn reserved = conversationService.appendUserMessage(
                 projectId, conversationId, request.getContent(), authorLabel, null, actor);
+        ConversationMessage userMessage = reserved.userMessage();
+        ConversationMessage assistantMessage = reserved.assistantMessage();
 
-        ConversationMessage assistantMessage;
         try {
-            assistantMessage = runner.submit(conversationId).get(RUN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            assistantMessage = runner.submit(conversationId, assistantMessage.getId())
+                    .get(RUN_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (RejectedExecutionException e) {
+            conversationService.abandonReservedTurn(assistantMessage.getId(),
+                    "Too many conversations running right now -- the turn was never started");
             throw new ConversationBusyException(
                     "Too many conversations running right now -- please try again shortly");
         } catch (TimeoutException e) {
-            // The run keeps completing in the background (it's not cancelled) -- return the conversation's
-            // latest turn if it's the still-PENDING assistant row AgentConversationRunner inserts up front
-            // (the overwhelmingly common case), and let the caller poll GET .../messages. If the queued
-            // task hadn't even started within the budget, the latest row is still the user's own message
-            // -- there's no assistant reply to describe yet, so report null rather than echoing it back
-            // mislabeled as an assistant turn.
-            ConversationMessage latest = messageRepository
-                    .findTopByConversationIdOrderByCreatedAtDesc(conversationId).orElse(null);
-            assistantMessage = latest != null && latest.getRole() == ConversationMessage.Role.ASSISTANT
-                    ? latest : null;
+            // The run keeps completing in the background (it's not cancelled) -- the reserved row itself
+            // is guaranteed to exist and is still PENDING, so return it as-is and let the caller poll
+            // GET .../messages for the eventual result.
         } catch (ExecutionException e) {
+            // runNow records its own agent-side failures internally as a FAILED message before returning
+            // normally -- an exception escaping here instead means a precondition failed before runNow
+            // ever reached that handling (e.g. the conversation vanished mid-flight, or the reserved row
+            // was already resolved by a caller-ordering bug), which would otherwise leave the reservation
+            // PENDING forever.
             Throwable cause = e.getCause();
+            conversationService.abandonReservedTurn(assistantMessage.getId(), cause != null && cause.getMessage() != null
+                    ? cause.getMessage() : "Unexpected failure running the conversation turn");
             if (cause instanceof RuntimeException re) {
                 throw re;
             }
@@ -156,7 +164,7 @@ public class ConversationController implements ConversationsApi {
 
         PostMessageResponse response = new PostMessageResponse();
         response.setUserMessage(toDto(userMessage));
-        response.setAssistantMessage(assistantMessage != null ? toDto(assistantMessage) : null);
+        response.setAssistantMessage(toDto(assistantMessage));
         return ResponseEntity.ok(response);
     }
 

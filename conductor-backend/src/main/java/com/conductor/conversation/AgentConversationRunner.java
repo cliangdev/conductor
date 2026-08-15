@@ -35,7 +35,6 @@ public class AgentConversationRunner {
      *  that precede the latest USER message. Package-visible for the window-policy unit test. */
     static final int MAX_WINDOW_MESSAGES = 20;
     static final long MAX_WINDOW_CHARS = 24_000;
-    private static final int MAX_ERROR_REASON_LENGTH = 500;
 
     private final ConversationRepository conversationRepository;
     private final ConversationMessageRepository messageRepository;
@@ -69,22 +68,23 @@ public class AgentConversationRunner {
      * future. The caller is expected to catch it around this call and send a "busy, try again" reply
      * instead of silently dropping the turn.
      */
-    public CompletableFuture<ConversationMessage> submit(String conversationId) {
-        return CompletableFuture.supplyAsync(() -> runNow(conversationId), conversationExecutor);
+    public CompletableFuture<ConversationMessage> submit(String conversationId, String assistantMessageId) {
+        return CompletableFuture.supplyAsync(() -> runNow(conversationId, assistantMessageId), conversationExecutor);
     }
 
     /**
      * Synchronous core: run one turn to completion and persist it. Assumes the latest message in the
-     * conversation is an already-appended, COMPLETED USER turn awaiting a reply (see {@code
-     * ConversationService#appendUserMessage}) -- throws {@link IllegalStateException} if not, since
-     * that's a caller-ordering bug, not an agent-side failure. Two distinct agent-side failure shapes
-     * are both recorded as a FAILED message and returned normally, never thrown: {@code
-     * AgentExecutionService} throws for a setup-time problem (unknown agent id, the 60k-char prior-
-     * message cap), while an execution-time problem (no provider credential, guardrail tripped mid-run)
-     * comes back as a normal {@link AgentRunResult} with {@link AgentRunResult#status()} == FAILED --
-     * see {@code AgentExecutionService#runForAgent}'s javadoc. Both are handled here.
+     * conversation is an already-appended, COMPLETED USER turn awaiting a reply, and that {@code
+     * assistantMessageId} is the still-PENDING placeholder {@code ConversationService#appendUserMessage}
+     * reserved for it in the same transaction as that USER turn -- throws {@link IllegalStateException}
+     * if either doesn't hold, since that's a caller-ordering bug, not an agent-side failure. Two distinct
+     * agent-side failure shapes are both recorded as a FAILED message and returned normally, never
+     * thrown: {@code AgentExecutionService} throws for a setup-time problem (unknown agent id, the
+     * 60k-char prior-message cap), while an execution-time problem (no provider credential, guardrail
+     * tripped mid-run) comes back as a normal {@link AgentRunResult} with {@link AgentRunResult#status()}
+     * == FAILED -- see {@code AgentExecutionService#runForAgent}'s javadoc. Both are handled here.
      */
-    public ConversationMessage runNow(String conversationId) {
+    public ConversationMessage runNow(String conversationId, String assistantMessageId) {
         Conversation conversation = conversationRepository.findById(conversationId)
                 .orElseThrow(() -> new ConversationNotFoundException(conversationId));
 
@@ -109,12 +109,18 @@ public class AgentConversationRunner {
         }
         window = augmentation.window();
 
-        ConversationMessage pending = new ConversationMessage();
-        pending.setConversationId(conversationId);
-        pending.setRole(ConversationMessage.Role.ASSISTANT);
-        pending.setContent("");
-        pending.setStatus(ConversationMessage.Status.PENDING);
-        pending = messageRepository.save(pending);
+        // The placeholder is loaded, not created -- ConversationService#appendUserMessage already
+        // reserved it (same transaction as latestUser above) so the next caller's one-turn-in-flight
+        // guard has something to see the instant that transaction commits, closing the race where two
+        // concurrent POSTs both started a run before either's placeholder existed.
+        ConversationMessage pending = messageRepository.findById(assistantMessageId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Conversation " + conversationId + " has no reserved assistant turn " + assistantMessageId));
+        if (pending.getStatus() != ConversationMessage.Status.PENDING) {
+            throw new IllegalStateException("Reserved assistant turn " + assistantMessageId
+                    + " for conversation " + conversationId + " is no longer PENDING (status "
+                    + pending.getStatus() + ")");
+        }
 
         String suffix = buildSystemPromptSuffix(conversation, latestUser);
         if (augmentation.systemPromptAddendum() != null && !augmentation.systemPromptAddendum().isBlank()) {
@@ -257,6 +263,6 @@ public class AgentConversationRunner {
     }
 
     private String truncate(String s) {
-        return s.length() > MAX_ERROR_REASON_LENGTH ? s.substring(0, MAX_ERROR_REASON_LENGTH) : s;
+        return ConversationMessage.truncateErrorReason(s);
     }
 }

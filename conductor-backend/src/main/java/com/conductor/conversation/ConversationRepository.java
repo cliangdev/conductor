@@ -20,6 +20,13 @@ public interface ConversationRepository extends JpaRepository<Conversation, Stri
 
     Optional<Conversation> findByIdAndProjectId(String id, String projectId);
 
+    /** {@code com.conductor.agent.AgentService#delete}'s guard against orphaning conversation history --
+     *  {@code conversations.agent_id} has no {@code ON DELETE} clause, so an agent deleted while still
+     *  referenced would otherwise surface as a bare FK-violation 500 instead of an actionable refusal.
+     *  A count (not just an existence check) so the refusal message can tell the operator how many
+     *  conversations are in the way. */
+    long countByAgentId(String agentId);
+
     /**
      * Locks the conversation row for the rest of the caller's transaction -- {@code
      * ConversationService#appendUserMessage} uses this (and only this) to serialize concurrent POSTs
