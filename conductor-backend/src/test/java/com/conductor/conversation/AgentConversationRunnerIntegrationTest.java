@@ -26,6 +26,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -55,6 +58,8 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
     private AgentExecutionService agentExecutionService;
     @MockitoBean
     private MemoryAugmentor memoryAugmentor;
+    @MockitoBean
+    private TurnCompletionListener turnCompletionListener;
 
     private String projectId;
     private String agentId;
@@ -317,5 +322,67 @@ class AgentConversationRunnerIntegrationTest extends AbstractNoneWebIntegrationT
 
         assertThat(reply.getStatus()).isEqualTo(ConversationMessage.Status.COMPLETED);
         assertThat(reply.getContent()).isEqualTo("ok");
+    }
+
+    /** A COMPLETED turn fans out to every {@link TurnCompletionListener} with the project/agent/
+     *  conversation ids plus the raw user and assistant text -- the shape {@code MemoryExtractionService}
+     *  (Phase 3) needs to extract candidate memories from the turn. */
+    @Test
+    void completedTurnFiresTurnCompletionListenerWithExpectedArgs() {
+        Conversation conversation = conversationWithPendingUserTurn("What's the deploy status?");
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-10", "All green.", null, TokenUsage.ZERO,
+                        AgentRun.Status.SUCCEEDED.name()));
+
+        runner.runNow(conversation.getId());
+
+        verify(turnCompletionListener).onTurnCompleted(projectId, agentId, conversation.getId(),
+                "What's the deploy status?", "All green.");
+    }
+
+    /** A FAILED turn (the agent-run result itself reports FAILED) must never fire the listener -- only a
+     *  turn that actually produced a usable reply is worth extracting memories from. */
+    @Test
+    void failedTurnResultDoesNotFireTurnCompletionListener() {
+        Conversation conversation = conversationWithPendingUserTurn("Break please");
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-11", "", null, TokenUsage.ZERO, AgentRun.Status.FAILED.name()));
+
+        runner.runNow(conversation.getId());
+
+        verifyNoInteractions(turnCompletionListener);
+    }
+
+    /** {@code AgentExecutionService} throwing (a setup-time failure) also persists a FAILED message --
+     *  must not fire the listener either. */
+    @Test
+    void executionServiceThrowingDoesNotFireTurnCompletionListener() {
+        Conversation conversation = conversationWithPendingUserTurn("Throw please");
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenThrow(new RuntimeException("provider unreachable"));
+
+        runner.runNow(conversation.getId());
+
+        verifyNoInteractions(turnCompletionListener);
+    }
+
+    /** The listener is best-effort: it throwing must not change the persisted message or the status
+     *  {@link AgentConversationRunner#runNow} returns to its caller. */
+    @Test
+    void listenerThrowingDoesNotChangePersistedMessageOrReturnedStatus() {
+        Conversation conversation = conversationWithPendingUserTurn("Fire and forget");
+        when(agentExecutionService.run(any(AgentRunRequest.class), anyList(), any()))
+                .thenReturn(new AgentRunResult("run-12", "ok", null, TokenUsage.ZERO,
+                        AgentRun.Status.SUCCEEDED.name()));
+        doThrow(new RuntimeException("listener bug")).when(turnCompletionListener)
+                .onTurnCompleted(anyString(), anyString(), anyString(), any(), any());
+
+        ConversationMessage reply = runner.runNow(conversation.getId());
+
+        assertThat(reply.getStatus()).isEqualTo(ConversationMessage.Status.COMPLETED);
+        assertThat(reply.getContent()).isEqualTo("ok");
+        ConversationMessage reloaded = messageRepository.findById(reply.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ConversationMessage.Status.COMPLETED);
+        assertThat(reloaded.getContent()).isEqualTo("ok");
     }
 }

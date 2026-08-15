@@ -42,6 +42,7 @@ public class AgentConversationRunner {
     private final AgentRepository agentRepository;
     private final AgentExecutionService agentExecutionService;
     private final MemoryAugmentor memoryAugmentor;
+    private final List<TurnCompletionListener> turnCompletionListeners;
     private final ExecutorService conversationExecutor;
 
     public AgentConversationRunner(ConversationRepository conversationRepository,
@@ -49,12 +50,14 @@ public class AgentConversationRunner {
                                    AgentRepository agentRepository,
                                    AgentExecutionService agentExecutionService,
                                    MemoryAugmentor memoryAugmentor,
+                                   List<TurnCompletionListener> turnCompletionListeners,
                                    @Qualifier("conversationExecutor") ExecutorService conversationExecutor) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
         this.agentRepository = agentRepository;
         this.agentExecutionService = agentExecutionService;
         this.memoryAugmentor = memoryAugmentor;
+        this.turnCompletionListeners = turnCompletionListeners;
         this.conversationExecutor = conversationExecutor;
     }
 
@@ -141,7 +144,29 @@ public class AgentConversationRunner {
         messageRepository.save(pending);
         conversation.setLastMessageAt(OffsetDateTime.now());
         conversationRepository.save(conversation);
+
+        if (pending.getStatus() == ConversationMessage.Status.COMPLETED) {
+            notifyTurnCompletionListeners(conversation, conversationId, latestUser, pending);
+        }
         return pending;
+    }
+
+    /**
+     * Best-effort fan-out to every {@link TurnCompletionListener} (e.g. {@code
+     * com.conductor.memory.MemoryExtractionService}), each isolated in its own try/catch so one
+     * listener's failure can never affect the turn already persisted above or block another listener.
+     */
+    private void notifyTurnCompletionListeners(Conversation conversation, String conversationId,
+                                                ConversationMessage latestUser, ConversationMessage pending) {
+        for (TurnCompletionListener listener : turnCompletionListeners) {
+            try {
+                listener.onTurnCompleted(conversation.getProjectId(), conversation.getAgentId(), conversationId,
+                        latestUser.getContent(), pending.getContent());
+            } catch (Exception e) {
+                log.warn("Turn completion listener {} failed for conversation {}: {}",
+                        listener.getClass().getSimpleName(), conversationId, e.getMessage());
+            }
+        }
     }
 
     /**
