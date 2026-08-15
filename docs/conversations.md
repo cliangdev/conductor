@@ -156,10 +156,24 @@ All under `/api/v1/projects/{projectId}/conversations`, membership-gated via `Pr
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/conversations` | Create a conversation on the `api` channel. `agentName` optional (defaults to `ceo`). `404` if the name doesn't resolve to one addressable agent; `409` if it's ambiguous. |
-| `GET` | `/conversations` | List conversations, most-recently-active first. |
+| `GET` | `/conversations` | List conversations, most-recently-active first. Cursor-paginated (see below). |
 | `GET` | `/conversations/{id}` | Fetch one conversation. |
-| `GET` | `/conversations/{id}/messages` | List messages, oldest first. |
+| `GET` | `/conversations/{id}/messages` | List messages, oldest first. Cursor-paginated (see below). |
 | `POST` | `/conversations/{id}/messages` | Append a `USER` message and run the agent's reply. |
+
+**Cursor pagination, not offset.** Both listing endpoints take `limit` and an opaque `cursor` (the
+previous response's `nextCursor`, omitted for the first page) rather than `limit`/`offset`, and return
+`items` plus `nextCursor` (null on the last page) instead of a `total` count. This isn't just a nicer API
+shape -- offset pagination is structurally wrong for either collection: `last_message_at` (the
+conversation list's sort key) is bumped on every turn, and the message log is appended to while it's
+being read, so a page boundary computed as a row *offset* skips and duplicates rows as the underlying
+data shifts underneath it. The cursor instead encodes a keyset position -- `(lastMessageAt, id)` for
+conversations, `(createdAt, id)` for messages -- so a page boundary is "the next row after this exact
+row," which stays correct regardless of what else is being inserted concurrently. The `id` tiebreak
+matters in practice, not just in theory: `appendUserMessage` inserts the `USER` row and its reserved
+`ASSISTANT` placeholder back-to-back in the same transaction, so two messages routinely share a
+`createdAt` down to the same instant. Treat `nextCursor` as opaque -- pass it back verbatim; a malformed
+cursor is rejected with `400`, never silently ignored.
 
 **Sync-with-timeout + `PENDING` poll contract.** `POST .../messages` appends the user turn (which also
 reserves the assistant placeholder — see [Concept](#concept)), then runs the agent synchronously up to a

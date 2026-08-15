@@ -6,13 +6,13 @@ import com.conductor.service.ProjectActor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.function.Function;
 
 /**
  * CRUD + lifecycle for {@link Conversation}s and their {@link ConversationMessage} log. Actor
@@ -108,13 +108,47 @@ public class ConversationService {
                 .orElseThrow(() -> new ConversationNotFoundException(projectId, conversationId));
     }
 
-    public Page<Conversation> listByProject(String projectId, Pageable pageable) {
-        return conversationRepository.findByProjectIdOrderByLastMessageAtDesc(projectId, pageable);
+    /** One page of a keyset-paginated listing: {@code items} capped at the caller's {@code limit},
+     *  {@code nextCursor} opaque (see {@link CursorCodec}) and null once there's nothing left to page. */
+    public record CursorPage<T>(List<T> items, String nextCursor) {}
+
+    /**
+     * Keyset page of a project's conversations, most-recently-active first. {@code cursor} is the
+     * previous page's {@code nextCursor} (or null for the first page); {@link CursorCodec#decode} 400s on
+     * a malformed one rather than silently ignoring it. Fetches {@code limit + 1} rows so the presence of
+     * a next page can be determined without a separate count query -- see {@link #toCursorPage}.
+     */
+    public CursorPage<Conversation> listByProject(String projectId, String cursor, int limit) {
+        CursorCodec.Cursor decoded = cursor != null ? CursorCodec.decode(cursor) : null;
+        List<Conversation> rows = conversationRepository.findPageByProjectId(
+                projectId,
+                decoded != null ? decoded.timestamp() : null,
+                decoded != null ? decoded.id() : null,
+                limit + 1);
+        return toCursorPage(rows, limit, c -> CursorCodec.encode(c.getLastMessageAt(), c.getId()));
     }
 
-    public Page<ConversationMessage> listMessages(String projectId, String conversationId, Pageable pageable) {
+    /** Keyset page of a conversation's message log, oldest first. Same cursor contract as {@link
+     *  #listByProject}. */
+    public CursorPage<ConversationMessage> listMessages(String projectId, String conversationId, String cursor, int limit) {
         get(projectId, conversationId); // 404s if absent or cross-project before touching messages
-        return messageRepository.findByConversationIdOrderByCreatedAtAsc(conversationId, pageable);
+        CursorCodec.Cursor decoded = cursor != null ? CursorCodec.decode(cursor) : null;
+        List<ConversationMessage> rows = messageRepository.findPageByConversationId(
+                conversationId,
+                decoded != null ? decoded.timestamp() : null,
+                decoded != null ? decoded.id() : null,
+                limit + 1);
+        return toCursorPage(rows, limit, m -> CursorCodec.encode(m.getCreatedAt(), m.getId()));
+    }
+
+    /** Trims an over-fetched {@code limit + 1}-row batch down to {@code limit}, deriving {@code
+     *  nextCursor} from the last row kept -- null when the extra row never came back, meaning this was
+     *  the last page. */
+    private <T> CursorPage<T> toCursorPage(List<T> rows, int limit, Function<T, String> cursorOf) {
+        boolean hasMore = rows.size() > limit;
+        List<T> page = hasMore ? rows.subList(0, limit) : rows;
+        String nextCursor = hasMore ? cursorOf.apply(page.get(page.size() - 1)) : null;
+        return new CursorPage<>(page, nextCursor);
     }
 
     /** A PENDING assistant reply older than this is treated as abandoned (its run died mid-turn -- a

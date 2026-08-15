@@ -20,14 +20,12 @@ CREATE TABLE conversations (
     channel            VARCHAR(20)  NOT NULL,
     channel_key        VARCHAR(200),
     title              VARCHAR(200),
-    status             VARCHAR(20)  NOT NULL DEFAULT 'ACTIVE',
     created_by_user_id VARCHAR(36)  REFERENCES users(id),
     created_by_label   VARCHAR(255),
     metadata_json      JSONB,
     created_at         TIMESTAMPTZ  NOT NULL DEFAULT now(),
     last_message_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
     CONSTRAINT ck_conversations_channel CHECK (channel IN ('api', 'discord')),
-    CONSTRAINT ck_conversations_status CHECK (status IN ('ACTIVE', 'ARCHIVED')),
     CONSTRAINT ck_conversations_created_attribution
         CHECK (created_by_user_id IS NOT NULL OR created_by_label IS NOT NULL)
 );

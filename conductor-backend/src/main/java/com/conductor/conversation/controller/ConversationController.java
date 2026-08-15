@@ -20,9 +20,6 @@ import com.conductor.generated.model.PostMessageRequest;
 import com.conductor.generated.model.PostMessageResponse;
 import com.conductor.service.ProjectActor;
 import com.conductor.service.ProjectSecurityService;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -41,8 +38,6 @@ import java.util.concurrent.TimeoutException;
 public class ConversationController implements ConversationsApi {
 
     private static final long RUN_TIMEOUT_SECONDS = 90;
-    private static final int DEFAULT_CONVERSATIONS_LIMIT = 20;
-    private static final int DEFAULT_MESSAGES_LIMIT = 50;
 
     private final ConversationService conversationService;
     private final AddressableAgentResolver agentResolver;
@@ -78,14 +73,13 @@ public class ConversationController implements ConversationsApi {
     }
 
     @Override
-    public ResponseEntity<ConversationListResponse> listConversations(String projectId, Integer limit, Integer offset) {
+    public ResponseEntity<ConversationListResponse> listConversations(String projectId, Integer limit, String cursor) {
         projectSecurityService.requireProjectAccess(projectId);
-        Page<Conversation> page = conversationService.listByProject(
-                projectId, pageable(limit, offset, DEFAULT_CONVERSATIONS_LIMIT));
-        List<ConversationResponse> items = page.getContent().stream()
+        ConversationService.CursorPage<Conversation> page = conversationService.listByProject(projectId, cursor, limit);
+        List<ConversationResponse> items = page.items().stream()
                 .map(c -> toDto(c, agentRepository.findById(c.getAgentId()).orElse(null)))
                 .toList();
-        return ResponseEntity.ok(new ConversationListResponse().items(items).total(page.getTotalElements()));
+        return ResponseEntity.ok(new ConversationListResponse().items(items).nextCursor(page.nextCursor()));
     }
 
     @Override
@@ -98,12 +92,12 @@ public class ConversationController implements ConversationsApi {
 
     @Override
     public ResponseEntity<ConversationMessageListResponse> listConversationMessages(
-            String projectId, String conversationId, Integer limit, Integer offset) {
+            String projectId, String conversationId, Integer limit, String cursor) {
         projectSecurityService.requireProjectAccess(projectId);
-        Page<ConversationMessage> page = conversationService.listMessages(
-                projectId, conversationId, pageable(limit, offset, DEFAULT_MESSAGES_LIMIT));
-        List<ConversationMessageResponse> items = page.getContent().stream().map(this::toDto).toList();
-        return ResponseEntity.ok(new ConversationMessageListResponse().items(items).total(page.getTotalElements()));
+        ConversationService.CursorPage<ConversationMessage> page =
+                conversationService.listMessages(projectId, conversationId, cursor, limit);
+        List<ConversationMessageResponse> items = page.items().stream().map(this::toDto).toList();
+        return ResponseEntity.ok(new ConversationMessageListResponse().items(items).nextCursor(page.nextCursor()));
     }
 
     /**
@@ -170,12 +164,6 @@ public class ConversationController implements ConversationsApi {
 
     // ---- helpers ----
 
-    private Pageable pageable(Integer limit, Integer offset, int defaultLimit) {
-        int size = limit != null && limit > 0 ? limit : defaultLimit;
-        int off = offset != null && offset > 0 ? offset : 0;
-        return PageRequest.of(off / size, size);
-    }
-
     /** Best available human-readable name for {@code user}: displayName, then name, then email --
      *  mirrors {@code KnowledgeController#displayLabel} exactly. */
     private String displayLabel(User user) {
@@ -196,7 +184,6 @@ public class ConversationController implements ConversationsApi {
                 .agentSlug(agent != null ? agent.getSlug() : c.getAgentId())
                 .channel(c.getChannel())
                 .title(c.getTitle())
-                .status(ConversationResponse.StatusEnum.valueOf(c.getStatus().name()))
                 .createdAt(c.getCreatedAt())
                 .lastMessageAt(c.getLastMessageAt());
     }

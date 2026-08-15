@@ -10,6 +10,7 @@ import com.conductor.conversation.Conversation;
 import com.conductor.conversation.ConversationMessage;
 import com.conductor.conversation.ConversationService;
 import com.conductor.entity.User;
+import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.GlobalExceptionHandler;
 import com.conductor.repository.ProjectApiKeyRepository;
@@ -24,9 +25,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -112,7 +110,6 @@ class ConversationControllerTest {
         c.setProjectId(PROJECT_ID);
         c.setAgentId(agentId);
         c.setChannel("api");
-        c.setStatus(Conversation.Status.ACTIVE);
         c.setCreatedAt(OffsetDateTime.now());
         c.setLastMessageAt(OffsetDateTime.now());
         return c;
@@ -192,22 +189,69 @@ class ConversationControllerTest {
     // ---- listConversations / getConversation (pagination shape) ----
 
     @Test
-    void listConversationsReturnsItemsAndTotal() throws Exception {
+    void listConversationsReturnsItemsAndNextCursor() throws Exception {
         asMember();
         Agent a = agent("agent-1", "ceo", "John");
         when(agentRepository.findById("agent-1")).thenReturn(Optional.of(a));
-        // pageSize must not exceed content.size() here, or PageImpl's own correction logic silently
-        // recomputes total as offset + content.size() instead of trusting the value passed in below.
-        Page<Conversation> page = new PageImpl<>(List.of(conversation(CONVERSATION_ID, "agent-1")),
-                Pageable.ofSize(1), 7);
-        when(conversationService.listByProject(eq(PROJECT_ID), any())).thenReturn(page);
+        ConversationService.CursorPage<Conversation> page = new ConversationService.CursorPage<>(
+                List.of(conversation(CONVERSATION_ID, "agent-1")), "opaque-next-cursor");
+        when(conversationService.listByProject(eq(PROJECT_ID), eq(null), eq(20))).thenReturn(page);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/conversations")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
                 .andExpect(jsonPath("$.items[0].id").value(CONVERSATION_ID))
-                .andExpect(jsonPath("$.total").value(7));
+                .andExpect(jsonPath("$.nextCursor").value("opaque-next-cursor"));
+    }
+
+    @Test
+    void listConversationsOnTheLastPageReturnsNullNextCursor() throws Exception {
+        asMember();
+        Agent a = agent("agent-1", "ceo", "John");
+        when(agentRepository.findById("agent-1")).thenReturn(Optional.of(a));
+        ConversationService.CursorPage<Conversation> page = new ConversationService.CursorPage<>(
+                List.of(conversation(CONVERSATION_ID, "agent-1")), null);
+        when(conversationService.listByProject(eq(PROJECT_ID), eq(null), eq(20))).thenReturn(page);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/conversations")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nextCursor").doesNotExist());
+    }
+
+    @Test
+    void listConversationsPassesTheCursorQueryParamThrough() throws Exception {
+        asMember();
+        ConversationService.CursorPage<Conversation> page = new ConversationService.CursorPage<>(List.of(), null);
+        when(conversationService.listByProject(eq(PROJECT_ID), eq("client-supplied-cursor"), eq(20))).thenReturn(page);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/conversations")
+                        .queryParam("cursor", "client-supplied-cursor")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void listConversationsWithAMalformedCursorReturns400() throws Exception {
+        asMember();
+        when(conversationService.listByProject(eq(PROJECT_ID), eq("garbage"), eq(20)))
+                .thenThrow(new BusinessException("Invalid cursor"));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/conversations")
+                        .queryParam("cursor", "garbage")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void listConversationsWithALimitAboveTheCapReturns400() throws Exception {
+        asMember();
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/conversations")
+                        .queryParam("limit", "10000")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -224,20 +268,44 @@ class ConversationControllerTest {
     // ---- listConversationMessages (pagination shape) ----
 
     @Test
-    void listConversationMessagesReturnsItemsAndTotal() throws Exception {
+    void listConversationMessagesReturnsItemsAndNextCursor() throws Exception {
         asMember();
-        // pageSize must not exceed content.size() here -- see the comment on the analogous conversations test.
-        Page<ConversationMessage> page = new PageImpl<>(
+        ConversationService.CursorPage<ConversationMessage> page = new ConversationService.CursorPage<>(
                 List.of(message("m1", ConversationMessage.Role.USER, "hi", ConversationMessage.Status.COMPLETED)),
-                Pageable.ofSize(1), 3);
-        when(conversationService.listMessages(eq(PROJECT_ID), eq(CONVERSATION_ID), any())).thenReturn(page);
+                "opaque-next-cursor");
+        when(conversationService.listMessages(eq(PROJECT_ID), eq(CONVERSATION_ID), eq(null), eq(50))).thenReturn(page);
 
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/conversations/" + CONVERSATION_ID + "/messages")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
                 .andExpect(jsonPath("$.items[0].role").value("USER"))
-                .andExpect(jsonPath("$.total").value(3));
+                .andExpect(jsonPath("$.nextCursor").value("opaque-next-cursor"));
+    }
+
+    @Test
+    void listConversationMessagesOnTheLastPageReturnsNullNextCursor() throws Exception {
+        asMember();
+        ConversationService.CursorPage<ConversationMessage> page = new ConversationService.CursorPage<>(
+                List.of(message("m1", ConversationMessage.Role.USER, "hi", ConversationMessage.Status.COMPLETED)), null);
+        when(conversationService.listMessages(eq(PROJECT_ID), eq(CONVERSATION_ID), eq(null), eq(50))).thenReturn(page);
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/conversations/" + CONVERSATION_ID + "/messages")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nextCursor").doesNotExist());
+    }
+
+    @Test
+    void listConversationMessagesWithAMalformedCursorReturns400() throws Exception {
+        asMember();
+        when(conversationService.listMessages(eq(PROJECT_ID), eq(CONVERSATION_ID), eq("garbage"), eq(50)))
+                .thenThrow(new BusinessException("Invalid cursor"));
+
+        mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/conversations/" + CONVERSATION_ID + "/messages")
+                        .queryParam("cursor", "garbage")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest());
     }
 
     // ---- postConversationMessage ----

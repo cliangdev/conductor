@@ -4984,14 +4984,14 @@ paths:
         - name: limit
           in: query
           required: false
-          schema: {type: integer, default: 20}
-        - name: offset
+          schema: {type: integer, default: 20, minimum: 1, maximum: 100}
+        - name: cursor
           in: query
           required: false
           description: >-
-            Row offset, most-recently-active-first. Should be a multiple of limit -- internally mapped
-            to a page index (offset / limit).
-          schema: {type: integer, default: 0}
+            Opaque keyset-pagination cursor from a previous response's nextCursor. Omit for the first
+            page. Pass the value back verbatim -- never construct or parse one; its shape may change.
+          schema: {type: string}
       responses:
         '200':
           description: Conversations, most recently active first
@@ -4999,6 +4999,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConversationListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
 
@@ -5051,14 +5053,14 @@ paths:
         - name: limit
           in: query
           required: false
-          schema: {type: integer, default: 50}
-        - name: offset
+          schema: {type: integer, default: 50, minimum: 1, maximum: 200}
+        - name: cursor
           in: query
           required: false
           description: >-
-            Row offset, oldest first. Should be a multiple of limit -- internally mapped to a page
-            index (offset / limit).
-          schema: {type: integer, default: 0}
+            Opaque keyset-pagination cursor from a previous response's nextCursor. Omit for the first
+            page. Pass the value back verbatim -- never construct or parse one; its shape may change.
+          schema: {type: string}
       responses:
         '200':
           description: Messages, oldest first
@@ -5066,6 +5068,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConversationMessageListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -9149,7 +9153,6 @@ components:
         - agentName
         - agentSlug
         - channel
-        - status
         - createdAt
         - lastMessageAt
       properties:
@@ -9166,9 +9169,6 @@ components:
           description: Always "api" for a REST-created conversation.
         title:
           type: string
-        status:
-          type: string
-          enum: [ACTIVE]
         createdAt:
           type: string
           format: date-time
@@ -9178,15 +9178,18 @@ components:
 
     ConversationListResponse:
       type: object
-      required: [items, total]
+      required: [items]
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/ConversationResponse'
-        total:
-          type: integer
-          format: int64
+        nextCursor:
+          type: string
+          nullable: true
+          description: >-
+            Opaque cursor for the next page, via the cursor query parameter. Absent/null when this is
+            the last page.
 
     ConversationMessageResponse:
       type: object
@@ -9219,15 +9222,18 @@ components:
 
     ConversationMessageListResponse:
       type: object
-      required: [items, total]
+      required: [items]
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/ConversationMessageResponse'
-        total:
-          type: integer
-          format: int64
+        nextCursor:
+          type: string
+          nullable: true
+          description: >-
+            Opaque cursor for the next page, via the cursor query parameter. Absent/null when this is
+            the last page.
 
     PostMessageRequest:
       type: object

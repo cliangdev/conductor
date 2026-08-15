@@ -5,6 +5,7 @@ import com.conductor.agent.AgentRepository;
 import com.conductor.agent.DefaultAgentSlugs;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
+import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
@@ -16,7 +17,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -376,6 +382,178 @@ class ConversationServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
 
         assertThatThrownBy(() -> conversationService.get("some-other-project-id", conversation.getId()))
                 .isInstanceOf(ConversationNotFoundException.class);
+    }
+
+    // ---- listByProject (keyset pagination, post-review fix: cursor replaces offset) ----
+
+    /** Ordinary case, distinct {@code lastMessageAt} per row: pages a small window size (2) across 5
+     *  conversations and checks every row comes back exactly once, in the documented
+     *  most-recently-active-first order -- proves the cursor advances correctly page over page, not just
+     *  within a single page. */
+    @Test
+    void listByProjectPagesThroughAllConversationsExactlyOnceInOrder() {
+        OffsetDateTime base = OffsetDateTime.now();
+        List<String> insertOrder = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            insertOrder.add(newConversationWithLastMessageAt(base.plusSeconds(i)).getId());
+        }
+        List<String> mostRecentFirst = new ArrayList<>(insertOrder);
+        Collections.reverse(mostRecentFirst);
+
+        assertThat(pageThroughAllConversationIds(2)).containsExactlyElementsOf(mostRecentFirst);
+    }
+
+    /**
+     * The tiebreak's own reason for existing: {@code lastMessageAt} comes from {@code
+     * OffsetDateTime.now()}, so rows bumped in the same transaction (or, here, sharing a timestamp by
+     * construction) routinely tie. Rather than assert one hand-computed tiebreak order -- which would
+     * depend on this test correctly predicting the DB's string-comparison collation for the {@code id}
+     * column, not the behavior actually under test -- this pins the property the fix promises: two
+     * independent full traversals return every row exactly once and land in the *same* order as each
+     * other. Per docs/testing-guidelines.md-style invariant testing, varying nothing and checking for
+     * reproducibility is what actually catches a missing/broken tiebreak (without it, ties are ordered
+     * arbitrarily by physical row order, which two full re-traversals would not reliably reproduce).
+     */
+    @Test
+    void listByProjectPagesConversationsThatShareAnIdenticalLastMessageAtStablyAndCompletely() {
+        OffsetDateTime tied = OffsetDateTime.now();
+        Set<String> ids = new HashSet<>();
+        for (int i = 0; i < 4; i++) {
+            ids.add(newConversationWithLastMessageAt(tied).getId());
+        }
+
+        List<String> firstTraversal = pageThroughAllConversationIds(2);
+        List<String> secondTraversal = pageThroughAllConversationIds(2);
+
+        assertThat(firstTraversal).hasSize(4).containsExactlyInAnyOrderElementsOf(ids);
+        assertThat(secondTraversal).isEqualTo(firstTraversal);
+    }
+
+    @Test
+    void listByProjectNextCursorIsNullOnTheFinalPage() {
+        newConversationWithLastMessageAt(OffsetDateTime.now());
+
+        ConversationService.CursorPage<Conversation> page = conversationService.listByProject(projectId, null, 20);
+
+        assertThat(page.nextCursor()).isNull();
+    }
+
+    @Test
+    void listByProjectWithAMalformedCursorThrowsBusinessException() {
+        assertThatThrownBy(() -> conversationService.listByProject(projectId, "not a valid cursor", 20))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    private List<String> pageThroughAllConversationIds(int limit) {
+        List<String> collected = new ArrayList<>();
+        String cursor = null;
+        do {
+            ConversationService.CursorPage<Conversation> page = conversationService.listByProject(projectId, cursor, limit);
+            page.items().forEach(c -> collected.add(c.getId()));
+            cursor = page.nextCursor();
+        } while (cursor != null);
+        return collected;
+    }
+
+    /** Direct insert, bypassing {@code create()} -- lets a test pin an exact {@code lastMessageAt}
+     *  (including deliberately-tied values) rather than whatever {@code OffsetDateTime.now()} happens to
+     *  return when the service creates a row. */
+    private Conversation newConversationWithLastMessageAt(OffsetDateTime lastMessageAt) {
+        Conversation conversation = new Conversation();
+        conversation.setProjectId(projectId);
+        conversation.setAgentId(agentId);
+        conversation.setChannel(ConversationChannel.API.dbValue());
+        conversation.setCreatedByUserId(actor.userId());
+        conversation.setLastMessageAt(lastMessageAt);
+        return conversationRepository.saveAndFlush(conversation);
+    }
+
+    // ---- listMessages (keyset pagination, post-review fix: cursor replaces offset) ----
+
+    /** Ordinary case, distinct {@code createdAt} per row -- see {@link
+     *  #listByProjectPagesThroughAllConversationsExactlyOnceInOrder} for why this shape matters. */
+    @Test
+    void listMessagesPagesThroughAllMessagesExactlyOnceInOrder() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+        OffsetDateTime base = OffsetDateTime.now();
+        List<String> oldestFirst = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            oldestFirst.add(newMessageWithCreatedAt(conversation.getId(), base.plusSeconds(i)).getId());
+        }
+
+        assertThat(pageThroughAllMessageIds(conversation.getId(), 2)).containsExactlyElementsOf(oldestFirst);
+    }
+
+    /**
+     * The tiebreak matters here even more directly than for conversations: {@code appendUserMessage}
+     * inserts the USER row and its reserved ASSISTANT placeholder back-to-back in one transaction, so
+     * they routinely share a {@code createdAt} down to the same instant in production, not just in a
+     * contrived test. Same two-traversal shape as {@link
+     * #listByProjectPagesConversationsThatShareAnIdenticalLastMessageAtStablyAndCompletely} and for the
+     * same reason -- pins "complete and stable," not one hand-predicted collation order.
+     */
+    @Test
+    void listMessagesPagesMessagesThatShareAnIdenticalCreatedAtStablyAndCompletely() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+        OffsetDateTime tied = OffsetDateTime.now();
+        Set<String> ids = new HashSet<>();
+        for (int i = 0; i < 4; i++) {
+            ids.add(newMessageWithCreatedAt(conversation.getId(), tied).getId());
+        }
+
+        List<String> firstTraversal = pageThroughAllMessageIds(conversation.getId(), 2);
+        List<String> secondTraversal = pageThroughAllMessageIds(conversation.getId(), 2);
+
+        assertThat(firstTraversal).hasSize(4).containsExactlyInAnyOrderElementsOf(ids);
+        assertThat(secondTraversal).isEqualTo(firstTraversal);
+    }
+
+    @Test
+    void listMessagesNextCursorIsNullOnTheFinalPage() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+        newMessageWithCreatedAt(conversation.getId(), OffsetDateTime.now());
+
+        ConversationService.CursorPage<ConversationMessage> page =
+                conversationService.listMessages(projectId, conversation.getId(), null, 20);
+
+        assertThat(page.nextCursor()).isNull();
+    }
+
+    @Test
+    void listMessagesWithAMalformedCursorThrowsBusinessException() {
+        Conversation conversation = conversationService.create(
+                projectId, agentId, ConversationChannel.API, null, "Title", actor);
+
+        assertThatThrownBy(() -> conversationService.listMessages(projectId, conversation.getId(), "not a valid cursor", 20))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    private List<String> pageThroughAllMessageIds(String conversationId, int limit) {
+        List<String> collected = new ArrayList<>();
+        String cursor = null;
+        do {
+            ConversationService.CursorPage<ConversationMessage> page =
+                    conversationService.listMessages(projectId, conversationId, cursor, limit);
+            page.items().forEach(m -> collected.add(m.getId()));
+            cursor = page.nextCursor();
+        } while (cursor != null);
+        return collected;
+    }
+
+    /** Direct insert, bypassing {@code appendUserMessage} -- lets a test pin an exact {@code createdAt}
+     *  (including deliberately-tied values), same rationale as {@link
+     *  #newConversationWithLastMessageAt}. */
+    private ConversationMessage newMessageWithCreatedAt(String conversationId, OffsetDateTime createdAt) {
+        ConversationMessage message = new ConversationMessage();
+        message.setConversationId(conversationId);
+        message.setRole(ConversationMessage.Role.USER);
+        message.setContent("hi");
+        message.setStatus(ConversationMessage.Status.COMPLETED);
+        message.setCreatedAt(createdAt);
+        return messageRepository.saveAndFlush(message);
     }
 
     // ---- CEO agent self-heal (Phase 5: CoordinatorProvisioner#ensureProvisioned) ----

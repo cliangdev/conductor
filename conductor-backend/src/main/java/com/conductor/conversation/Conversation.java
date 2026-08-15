@@ -2,8 +2,6 @@ package com.conductor.conversation;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
@@ -26,11 +24,6 @@ import java.util.UUID;
 @Entity
 @Table(name = "conversations")
 public class Conversation {
-
-    /** Lifecycle status of a conversation. The DB's {@code ck_conversations_status} CHECK still allows
-     *  {@code 'ARCHIVED'} (an intentionally untouched historical migration), but nothing writes it --
-     *  {@code archive()} was removed as dead code, so this enum only ever holds {@code ACTIVE} today. */
-    public enum Status { ACTIVE }
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
@@ -55,10 +48,6 @@ public class Conversation {
     @Column(name = "title", length = 200)
     private String title;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "status", length = 20, nullable = false)
-    private Status status;
-
     /** Null for a machine actor -- {@link #createdByLabel} carries its identity instead. Attribution
      *  follows {@code project_docs}' user-or-label pattern; the V110 CHECK constraint is the actual
      *  guarantee that a byline is always present one way or the other. */
@@ -78,9 +67,6 @@ public class Conversation {
     protected void onCreate() {
         if (id == null) {
             id = UUID.randomUUID().toString();
-        }
-        if (status == null) {
-            status = Status.ACTIVE;
         }
         OffsetDateTime now = OffsetDateTime.now();
         if (createdAt == null) {
@@ -108,9 +94,6 @@ public class Conversation {
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
-
-    public Status getStatus() { return status; }
-    public void setStatus(Status status) { this.status = status; }
 
     public String getCreatedByUserId() { return createdByUserId; }
     public void setCreatedByUserId(String createdByUserId) { this.createdByUserId = createdByUserId; }
