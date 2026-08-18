@@ -45,7 +45,12 @@ public class CloudTasksJobDispatcher {
     public CloudTasksJobDispatcher(ObjectProvider<CloudTasksClient> tasksClientProvider,
                                    RunTokenService runTokenService,
                                    @Value("${conductor.workflow.job-executor.dispatch-mode:poll}") String dispatchMode,
-                                   @Value("${gcp.cloudrun.project-id:}") String projectId,
+                                   // Deliberately NOT gcp.cloudrun.project-id: that's the (optional, often
+                                   // blank) project hosting the builtin Claude runtime target, a different
+                                   // GCP project from the one this backend itself is deployed in. The Cloud
+                                   // Tasks queue lives alongside the backend, so it needs the latter — the
+                                   // same GCP_PROJECT_ID already used by GcpKmsCredentialService.
+                                   @Value("${GCP_PROJECT_ID:}") String projectId,
                                    @Value("${gcp.tasks.location:us-central1}") String location,
                                    @Value("${gcp.tasks.queue-name:workflow-jobs}") String queueName,
                                    @Value("${gcp.tasks.dispatch-base-url:}") String dispatchBaseUrl) {

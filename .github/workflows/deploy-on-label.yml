@@ -34,7 +34,8 @@ jobs:
       image-name: backend
       build-context: conductor-backend/
       health-path: /api/v1/health
-      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }},GCP_CLOUDRUN_PROJECT_ID=${{ vars.GCP_CLOUDRUN_PROJECT_ID }},GCP_CLOUDRUN_REGION=${{ vars.GCP_CLOUDRUN_REGION }},GCP_CLOUDRUN_CLAUDE_JOB_NAME=${{ vars.GCP_CLOUDRUN_CLAUDE_JOB_NAME }} --memory=1Gi --cpu=2 --no-cpu-throttling --min-instances=1"
+      # See backend-cd.yml for why these flags changed from cpu=2/--no-cpu-throttling/min-instances=1.
+      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }},GCP_CLOUDRUN_PROJECT_ID=${{ vars.GCP_CLOUDRUN_PROJECT_ID }},GCP_CLOUDRUN_REGION=${{ vars.GCP_CLOUDRUN_REGION }},GCP_CLOUDRUN_CLAUDE_JOB_NAME=${{ vars.GCP_CLOUDRUN_CLAUDE_JOB_NAME }},GCP_TASKS_DISPATCH_BASE_URL=${{ vars.BACKEND_URL }},WORKFLOW_JOB_DISPATCH_MODE=cloud-tasks --memory=1Gi --cpu=1 --cpu-throttling --min-instances=0 --timeout=3600"
       cloudrun-secrets: |
         DATABASE_URL=DATABASE_URL:latest
         DATABASE_USERNAME=DATABASE_USERNAME:latest
