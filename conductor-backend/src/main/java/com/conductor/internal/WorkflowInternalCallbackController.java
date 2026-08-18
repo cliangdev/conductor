@@ -92,10 +92,7 @@ public class WorkflowInternalCallbackController implements WorkflowInternalApi {
         if (!validateRunToken(runId)) {
             return ResponseEntity.status(401).build();
         }
-        if (engine.claimQueuedJob(runId, jobId)) {
-            engine.processJob(runId, jobId);
-            engine.checkRunCompletionAfterCommit(runId);
-        }
+        engine.claimAndProcessQueuedJob(runId, jobId);
         return ResponseEntity.ok().build();
     }
 

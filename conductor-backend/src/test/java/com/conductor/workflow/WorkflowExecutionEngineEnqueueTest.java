@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -38,7 +39,7 @@ class WorkflowExecutionEngineEnqueueTest {
     @Mock WorkflowJobOrchestrator orchestrator;
     @Mock WorkflowFailureCircuitBreaker circuitBreaker;
     @Mock WorkflowRunFailureNotifier runFailureNotifier;
-    @Mock CloudTasksJobDispatcher cloudTasksJobDispatcher;
+    @Mock WorkflowJobDispatcher cloudTasksJobDispatcher;
 
     WorkflowExecutionEngine engine;
 
@@ -47,7 +48,10 @@ class WorkflowExecutionEngineEnqueueTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
-                circuitBreaker, runFailureNotifier, cloudTasksJobDispatcher, 4);
+                circuitBreaker, runFailureNotifier, cloudTasksJobDispatcher);
+        // claimAndProcessQueuedJob calls through the `self` proxy field (Spring-injected in
+        // production), which MockitoExtension doesn't wire for a plain `new WorkflowExecutionEngine(...)`.
+        org.springframework.test.util.ReflectionTestUtils.setField(engine, "self", engine);
     }
 
     @Test
@@ -76,8 +80,6 @@ class WorkflowExecutionEngineEnqueueTest {
 
     @Test
     void enqueueJob_alwaysNotifiesCloudTasksDispatcher_afterInsertingRow() {
-        // The dispatcher itself is a no-op in dispatch-mode=poll (see CloudTasksJobDispatcherTest) —
-        // enqueueJob doesn't need to know the mode, it just always offers the dispatch.
         when(queueRepository.findByRunIdAndJobIdAndClaimedAtIsNull("run-1", "notify"))
                 .thenReturn(List.of());
         WorkflowRun run = new WorkflowRun();
@@ -115,5 +117,23 @@ class WorkflowExecutionEngineEnqueueTest {
         boolean claimed = engine.claimQueuedJob("run-1", "notify");
 
         org.assertj.core.api.Assertions.assertThat(claimed).isFalse();
+    }
+
+    @Test
+    void claimAndProcessQueuedJob_runsTheJob_whenRowClaimed() {
+        when(queueRepository.claimUnclaimedByRunIdAndJobId("run-1", "notify")).thenReturn(1);
+
+        engine.claimAndProcessQueuedJob("run-1", "notify");
+
+        verify(orchestrator).executeJob("run-1", "notify");
+    }
+
+    @Test
+    void claimAndProcessQueuedJob_isNoOp_whenRowAlreadyClaimed() {
+        when(queueRepository.claimUnclaimedByRunIdAndJobId("run-1", "notify")).thenReturn(0);
+
+        engine.claimAndProcessQueuedJob("run-1", "notify");
+
+        verify(orchestrator, never()).executeJob(anyString(), anyString());
     }
 }

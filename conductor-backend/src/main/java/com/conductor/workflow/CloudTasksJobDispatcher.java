@@ -7,8 +7,8 @@ import com.google.cloud.tasks.v2.QueueName;
 import com.google.cloud.tasks.v2.Task;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -17,34 +17,32 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * Pushes a workflow job dispatch as a Cloud Task, so it arrives at
  * {@code POST /internal/v1/workflow-runs/{runId}/jobs/{jobId}/dispatch} as a genuine inbound HTTP
  * request. That's the point: under request-based Cloud Run billing, CPU is only allocated while a
- * request is being served, so a job that only ever ran on an internal {@code @Scheduled} background
- * thread (see {@link WorkflowExecutionEngine#pollQueue}) would starve under {@code cpu-throttling}
- * whenever no unrelated request happened to be in flight. Routing dispatch itself through an HTTP
- * request fixes that at the source, instead of working around it.
+ * request is being served — dispatching this way (rather than an internal {@code @Scheduled}
+ * background poller) is what lets the service run at {@code min-instances=0}/{@code cpu-throttling}
+ * without starving job execution.
  *
- * <p>A no-op (see {@link #dispatchAfterCommit}) unless {@code conductor.workflow.job-executor.dispatch-mode}
- * is {@code cloud-tasks} — the poller remains the sole dispatch path otherwise.
+ * <p>{@code @Profile("!local")}: there's no real Cloud Tasks queue in local/self-hosted dev, so that
+ * profile gets {@link LocalWorkflowJobDispatcher} instead — see {@link WorkflowJobDispatcher}.
+ *
+ * <p>The crash-recovery paths ({@link WorkflowExecutionEngine#recoverStuckJobs}, {@link
+ * WorkflowExecutionEngine#recoverOrphanedClaims}) still exist independently of this — both funnel
+ * back through {@link WorkflowExecutionEngine#enqueueJob}, i.e. back through here — and Cloud Tasks'
+ * own retry policy redelivers a dispatch that didn't get a 2xx response.
  */
 @Component
-public class CloudTasksJobDispatcher {
+@Profile("!local")
+public class CloudTasksJobDispatcher implements WorkflowJobDispatcher {
 
     private static final Logger log = LoggerFactory.getLogger(CloudTasksJobDispatcher.class);
     private static final int RUN_TOKEN_TTL_HOURS = 2;
 
-    // Resolved lazily, not injected directly: CloudTasksClient only exists under @Profile("!local")
-    // (see CloudTasksConfig), but this dispatcher is a plain @Component needed in every profile —
-    // WorkflowExecutionEngine depends on it unconditionally. Eagerly requiring the client would break
-    // context startup wherever the client bean isn't registered, even though dispatch-mode=poll (the
-    // default, and every local/test profile) never actually needs it.
-    private final ObjectProvider<CloudTasksClient> tasksClientProvider;
+    private final CloudTasksClient tasksClient;
     private final RunTokenService runTokenService;
-    private final boolean enabled;
     private final String queuePath;
     private final String dispatchBaseUrl;
 
-    public CloudTasksJobDispatcher(ObjectProvider<CloudTasksClient> tasksClientProvider,
+    public CloudTasksJobDispatcher(CloudTasksClient tasksClient,
                                    RunTokenService runTokenService,
-                                   @Value("${conductor.workflow.job-executor.dispatch-mode:poll}") String dispatchMode,
                                    // Deliberately NOT gcp.cloudrun.project-id: that's the (optional, often
                                    // blank) project hosting the builtin Claude runtime target, a different
                                    // GCP project from the one this backend itself is deployed in. The Cloud
@@ -54,22 +52,14 @@ public class CloudTasksJobDispatcher {
                                    @Value("${gcp.tasks.location:us-central1}") String location,
                                    @Value("${gcp.tasks.queue-name:workflow-jobs}") String queueName,
                                    @Value("${gcp.tasks.dispatch-base-url:}") String dispatchBaseUrl) {
-        this.tasksClientProvider = tasksClientProvider;
+        this.tasksClient = tasksClient;
         this.runTokenService = runTokenService;
-        this.enabled = "cloud-tasks".equals(dispatchMode);
         this.queuePath = QueueName.of(projectId, location, queueName).toString();
         this.dispatchBaseUrl = dispatchBaseUrl;
     }
 
-    /**
-     * Called from {@link WorkflowExecutionEngine#enqueueJob}, itself always {@code @Transactional}.
-     * Deferring to {@code afterCommit} avoids a race where the Cloud Task fires and the dispatch
-     * endpoint claims the {@code workflow_job_queue} row before the enqueueing transaction has
-     * actually committed it — which would silently drop the dispatch (the row wouldn't be visible
-     * yet) and leave the job to the fallback poller instead of the fast path.
-     */
+    @Override
     public void dispatchAfterCommit(String runId, String jobId) {
-        if (!enabled) return;
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
@@ -84,14 +74,8 @@ public class CloudTasksJobDispatcher {
 
     private void dispatch(String runId, String jobId) {
         if (dispatchBaseUrl.isBlank()) {
-            log.error("dispatch-mode=cloud-tasks but gcp.tasks.dispatch-base-url is unset — "
-                    + "job {} for run {} will only be picked up by the fallback poller", jobId, runId);
-            return;
-        }
-        CloudTasksClient tasksClient = tasksClientProvider.getIfAvailable();
-        if (tasksClient == null) {
-            log.error("dispatch-mode=cloud-tasks but no CloudTasksClient bean is available — "
-                    + "job {} for run {} will only be picked up by the fallback poller", jobId, runId);
+            log.error("gcp.tasks.dispatch-base-url is unset — job {} for run {} has no dispatch trigger "
+                    + "and will sit in the queue until the 24h stuck-run sweep fails its run", jobId, runId);
             return;
         }
         String token = runTokenService.generateRunToken(runId, RUN_TOKEN_TTL_HOURS);
@@ -104,11 +88,12 @@ public class CloudTasksJobDispatcher {
         try {
             tasksClient.createTask(queuePath, Task.newBuilder().setHttpRequest(request).build());
         } catch (Exception e) {
-            // Not fatal: the workflow_job_queue row this Cloud Task would have driven is already
-            // persisted, so the fallback poller (WorkflowExecutionEngine#pollQueue) will still pick
-            // it up — just later than the fast path.
-            log.error("Failed to create Cloud Task for run {} job {} — falling back to poll-based "
-                    + "pickup: {}", runId, jobId, e.getMessage(), e);
+            // The workflow_job_queue row this Cloud Task would have driven is already persisted, but
+            // with no task ever created there's nothing left to redeliver it — the run sits PENDING
+            // until the 24h stuck-run sweep (WorkflowExecutionEngine#cleanupStuckRuns) fails it. There
+            // is no poller to fall back on; a transient failure here needs an operator or a retry of
+            // the run itself.
+            log.error("Failed to create Cloud Task for run {} job {}: {}", runId, jobId, e.getMessage(), e);
         }
     }
 }

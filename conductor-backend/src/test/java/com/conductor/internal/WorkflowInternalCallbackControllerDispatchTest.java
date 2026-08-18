@@ -22,8 +22,9 @@ import static org.mockito.Mockito.when;
 
 /**
  * The Cloud-Tasks-triggered dispatch endpoint: must reject a missing/invalid run token exactly like
- * every other {@code /internal/v1} callback, and must not run the job a second time when the queue row
- * was already claimed — a duplicate Cloud Tasks delivery or a race with the fallback poller.
+ * every other {@code /internal/v1} callback, and otherwise just delegates to {@code
+ * WorkflowExecutionEngine#claimAndProcessQueuedJob} — its claim-then-run and duplicate-delivery
+ * behavior is covered directly on the engine, not re-tested here.
  */
 @ExtendWith(MockitoExtension.class)
 class WorkflowInternalCallbackControllerDispatchTest {
@@ -60,7 +61,7 @@ class WorkflowInternalCallbackControllerDispatchTest {
         ResponseEntity<Void> response = controller.dispatchWorkflowJob("run-1", "job-1");
 
         assertThat(response.getStatusCode().value()).isEqualTo(401);
-        verify(engine, never()).claimQueuedJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        verify(engine, never()).claimAndProcessQueuedJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -74,28 +75,13 @@ class WorkflowInternalCallbackControllerDispatchTest {
     }
 
     @Test
-    void dispatchWorkflowJob_runsJob_whenRowClaimed() {
+    void dispatchWorkflowJob_delegatesToEngine_whenTokenValid() {
         withBearerToken("good-token");
         when(runTokenService.validateRunToken("good-token", "run-1")).thenReturn(true);
-        when(engine.claimQueuedJob("run-1", "job-1")).thenReturn(true);
 
         ResponseEntity<Void> response = controller.dispatchWorkflowJob("run-1", "job-1");
 
         assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
-        verify(engine).processJob("run-1", "job-1");
-        verify(engine).checkRunCompletionAfterCommit("run-1");
-    }
-
-    @Test
-    void dispatchWorkflowJob_isNoOp_whenRowAlreadyClaimed() {
-        withBearerToken("good-token");
-        when(runTokenService.validateRunToken("good-token", "run-1")).thenReturn(true);
-        when(engine.claimQueuedJob("run-1", "job-1")).thenReturn(false);
-
-        ResponseEntity<Void> response = controller.dispatchWorkflowJob("run-1", "job-1");
-
-        assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
-        verify(engine, never()).processJob(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
-        verify(engine, never()).checkRunCompletionAfterCommit(org.mockito.ArgumentMatchers.any());
+        verify(engine).claimAndProcessQueuedJob("run-1", "job-1");
     }
 }

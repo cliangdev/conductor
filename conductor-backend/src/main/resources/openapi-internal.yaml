@@ -158,12 +158,12 @@ paths:
       tags: [workflow-internal]
       summary: Dispatch and synchronously run a queued workflow job
       description: >
-        Cloud Tasks' HTTP target for job dispatch (see CloudTasksJobDispatcher) when
-        conductor.workflow.job-executor.dispatch-mode=cloud-tasks. Claims the matching unclaimed
-        workflow_job_queue row and, if claimed, runs the job to completion before responding — the
-        request stays open for the job's full duration so Cloud Run's request-based billing allocates
-        CPU for exactly that span. A no-op 200 if the row was already claimed (duplicate Cloud Tasks
-        delivery, or the fallback poller got there first).
+        Cloud Tasks' HTTP target for job dispatch (see CloudTasksJobDispatcher) — the sole way a
+        queued job reaches execution. Claims the matching unclaimed workflow_job_queue row and, if
+        claimed, runs the job to completion before responding — the request stays open for the job's
+        full duration so Cloud Run's request-based billing allocates CPU for exactly that span. A
+        no-op 200 if the row was already claimed (a duplicate Cloud Tasks delivery — at-least-once
+        retries can occasionally overlap in flight).
       operationId: dispatchWorkflowJob
       security:
         - runToken: []

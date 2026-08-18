@@ -31,7 +31,7 @@ class WorkflowExecutionEngineCleanupTest {
     @Mock WorkflowJobOrchestrator orchestrator;
     @Mock WorkflowFailureCircuitBreaker circuitBreaker;
     @Mock WorkflowRunFailureNotifier runFailureNotifier;
-    @Mock CloudTasksJobDispatcher cloudTasksJobDispatcher;
+    @Mock WorkflowJobDispatcher cloudTasksJobDispatcher;
 
     WorkflowExecutionEngine engine;
 
@@ -40,7 +40,7 @@ class WorkflowExecutionEngineCleanupTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
-                circuitBreaker, runFailureNotifier, cloudTasksJobDispatcher, 4);
+                circuitBreaker, runFailureNotifier, cloudTasksJobDispatcher);
     }
 
     @Test
