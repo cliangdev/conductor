@@ -1278,9 +1278,22 @@ Credential-wise a runtime-target job behaves like `cloud-run`: the project's Cla
 
 ## Queued and waiting work
 
-Most of the time, `PENDING` isn't a queue you need to think about. The engine drains its internal job
-queue (`workflow_job_queue`) on a 500ms tick with adaptive backoff (idle ticks back off to as slow as
-5s) — a run normally clears `PENDING` in well under a second. A run stuck in `PENDING` for any real
+Most of the time, `PENDING` isn't a queue you need to think about. Every job dispatch first inserts a
+row into the engine's internal job queue (`workflow_job_queue`), then reaches the engine one of two
+ways depending on `conductor.workflow.job-executor.dispatch-mode`:
+
+- **`poll`** (default): a `@Scheduled` tick drains `workflow_job_queue` directly, on a base interval
+  (`conductor.workflow.job-executor.poll-interval-ms`, 500ms by default) with adaptive backoff (idle
+  ticks back off to as slow as 10× the base interval).
+- **`cloud-tasks`**: each enqueue also pushes a Cloud Task that calls the engine back over HTTP
+  (`POST /internal/v1/workflow-runs/{runId}/jobs/{jobId}/dispatch`), so dispatch arrives as a genuine
+  inbound request rather than depending on an always-warm background thread — this is what makes
+  `min-instances: 0` + Cloud Run CPU throttling safe for a deployment with real job traffic. The
+  `poll` tick keeps running underneath as a fallback for a lost/expired Cloud Tasks delivery; once a
+  deployment has confirmed `cloud-tasks` mode is working, its poll interval is usually raised well past
+  the 500ms default so it stays a rare backstop rather than a source of background CPU demand.
+
+Either way, a run normally clears `PENDING` in well under a second. A run stuck in `PENDING` for any real
 length of time is a symptom (engine trouble, a stuck upstream dependency), not a designed backlog.
 
 **Real waiting happens at the self-hosted boundary.** A job with `runs-on: self-hosted` is handed to your

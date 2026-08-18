@@ -46,6 +46,23 @@ public interface WorkflowJobQueueRepository extends JpaRepository<WorkflowJobQue
     void markAllClaimed(@Param("ids") List<String> ids);
 
     /**
+     * Claims the unclaimed queue row(s) for this (run, job), if any still exist — used by the
+     * Cloud-Tasks-triggered dispatch path (see {@code WorkflowExecutionEngine#claimQueuedJob}) as the
+     * same kind of atomic claim {@link #claimReadyJobs} does for the poll path. Returns the number of
+     * rows claimed: 0 means someone else — a duplicate Cloud Tasks delivery (at-least-once) or the
+     * fallback poller — already claimed it, so the caller should treat this as a safe no-op rather
+     * than executing the job again. Bulk by design, not just by accident: {@code enqueueJob}'s dedup is
+     * itself best-effort (see its own comment), so if that race is ever lost and two unclaimed rows
+     * exist for the same (run, job), this claims both in one statement rather than leaving a second
+     * row behind for a later poll to claim and (re-)dispatch — only one {@code processJob} call ever
+     * results from a single {@code claimQueuedJob} invocation regardless of how many rows it claimed.
+     */
+    @Modifying
+    @Query(value = "UPDATE workflow_job_queue SET claimed_at = NOW() "
+            + "WHERE run_id = :runId AND job_id = :jobId AND claimed_at IS NULL", nativeQuery = true)
+    int claimUnclaimedByRunIdAndJobId(@Param("runId") String runId, @Param("jobId") String jobId);
+
+    /**
      * Used by {@code WorkflowExecutionEngine#enqueueJob} to skip inserting a duplicate row when
      * one is already queued and unclaimed for this (run, job) — e.g. two upstream jobs completing
      * near-simultaneously both trying to enqueue the same diamond-`needs` dependent. Best-effort

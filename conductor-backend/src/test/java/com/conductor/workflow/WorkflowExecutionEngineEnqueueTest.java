@@ -38,6 +38,7 @@ class WorkflowExecutionEngineEnqueueTest {
     @Mock WorkflowJobOrchestrator orchestrator;
     @Mock WorkflowFailureCircuitBreaker circuitBreaker;
     @Mock WorkflowRunFailureNotifier runFailureNotifier;
+    @Mock CloudTasksJobDispatcher cloudTasksJobDispatcher;
 
     WorkflowExecutionEngine engine;
 
@@ -46,7 +47,7 @@ class WorkflowExecutionEngineEnqueueTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
-                circuitBreaker, runFailureNotifier, 4);
+                circuitBreaker, runFailureNotifier, cloudTasksJobDispatcher, 4);
     }
 
     @Test
@@ -71,5 +72,48 @@ class WorkflowExecutionEngineEnqueueTest {
         engine.enqueueJob("run-1", "notify");
 
         verify(queueRepository).save(any(WorkflowJobQueue.class));
+    }
+
+    @Test
+    void enqueueJob_alwaysNotifiesCloudTasksDispatcher_afterInsertingRow() {
+        // The dispatcher itself is a no-op in dispatch-mode=poll (see CloudTasksJobDispatcherTest) —
+        // enqueueJob doesn't need to know the mode, it just always offers the dispatch.
+        when(queueRepository.findByRunIdAndJobIdAndClaimedAtIsNull("run-1", "notify"))
+                .thenReturn(List.of());
+        WorkflowRun run = new WorkflowRun();
+        run.setId("run-1");
+        when(runRepository.findById("run-1")).thenReturn(Optional.of(run));
+
+        engine.enqueueJob("run-1", "notify");
+
+        verify(cloudTasksJobDispatcher).dispatchAfterCommit("run-1", "notify");
+    }
+
+    @Test
+    void enqueueJob_doesNotNotifyCloudTasksDispatcher_whenDedupSkipsInsert() {
+        when(queueRepository.findByRunIdAndJobIdAndClaimedAtIsNull("run-1", "notify"))
+                .thenReturn(List.of(mock(WorkflowJobQueue.class)));
+
+        engine.enqueueJob("run-1", "notify");
+
+        verify(cloudTasksJobDispatcher, never()).dispatchAfterCommit(any(), any());
+    }
+
+    @Test
+    void claimQueuedJob_returnsTrue_whenRowClaimed() {
+        when(queueRepository.claimUnclaimedByRunIdAndJobId("run-1", "notify")).thenReturn(1);
+
+        boolean claimed = engine.claimQueuedJob("run-1", "notify");
+
+        org.assertj.core.api.Assertions.assertThat(claimed).isTrue();
+    }
+
+    @Test
+    void claimQueuedJob_returnsFalse_whenRowAlreadyClaimedByAnotherPath() {
+        when(queueRepository.claimUnclaimedByRunIdAndJobId("run-1", "notify")).thenReturn(0);
+
+        boolean claimed = engine.claimQueuedJob("run-1", "notify");
+
+        org.assertj.core.api.Assertions.assertThat(claimed).isFalse();
     }
 }

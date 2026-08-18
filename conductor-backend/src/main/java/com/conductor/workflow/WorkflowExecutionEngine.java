@@ -44,6 +44,7 @@ public class WorkflowExecutionEngine {
     private final WorkflowYamlParser yamlParser;
     private final WorkflowFailureCircuitBreaker circuitBreaker;
     private final WorkflowRunFailureNotifier runFailureNotifier;
+    private final CloudTasksJobDispatcher cloudTasksJobDispatcher;
 
     /**
      * Jobs run here rather than on {@code CompletableFuture}'s default pool. That default is only
@@ -98,6 +99,7 @@ public class WorkflowExecutionEngine {
                                    WorkflowYamlParser yamlParser,
                                    WorkflowFailureCircuitBreaker circuitBreaker,
                                    WorkflowRunFailureNotifier runFailureNotifier,
+                                   CloudTasksJobDispatcher cloudTasksJobDispatcher,
                                    @Value("${conductor.workflow.job-executor.pool-size:16}") int jobPoolSize) {
         this.jobExecutor = Executors.newFixedThreadPool(jobPoolSize, namedThreadFactory());
         this.jobPoolSize = jobPoolSize;
@@ -110,6 +112,7 @@ public class WorkflowExecutionEngine {
         this.yamlParser = yamlParser;
         this.circuitBreaker = circuitBreaker;
         this.runFailureNotifier = runFailureNotifier;
+        this.cloudTasksJobDispatcher = cloudTasksJobDispatcher;
     }
 
     private static ThreadFactory namedThreadFactory() {
@@ -127,11 +130,17 @@ public class WorkflowExecutionEngine {
     }
 
     /**
-     * Tick every 500ms — but only actually query the DB when the adaptive backoff counter
-     * allows. Fast (500ms) while jobs are flowing, slow (up to 5s) when the queue is idle.
-     * Cuts DB chatter ~10× on an idle system without hurting responsiveness when there's work.
+     * Tick every {@code conductor.workflow.job-executor.poll-interval-ms} (500ms by default) — but
+     * only actually query the DB when the adaptive backoff counter allows. Fast while jobs are
+     * flowing, slower (up to 10x the base interval) when the queue is idle. Cuts DB chatter without
+     * hurting responsiveness when there's work.
+     *
+     * <p>This is the sole dispatch path in {@code dispatch-mode=poll}. In {@code dispatch-mode=cloud-tasks}
+     * it's a fallback safety net for lost/expired Cloud Tasks deliveries — see {@link CloudTasksJobDispatcher}
+     * and {@link #claimQueuedJob} — so once that mode is confirmed working, raise the interval (e.g. to
+     * 60000ms) so this isn't the primary source of background CPU demand.
      */
-    @Scheduled(fixedDelay = 500)
+    @Scheduled(fixedDelayString = "${conductor.workflow.job-executor.poll-interval-ms:500}")
     public void pollQueue() {
         if (ticksUntilNextPoll > 0) {
             ticksUntilNextPoll--;
@@ -269,6 +278,23 @@ public class WorkflowExecutionEngine {
         entry.setRun(run);
         entry.setJobId(jobId);
         queueRepository.save(entry);
+        cloudTasksJobDispatcher.dispatchAfterCommit(runId, jobId);
+    }
+
+    /**
+     * Entry point for the Cloud-Tasks-triggered dispatch path (the {@code POST
+     * /internal/v1/workflow-runs/{runId}/jobs/{jobId}/dispatch} endpoint). Claims the matching
+     * unclaimed {@code workflow_job_queue} row exactly like {@link #pollQueueOnce} does for the poll
+     * path, so a duplicate Cloud Tasks delivery (at-least-once) or a race with the fallback poller
+     * claiming the same row is a safe no-op rather than a second execution attempt — {@code
+     * findOrCreateLatestJobRun} would otherwise start a fresh job run even though the first dispatch
+     * already completed it.
+     *
+     * @return true if this call claimed the row and the caller should proceed to run the job
+     */
+    @Transactional
+    public boolean claimQueuedJob(String runId, String jobId) {
+        return queueRepository.claimUnclaimedByRunIdAndJobId(runId, jobId) > 0;
     }
 
     /**

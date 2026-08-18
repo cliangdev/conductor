@@ -31,6 +31,7 @@ class WorkflowExecutionEngineFailureRecoveryTest {
     @Mock WorkflowJobOrchestrator orchestrator;
     @Mock WorkflowFailureCircuitBreaker circuitBreaker;
     @Mock WorkflowRunFailureNotifier runFailureNotifier;
+    @Mock CloudTasksJobDispatcher cloudTasksJobDispatcher;
 
     WorkflowExecutionEngine engine;
 
@@ -39,7 +40,7 @@ class WorkflowExecutionEngineFailureRecoveryTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
-                circuitBreaker, runFailureNotifier, 4);
+                circuitBreaker, runFailureNotifier, cloudTasksJobDispatcher, 4);
     }
 
     @Test
