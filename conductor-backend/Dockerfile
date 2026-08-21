@@ -1,6 +1,6 @@
 # Stage 1: Build
 # JDK 21 — matches pom <java.version> and the CI test JVM (test what we ship).
-FROM maven:3-eclipse-temurin-21 AS build
+FROM maven:3-eclipse-temurin-24 AS build
 WORKDIR /app
 COPY pom.xml .
 RUN mvn dependency:go-offline -q
