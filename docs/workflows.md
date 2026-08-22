@@ -1278,10 +1278,20 @@ Credential-wise a runtime-target job behaves like `cloud-run`: the project's Cla
 
 ## Queued and waiting work
 
-Most of the time, `PENDING` isn't a queue you need to think about. The engine drains its internal job
-queue (`workflow_job_queue`) on a 500ms tick with adaptive backoff (idle ticks back off to as slow as
-5s) — a run normally clears `PENDING` in well under a second. A run stuck in `PENDING` for any real
-length of time is a symptom (engine trouble, a stuck upstream dependency), not a designed backlog.
+Most of the time, `PENDING` isn't a queue you need to think about. Every job dispatch first inserts a
+row into the engine's internal job queue (`workflow_job_queue`), then pushes a Cloud Task that calls
+the engine back over HTTP (`POST /internal/v1/workflow-runs/{runId}/jobs/{jobId}/dispatch`) — so
+dispatch arrives as a genuine inbound request rather than depending on an always-warm background
+thread, which is what makes `min-instances: 0` + Cloud Run CPU throttling safe for a deployment with
+real job traffic (see `CloudTasksJobDispatcher`). `GCP_TASKS_DISPATCH_BASE_URL` must be configured for
+this to work at all — there's no fallback poller.
+
+A run normally clears `PENDING` in well under a second. A run stuck in `PENDING` for any real length of
+time is a symptom (a misconfigured `GCP_TASKS_DISPATCH_BASE_URL`, a Cloud Tasks outage, a stuck
+upstream dependency), not a designed backlog — check for `Failed to create Cloud Task` in the backend
+logs first. Crash recovery (an instance dying mid-claim or mid-job) is handled independently of the
+dispatch path by `recoverStuckJobs`/`recoverOrphanedClaims` on startup and the 24h `cleanupStuckRuns`
+sweep — see [Crash recovery](#crash-recovery).
 
 **Real waiting happens at the self-hosted boundary.** A job with `runs-on: self-hosted` is handed to your
 daemon and sits in `AWAITING_PICKUP` — and, importantly, **stays** `AWAITING_PICKUP` for the job's entire

@@ -6,12 +6,10 @@ import com.conductor.workflow.model.JobSpec;
 import com.conductor.workflow.model.WorkflowSpec;
 import com.conductor.workflow.model.WorkflowYamlException;
 import com.conductor.workflow.model.WorkflowYamlParser;
-import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.EventListener;
@@ -22,13 +20,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 @Service
 public class WorkflowExecutionEngine {
@@ -44,47 +35,10 @@ public class WorkflowExecutionEngine {
     private final WorkflowYamlParser yamlParser;
     private final WorkflowFailureCircuitBreaker circuitBreaker;
     private final WorkflowRunFailureNotifier runFailureNotifier;
+    private final WorkflowJobDispatcher jobDispatcher;
 
-    /**
-     * Jobs run here rather than on {@code CompletableFuture}'s default pool. That default is only
-     * {@code ForkJoinPool.commonPool()} when the pool's parallelism is greater than 1
-     * ({@code CompletableFuture.USE_COMMON_POOL}); parallelism is {@code max(1, processors - 1)}, so
-     * the common pool is bypassed entirely below **3** available processors and the JDK silently
-     * substitutes a thread-per-task executor. Measured, not inferred:
-     *
-     * <pre>
-     *   ActiveProcessorCount=1 → parallelism 1 → Thread-0
-     *   ActiveProcessorCount=2 → parallelism 1 → Thread-0
-     *   ActiveProcessorCount=3 → parallelism 2 → ForkJoinPool.commonPool-worker-1
-     * </pre>
-     *
-     * Production ran the fallback: every concurrent job spawned a fresh unbounded {@code Thread-NN},
-     * all contending for one core, starving the gax executors behind Cloud Run launches and Hikari's
-     * housekeeper alike. Note the deploy's {@code --cpu=2} does NOT lift us onto the common pool — this
-     * pool is what bounds the fan-out, so don't delete it on the assumption that more vCPUs made the
-     * default safe.
-     */
-    private final ExecutorService jobExecutor;
-
-    /** Pool capacity, so {@link #pollQueueOnce} never claims more than it can start — see {@link #inFlightJobs}. */
-    private final int jobPoolSize;
-
-    /**
-     * Jobs submitted to {@link #jobExecutor} but not yet finished. Claiming a queue row is a durable
-     * side effect that only {@link #recoverOrphanedClaims} can undo, so the poll claims strictly what
-     * it has a free thread for rather than letting rows pile up in the executor's unbounded queue where
-     * a restart would strand them.
-     */
-    private final AtomicInteger inFlightJobs = new AtomicInteger();
-
-    // Adaptive poll backoff (in 500ms ticks). Busy (work found last poll) → every tick (500ms).
-    // Idle → exponentially back off up to MAX_BACKOFF_TICKS * 500ms = 5s between DB queries.
-    private static final int MAX_BACKOFF_TICKS = 10;
-    private int currentBackoffTicks = 1;
-    private int ticksUntilNextPoll = 0;
-
-    // Self-reference injected lazily to ensure processJob() is called through the Spring proxy,
-    // enabling @Transactional to work when invoked from within pollQueue() (self-invocation workaround).
+    // Self-reference injected lazily so recoverStuckJobsOnStartup's calls to other @Transactional
+    // methods on this class go through the Spring proxy (self-invocation workaround).
     @Lazy
     @Autowired
     private WorkflowExecutionEngine self;
@@ -98,9 +52,7 @@ public class WorkflowExecutionEngine {
                                    WorkflowYamlParser yamlParser,
                                    WorkflowFailureCircuitBreaker circuitBreaker,
                                    WorkflowRunFailureNotifier runFailureNotifier,
-                                   @Value("${conductor.workflow.job-executor.pool-size:16}") int jobPoolSize) {
-        this.jobExecutor = Executors.newFixedThreadPool(jobPoolSize, namedThreadFactory());
-        this.jobPoolSize = jobPoolSize;
+                                   WorkflowJobDispatcher jobDispatcher) {
         this.queueRepository = queueRepository;
         this.runRepository = runRepository;
         this.jobRunRepository = jobRunRepository;
@@ -110,98 +62,7 @@ public class WorkflowExecutionEngine {
         this.yamlParser = yamlParser;
         this.circuitBreaker = circuitBreaker;
         this.runFailureNotifier = runFailureNotifier;
-    }
-
-    private static ThreadFactory namedThreadFactory() {
-        AtomicInteger seq = new AtomicInteger();
-        return r -> {
-            Thread t = new Thread(r, "workflow-job-" + seq.incrementAndGet());
-            t.setDaemon(true);
-            return t;
-        };
-    }
-
-    @PreDestroy
-    void shutdownJobExecutor() {
-        jobExecutor.shutdown();
-    }
-
-    /**
-     * Tick every 500ms — but only actually query the DB when the adaptive backoff counter
-     * allows. Fast (500ms) while jobs are flowing, slow (up to 5s) when the queue is idle.
-     * Cuts DB chatter ~10× on an idle system without hurting responsiveness when there's work.
-     */
-    @Scheduled(fixedDelay = 500)
-    public void pollQueue() {
-        if (ticksUntilNextPoll > 0) {
-            ticksUntilNextPoll--;
-            return;
-        }
-
-        boolean hadWork;
-        try {
-            hadWork = self.pollQueueOnce();
-        } catch (Exception e) {
-            log.error("Error polling workflow job queue: {}", e.getMessage(), e);
-            hadWork = false;
-        }
-
-        if (hadWork) {
-            currentBackoffTicks = 1;
-        } else {
-            currentBackoffTicks = Math.min(currentBackoffTicks * 2, MAX_BACKOFF_TICKS);
-        }
-        ticksUntilNextPoll = currentBackoffTicks - 1;
-    }
-
-    /**
-     * Single-tick DB poll. @Transactional for the short claim + mark-claimed work only;
-     * dispatch happens asynchronously after the transaction returns so no connection is
-     * held during job processing.
-     *
-     * @return true if any jobs were claimed and dispatched this tick
-     */
-    @Transactional
-    public boolean pollQueueOnce() {
-        int capacity = jobPoolSize - inFlightJobs.get();
-        if (capacity <= 0) {
-            // Every thread is busy. Leaving the rows unclaimed keeps them visible to the next tick (and
-            // to another instance) instead of parking them in an executor queue only a restart-time
-            // sweep could rescue.
-            return false;
-        }
-        List<WorkflowJobQueue> entries = queueRepository.claimReadyJobs(capacity);
-        if (entries.isEmpty()) return false;
-        log.info("Claimed {} job(s) from queue", entries.size());
-        List<String> ids = entries.stream().map(WorkflowJobQueue::getId).collect(Collectors.toList());
-        queueRepository.markAllClaimed(ids);
-        for (WorkflowJobQueue queued : entries) {
-            String runId = queued.getRun().getId();
-            String jobId = queued.getJobId();
-            log.info("Dispatching job {} for run {}", jobId, runId);
-            inFlightJobs.incrementAndGet();
-            CompletableFuture.runAsync(() -> {
-                MDC.put("runId", runId);
-                MDC.put("jobId", jobId);
-                try {
-                    self.processJob(runId, jobId);
-                    // After processJob transaction commits, check completion in a fresh transaction
-                    // so all concurrent job results are visible.
-                    self.checkRunCompletionAfterCommit(runId);
-                } catch (Exception e) {
-                    // Last-resort net: processJob() now catches and terminalizes job-level failures
-                    // itself (see its own try/catch), so this should only ever fire if that recovery
-                    // path itself throws (e.g. completeRemoteJob failing) — log loudly since a job is
-                    // left stranded in RUNNING with no further automatic recovery at this point.
-                    log.error("Error processing job {} — job may be stranded in RUNNING: {}", jobId, e.getMessage(), e);
-                } finally {
-                    inFlightJobs.decrementAndGet();
-                    MDC.remove("runId");
-                    MDC.remove("jobId");
-                }
-            }, jobExecutor);
-        }
-        return true;
+        this.jobDispatcher = jobDispatcher;
     }
 
     /**
@@ -269,6 +130,40 @@ public class WorkflowExecutionEngine {
         entry.setRun(run);
         entry.setJobId(jobId);
         queueRepository.save(entry);
+        jobDispatcher.dispatchAfterCommit(runId, jobId);
+    }
+
+    /**
+     * Entry point for the Cloud-Tasks-triggered dispatch path (the {@code POST
+     * /internal/v1/workflow-runs/{runId}/jobs/{jobId}/dispatch} endpoint). Atomically claims the
+     * matching unclaimed {@code workflow_job_queue} row, so a duplicate Cloud Tasks delivery
+     * (at-least-once — retries can occasionally overlap in flight) is a safe no-op rather than a
+     * second execution attempt — {@code findOrCreateLatestJobRun} would otherwise start a fresh job
+     * run even though the first dispatch already completed it.
+     *
+     * @return true if this call claimed the row and the caller should proceed to run the job
+     */
+    @Transactional
+    public boolean claimQueuedJob(String runId, String jobId) {
+        return queueRepository.claimUnclaimedByRunIdAndJobId(runId, jobId) > 0;
+    }
+
+    /**
+     * The full claim-then-run body shared by both {@link WorkflowJobDispatcher} implementations — the
+     * {@code /internal/v1} dispatch endpoint calls it after validating the run token (real Cloud Tasks
+     * traffic), and {@link LocalWorkflowJobDispatcher} calls it directly in-process (no queue to
+     * validate a token for, since nothing left the JVM). A no-op if the row was already claimed.
+     *
+     * <p>Calls {@code claimQueuedJob}/{@code checkRunCompletionAfterCommit} through {@link #self},
+     * not directly — both are {@code @Transactional}, and a plain {@code this.}-call from a method
+     * that (like this one) isn't itself proxied bypasses Spring's AOP entirely, silently running the
+     * {@code @Modifying} claim query with no active transaction at all.
+     */
+    public void claimAndProcessQueuedJob(String runId, String jobId) {
+        if (self.claimQueuedJob(runId, jobId)) {
+            processJob(runId, jobId);
+            self.checkRunCompletionAfterCommit(runId);
+        }
     }
 
     /**
@@ -282,22 +177,33 @@ public class WorkflowExecutionEngine {
      * this method as an exception. This catch is a safety net for the unexpected case: any executor
      * that lets an exception escape uncaught (e.g. a raw {@code RuntimeException} from an HTTP client
      * that isn't translated into a {@code StepResult}) used to strand the job in {@code RUNNING}
-     * forever, since the caller ({@link #pollQueueOnce}) only logged it. Reusing {@link
-     * WorkflowJobOrchestrator#completeRemoteJob} here — the same idempotent terminalize-and-propagate
-     * path already used by the daemon-pickup-timeout sweep — closes that gap without inventing a new
-     * failure path.
+     * forever if left uncaught here. Reusing {@link WorkflowJobOrchestrator#completeRemoteJob} here —
+     * the same idempotent terminalize-and-propagate path already used by the daemon-pickup-timeout
+     * sweep — closes that gap without inventing a new failure path.
+     *
+     * <p>If {@code completeRemoteJob} itself then throws, that propagates out of this method to the
+     * dispatch endpoint's caller, which is Cloud Tasks — a non-2xx response is exactly what makes it
+     * retry the dispatch per the queue's retry policy, so this doubles as that failure's recovery path
+     * rather than needing one of its own.
      */
     public void processJob(String runId, String jobId) {
-        log.info("processJob started: runId={}, jobId={}", runId, jobId);
+        MDC.put("runId", runId);
+        MDC.put("jobId", jobId);
         try {
-            orchestrator.executeJob(runId, jobId);
-        } catch (Exception e) {
-            log.error("Unhandled exception executing job {} for run {} — marking FAILED: {}",
-                    jobId, runId, e.getMessage(), e);
-            orchestrator.completeRemoteJob(runId, jobId, WorkflowJobStatus.FAILED,
-                    "INTERNAL_ERROR: " + e.getMessage());
+            log.info("processJob started: runId={}, jobId={}", runId, jobId);
+            try {
+                orchestrator.executeJob(runId, jobId);
+            } catch (Exception e) {
+                log.error("Unhandled exception executing job {} for run {} — marking FAILED: {}",
+                        jobId, runId, e.getMessage(), e);
+                orchestrator.completeRemoteJob(runId, jobId, WorkflowJobStatus.FAILED,
+                        "INTERNAL_ERROR: " + e.getMessage());
+            }
+            log.info("processJob finished: runId={}, jobId={}", runId, jobId);
+        } finally {
+            MDC.remove("runId");
+            MDC.remove("jobId");
         }
-        log.info("processJob finished: runId={}, jobId={}", runId, jobId);
     }
 
     /**
@@ -313,13 +219,18 @@ public class WorkflowExecutionEngine {
 
     /**
      * On startup: re-open queue rows that were claimed but whose job never got as far as creating a
-     * {@code WorkflowJobRun}. {@link #recoverStuckJobs} can't see these — it looks for RUNNING job runs,
+     * {@code WorkflowJobRun} — the instance died between {@link #claimQueuedJob} and finishing
+     * {@link #processJob}. {@link #recoverStuckJobs} can't see these — it looks for RUNNING job runs,
      * and the whole point is that none was ever written. Without this they are invisible to every query
      * in the system and their runs sit in RUNNING until the 24h {@link #cleanupStuckRuns} sweep fails
      * them.
      *
      * <p>Clearing {@code claimedAt} is enough to make them claimable again; it deliberately does not
-     * insert a second queue row, which would risk running the job twice.
+     * insert a second queue row, which would risk running the job twice. What actually re-drives a
+     * cleared row is the original Cloud Task's own retry (it never got a 2xx from the crashed instance,
+     * so Cloud Tasks keeps retrying regardless of this sweep) landing on a healthy instance after this
+     * has run — this sweep just makes sure that retry finds the row claimable instead of still marked
+     * claimed by an instance that no longer exists.
      */
     @Transactional
     public void recoverOrphanedClaims() {

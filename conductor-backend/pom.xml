@@ -140,6 +140,15 @@
             <version>0.95.0</version>
         </dependency>
 
+        <!-- GCP Cloud Tasks — pushes workflow job dispatch as HTTP requests instead of relying on an
+             always-on in-process poller, so job execution is billed (and gets CPU) as request-based
+             Cloud Run traffic. See CloudTasksJobDispatcher / WorkflowExecutionEngine. -->
+        <dependency>
+            <groupId>com.google.cloud</groupId>
+            <artifactId>google-cloud-tasks</artifactId>
+            <version>2.93.0</version>
+        </dependency>
+
         <!-- Anthropic Java SDK — backs the Claude model provider in the agent module -->
         <dependency>
             <groupId>com.anthropic</groupId>

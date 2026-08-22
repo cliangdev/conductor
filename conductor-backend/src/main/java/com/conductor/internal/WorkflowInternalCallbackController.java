@@ -11,6 +11,7 @@ import com.conductor.generated.internal.model.ResolveWorkflowArtifactResponse;
 import com.conductor.generated.internal.model.StepCompleteRequest;
 import com.conductor.service.WorkflowArtifactService;
 import com.conductor.workflow.RunTokenService;
+import com.conductor.workflow.WorkflowExecutionEngine;
 import com.conductor.workflow.WorkflowRunLogBroker;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -39,12 +40,14 @@ public class WorkflowInternalCallbackController implements WorkflowInternalApi {
     private final RunTokenService runTokenService;
     private final WorkflowRunLogBroker broker;
     private final WorkflowArtifactService artifactService;
+    private final WorkflowExecutionEngine engine;
 
     public WorkflowInternalCallbackController(RunTokenService runTokenService, WorkflowRunLogBroker broker,
-                                               WorkflowArtifactService artifactService) {
+                                               WorkflowArtifactService artifactService, WorkflowExecutionEngine engine) {
         this.runTokenService = runTokenService;
         this.broker = broker;
         this.artifactService = artifactService;
+        this.engine = engine;
     }
 
     @Override
@@ -81,6 +84,15 @@ public class WorkflowInternalCallbackController implements WorkflowInternalApi {
             return ResponseEntity.badRequest().build();
         }
         broker.recordJobFailed(runId, workerJobId, body.getReason());
+        return ResponseEntity.ok().build();
+    }
+
+    @Override
+    public ResponseEntity<Void> dispatchWorkflowJob(String runId, String jobId) {
+        if (!validateRunToken(runId)) {
+            return ResponseEntity.status(401).build();
+        }
+        engine.claimAndProcessQueuedJob(runId, jobId);
         return ResponseEntity.ok().build();
     }
 

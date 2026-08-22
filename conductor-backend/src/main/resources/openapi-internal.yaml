@@ -153,6 +153,29 @@ paths:
         "401":
           description: Missing or invalid run token
 
+  /workflow-runs/{runId}/jobs/{jobId}/dispatch:
+    post:
+      tags: [workflow-internal]
+      summary: Dispatch and synchronously run a queued workflow job
+      description: >
+        Cloud Tasks' HTTP target for job dispatch (see CloudTasksJobDispatcher) — the sole way a
+        queued job reaches execution. Claims the matching unclaimed workflow_job_queue row and, if
+        claimed, runs the job to completion before responding — the request stays open for the job's
+        full duration so Cloud Run's request-based billing allocates CPU for exactly that span. A
+        no-op 200 if the row was already claimed (a duplicate Cloud Tasks delivery — at-least-once
+        retries can occasionally overlap in flight).
+      operationId: dispatchWorkflowJob
+      security:
+        - runToken: []
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job claimed and run to completion, or already claimed elsewhere (no-op)
+        "401":
+          description: Missing or invalid run token
+
   /workflow-runs/{runId}/steps/{workerJobId}/complete:
     post:
       tags: [workflow-internal]
@@ -185,6 +208,12 @@ components:
         type: string
     WorkerJobId:
       name: workerJobId
+      in: path
+      required: true
+      schema:
+        type: string
+    JobId:
+      name: jobId
       in: path
       required: true
       schema:

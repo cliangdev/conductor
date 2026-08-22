@@ -53,6 +53,7 @@ class WorkflowExecutionEngineRunCompletionTest {
     @Mock WorkflowJobOrchestrator orchestrator;
     @Mock WorkflowFailureCircuitBreaker circuitBreaker;
     @Mock SignalBus signalBus;
+    @Mock WorkflowJobDispatcher cloudTasksJobDispatcher;
 
     WorkflowExecutionEngine engine;
 
@@ -63,7 +64,7 @@ class WorkflowExecutionEngineRunCompletionTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
-                circuitBreaker, realNotifier, 4);
+                circuitBreaker, realNotifier, cloudTasksJobDispatcher);
     }
 
     private WorkflowRun runWithOneJob(WorkflowRunStatus runStatus, WorkflowJobStatus jobStatus) {
