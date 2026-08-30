@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, SearchX } from 'lucide-react'
+import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, SearchX } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -37,6 +37,7 @@ import {
   workItemDetailPath,
 } from '@/lib/workflows'
 import { WorkItemBoardView } from '@/components/workitems/WorkItemBoardView'
+import { WorkItemCalendarView } from '@/components/workitems/WorkItemCalendarView'
 import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
@@ -52,7 +53,13 @@ import type {
 } from '@/components/workitems/listTypes'
 import type { MemberRole } from '@/types'
 
-type DisplayMode = 'list' | 'board'
+type DisplayMode = 'list' | 'board' | 'calendar'
+
+/** The one place the set of display modes is enumerated — used for URL, localStorage, and the
+ *  Workflow's own `defaultView`, all of which carry the mode as an untrusted string. */
+function isDisplayMode(value: string): value is DisplayMode {
+  return value === 'list' || value === 'board' || value === 'calendar'
+}
 
 /**
  * The list (grouped rows / board) view of a Workflow's Work Items, scoped to one slug. Title, status
@@ -75,13 +82,14 @@ export function WorkItemListView({
   const viewParam = searchParams.get('view')
   const view: ListView = viewParam === 'done' || viewParam === 'all' ? viewParam : 'active'
 
-  // Display mode: list (default) or board. Priority: URL param > explicit localStorage > workflow defaultView.
+  // Display mode: list (default), board, or calendar. Priority: URL param > explicit localStorage >
+  // workflow defaultView.
   const modeKey = `wv_mode_${projectId}_${slug}`
   const modeExplicitKey = `wv_mode_explicit_${projectId}_${slug}`
   const [mode, setMode] = useState<DisplayMode>(() => {
     const p = searchParams.get('mode')
-    if (p === 'board' || p === 'list') return p
-    return readPersisted<DisplayMode>(modeKey, (v): v is DisplayMode => v === 'board' || v === 'list', 'list')
+    if (p && isDisplayMode(p)) return p
+    return readPersisted<DisplayMode>(modeKey, isDisplayMode, 'list')
   })
 
   function setDisplayMode(next: DisplayMode) {
@@ -112,10 +120,10 @@ export function WorkItemListView({
 
   // Apply workflow's defaultView once it loads — only if no URL param or explicit user preference.
   useEffect(() => {
-    const wfDefault = workflowView?.defaultView as DisplayMode | undefined
-    if (!wfDefault || (wfDefault !== 'list' && wfDefault !== 'board')) return
+    const wfDefault = workflowView?.defaultView
+    if (!wfDefault || !isDisplayMode(wfDefault)) return
     const p = searchParams.get('mode')
-    if (p === 'board' || p === 'list') return
+    if (p && isDisplayMode(p)) return
     if (readPersistedFlag(modeExplicitKey)) return
     setMode(wfDefault)
   }, [workflowView?.defaultView, modeExplicitKey, searchParams])
@@ -324,7 +332,7 @@ export function WorkItemListView({
           className="flex-1 min-w-0 border-b-0"
         />
 
-        {/* List/Board toggle pushed to the right */}
+        {/* List/Board/Calendar toggle pushed to the right */}
         <div className="ml-auto flex items-center gap-0.5 pb-px shrink-0">
           <button
             type="button"
@@ -346,6 +354,16 @@ export function WorkItemListView({
           >
             <LayoutDashboardIcon className="h-4 w-4" />
           </button>
+          <button
+            type="button"
+            title="Calendar view"
+            onClick={() => setDisplayMode('calendar')}
+            className={`p-1.5 rounded transition-colors ${
+              mode === 'calendar' ? 'text-foreground bg-foreground/8' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+          >
+            <CalendarDaysIcon className="h-4 w-4" />
+          </button>
         </div>
       </div>
 
@@ -360,7 +378,15 @@ export function WorkItemListView({
         showSort={mode === 'list'}
       />
 
-      {mode === 'board' && workflowView ? (
+      {mode === 'calendar' ? (
+        <WorkItemCalendarView
+          projectId={projectId}
+          area={detailArea}
+          noun={noun}
+          workflowView={workflowView}
+          issues={listState.filteredIssues}
+        />
+      ) : mode === 'board' && workflowView ? (
         <WorkItemBoardView
           projectId={projectId}
           slug={slug}

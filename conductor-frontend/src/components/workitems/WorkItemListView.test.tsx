@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, within, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { WorkflowView } from '@/types/workItem'
@@ -33,6 +33,8 @@ interface MockIssue {
   displayId: string
   unresolvedCommentCount?: number
   assignee?: { userId: string; name: string; avatarUrl?: string | null } | null
+  scheduledFor?: string | null
+  scheduleTimezone?: string | null
 }
 
 let issues: MockIssue[] = []
@@ -69,7 +71,7 @@ vi.mock('@/lib/api', () => ({
   apiErrorMessage: (_e: unknown, fallback: string) => fallback,
 }))
 
-const VIEW: WorkflowView = {
+const BASE_VIEW: WorkflowView = {
   slug: 'ENGINEERING',
   noun: 'Issue',
   area: 'ENGINEERING',
@@ -83,6 +85,9 @@ const VIEW: WorkflowView = {
   ],
   transitions: [],
 }
+
+// Mutable so a test can exercise a Workflow that declares a different `default_view`; reset per test.
+let VIEW: WorkflowView = BASE_VIEW
 
 vi.mock('@/lib/workflows', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/workflows')>()
@@ -101,6 +106,8 @@ function baseIssues(): MockIssue[] {
       updatedAt: '2026-01-05T00:00:00Z',
       createdAt: '2026-01-01T00:00:00Z',
       displayId: 'COND-1',
+      scheduledFor: '2026-03-04T15:00:00Z',
+      scheduleTimezone: 'UTC',
     },
     {
       id: 'i2',
@@ -157,6 +164,7 @@ beforeEach(() => {
   localStorage.clear()
   issues = baseIssues()
   searchParamsValue = new URLSearchParams()
+  VIEW = BASE_VIEW
 })
 
 describe('WorkItemListView links', () => {
@@ -442,5 +450,76 @@ describe('empty states', () => {
     searchParamsValue = new URLSearchParams('view=all')
     render(<WorkItemListView projectId="proj-1" slug="ENGINEERING" noun="Issue" />)
     expect(await screen.findByText('No issues yet')).toBeInTheDocument()
+  })
+})
+
+describe('display mode', () => {
+  beforeEach(() => {
+    // Pin "today" so the calendar opens on the month the fixture Work Item is scheduled in.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.setSystemTime(new Date('2026-03-15T12:00:00Z'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('renders the calendar when the Workflow declares default_view: calendar', async () => {
+    VIEW = { ...BASE_VIEW, defaultView: 'calendar' }
+    await renderList()
+
+    await waitFor(() => expect(screen.getByTestId('work-item-calendar-grid')).toBeInTheDocument())
+    expect(screen.queryByTestId('work-item-list')).not.toBeInTheDocument()
+  })
+
+  it('honors ?mode=calendar over the Workflow default', async () => {
+    searchParamsValue = new URLSearchParams('mode=calendar')
+    await renderList()
+
+    expect(screen.getByTestId('work-item-calendar-grid')).toBeInTheDocument()
+  })
+
+  it('places scheduled Work Items on their fire dates in the calendar', async () => {
+    VIEW = { ...BASE_VIEW, defaultView: 'calendar' }
+    await renderList()
+
+    await waitFor(() => expect(screen.getByTestId('calendar-day-2026-03-04')).toBeInTheDocument())
+    const cell = screen.getByTestId('calendar-day-2026-03-04')
+    expect(within(cell).getByTestId('calendar-chip-i1')).toHaveAttribute(
+      'href',
+      '/app/projects/proj-1/engineering/issues/COND-1'
+    )
+    // An unscheduled Work Item never lands on the grid (the unscheduled tray is a follow-up).
+    expect(screen.queryByTestId('calendar-chip-i2')).not.toBeInTheDocument()
+  })
+
+  it('switches back to list and persists the choice', async () => {
+    VIEW = { ...BASE_VIEW, defaultView: 'calendar' }
+    await renderList()
+    await waitFor(() => expect(screen.getByTestId('work-item-calendar-grid')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByTitle('List view'))
+
+    expect(screen.getByTestId('work-item-list')).toBeInTheDocument()
+    expect(screen.queryByTestId('work-item-calendar-grid')).not.toBeInTheDocument()
+    expect(localStorage.getItem('wv_mode_proj-1_ENGINEERING')).toBe('list')
+    expect(localStorage.getItem('wv_mode_explicit_proj-1_ENGINEERING')).toBe('1')
+  })
+
+  it('switches to board and persists the choice', async () => {
+    await renderList()
+
+    fireEvent.click(screen.getByTitle('Board view'))
+
+    expect(screen.queryByTestId('work-item-list')).not.toBeInTheDocument()
+    expect(localStorage.getItem('wv_mode_proj-1_ENGINEERING')).toBe('board')
+  })
+
+  it('restores a persisted calendar choice on remount', async () => {
+    localStorage.setItem('wv_mode_proj-1_ENGINEERING', 'calendar')
+    localStorage.setItem('wv_mode_explicit_proj-1_ENGINEERING', '1')
+    await renderList()
+
+    expect(screen.getByTestId('work-item-calendar-grid')).toBeInTheDocument()
   })
 })
