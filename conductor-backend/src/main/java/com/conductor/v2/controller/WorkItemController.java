@@ -105,7 +105,8 @@ public class WorkItemController implements WorkItemsApi {
         User caller = currentUser();
         WorkItem item = workItemService.patchWorkItem(
                 projectId, workItemId, request.getTitle(), request.getDescription(),
-                request.getStatus(), request.getAssigneeId(), caller);
+                request.getStatus(), request.getAssigneeId(), request.getScheduledFor(),
+                request.getScheduleTimezone(), caller);
         return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId())));
     }
 
@@ -146,7 +147,9 @@ public class WorkItemController implements WorkItemsApi {
                 .description(item.getDescription())
                 .workflow(item.getWorkflow())
                 .unresolvedCommentCount((int) unresolvedCommentCount)
-                .assignee(assignee);
+                .assignee(assignee)
+                .scheduledFor(item.getScheduledFor())
+                .scheduleTimezone(item.getScheduleTimezone());
     }
 
     /** Map the doer-projection transitions view into its v2 response DTO (identical shape). */
