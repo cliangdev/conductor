@@ -339,20 +339,30 @@ public class YouTubeDataClient {
      * outbound call. Restricting the scheme and host keeps the token on Google's upload endpoints.
      */
     static URI requireGoogleUploadUri(String sessionUri) {
-        URI uri;
+        URI parsed;
         try {
-            uri = new URI(sessionUri);
+            parsed = new URI(sessionUri);
         } catch (URISyntaxException e) {
             throw new IllegalArgumentException("YouTube upload session URI is not a valid URI", e);
         }
-        String host = uri.getHost();
-        if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null
-                || !UPLOAD_HOSTS.contains(host.toLowerCase(Locale.ROOT))) {
+        String host = parsed.getHost() == null ? null : parsed.getHost().toLowerCase(Locale.ROOT);
+        if (!"https".equalsIgnoreCase(parsed.getScheme()) || parsed.getUserInfo() != null
+                || host == null || !UPLOAD_HOSTS.contains(host)) {
             // Deliberately does not echo the URI: it is attacker-influenced in the case this guards against.
             throw new IllegalArgumentException(
                     "YouTube upload session URI must be an https Google upload endpoint");
         }
-        return uri;
+        // Rebuild from the matched CONSTANT rather than from the parsed value, so the authority the request
+        // actually goes to is a literal from UPLOAD_HOSTS and cannot be anything the stored checkpoint says.
+        String trustedHost = UPLOAD_HOSTS.stream().filter(host::equals).findFirst().orElseThrow();
+        StringBuilder rebuilt = new StringBuilder("https://").append(trustedHost);
+        if (parsed.getRawPath() != null) {
+            rebuilt.append(parsed.getRawPath());
+        }
+        if (parsed.getRawQuery() != null) {
+            rebuilt.append('?').append(parsed.getRawQuery());
+        }
+        return URI.create(rebuilt.toString());
     }
 
 }

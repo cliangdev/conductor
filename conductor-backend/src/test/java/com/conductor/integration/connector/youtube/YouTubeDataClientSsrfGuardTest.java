@@ -53,6 +53,14 @@ class YouTubeDataClientSsrfGuardTest {
     }
 
     @Test
+    void thePathAndQueryAreCarriedOverOntoTheTrustedHost() {
+        assertThat(YouTubeDataClient.requireGoogleUploadUri(
+                "https://upload.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=xyz"))
+                .isEqualTo(URI.create(
+                        "https://upload.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=xyz"));
+    }
+
+    @Test
     void theRefusalDoesNotEchoTheOffendingUri() {
         // The value is attacker-influenced in the case this guards against, and may embed a token.
         assertThatThrownBy(() -> YouTubeDataClient.requireGoogleUploadUri(
