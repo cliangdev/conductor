@@ -10,6 +10,7 @@ import com.conductor.integration.ActionResult;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.ActionInvocationService;
 import com.conductor.service.ActiveConnectionResolver;
+import com.conductor.service.PublishOutcomeService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,6 +49,7 @@ class PostPublishSchedulerTest {
     private PostPublishTargetRepository targetRepository;
     private ActiveConnectionResolver connectionResolver;
     private ActionInvocationService actionInvocationService;
+    private PublishOutcomeService publishOutcomeService;
     private EntityManager entityManager;
     private Query claimQuery;
 
@@ -61,6 +63,7 @@ class PostPublishSchedulerTest {
         targetRepository = mock(PostPublishTargetRepository.class);
         connectionResolver = mock(ActiveConnectionResolver.class);
         actionInvocationService = mock(ActionInvocationService.class);
+        publishOutcomeService = mock(PublishOutcomeService.class);
         entityManager = mock(EntityManager.class);
         claimQuery = mock(Query.class, RETURNS_SELF);
 
@@ -86,7 +89,7 @@ class PostPublishSchedulerTest {
 
     private PostPublishScheduler newScheduler(boolean enabled) {
         PostPublishScheduler s = new PostPublishScheduler(
-                targetRepository, connectionResolver, actionInvocationService, enabled);
+                targetRepository, connectionResolver, actionInvocationService, publishOutcomeService, enabled);
         s.entityManager = entityManager;
         s.self = s;
         return s;
@@ -317,15 +320,53 @@ class PostPublishSchedulerTest {
     }
 
     @Test
-    void aConnectorRejectionLeavesTheRowClaimedSoItIsNeverPublishedTwice() {
+    void aConnectorRejectionIsRecordedAsAnOutcomeRatherThanStrandingTheRowInPublishing() {
         given(dueTarget());
+        ActionResult rejection =
+                ActionResult.error("(#100) The parameter image_url is required");
         when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
-                .thenReturn(ActionResult.error("Meta action 'publish_facebook_post' is not implemented yet"));
+                .thenReturn(rejection);
 
         scheduler.poll();
 
+        // Claimed, dispatched, and then resolved: the row leaves PUBLISHING for a terminal state carrying
+        // the platform's own words, which is what retry and the roll-up need to find.
         verify(claimQuery).executeUpdate();
-        verify(actionInvocationService).invoke(any(), anyString(), any(), anyString(), any());
+        verify(publishOutcomeService).recordOutcome("target-1", rejection);
+    }
+
+    @Test
+    void aSuccessfulDispatchIsRecordedAsAnOutcomeToo() {
+        given(dueTarget());
+        ActionResult published = ActionResult.ok(Map.of(
+                "post_id", "page_1_post_99", "permalink", "https://facebook.com/page_1/posts/99"));
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(published);
+
+        scheduler.poll();
+
+        verify(publishOutcomeService).recordOutcome("target-1", published);
+    }
+
+    @Test
+    void aDispatchThatReportedNothingBackIsStillHandedToTheOutcomeRecorder() {
+        given(dueTarget());
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(null);
+
+        scheduler.poll();
+
+        verify(publishOutcomeService).recordOutcome("target-1", null);
+    }
+
+    @Test
+    void aRowThatWasNeverClaimedNeverRecordsAnOutcome() {
+        given(dueTarget());
+        claimLost();
+
+        scheduler.poll();
+
+        verifyNoInteractions(publishOutcomeService);
     }
 
     // --- [auto] The scheduler can be disabled by config for tests and the local profile ---
@@ -339,6 +380,7 @@ class PostPublishSchedulerTest {
 
         verify(targetRepository, never()).findDueAppManagedTargets(any());
         verifyNoInteractions(actionInvocationService);
+        verifyNoInteractions(publishOutcomeService);
         verifyNoInteractions(entityManager);
     }
 

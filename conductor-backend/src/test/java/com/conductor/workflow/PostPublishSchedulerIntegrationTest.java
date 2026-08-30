@@ -8,6 +8,8 @@ import com.conductor.entity.PublishLane;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.integration.ActionResult;
+import com.conductor.entity.Asset;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.ProjectRepository;
@@ -33,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -62,6 +65,7 @@ class PostPublishSchedulerIntegrationTest extends AbstractNoneWebIntegrationTest
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private ConnectionRepository connectionRepository;
+    @Autowired private AssetRepository assetRepository;
 
     @MockitoBean private ActionInvocationService actionInvocationService;
 
@@ -137,8 +141,12 @@ class PostPublishSchedulerIntegrationTest extends AbstractNoneWebIntegrationTest
                 PostPublishTargetState.PENDING, OffsetDateTime.now().minusMinutes(1));
     }
 
+    private PostPublishTarget reload(PostPublishTarget target) {
+        return targetRepository.findById(target.getId()).orElseThrow();
+    }
+
     private PostPublishTargetState stateOf(PostPublishTarget target) {
-        return targetRepository.findById(target.getId()).orElseThrow().getState();
+        return reload(target).getState();
     }
 
     private void verifyDispatched(PostPublishTarget target, int expectedTimes) {
@@ -166,7 +174,7 @@ class PostPublishSchedulerIntegrationTest extends AbstractNoneWebIntegrationTest
         scheduler.runTick(nineAmDenver.plusSeconds(30).toOffsetDateTime());
 
         verifyDispatched(target, 1);
-        assertThat(stateOf(target)).isEqualTo(PostPublishTargetState.PUBLISHING);
+        assertThat(stateOf(target)).isEqualTo(PostPublishTargetState.PUBLISHED);
     }
 
     @Test
@@ -194,7 +202,7 @@ class PostPublishSchedulerIntegrationTest extends AbstractNoneWebIntegrationTest
         scheduler.runTick(OffsetDateTime.now());
 
         verifyDispatched(target, 1);
-        assertThat(stateOf(target)).isEqualTo(PostPublishTargetState.PUBLISHING);
+        assertThat(stateOf(target)).isEqualTo(PostPublishTargetState.PUBLISHED);
     }
 
     @Test
@@ -313,6 +321,54 @@ class PostPublishSchedulerIntegrationTest extends AbstractNoneWebIntegrationTest
 
         verifyNeverDispatched(target);
         assertThat(stateOf(target)).isEqualTo(PostPublishTargetState.PENDING);
+    }
+
+    // --- [auto] The platform's answer is recorded as durable state -------------------------------
+
+    @Test
+    void aPublishedTargetRecordsItsPermalinkAndATypedAssetOnThePost() {
+        PostPublishTarget target = dueTarget();
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(ActionResult.ok(Map.of(
+                        "post_id", "page_1_post_99",
+                        "permalink", "https://facebook.com/page_1/posts/99")));
+
+        scheduler.runTick(OffsetDateTime.now());
+
+        PostPublishTarget stored = reload(target);
+        assertThat(stored.getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(stored.getPlatformPostId()).isEqualTo("page_1_post_99");
+        assertThat(stored.getPermalink()).isEqualTo("https://facebook.com/page_1/posts/99");
+        assertThat(assetRepository.findAllByWorkItemId(stored.getWorkItem().getId()))
+                .extracting(Asset::getType, Asset::getRef)
+                .containsExactly(tuple("facebook_post", "https://facebook.com/page_1/posts/99"));
+    }
+
+    @Test
+    void aDispatchThePlatformRejectedMovesTheRowToFailedWithItsMessageInsteadOfStrandingItInPublishing() {
+        PostPublishTarget target = dueTarget();
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(ActionResult.error("(#100) The parameter image_url is required"));
+
+        scheduler.runTick(OffsetDateTime.now());
+
+        PostPublishTarget stored = reload(target);
+        assertThat(stored.getState()).isEqualTo(PostPublishTargetState.FAILED);
+        assertThat(stored.getErrorMessage()).isEqualTo("(#100) The parameter image_url is required");
+        assertThat(stored.getAttempts()).isEqualTo(1);
+    }
+
+    @Test
+    void aFailedTargetIsStillNeverReDispatchedByALaterTick() {
+        PostPublishTarget target = dueTarget();
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(ActionResult.error("(#100) The parameter image_url is required"));
+
+        scheduler.runTick(OffsetDateTime.now());
+        scheduler.runTick(OffsetDateTime.now());
+
+        verifyDispatched(target, 1);
+        assertThat(stateOf(target)).isEqualTo(PostPublishTargetState.FAILED);
     }
 
     // --- [auto] The scheduler can be disabled by config for tests and the local profile ---

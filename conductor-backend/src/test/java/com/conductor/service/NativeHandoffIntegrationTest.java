@@ -9,6 +9,8 @@ import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.integration.ActionResult;
+import com.conductor.entity.Asset;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.ProjectRepository;
@@ -20,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -30,6 +33,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -45,20 +49,35 @@ import static org.mockito.Mockito.when;
  * one — that a failed revocation rolls the caller's status change back, so a Post can never leave the
  * scheduled status while its post is still scheduled on a platform.
  *
- * <p>{@link ActionInvocationService} is mocked: the publish and revoke action bodies are separate tasks
- * (T5.2 Facebook, T5.4 YouTube), and this test is about which rows are handed off or taken back down, not
- * about what a connector does with them. The service's own {@code @Scheduled} sweep stays off in this
+ * <p>It also carries {@link NativePublishConfirmationPoller}'s DB-backed coverage — the other half of the
+ * same lane, and the only path that ever moves a {@code HANDED_OFF} row on. Both live here because they
+ * share every fixture and, being one Spring context, one Postgres.
+ *
+ * <p>{@link ActionInvocationService} is mocked: the publish, revoke and read action bodies are separate
+ * tasks (T5.2 Facebook, T5.4 YouTube, and the {@code get_facebook_post}/{@code get_video_status} reads),
+ * and this test is about which rows are handed off, taken back down or confirmed, not about what a
+ * connector does with them. The service's own {@code @Scheduled} sweep stays off in this
  * profile (its finder is globally scoped — see the class javadoc); every test drives {@code runTick}
  * explicitly and asserts only on rows it created, per {@code docs/testing-guidelines.md}.
  */
 class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     @Autowired private NativeHandoffService service;
+    @Autowired private NativePublishConfirmationPoller confirmationPollerBean;
+
+    /**
+     * The poller behind its transactional proxy. Its tuning fields ({@code batchSize},
+     * {@code maxConfirmationAttempts}) live on the target instance, so setting them on the CGLIB proxy
+     * would be silently ignored — the proxy has fields of its own that nothing reads. Its own
+     * {@code self} reference is still the proxy, so the {@code REQUIRES_NEW} claim keeps its transaction.
+     */
+    private NativePublishConfirmationPoller confirmationPoller;
     @Autowired private PostPublishTargetRepository targetRepository;
     @Autowired private WorkItemRepository workItemRepository;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private ConnectionRepository connectionRepository;
+    @Autowired private AssetRepository assetRepository;
     @Autowired private PlatformTransactionManager transactionManager;
 
     @MockitoBean private ActionInvocationService actionInvocationService;
@@ -70,6 +89,7 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        confirmationPoller = AopTestUtils.getTargetObject(confirmationPollerBean);
         when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
                 .thenReturn(ActionResult.ok(Map.of("post_id", "page_1_post_99", "video_id", "vid_99")));
 
@@ -157,12 +177,37 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
     @AfterEach
     void resetBatchSize() {
         service.batchSize = 50;
+        confirmationPoller.batchSize = 50;
+        confirmationPoller.maxConfirmationAttempts = 20;
     }
 
     private void runSweep(OffsetDateTime now) {
         // Keep the (globally scoped) batch generous so this test's own row is always reached.
         service.batchSize = 500;
         service.runTick(now);
+    }
+
+    private void runConfirmation(OffsetDateTime now) {
+        confirmationPoller.batchSize = 500;
+        confirmationPoller.runTick(now);
+    }
+
+    /** A native row the platform already holds, whose fire time has passed — the poller's whole input. */
+    private PostPublishTarget dueHandedOff(String platform, String platformPostId) {
+        return target(post(NativeHandoffService.SCHEDULED_STATUS), platform, PublishLane.NATIVE,
+                PostPublishTargetState.HANDED_OFF, OffsetDateTime.now().minusMinutes(5), platformPostId);
+    }
+
+    /** Answers only the confirmation read for {@code target}, so rows other tests left behind are unaffected. */
+    private void platformAnswersFor(PostPublishTarget target, Map<String, Object> output) {
+        when(actionInvocationService.invoke(any(), anyString(), any(),
+                org.mockito.ArgumentMatchers.startsWith("confirm:" + target.getIdempotencyKey() + ":"), any()))
+                .thenReturn(ActionResult.ok(output));
+    }
+
+    private void verifyConfirmationRead(PostPublishTarget target, String actionId, int attempt) {
+        verify(actionInvocationService).invoke(any(), eq(actionId), any(),
+                eq("confirm:" + target.getIdempotencyKey() + ":" + attempt), any());
     }
 
     // --- [auto] Native handoff occurs only inside the platform window ----------------------------
@@ -250,6 +295,183 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
         assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PENDING);
         verify(actionInvocationService, never())
                 .invoke(any(), anyString(), any(), eq(target.getIdempotencyKey()), any());
+    }
+
+    // --- [auto] A rejected hand-off is recorded as a failed outcome ------------------------------
+
+    @Test
+    void aRejectedHandoffMovesTheRowToFailedWithThePlatformsOwnWords() {
+        PostPublishTarget target = pendingNative("facebook", OffsetDateTime.now().plusDays(2));
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(ActionResult.error("(#100) The parameter scheduled_publish_time is required"));
+
+        service.handoffForPost(target.getWorkItem());
+
+        PostPublishTarget stored = reload(target);
+        assertThat(stored.getState()).isEqualTo(PostPublishTargetState.FAILED);
+        assertThat(stored.getErrorMessage())
+                .isEqualTo("(#100) The parameter scheduled_publish_time is required");
+        assertThat(stored.getAttempts()).isEqualTo(1);
+    }
+
+    // --- [auto] A native target confirmed live reaches PUBLISHED with its typed Asset -------------
+
+    @Test
+    void aHandedOffFacebookTargetConfirmedLiveIsPublishedAndRecordsAFacebookPostAsset() {
+        PostPublishTarget target = dueHandedOff("facebook", "page_1_post_99");
+        platformAnswersFor(target, Map.of(
+                "is_published", true,
+                "post_id", "page_1_post_99",
+                "permalink", "https://facebook.com/page_1/posts/99"));
+
+        runConfirmation(OffsetDateTime.now());
+
+        verifyConfirmationRead(target, "get_facebook_post", 1);
+        PostPublishTarget stored = reload(target);
+        assertThat(stored.getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(stored.getPermalink()).isEqualTo("https://facebook.com/page_1/posts/99");
+        assertThat(assetRepository.findAllByWorkItemId(stored.getWorkItem().getId()))
+                .extracting(Asset::getType, Asset::getRef)
+                .containsExactly(tuple("facebook_post", "https://facebook.com/page_1/posts/99"));
+    }
+
+    @Test
+    void aHandedOffYouTubeTargetGonePublicIsPublishedAndRecordsAYouTubeVideoAsset() {
+        PostPublishTarget target = dueHandedOff("youtube", "vid_99");
+        platformAnswersFor(target, Map.of(
+                "privacy_status", "public",
+                "video_id", "vid_99",
+                "permalink", "https://youtu.be/vid_99"));
+
+        runConfirmation(OffsetDateTime.now());
+
+        verifyConfirmationRead(target, "get_video_status", 1);
+        PostPublishTarget stored = reload(target);
+        assertThat(stored.getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(assetRepository.findAllByWorkItemId(stored.getWorkItem().getId()))
+                .extracting(Asset::getType, Asset::getRef)
+                .containsExactly(tuple("youtube_video", "https://youtu.be/vid_99"));
+    }
+
+    @Test
+    void aHandedOffYouTubeTargetStillPrivateIsLeftHandedOffAndAskedAgainOnALaterTick() {
+        PostPublishTarget target = dueHandedOff("youtube", "vid_99");
+        platformAnswersFor(target, Map.of("privacy_status", "private", "video_id", "vid_99"));
+
+        runConfirmation(OffsetDateTime.now());
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
+        verifyConfirmationRead(target, "get_video_status", 1);
+
+        // A later tick asks again — under a key of its own, or the invocation store would replay the
+        // first "still private" answer forever.
+        platformAnswersFor(target, Map.of("privacy_status", "public", "video_id", "vid_99",
+                "permalink", "https://youtu.be/vid_99"));
+        runConfirmation(OffsetDateTime.now());
+
+        verifyConfirmationRead(target, "get_video_status", 2);
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+    }
+
+    // --- [auto] Confirmation polling is bounded and resolves into FAILED --------------------------
+
+    @Test
+    void confirmationPollingGivesUpIntoFailedOnceItsAttemptBoundIsReached() {
+        confirmationPoller.maxConfirmationAttempts = 2;
+        PostPublishTarget target = dueHandedOff("facebook", "page_1_post_99");
+        platformAnswersFor(target, Map.of("is_published", false));
+
+        runConfirmation(OffsetDateTime.now());
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
+
+        runConfirmation(OffsetDateTime.now());
+
+        PostPublishTarget stored = reload(target);
+        assertThat(stored.getState()).isEqualTo(PostPublishTargetState.FAILED);
+        assertThat(stored.getErrorMessage())
+                .contains("facebook")
+                .contains("page_1_post_99")
+                .contains("2 checks");
+
+        // ...and it is genuinely done: a third tick never asks again.
+        runConfirmation(OffsetDateTime.now());
+        verify(actionInvocationService, never()).invoke(any(), anyString(), any(),
+                eq("confirm:" + target.getIdempotencyKey() + ":3"), any());
+    }
+
+    // --- [auto] Terminal rows are never polled, and a doubled tick confirms only once -------------
+
+    @Test
+    void aRevokedOrAlreadyPublishedRowIsNeverPolled() {
+        OffsetDateTime past = OffsetDateTime.now().minusMinutes(5);
+        PostPublishTarget revoked = target(post(NativeHandoffService.SCHEDULED_STATUS), "facebook",
+                PublishLane.NATIVE, PostPublishTargetState.REVOKED, past, "page_1_post_98");
+        PostPublishTarget published = target(post(NativeHandoffService.SCHEDULED_STATUS), "youtube",
+                PublishLane.NATIVE, PostPublishTargetState.PUBLISHED, past, "vid_98");
+
+        runConfirmation(OffsetDateTime.now());
+
+        for (PostPublishTarget t : List.of(revoked, published)) {
+            verify(actionInvocationService, never()).invoke(any(), anyString(), any(),
+                    org.mockito.ArgumentMatchers.startsWith("confirm:" + t.getIdempotencyKey()), any());
+        }
+        assertThat(reload(revoked).getState()).isEqualTo(PostPublishTargetState.REVOKED);
+        assertThat(reload(published).getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+    }
+
+    @Test
+    void anAppManagedHandedOffRowIsNeverPolledByThisPoller() {
+        PostPublishTarget target = target(post(NativeHandoffService.SCHEDULED_STATUS), "facebook",
+                PublishLane.APP_MANAGED, PostPublishTargetState.HANDED_OFF,
+                OffsetDateTime.now().minusMinutes(5), "page_1_post_97");
+
+        runConfirmation(OffsetDateTime.now());
+
+        verify(actionInvocationService, never()).invoke(any(), anyString(), any(),
+                org.mockito.ArgumentMatchers.startsWith("confirm:" + target.getIdempotencyKey()), any());
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
+    }
+
+    @Test
+    void aTargetWhoseFireTimeHasNotArrivedIsNeverPolled() {
+        PostPublishTarget target = target(post(NativeHandoffService.SCHEDULED_STATUS), "facebook",
+                PublishLane.NATIVE, PostPublishTargetState.HANDED_OFF,
+                OffsetDateTime.now().plusDays(2), "page_1_post_96");
+
+        runConfirmation(OffsetDateTime.now());
+
+        verify(actionInvocationService, never()).invoke(any(), anyString(), any(),
+                org.mockito.ArgumentMatchers.startsWith("confirm:" + target.getIdempotencyKey()), any());
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
+    }
+
+    @Test
+    void aDoubledConfirmationTickConfirmsATargetExactlyOnce() {
+        PostPublishTarget target = dueHandedOff("facebook", "page_1_post_99");
+        platformAnswersFor(target, Map.of(
+                "is_published", true,
+                "permalink", "https://facebook.com/page_1/posts/99"));
+
+        runConfirmation(OffsetDateTime.now());
+        runConfirmation(OffsetDateTime.now());
+
+        // The second tick's due query no longer sees the row at all: it is PUBLISHED.
+        verifyConfirmationRead(target, "get_facebook_post", 1);
+        verify(actionInvocationService, never()).invoke(any(), anyString(), any(),
+                eq("confirm:" + target.getIdempotencyKey() + ":2"), any());
+        assertThat(assetRepository.findAllByWorkItemId(reload(target).getWorkItem().getId())).hasSize(1);
+    }
+
+    @Test
+    void theConfirmationTickIsDisabledByConfigInThisProfileSoNothingFiresOnItsOwn() {
+        PostPublishTarget target = dueHandedOff("facebook", "page_1_post_99");
+        platformAnswersFor(target, Map.of("is_published", true, "permalink", "https://example.com/p/99"));
+
+        confirmationPoller.poll();
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
+        verify(actionInvocationService, never()).invoke(any(), anyString(), any(),
+                org.mockito.ArgumentMatchers.startsWith("confirm:" + target.getIdempotencyKey()), any());
     }
 
     // --- [auto] Any exit from Scheduled revokes handed-off targets before the status change ------

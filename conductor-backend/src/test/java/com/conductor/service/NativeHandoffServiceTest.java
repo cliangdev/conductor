@@ -52,6 +52,7 @@ class NativeHandoffServiceTest {
     private PostPublishTargetRepository targetRepository;
     private ActiveConnectionResolver connectionResolver;
     private ActionInvocationService actionInvocationService;
+    private PublishOutcomeService publishOutcomeService;
     private EntityManager entityManager;
     private Query bulkUpdate;
 
@@ -65,6 +66,7 @@ class NativeHandoffServiceTest {
         targetRepository = mock(PostPublishTargetRepository.class);
         connectionResolver = mock(ActiveConnectionResolver.class);
         actionInvocationService = mock(ActionInvocationService.class);
+        publishOutcomeService = mock(PublishOutcomeService.class);
         entityManager = mock(EntityManager.class);
         bulkUpdate = mock(Query.class, RETURNS_SELF);
 
@@ -90,7 +92,7 @@ class NativeHandoffServiceTest {
 
     private NativeHandoffService newService(boolean enabled) {
         NativeHandoffService s = new NativeHandoffService(
-                targetRepository, connectionResolver, actionInvocationService, enabled);
+                targetRepository, connectionResolver, actionInvocationService, publishOutcomeService, enabled);
         s.entityManager = entityManager;
         s.self = s;
         return s;
@@ -523,7 +525,7 @@ class NativeHandoffServiceTest {
     }
 
     @Test
-    void aRejectedHandoffLeavesTheRowFailedRatherThanQueuedForAnotherAttempt() {
+    void aRejectedHandoffIsRecordedAsAFailedOutcomeRatherThanQueuedForAnotherAttempt() {
         PostPublishTarget target = pendingNative("facebook", Duration.ofDays(2));
         given(target);
         when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
@@ -531,10 +533,46 @@ class NativeHandoffServiceTest {
 
         service.handoffForPost(target.getWorkItem());
 
-        // Claimed HANDED_OFF, then marked FAILED — never returned to PENDING, because the platform may
-        // have accepted the post before failing to say so.
-        assertThat(target.getState()).isEqualTo(PostPublishTargetState.FAILED);
-        verify(targetRepository).save(target);
+        // Claimed HANDED_OFF, then filed through the one place outcomes are recorded — never returned to
+        // PENDING, because the platform may have accepted the post before failing to say so.
+        verify(publishOutcomeService).recordFailure("target-1",
+                "Meta action 'publish_facebook_post' is not implemented yet");
+    }
+
+    @Test
+    void aHandoffThatReportedNothingBackIsAlsoRecordedAsAFailedOutcome() {
+        PostPublishTarget target = pendingNative("facebook", Duration.ofDays(2));
+        given(target);
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(null);
+
+        service.handoffForPost(target.getWorkItem());
+
+        verify(publishOutcomeService).recordFailure(eq("target-1"), anyString());
+    }
+
+    @Test
+    void anExpiredTokenRejectionGoesThroughTheOutcomeRecorderSoTheConnectionCanBeMarkedUnhealthy() {
+        PostPublishTarget target = pendingNative("facebook", Duration.ofDays(2));
+        given(target);
+        when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
+                .thenReturn(ActionResult.error("OAuthException: Error validating access token: Session has expired"));
+
+        service.handoffForPost(target.getWorkItem());
+
+        // The classification (and the health report it triggers) is PublishOutcomeService's; what matters
+        // here is that the hand-off no longer bypasses it with a plain state write.
+        verify(publishOutcomeService).recordFailure(eq("target-1"),
+                eq("OAuthException: Error validating access token: Session has expired"));
+    }
+
+    @Test
+    void aSuccessfulHandoffRecordsNoOutcomeBecauseThePostHasNotPublishedYet() {
+        given(pendingNative("facebook", Duration.ofDays(2)));
+
+        service.handoffForPost(post(NativeHandoffService.SCHEDULED_STATUS));
+
+        verifyNoInteractions(publishOutcomeService);
     }
 
     @Test

@@ -207,6 +207,7 @@ public class NativeHandoffService {
     private final PostPublishTargetRepository targetRepository;
     private final ActiveConnectionResolver connectionResolver;
     private final ActionInvocationService actionInvocationService;
+    private final PublishOutcomeService publishOutcomeService;
     private final boolean enabled;
 
     /**
@@ -225,10 +226,12 @@ public class NativeHandoffService {
     public NativeHandoffService(PostPublishTargetRepository targetRepository,
                                 ActiveConnectionResolver connectionResolver,
                                 ActionInvocationService actionInvocationService,
+                                PublishOutcomeService publishOutcomeService,
                                 @Value("${conductor.native-handoff.enabled:true}") boolean enabled) {
         this.targetRepository = targetRepository;
         this.connectionResolver = connectionResolver;
         this.actionInvocationService = actionInvocationService;
+        this.publishOutcomeService = publishOutcomeService;
         this.enabled = enabled;
     }
 
@@ -371,7 +374,10 @@ public class NativeHandoffService {
             String message = result == null ? "Publish action returned no result" : result.message();
             log.warn("Native hand-off for target {} did not succeed: {}", dispatch.targetId(), message);
             // Terminal, not re-queued: the platform may well have accepted the post before failing to say so.
-            self.markFailedInNewTx(dispatch.targetId(), message);
+            // Recorded through the one place outcomes are filed, so a rejected hand-off gets the same
+            // treatment as a rejected publish — including the connection health report a permanent auth
+            // failure has to raise, which a plain state write cannot do.
+            publishOutcomeService.recordFailure(dispatch.targetId(), message);
             return;
         }
 
@@ -496,21 +502,6 @@ public class NativeHandoffService {
                 .setParameter("id", targetId)
                 .executeUpdate();
         return updated > 0;
-    }
-
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void markFailedInNewTx(String targetId, String errorMessage) {
-        targetRepository.findById(targetId).ifPresent(target -> {
-            if (target.getState() == PostPublishTargetState.REVOKED) {
-                // Revoked while the platform call was in flight — a revocation is never overwritten by a
-                // late failure from the hand-off it cancelled.
-                return;
-            }
-            target.setState(PostPublishTargetState.FAILED);
-            target.setErrorMessage(errorMessage);
-            target.setAttempts(target.getAttempts() + 1);
-            targetRepository.save(target);
-        });
     }
 
     /**

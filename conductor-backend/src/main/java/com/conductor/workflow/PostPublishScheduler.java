@@ -9,6 +9,7 @@ import com.conductor.integration.ActionResult;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.ActionInvocationService;
 import com.conductor.service.ActiveConnectionResolver;
+import com.conductor.service.PublishOutcomeService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
@@ -137,6 +138,7 @@ public class PostPublishScheduler {
     private final PostPublishTargetRepository targetRepository;
     private final ActiveConnectionResolver connectionResolver;
     private final ActionInvocationService actionInvocationService;
+    private final PublishOutcomeService publishOutcomeService;
     private final boolean enabled;
 
     /**
@@ -156,10 +158,12 @@ public class PostPublishScheduler {
     public PostPublishScheduler(PostPublishTargetRepository targetRepository,
                                 ActiveConnectionResolver connectionResolver,
                                 ActionInvocationService actionInvocationService,
+                                PublishOutcomeService publishOutcomeService,
                                 @Value("${conductor.post-publish.enabled:true}") boolean enabled) {
         this.targetRepository = targetRepository;
         this.connectionResolver = connectionResolver;
         this.actionInvocationService = actionInvocationService;
+        this.publishOutcomeService = publishOutcomeService;
         this.enabled = enabled;
     }
 
@@ -206,11 +210,11 @@ public class PostPublishScheduler {
         ActionResult result = actionInvocationService.invoke(dispatch.connection(), dispatch.actionId(),
                 dispatch.input(), dispatch.idempotencyKey(), List.of());
 
-        if (result != null && !result.success()) {
-            // The row stays PUBLISHING: a failed dispatch is never silently re-queued, because the
-            // platform may well have accepted the post before failing to tell us so.
-            log.warn("Publish dispatch for target {} did not succeed: {}", dispatch.targetId(), result.message());
-        }
+        // The platform has answered (or failed to), and that answer is durable state, not a log line:
+        // PUBLISHED with its permalink Asset, or FAILED with the platform's own words. Deliberately not a
+        // re-queue — the row leaves PUBLISHING for a terminal state, so at-most-once still holds and a
+        // failed target is something retry (T6.2) and the roll-up can actually find.
+        publishOutcomeService.recordOutcome(dispatch.targetId(), result);
     }
 
     /** Everything the dispatch needs, read while the claim transaction was still open. */
