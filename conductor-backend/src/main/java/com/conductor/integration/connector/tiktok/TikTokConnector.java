@@ -9,9 +9,7 @@ import com.conductor.integration.ConnectorMetadata;
 import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.FieldType;
 import com.conductor.integration.OAuth2Connector;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
-import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -27,18 +25,15 @@ import java.util.Map;
  * The client key/secret come from backend config ({@code TIKTOK_CLIENT_KEY}/
  * {@code TIKTOK_CLIENT_SECRET}), never from per-project settings.
  *
- * <p><b>TikTok names the client parameter {@code client_key}, not {@code client_id}.</b> The shared
- * {@code OAuthFlowService} hard-codes {@code client_id} on both the consent URL and the token
- * exchange body, and that file is owned elsewhere — so this connector contributes {@code client_key}
- * through {@link #extraAuthorizationParams()}, which is the only connector-side hook into the consent
- * URL. The consent URL therefore still carries a redundant {@code client_id} alongside it, and the
- * token exchange still sends only {@code client_id}; both need the flow service to let a connector
- * name that parameter (and to join scopes with {@code ,}, which is what TikTok's authorize endpoint
- * expects) before this connector can complete a real consent round trip.
+ * <p><b>TikTok deviates from RFC 6749 in two ways, both named by the connector rather than patched
+ * into the shared flow.</b> It calls the client identifier {@code client_key}
+ * ({@link #clientIdParamName()}), on the consent URL and in the token-exchange and refresh bodies
+ * alike, and its authorize endpoint takes a comma-separated scope list ({@link #scopeDelimiter()}).
  *
- * <p><b>Post-callback completion.</b> {@link #completeAuthorization(String)} runs after the shared
- * authorization-code exchange and reads the creator profile once, so the connection carries the
- * per-creator facts publishing depends on. The returned {@link TikTokAuthorization} splits the
+ * <p><b>Post-callback completion.</b> {@link #completeAuthorization(OAuthCompletionRequest)} is the
+ * shared seam the flow service calls after the authorization-code exchange; it delegates to
+ * {@link #completeAuthorization(String)}, which reads the creator profile once so the connection
+ * carries the per-creator facts publishing depends on. The returned {@link TikTokAuthorization} splits the
  * results the way they must be persisted: {@link TikTokAuthorization#accessToken()} goes through
  * {@code ConnectionService.storeTokens} (per-connection DEK envelope encryption — never into config,
  * which is plaintext JSON), while {@link TikTokAuthorization#config()} carries only the non-secret
@@ -67,19 +62,13 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
 
     private static final String ACTION_PUBLISH_VIDEO = "publish_video";
 
-    private final Environment environment;
     private final TikTokClient client;
 
-    // @Autowired is load-bearing with two constructors: without it Spring looks for a no-arg
-    // constructor and the context fails at deploy only, since @Profile("!local") beans never
-    // instantiate in tests (see MetaConnector).
-    @Autowired
-    public TikTokConnector(Environment environment) {
-        this(environment, new TikTokClient());
+    public TikTokConnector() {
+        this(new TikTokClient());
     }
 
-    TikTokConnector(Environment environment, TikTokClient client) {
-        this.environment = environment;
+    TikTokConnector(TikTokClient client) {
         this.client = client;
     }
 
@@ -140,24 +129,46 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
     }
 
     /**
+     * TikTok names the client identifier {@code client_key}, not {@code client_id} — on the consent
+     * URL and in the token-exchange and refresh bodies alike. The flow service reads this name from
+     * the connector, so the identifier is emitted once, under the right name, in all three places.
+     */
+    @Override
+    public String clientIdParamName() {
+        return "client_key";
+    }
+
+    /**
+     * TikTok's {@code /v2/auth/authorize/} takes a comma-separated scope list, not RFC 6749's
+     * space-separated one. A space-joined list is not rejected outright — it is partially granted,
+     * which would surface much later as an unexplained permission failure at publish time.
+     */
+    @Override
+    public String scopeDelimiter() {
+        return ",";
+    }
+
+    /**
      * TikTok's consent params, not Google's. There is no {@code access_type=offline}/{@code
      * prompt=consent}: TikTok always returns a refresh token for an approved grant, so neither has a
-     * TikTok equivalent to request.
-     *
-     * <p>The one entry here is the {@code client_key} shim described in the class javadoc — TikTok's
-     * authorize endpoint requires the client identifier under that name, and this is the only
-     * connector-side hook into the consent URL. The value is the public client key (the OAuth
-     * client-id analogue), never the secret. It is omitted when unconfigured, so an unconfigured
-     * deployment fails on the flow service's own credential check rather than emitting a blank param.
+     * TikTok equivalent to request. The empty map is the point — inheriting the Google default would
+     * put both on TikTok's consent URL.
      */
     @Override
     public Map<String, String> extraAuthorizationParams() {
-        Map<String, String> params = new LinkedHashMap<>();
-        String clientKey = environment.getProperty(clientIdProperty(), "");
-        if (!clientKey.isBlank()) {
-            params.put("client_key", clientKey);
-        }
-        return params;
+        return Map.of();
+    }
+
+    /**
+     * The grant resolves exactly one creator, so there is nothing for a human to pick — the
+     * completion hook establishes the account identity on its own.
+     */
+    @Override
+    public OAuthCompletion completeAuthorization(OAuthCompletionRequest request) {
+        TikTokAuthorization authorization = completeAuthorization(request.accessToken());
+        Object nickname = authorization.config().get(CONFIG_CREATOR_NICKNAME);
+        return new OAuthCompletion(authorization.accessToken(), request.refreshToken(),
+                nickname != null ? nickname.toString() : null, authorization.config());
     }
 
     /**

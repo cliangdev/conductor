@@ -6,11 +6,11 @@ import com.conductor.integration.ActionSpec;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.IntegrationToolSpec;
+import com.conductor.integration.OAuth2Connector;
 import com.conductor.integration.connector.tiktok.TikTokClient.CreatorInfo;
 import com.conductor.integration.connector.tiktok.TikTokConnector.TikTokAuthorization;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.mock.env.MockEnvironment;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.List;
@@ -28,17 +28,13 @@ class TikTokConnectorTest {
     private static final List<String> PRIVACY_OPTIONS =
             List.of("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY");
 
-    private MockEnvironment environment;
     private TikTokClient client;
     private TikTokConnector connector;
 
     @BeforeEach
     void setUp() {
-        environment = new MockEnvironment()
-                .withProperty("TIKTOK_CLIENT_KEY", "client-key-123")
-                .withProperty("TIKTOK_CLIENT_SECRET", "client-secret-456");
         client = mock(TikTokClient.class);
-        connector = new TikTokConnector(environment, client);
+        connector = new TikTokConnector(client);
     }
 
     // --- [auto] TikTokConnector overrides all five OAuth2Connector endpoint methods ---
@@ -56,10 +52,10 @@ class TikTokConnectorTest {
     void consentUrl_usesTikTokHostAndDeclaredScopes_withoutGoogleParams() {
         // Mirrors how OAuthFlowService assembles the consent URL from the connector's declarations.
         UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(connector.authorizationUrl())
-                .queryParam("client_id", "client-key-123")
+                .queryParam(connector.clientIdParamName(), "client-key-123")
                 .queryParam("redirect_uri", "https://conductor.example/api/v1/oauth/callback")
                 .queryParam("response_type", "code")
-                .queryParam("scope", String.join(" ", connector.oauthScopes()));
+                .queryParam("scope", String.join(connector.scopeDelimiter(), connector.oauthScopes()));
         connector.extraAuthorizationParams().forEach(builder::queryParam);
         String consentUrl = builder.queryParam("state", "abc").build().toUriString();
 
@@ -74,17 +70,39 @@ class TikTokConnectorTest {
     }
 
     @Test
-    void consentUrl_carriesTikToksClientKeyParameter() {
-        // TikTok names the client parameter client_key, not client_id. The shared flow service only
-        // emits client_id, so the connector contributes client_key through its extra params.
-        assertThat(connector.extraAuthorizationParams()).containsEntry("client_key", "client-key-123");
+    void clientIdParamName_isTikToksClientKey_soTheSharedFlowNamesItCorrectly() {
+        // TikTok names the client parameter client_key, not client_id — on the consent URL and in the
+        // token-exchange and refresh bodies alike. OAuthFlowService reads the name from here.
+        assertThat(connector.clientIdParamName()).isEqualTo("client_key");
+        assertThat(connector.extraAuthorizationParams()).doesNotContainKey("client_key");
     }
 
     @Test
-    void extraAuthorizationParams_withoutConfiguredClientKey_omitsIt() {
-        TikTokConnector unconfigured = new TikTokConnector(new MockEnvironment(), client);
+    void scopeDelimiter_isAComma_notRfc6749sSpace() {
+        assertThat(connector.scopeDelimiter()).isEqualTo(",");
+        assertThat(String.join(connector.scopeDelimiter(), connector.oauthScopes()))
+                .isEqualTo("user.info.basic,video.publish,video.upload");
+    }
 
-        assertThat(unconfigured.extraAuthorizationParams()).doesNotContainKey("client_key");
+    @Test
+    void completionSeam_delegatesToTheCreatorProfileReadAndKeepsTheTokenOutOfConfig() {
+        when(client.queryCreatorInfo(ACCESS_TOKEN)).thenReturn(
+                new CreatorInfo("Acme Studio", "acmestudio", PRIVACY_OPTIONS, 300));
+
+        OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
+                new OAuth2Connector.OAuthCompletionRequest(ACCESS_TOKEN, "refresh-1", null));
+
+        assertThat(completion.accessToken()).isEqualTo(ACCESS_TOKEN);
+        assertThat(completion.refreshToken()).isEqualTo("refresh-1");
+        assertThat(completion.label()).isEqualTo("Acme Studio");
+        assertThat(completion.config()).containsEntry("creatorNickname", "Acme Studio");
+        assertThat(completion.config().values()).doesNotContain(ACCESS_TOKEN, "refresh-1");
+    }
+
+    @Test
+    void requiresAccountSelection_isFalse_becauseTheGrantResolvesOneCreator() {
+        assertThat(connector.requiresAccountSelection()).isFalse();
+        assertThat(connector.listAuthorizableAccounts(ACCESS_TOKEN)).isEmpty();
     }
 
     // --- [auto] creator_info including max_video_post_duration_sec is cached on the connection ---

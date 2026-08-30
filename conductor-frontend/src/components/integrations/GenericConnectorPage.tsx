@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createConnection, deleteConnection, apiPost, apiErrorMessage } from '@/lib/api';
 import { buildConnectionPayload } from '@/lib/connectorConnectForm';
@@ -8,6 +8,7 @@ import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { useConnectorCatalogItem } from './ConnectorCatalogContext';
 import { ConnectorConfigFields } from './ConnectorConfigFields';
 import { ConnectionRow } from './ConnectionRow';
+import { OAuthAccountPicker } from './OAuthAccountPicker';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useCan } from '@/contexts/PermissionsContext';
@@ -35,6 +36,22 @@ export default function GenericConnectorPage({
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [pendingAccountConnectionId, setPendingAccountConnectionId] = useState<string | null>(null);
+
+  // The OAuth callback parks a connection here (`?selectAccount=<connectionId>`) when the grant
+  // covers several publishable accounts and an admin still has to pick one. Read after mount rather
+  // than during render, so the server-rendered pass doesn't touch `window`.
+  useEffect(() => {
+    const connectionId = new URLSearchParams(window.location.search).get('selectAccount');
+    if (connectionId) setPendingAccountConnectionId(connectionId);
+  }, []);
+
+  // Drop the marker from the URL too, so a reload (or a back-navigation) doesn't reopen a picker
+  // for a choice that has already been made.
+  const clearPendingAccount = useCallback(() => {
+    setPendingAccountConnectionId(null);
+    window.history.replaceState(null, '', window.location.pathname);
+  }, []);
 
   const applyJsonField = (key: string, value: string) => {
     setFormValues((prev) => ({ ...prev, [key]: value }));
@@ -125,6 +142,20 @@ export default function GenericConnectorPage({
       />
 
       {connectError && <p className="text-sm text-destructive mb-4">{connectError}</p>}
+
+      {pendingAccountConnectionId && canMutate && (
+        <OAuthAccountPicker
+          projectId={projectId}
+          connectorId={item.connectorId}
+          connectionId={pendingAccountConnectionId}
+          connectorName={item.name}
+          onSelected={async () => {
+            await refetch();
+            clearPendingAccount();
+          }}
+          onDismiss={clearPendingAccount}
+        />
+      )}
 
       {item.connections.length > 0 && (
         <div className="space-y-3 mb-6">

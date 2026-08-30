@@ -123,9 +123,9 @@ public class OAuthFlowService {
         oauthState.setConfigJson(Map.of());
         oAuthStateRepository.save(oauthState);
 
-        String scopes = String.join(" ", scopesFor(connectorId));
+        String scopes = String.join(connector.scopeDelimiter(), scopesFor(connectorId));
         UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(connector.authorizationUrl())
-                .queryParam("client_id", creds.clientId())
+                .queryParam(connector.clientIdParamName(), creds.clientId())
                 .queryParam("redirect_uri", redirectUri)
                 .queryParam("response_type", "code")
                 .queryParam("scope", scopes);
@@ -146,6 +146,7 @@ public class OAuthFlowService {
 
         String projectId = oauthState.getProjectId();
         String connectorId = oauthState.getConnectorId();
+        OAuth2Connector connector = requireOAuth2Connector(connectorId);
 
         Map<String, Object> tokenResponse = exchangeCodeForTokens(connectorId, code, redirectUri);
 
@@ -156,13 +157,93 @@ public class OAuthFlowService {
                 ? OffsetDateTime.now().plusSeconds(((Number) expiresIn).longValue())
                 : null;
 
-        Connection conn = connectionService.getOrCreateSingle(projectId, connectorId, AuthType.OAUTH2);
-        connectionService.storeTokens(conn, accessToken, refreshToken, expiresAt);
+        Connection conn = resolveConnection(projectId, connectorId, connector);
+
+        if (connector.requiresAccountSelection()) {
+            // The grant covers several accounts and a human still has to pick one. Persist the grant
+            // so the picker can enumerate against it, and hand the browser back to the connector page
+            // with the connection to finish — the completion hook runs on that selection instead.
+            connectionService.storeTokens(conn, accessToken, refreshToken, expiresAt);
+            oAuthStateRepository.delete(oauthState);
+            log.info("OAuth callback awaiting account selection for connector={} project={} connection={}",
+                    connectorId, projectId, conn.getId());
+            return frontendUrl + "/app/projects/" + projectId + "/integrations/" + connectorId
+                    + "?selectAccount=" + conn.getId();
+        }
+
+        OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
+                new OAuth2Connector.OAuthCompletionRequest(accessToken, refreshToken, null));
+        applyCompletion(conn, completion, accessToken, refreshToken, expiresAt);
 
         oAuthStateRepository.delete(oauthState);
 
         log.info("OAuth callback completed for connector={} project={}", connectorId, projectId);
         return frontendUrl + "/app/projects/" + projectId + "/integrations/" + connectorId;
+    }
+
+    /**
+     * The connection this authorization belongs to. A single-instance connector reuses its one row —
+     * exactly as before this seam existed. A connector that permits several connections gets a fresh
+     * row per authorization, which is what keeps two accounts on the same platform distinct instead of
+     * the second silently overwriting the first's tokens and config.
+     */
+    private Connection resolveConnection(String projectId, String connectorId, OAuth2Connector connector) {
+        if (connector.getSpec().singleInstance()) {
+            return connectionService.getOrCreateSingle(projectId, connectorId, AuthType.OAUTH2);
+        }
+        return connectionService.create(projectId, connectorId, AuthType.OAUTH2, connectorId, null);
+    }
+
+    /**
+     * Persists what the completion hook produced. Credentials go through {@code storeTokens} (the
+     * per-connection DEK envelope); the hook's config is plaintext JSON on the row and so carries
+     * only non-secret identifiers. A hook that reports no token keeps the exchanged one, which is the
+     * no-op default and therefore today's exact behaviour for every Google connector.
+     */
+    private void applyCompletion(Connection conn, OAuth2Connector.OAuthCompletion completion,
+                                 String exchangedAccessToken, String exchangedRefreshToken,
+                                 OffsetDateTime expiresAt) {
+        String accessToken = completion.accessToken() != null ? completion.accessToken() : exchangedAccessToken;
+        String refreshToken = completion.refreshToken() != null ? completion.refreshToken() : exchangedRefreshToken;
+        connectionService.storeTokens(conn, accessToken, refreshToken, expiresAt);
+        if (!completion.config().isEmpty()) {
+            connectionService.updateConfig(conn, completion.config());
+        }
+        if (completion.label() != null && !completion.label().isBlank()) {
+            connectionService.updateLabel(conn, completion.label());
+        }
+    }
+
+    /**
+     * Accounts the connection's stored grant covers, for the post-consent picker. Returns an empty
+     * list for a connector that needs no selection, so a caller never has to know which is which.
+     */
+    public List<OAuth2Connector.OAuthAccount> listAuthorizableAccounts(Connection conn) {
+        OAuth2Connector connector = requireOAuth2Connector(conn.getConnectorId());
+        String accessToken = connectionService.decrypt(conn).accessToken();
+        if (accessToken == null || accessToken.isBlank()) {
+            throw new BusinessException("Connection " + conn.getId() + " has no stored OAuth token");
+        }
+        return connector.listAuthorizableAccounts(accessToken);
+    }
+
+    /**
+     * Finalizes a connection that was parked awaiting an account choice: runs the completion hook
+     * with the admin's selection, so the connector can mint the per-account credential and hand back
+     * the non-secret identifiers that make the connection publishable.
+     */
+    @Transactional
+    public Connection completeAccountSelection(Connection conn, String accountId) {
+        OAuth2Connector connector = requireOAuth2Connector(conn.getConnectorId());
+        var creds = connectionService.decrypt(conn);
+        if (creds.accessToken() == null || creds.accessToken().isBlank()) {
+            throw new BusinessException("Connection " + conn.getId() + " has no stored OAuth token");
+        }
+        OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
+                new OAuth2Connector.OAuthCompletionRequest(creds.accessToken(), creds.refreshToken(), accountId));
+        applyCompletion(conn, completion, creds.accessToken(), creds.refreshToken(), conn.getTokenExpiresAt());
+        log.info("OAuth account selection completed for connection={} account={}", conn.getId(), accountId);
+        return conn;
     }
 
     /**
@@ -182,7 +263,7 @@ public class OAuthFlowService {
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
         params.add("grant_type", "refresh_token");
         params.add("refresh_token", refreshToken);
-        params.add("client_id", creds.clientId());
+        params.add(connector.clientIdParamName(), creds.clientId());
         params.add("client_secret", creds.clientSecret());
 
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(params, headers);
@@ -283,7 +364,7 @@ public class OAuthFlowService {
         params.add("grant_type", "authorization_code");
         params.add("code", code);
         params.add("redirect_uri", redirectUri);
-        params.add("client_id", creds.clientId());
+        params.add(connector.clientIdParamName(), creds.clientId());
         params.add("client_secret", creds.clientSecret());
 
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(params, headers);

@@ -24,7 +24,10 @@ import com.conductor.generated.model.GscSitesResponse;
 import com.conductor.generated.model.GscSitesResponseSitesInner;
 import com.conductor.generated.model.IntegrationListItem;
 import com.conductor.generated.model.IntegrationToolItem;
+import com.conductor.generated.model.OAuthAccountDto;
+import com.conductor.generated.model.OAuthAccountsResponse;
 import com.conductor.generated.model.OAuthAuthorizeResponse;
+import com.conductor.generated.model.SelectOAuthAccountRequest;
 import com.conductor.generated.model.UpdateConnectionRequest;
 import com.conductor.generated.model.UpdateConnectorFeedRequest;
 import com.conductor.generated.model.WebhookEventSummary;
@@ -368,6 +371,30 @@ public class IntegrationController implements IntegrationsApi {
         String authUrl = oAuthFlowService.buildAuthorizationUrl(
                 projectId, connectorId, oAuthFlowService.oauthCallbackUri());
         return ResponseEntity.ok(new OAuthAuthorizeResponse().authorizationUrl(authUrl));
+    }
+
+    @Override
+    public ResponseEntity<OAuthAccountsResponse> listOAuthAccounts(
+            String projectId, String connectorId, String connectionId) {
+        requireAdminOrCreator(projectId);
+        Connection conn = requireConnection(projectId, connectorId, connectionId);
+        OAuthAccountsResponse response = new OAuthAccountsResponse();
+        oAuthFlowService.listAuthorizableAccounts(conn).forEach(account -> response.addAccountsItem(
+                new OAuthAccountDto().id(account.id()).label(account.label())));
+        return ResponseEntity.ok(response);
+    }
+
+    @Override
+    public ResponseEntity<ConnectionResponse> selectOAuthAccount(
+            String projectId, String connectorId, String connectionId, SelectOAuthAccountRequest request) {
+        requireAdminOrCreator(projectId);
+        Connection conn = requireConnection(projectId, connectorId, connectionId);
+        String accountId = request != null ? request.getAccountId() : null;
+        if (accountId == null || accountId.isBlank()) {
+            throw new BusinessException("accountId is required");
+        }
+        Connection completed = oAuthFlowService.completeAccountSelection(conn, accountId);
+        return ResponseEntity.ok(toConnectionResponse(completed, null));
     }
 
     @Override
