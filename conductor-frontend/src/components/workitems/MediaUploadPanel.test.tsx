@@ -36,6 +36,7 @@ let calls: string[] = []
 let mintBodies: Record<string, unknown>[] = []
 let confirmBodies: Record<string, unknown>[] = []
 let mintRejection: { status: number; detail: string } | null = null
+let confirmRejection: { status: number; detail: string } | null = null
 
 // ── Fake XHR (the signed PUT) ───────────────────────────────────────────────
 
@@ -126,6 +127,9 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     })
   }
   if (url.endsWith('/confirm')) {
+    if (confirmRejection) {
+      return jsonResponse(confirmRejection.status, { detail: confirmRejection.detail })
+    }
     confirmBodies.push(JSON.parse(init!.body as string))
     return noContentResponse()
   }
@@ -170,6 +174,7 @@ beforeEach(() => {
   mintBodies = []
   confirmBodies = []
   mintRejection = null
+  confirmRejection = null
   FakeXhr.instances = []
   FakeXhr.auto = true
   FakeXhr.completeStatus = 200
@@ -403,6 +408,17 @@ describe('MediaUploadPanel', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('storage rejected the file (403)')
     expect(confirmBodies).toHaveLength(0)
+    expect(onUploaded).not.toHaveBeenCalled()
+  })
+
+  // The confirm endpoint answers 204 — the shared apiPost must resolve on it, not reject.
+  it('surfaces a confirm rejection verbatim', async () => {
+    confirmRejection = { status: 409, detail: 'Asset upload was already confirmed' }
+    renderPanel()
+
+    selectFile(videoFile())
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Asset upload was already confirmed')
     expect(onUploaded).not.toHaveBeenCalled()
   })
 

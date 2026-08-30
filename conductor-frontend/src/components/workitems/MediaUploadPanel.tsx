@@ -186,37 +186,6 @@ function putToSignedUrl(
   })
 }
 
-/**
- * Confirm answers 204 with no body, which apiPost cannot parse — hence the direct fetch. Failures
- * still surface the backend's ProblemDetail so the user reads the real reason.
- */
-async function confirmUpload(
-  projectId: string,
-  workItemId: string,
-  assetId: string,
-  sizeBytes: number,
-  token: string,
-): Promise<void> {
-  const res = await fetch(
-    `${process.env.NEXT_PUBLIC_API_URL}/api/v2/projects/${projectId}/work-items/${workItemId}/assets/${assetId}/confirm`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ sizeBytes }),
-    },
-  )
-  if (res.ok) return
-  let detail: string | undefined
-  try {
-    const json = await res.json()
-    if (typeof json?.detail === 'string') detail = json.detail
-    else if (typeof json?.message === 'string') detail = json.message
-  } catch {
-    // Non-JSON body — fall through to the opaque message.
-  }
-  throw new Error(detail ?? `Could not confirm the upload (${res.status})`)
-}
-
 export interface MediaUploadPanelProps {
   projectId: string
   workItemId: string
@@ -276,7 +245,12 @@ export function MediaUploadPanel({
           token,
         )
         await putToSignedUrl(ticket.uploadUrl, file, setProgress)
-        await confirmUpload(projectId, workItemId, ticket.assetId, file.size, token)
+        // Answers 204 — apiPost resolves on an empty body rather than trying to parse one.
+        await apiPost<void>(
+          `/api/v2/projects/${projectId}/work-items/${workItemId}/assets/${ticket.assetId}/confirm`,
+          { sizeBytes: file.size },
+          token,
+        )
         await onUploaded()
       } catch (err) {
         setError(apiErrorMessage(err, err instanceof Error ? err.message : 'Upload failed'))

@@ -375,6 +375,17 @@ function networkError(): never {
 }
 
 /**
+ * Read the body of a successful response. A 204 (or an explicitly empty body) has nothing to parse
+ * and `res.json()` would reject on it — turning a call that succeeded into a reported failure.
+ */
+function parseBody<T>(res: Response): Promise<T> {
+  if (res.status === 204 || res.headers.get('content-length') === '0') {
+    return Promise.resolve(undefined as T)
+  }
+  return res.json() as Promise<T>
+}
+
+/**
  * Pick a user-facing message: the backend's ProblemDetail `detail` when present and meaningful,
  * otherwise the caller's `fallback` (used for opaque "Server error (n)" and network failures).
  * This is the universal way to surface backend errors — components should call this instead of
@@ -399,7 +410,7 @@ export async function apiGet<T>(path: string, token: string): Promise<T> {
     if (res!.status === 401) onUnauthorized?.()
     await throwApiError(res!)
   }
-  return res!.json()
+  return parseBody<T>(res!)
 }
 
 export async function apiPost<T>(path: string, body: unknown, token?: string): Promise<T> {
@@ -418,7 +429,7 @@ export async function apiPost<T>(path: string, body: unknown, token?: string): P
     if (res!.status === 401 && token) onUnauthorized?.()
     await throwApiError(res!)
   }
-  return res!.json()
+  return parseBody<T>(res!)
 }
 
 export async function apiPatch<T>(path: string, body: unknown, token: string): Promise<T | undefined> {
@@ -437,10 +448,7 @@ export async function apiPatch<T>(path: string, body: unknown, token: string): P
     if (res!.status === 401) onUnauthorized?.()
     await throwApiError(res!)
   }
-  if (res!.status === 204 || res!.headers.get('content-length') === '0') {
-    return undefined as T
-  }
-  return res!.json() as Promise<T>
+  return parseBody<T>(res!)
 }
 
 export async function apiPut<T>(path: string, body: unknown, token: string): Promise<T> {
@@ -459,7 +467,7 @@ export async function apiPut<T>(path: string, body: unknown, token: string): Pro
     if (res!.status === 401) onUnauthorized?.()
     await throwApiError(res!)
   }
-  return res!.json()
+  return parseBody<T>(res!)
 }
 
 export async function apiDelete(path: string, token: string): Promise<void> {
