@@ -53,6 +53,7 @@ public class WorkItemWorkflowService {
     private final SystemTriggerRegistry systemTriggerRegistry;
     private final PublishBundleHasher publishBundleHasher;
     private final PostScheduleValidator postScheduleValidator;
+    private final MediaTargetValidator mediaTargetValidator;
 
     public WorkItemWorkflowService(WorkItemRepository workItemRepository,
                                    ProjectSecurityService projectSecurityService,
@@ -61,7 +62,8 @@ public class WorkItemWorkflowService {
                                    WorkflowDefinitionResolver resolver,
                                    SystemTriggerRegistry systemTriggerRegistry,
                                    PublishBundleHasher publishBundleHasher,
-                                   PostScheduleValidator postScheduleValidator) {
+                                   PostScheduleValidator postScheduleValidator,
+                                   MediaTargetValidator mediaTargetValidator) {
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
@@ -70,6 +72,7 @@ public class WorkItemWorkflowService {
         this.systemTriggerRegistry = systemTriggerRegistry;
         this.publishBundleHasher = publishBundleHasher;
         this.postScheduleValidator = postScheduleValidator;
+        this.mediaTargetValidator = mediaTargetValidator;
     }
 
     /** The Workflow's initial status id (e.g. {@code DRAFT}), used to stamp a freshly created Work Item. */
@@ -131,6 +134,11 @@ public class WorkItemWorkflowService {
         // validator is a no-op for every transition it does not apply to, so calling it unconditionally is
         // safe — see PostScheduleValidator for the definition-driven rule that decides when it applies.
         postScheduleValidator.validateForTransition(workItem, statechart, newStatus);
+        // Publishing workflows additionally reject media any selected target would refuse, so a per-platform
+        // format failure surfaces here and never at fire time. Also a no-op for every transition it does not
+        // apply to. The returned Result carries advisory-only warnings (e.g. "YouTube will treat this as a
+        // Short"); the validator logs them itself, so discarding the value here never changes the outcome.
+        mediaTargetValidator.validateForTransition(workItem, statechart, newStatus);
     }
 
     /**
