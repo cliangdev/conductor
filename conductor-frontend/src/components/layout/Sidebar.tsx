@@ -7,6 +7,7 @@ import {
   ChevronsUpDownIcon,
   FileTextIcon,
   FolderIcon,
+  ImagesIcon,
   LogOutIcon,
   PanelLeftCloseIcon,
   PanelLeftIcon,
@@ -44,6 +45,26 @@ import {
 import { THEME_OPTIONS } from '@/lib/theme'
 import { cn } from '@/lib/utils'
 import type { Project } from '@/types'
+
+// ─── Area-scoped static nav ───────────────────────────────────────────────────
+//
+// Some areas own a surface that is not a Workflow — the Marketing asset library spans every
+// Workflow in the area, so it is a sibling of Posts inside the Marketing group, not a tab within it
+// (COND-23 T7.2). Keyed by area slug, appended after that area's Workflow entries, so a second
+// Marketing Workflow keeps rendering in the same group with no layout change.
+const AREA_EXTRA_NAV: Record<
+  string,
+  { key: string; label: string; icon: React.ComponentType<{ className?: string }>; path: (projectId: string) => string }[]
+> = {
+  MARKETING: [
+    {
+      key: 'marketing-assets',
+      label: 'Asset Library',
+      icon: ImagesIcon,
+      path: (projectId) => `/app/projects/${projectId}/marketing/assets`,
+    },
+  ],
+}
 
 // ─── Primitives ───────────────────────────────────────────────────────────────
 
@@ -316,6 +337,16 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                         onNavigate={onNavigate}
                       >
                         {entry.label}
+                      </NavItem>
+                    ))}
+                    {(AREA_EXTRA_NAV[area.toUpperCase()] ?? []).map(({ key, label, icon: Icon, path }) => (
+                      <NavItem
+                        key={key}
+                        href={path(currentWorkspace.id)}
+                        icon={<Icon className="h-4 w-4" />}
+                        onNavigate={onNavigate}
+                      >
+                        {label}
                       </NavItem>
                     ))}
                   </div>
