@@ -217,7 +217,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_REVIEW");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("IN_REVIEW");
         verify(workItemWorkflowService).validateTransition("proj-1", testIssue, "IN_REVIEW");
@@ -232,7 +232,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("READY_FOR_DEVELOPMENT");
 
-        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT");
     }
@@ -247,7 +247,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("DRAFT");
 
-        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid status transition from READY_FOR_DEVELOPMENT to DRAFT");
     }
@@ -261,7 +261,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("READY_FOR_DEVELOPMENT");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("READY_FOR_DEVELOPMENT");
     }
@@ -279,7 +279,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_REVIEW");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("IN_REVIEW");
     }
@@ -293,7 +293,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("CODE_REVIEW");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signalCaptor.capture());
@@ -316,7 +316,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("CODE_REVIEW");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signalCaptor.capture());
@@ -336,7 +336,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_REVIEW");
 
-        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("REVIEWER role cannot change Work Item status");
     }
@@ -357,7 +357,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_PROGRESS");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signalCaptor.capture());
@@ -383,7 +383,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_PROGRESS");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signalCaptor.capture());
@@ -402,7 +402,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_PROGRESS");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signalCaptor.capture());

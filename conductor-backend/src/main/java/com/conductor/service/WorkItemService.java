@@ -113,20 +113,12 @@ public class WorkItemService {
      * entity to its response DTO. Each nullable field follows PATCH semantics: {@code null} means "field
      * absent — leave unchanged"; for {@code assigneeId} a blank string unassigns. Takes plain fields so the
      * service stays decoupled from any generated DTO version.
-     */
-    @Transactional
-    public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
-                                  String status, String assigneeId, User caller) {
-        return patchWorkItem(projectId, workItemId, title, description, status, assigneeId, null, null, caller);
-    }
-
-    /**
-     * Patch overload carrying the generic per-item scheduling fields (V111). {@code scheduledFor} and
-     * {@code scheduleTimezone} follow the same PATCH semantics as the rest: {@code null} means "field
-     * absent — leave unchanged"; a blank {@code scheduleTimezone} clears the stored zone (mirroring how a
-     * blank {@code assigneeId} unassigns). {@code scheduleTimezone} must be a zone {@link ZoneId#of} can
-     * resolve — an unknown zone is a {@link BusinessException} (400), raised before anything is written so
-     * a rejected patch persists none of its other fields either.
+     *
+     * <p>{@code scheduledFor} and {@code scheduleTimezone} are the generic per-item scheduling fields (V111)
+     * and follow the same PATCH semantics; a blank {@code scheduleTimezone} clears the stored zone (mirroring
+     * how a blank {@code assigneeId} unassigns). {@code scheduleTimezone} must be a zone {@link ZoneId#of}
+     * can resolve — an unknown zone is a {@link BusinessException} (400), raised before anything is written
+     * so a rejected patch persists none of its other fields either.
      */
     @Transactional
     public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,

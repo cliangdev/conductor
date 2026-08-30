@@ -255,7 +255,7 @@ class MarketingReviewGateIntegrationTest {
     }
 
     private void moveTo(String status) {
-        workItemService.patchWorkItem(project.getId(), post.getId(), null, null, status, null, author);
+        workItemService.patchWorkItem(project.getId(), post.getId(), null, null, status, null, null, null, author);
     }
 
     private WorkItem reload() {
