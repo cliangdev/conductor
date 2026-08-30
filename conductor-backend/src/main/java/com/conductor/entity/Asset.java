@@ -10,6 +10,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -63,6 +64,25 @@ public class Asset {
     @Column(name = "gcs_path", columnDefinition = "TEXT")
     private String gcsPath;
 
+    /**
+     * Pixel width of the media, or null when unknown. Derived server-side at upload confirm for images
+     * the JDK can read; declared by the uploading client for video. Null means "not measured", never
+     * "acceptable" — see {@code MediaTargetValidator}.
+     */
+    @Column(name = "width")
+    private Integer width;
+
+    /** Pixel height of the media, or null when unknown. See {@link #width}. */
+    @Column(name = "height")
+    private Integer height;
+
+    /**
+     * Running time of a video in seconds, or null when unknown. Fractional because platform length caps are
+     * whole seconds but real media is not, and rounding down could pass a cap the platform would then reject.
+     */
+    @Column(name = "duration_seconds", precision = 12, scale = 3)
+    private BigDecimal durationSeconds;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -115,6 +135,15 @@ public class Asset {
 
     public String getGcsPath() { return gcsPath; }
     public void setGcsPath(String gcsPath) { this.gcsPath = gcsPath; }
+
+    public Integer getWidth() { return width; }
+    public void setWidth(Integer width) { this.width = width; }
+
+    public Integer getHeight() { return height; }
+    public void setHeight(Integer height) { this.height = height; }
+
+    public BigDecimal getDurationSeconds() { return durationSeconds; }
+    public void setDurationSeconds(BigDecimal durationSeconds) { this.durationSeconds = durationSeconds; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

@@ -15,10 +15,13 @@ import com.conductor.signal.SignalTypes;
 import com.conductor.workflow.lifecycle.Statechart;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +49,8 @@ import java.util.UUID;
  */
 @Service
 public class AssetService {
+
+    private static final Logger log = LoggerFactory.getLogger(AssetService.class);
 
     /** {@code kind} value for an Asset whose {@code ref} is a stored object rather than a URL. */
     public static final String KIND_FILE = "file";
@@ -83,8 +88,22 @@ public class AssetService {
         this.backendBaseUrl = backendBaseUrl;
     }
 
-    /** Fields needed to mint a file Asset, decoupled from any generated request DTO version. */
-    public record FileAssetInput(String type, String label, String filename, String contentType, Long sizeBytes) {
+    /**
+     * Fields needed to mint a file Asset, decoupled from any generated request DTO version.
+     *
+     * <p>{@code width}/{@code height}/{@code durationSeconds} are the optional client-declared media shape
+     * (COND-23 T5.1) the per-target publish rules validate against — see {@link MediaMetadata} for how each
+     * one is populated and what a null means. They are optional because a caller that knows nothing about the
+     * media is still allowed to upload; the five-argument constructor is exactly that caller, and video
+     * duration is the one value no amount of server-side work can recover afterwards.
+     */
+    public record FileAssetInput(String type, String label, String filename, String contentType, Long sizeBytes,
+                                 Integer width, Integer height, BigDecimal durationSeconds) {
+
+        /** A file whose media shape the caller does not declare; images still get theirs at confirm. */
+        public FileAssetInput(String type, String label, String filename, String contentType, Long sizeBytes) {
+            this(type, label, filename, contentType, sizeBytes, null, null, null);
+        }
     }
 
     /** The PENDING row plus the URL the client must {@code PUT} the bytes to. */
@@ -154,6 +173,9 @@ public class AssetService {
         asset.setGcsPath(gcsPath);
         asset.setContentType(contentType);
         asset.setSizeBytes(sizeBytes);
+        asset.setWidth(positiveOrNull(input.width()));
+        asset.setHeight(positiveOrNull(input.height()));
+        asset.setDurationSeconds(positiveOrNull(input.durationSeconds()));
         asset.setUploadStatus(UPLOAD_STATUS_PENDING);
         asset.setDone(false);
         assetRepository.save(asset);
@@ -172,6 +194,10 @@ public class AssetService {
      * {@link AssetUploadPolicy#ALLOWED_CONTENT_TYPES} here as defence in depth, so a row that somehow carries a
      * disallowed type can never reach {@code UPLOADED}. {@code observedSizeBytes} is the byte count the client
      * actually wrote; it is re-validated against the ceiling before being persisted.
+     *
+     * <p>This is also where an image's real pixel dimensions are captured (COND-23 T5.1) — see
+     * {@link #captureImageDimensions}. Confirm is the only moment the definitive bytes are known to exist,
+     * and the approval gate needs the shape without going near object storage while a human waits.
      */
     @Transactional
     public Asset confirmUpload(String projectId, String workItemId, String assetId, Long observedSizeBytes,
@@ -186,12 +212,50 @@ public class AssetService {
         if (observedSizeBytes != null) {
             asset.setSizeBytes(AssetUploadPolicy.requireAllowedSize(observedSizeBytes));
         }
+        captureImageDimensions(asset);
         asset.setUploadStatus(UPLOAD_STATUS_UPLOADED);
         asset.setDone(true);
         assetRepository.save(asset);
 
         publishAssetAdded(projectId, workItem, asset);
         return asset;
+    }
+
+    /**
+     * Reads the uploaded image's real dimensions out of its header and records them on the row, overriding
+     * anything the client declared — the bytes in the bucket are the bytes a platform will receive, so they
+     * are the only trustworthy source. Best effort: an unreadable format (WebP), a storage hiccup or an
+     * oversized object leaves the existing values untouched rather than failing the confirm, and the
+     * approval gate then blocks on the unknown shape instead, where a human can see and fix it.
+     *
+     * <p>Video is skipped entirely: no container parser ships with the JDK, so duration and dimensions come
+     * from the client at mint (see {@link FileAssetInput}).
+     */
+    private void captureImageDimensions(Asset asset) {
+        String contentType = AssetUploadPolicy.normalizeContentType(asset.getContentType());
+        if (contentType == null || !contentType.startsWith("image/") || asset.getGcsPath() == null) {
+            return;
+        }
+        if (asset.getSizeBytes() != null && asset.getSizeBytes() > MediaMetadata.MAX_PROBE_BYTES) {
+            return;
+        }
+        try {
+            MediaMetadata.probeImage(storageService.download(asset.getGcsPath()))
+                    .ifPresent(metadata -> {
+                        asset.setWidth(metadata.width());
+                        asset.setHeight(metadata.height());
+                    });
+        } catch (RuntimeException e) {
+            log.warn("Could not read image dimensions for asset {}: {}", asset.getId(), e.toString());
+        }
+    }
+
+    private static Integer positiveOrNull(Integer value) {
+        return value != null && value > 0 ? value : null;
+    }
+
+    private static BigDecimal positiveOrNull(BigDecimal value) {
+        return value != null && value.signum() > 0 ? value : null;
     }
 
     /** Short-lived (15 minute) signed GET for previewing an uploaded file Asset. Reads are never gated by status. */
