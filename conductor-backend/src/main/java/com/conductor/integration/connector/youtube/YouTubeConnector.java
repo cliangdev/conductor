@@ -114,6 +114,29 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
     }
 
     /**
+     * The shared completion seam {@code OAuthFlowService} calls after the code exchange. It is a thin
+     * bridge onto {@link #completeAuthorization(String)}: Java has no structural typing, so without
+     * this override the connector-specific method below would <b>not</b> satisfy
+     * {@link OAuth2Connector#completeAuthorization(OAuthCompletionRequest)} and the flow would
+     * silently fall through to the interface's no-op default, persisting a connection with no channel
+     * identity at all.
+     *
+     * <p>The grant resolves exactly one channel ({@code mine=true}), so there is nothing for a human
+     * to pick — {@link #requiresAccountSelection()} stays false and completion happens in the callback.
+     *
+     * <p>The refresh token is passed straight back through: it comes from Google's code exchange
+     * ({@code access_type=offline}) and the channel read neither produces nor invalidates one, but it
+     * is what an upload weeks later depends on, so dropping it here would silently break re-auth.
+     */
+    @Override
+    public OAuthCompletion completeAuthorization(OAuthCompletionRequest request) {
+        YouTubeAuthorization authorization = completeAuthorization(request.accessToken());
+        Object channelTitle = authorization.config().get(CONFIG_CHANNEL_TITLE);
+        return new OAuthCompletion(authorization.accessToken(), request.refreshToken(),
+                channelTitle != null ? channelTitle.toString() : null, authorization.config());
+    }
+
+    /**
      * Completes the YouTube connect flow after the shared Google authorization-code exchange, by
      * resolving the channel the consenting identity owns. Fails rather than returning a half-built
      * connection when the account owns no channel — a connection with no channel id can never publish.

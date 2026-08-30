@@ -180,6 +180,59 @@ class YouTubeConnectorTest {
         assertThat(new YouTubeDataClient(restTemplate).listMyChannels(ACCESS_TOKEN)).isEmpty();
     }
 
+    // --- [auto] YouTube implements the generic completion seam rather than falling through to the no-op ---
+
+    @Test
+    void completionSeam_returnsTheAccessTokenAndChannelConfig_preservingTheRefreshToken() {
+        when(dataClient.listMyChannels(ACCESS_TOKEN))
+                .thenReturn(List.of(new Channel("UC_acme_channel", "Acme Marketing")));
+
+        OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
+                new OAuth2Connector.OAuthCompletionRequest(ACCESS_TOKEN, "1//refresh-token", null));
+
+        assertThat(completion.accessToken()).isEqualTo(ACCESS_TOKEN);
+        // The refresh token is what an upload weeks later depends on — the seam must not drop it.
+        assertThat(completion.refreshToken()).isEqualTo("1//refresh-token");
+        assertThat(completion.label()).isEqualTo("Acme Marketing");
+        assertThat(completion.config())
+                .containsEntry("channelId", "UC_acme_channel")
+                .containsEntry("channelTitle", "Acme Marketing");
+    }
+
+    @Test
+    void completionSeam_neverPutsATokenInThePlaintextConfig() {
+        when(dataClient.listMyChannels(ACCESS_TOKEN))
+                .thenReturn(List.of(new Channel("UC_acme_channel", "Acme Marketing")));
+
+        OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
+                new OAuth2Connector.OAuthCompletionRequest(ACCESS_TOKEN, "1//refresh-token", null));
+
+        assertThat(completion.config().values()).doesNotContain(ACCESS_TOKEN, "1//refresh-token");
+        assertThat(completion.config().keySet()).containsExactlyInAnyOrder("channelId", "channelTitle");
+    }
+
+    @Test
+    void requiresAccountSelection_isFalse_becauseMineTrueResolvesOneChannel() {
+        assertThat(connector.requiresAccountSelection()).isFalse();
+        assertThat(connector.listAuthorizableAccounts(ACCESS_TOKEN)).isEmpty();
+    }
+
+    @Test
+    void connector_actuallyOverridesTheCompletionSeam_ratherThanDeclaringALookalikeOverload() {
+        // The bug this guards: YouTubeConnector declared completeAuthorization(String), which Java
+        // does not treat as implementing completeAuthorization(OAuthCompletionRequest) — so the flow
+        // silently used the interface's no-op default. A refactor must not regress to that.
+        Method seam = Arrays.stream(YouTubeConnector.class.getDeclaredMethods())
+                .filter(m -> m.getName().equals("completeAuthorization"))
+                .filter(m -> Arrays.equals(m.getParameterTypes(),
+                        new Class<?>[]{OAuth2Connector.OAuthCompletionRequest.class}))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "YouTubeConnector must override completeAuthorization(OAuthCompletionRequest)"));
+
+        assertThat(seam.getReturnType()).isEqualTo(OAuth2Connector.OAuthCompletion.class);
+    }
+
     // --- [auto] youtube.json declares publish_video and the connector is not singleInstance ---
 
     @Test

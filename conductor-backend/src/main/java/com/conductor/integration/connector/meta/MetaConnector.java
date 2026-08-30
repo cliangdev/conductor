@@ -180,6 +180,54 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     }
 
     /**
+     * Meta's grant covers every Page the authorizing user administers, so a human has to say which
+     * one this connection publishes to before it is usable. The flow service reads this to route the
+     * callback into the account picker instead of completing inline.
+     */
+    @Override
+    public boolean requiresAccountSelection() {
+        return true;
+    }
+
+    /**
+     * Pages offered in the post-consent picker.
+     *
+     * <p><b>The token handed in here is the short-lived user token the code exchange returned</b> —
+     * the long-lived swap happens inside {@link #completeAuthorization(String, String)}, which runs
+     * only after the admin has picked. A short-lived token is enough to enumerate Pages, and the Page
+     * access tokens {@code listPages} returns are deliberately dropped: the picker needs identities,
+     * not credentials.
+     */
+    @Override
+    public List<OAuthAccount> listAuthorizableAccounts(String accessToken) {
+        return listAvailablePages(accessToken).stream()
+                .map(page -> new OAuthAccount(page.get(CONFIG_PAGE_ID), page.get(CONFIG_PAGE_NAME)))
+                .toList();
+    }
+
+    /**
+     * The shared completion seam {@code OAuthFlowService} calls once the admin has picked a Page. It
+     * is a thin bridge onto {@link #completeAuthorization(String, String)}: Java has no structural
+     * typing, so without this override that method would <b>not</b> satisfy
+     * {@link OAuth2Connector#completeAuthorization(OAuthCompletionRequest)} and the flow would
+     * silently fall through to the interface's no-op default — persisting the short-lived user token
+     * and no Page identity at all.
+     *
+     * <p>The credential returned is the <b>Page</b> access token, not the user token: that is what
+     * publishing authenticates with, and it is long-lived because it was read with the long-lived
+     * user token. It goes to the encrypted slot; only the non-secret Page/Instagram identifiers ride
+     * along in {@link OAuthCompletion#config()}, which is plaintext JSON.
+     */
+    @Override
+    public OAuthCompletion completeAuthorization(OAuthCompletionRequest request) {
+        MetaAuthorization authorization =
+                completeAuthorization(request.accessToken(), request.selectedAccountId());
+        Object pageName = authorization.config().get(CONFIG_PAGE_NAME);
+        return new OAuthCompletion(authorization.pageAccessToken(), request.refreshToken(),
+                pageName != null ? pageName.toString() : null, authorization.config());
+    }
+
+    /**
      * Completes the Meta connect flow after the shared authorization-code exchange.
      *
      * @param shortLivedUserToken the {@code access_token} the code exchange returned

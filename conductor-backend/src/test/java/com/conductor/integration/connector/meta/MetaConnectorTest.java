@@ -8,6 +8,7 @@ import com.conductor.integration.AuthType;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.IntegrationToolSpec;
+import com.conductor.integration.OAuth2Connector;
 import com.conductor.integration.connector.meta.MetaConnector.MetaAuthorization;
 import com.conductor.integration.connector.meta.MetaConnector.MetaTarget;
 import com.conductor.integration.connector.meta.MetaConnector.MetaTargetType;
@@ -24,6 +25,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -194,6 +197,84 @@ class MetaConnectorTest {
         // Page access tokens are credentials — never handed to a picker response.
         assertThat(pages.get(0)).doesNotContainKey("accessToken");
         assertThat(pages.get(1)).doesNotContainKey("instagramBusinessAccountId");
+    }
+
+    // --- [auto] Meta implements the generic completion seam rather than falling through to the no-op ---
+
+    @Test
+    void completionSeam_returnsTheLongLivedPageTokenAsTheCredentialAndTheIdsAsConfig() {
+        when(graphClient.exchangeForLongLivedUserToken("app-id", "app-secret", SHORT_LIVED))
+                .thenReturn(new LongLivedToken(LONG_LIVED, 5184000L));
+        when(graphClient.listPages(LONG_LIVED)).thenReturn(List.of(
+                new PageAccount("page-1", "Acme Marketing", "page-1-token", "ig-17841400000", "acme"),
+                new PageAccount("page-2", "Acme Support", "page-2-token", null, null)));
+
+        OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
+                new OAuth2Connector.OAuthCompletionRequest(SHORT_LIVED, null, "page-1"));
+
+        assertThat(completion.accessToken()).isEqualTo("page-1-token");
+        assertThat(completion.label()).isEqualTo("Acme Marketing");
+        assertThat(completion.config())
+                .containsEntry("pageId", "page-1")
+                .containsEntry("pageName", "Acme Marketing")
+                .containsEntry("instagramBusinessAccountId", "ig-17841400000")
+                .containsEntry("instagramUsername", "acme");
+    }
+
+    @Test
+    void completionSeam_neverPutsATokenInThePlaintextConfig() {
+        when(graphClient.exchangeForLongLivedUserToken(anyString(), anyString(), anyString()))
+                .thenReturn(new LongLivedToken(LONG_LIVED, 5184000L));
+        when(graphClient.listPages(LONG_LIVED)).thenReturn(List.of(
+                new PageAccount("page-1", "Acme Marketing", "page-1-token", "ig-1", "acme")));
+
+        OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
+                new OAuth2Connector.OAuthCompletionRequest(SHORT_LIVED, "refresh-1", "page-1"));
+
+        assertThat(completion.config().values()).doesNotContain(SHORT_LIVED, LONG_LIVED, "page-1-token", "refresh-1");
+        assertThat(completion.config().keySet()).noneSatisfy(key ->
+                assertThat(key.toLowerCase()).contains("token"));
+    }
+
+    @Test
+    void requiresAccountSelection_isTrue_becauseTheGrantCoversEveryPageTheUserAdministers() {
+        assertThat(connector.requiresAccountSelection()).isTrue();
+    }
+
+    @Test
+    void listAuthorizableAccounts_enumeratesPagesForThePicker_fromTheShortLivedToken() {
+        // The flow service hands the picker the SHORT-LIVED token the exchange stored; the long-lived
+        // swap only happens inside completeAuthorization, after a Page has been chosen.
+        when(graphClient.listPages(SHORT_LIVED)).thenReturn(List.of(
+                new PageAccount("page-1", "Acme Marketing", "page-1-token", "ig-1", "acme"),
+                new PageAccount("page-2", "Acme Support", "page-2-token", null, null)));
+
+        List<OAuth2Connector.OAuthAccount> accounts = connector.listAuthorizableAccounts(SHORT_LIVED);
+
+        assertThat(accounts).extracting(OAuth2Connector.OAuthAccount::id)
+                .containsExactly("page-1", "page-2");
+        assertThat(accounts).extracting(OAuth2Connector.OAuthAccount::label)
+                .containsExactly("Acme Marketing", "Acme Support");
+        // Page access tokens are credentials and never reach the picker.
+        assertThat(accounts.toString()).doesNotContain("page-1-token").doesNotContain("page-2-token");
+    }
+
+    @Test
+    void connector_actuallyOverridesTheCompletionSeam_ratherThanDeclaringALookalikeOverload() {
+        // The bug this guards: MetaConnector declared completeAuthorization(String, String), which
+        // Java does not treat as implementing completeAuthorization(OAuthCompletionRequest) — so the
+        // flow silently used the interface's no-op default. A refactor must not regress to that.
+        Method seam = Arrays.stream(MetaConnector.class.getDeclaredMethods())
+                .filter(m -> m.getName().equals("completeAuthorization"))
+                .filter(m -> Arrays.equals(m.getParameterTypes(),
+                        new Class<?>[]{OAuth2Connector.OAuthCompletionRequest.class}))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError(
+                        "MetaConnector must override completeAuthorization(OAuthCompletionRequest)"));
+
+        assertThat(seam.getReturnType()).isEqualTo(OAuth2Connector.OAuthCompletion.class);
+        assertThat(Arrays.stream(MetaConnector.class.getDeclaredMethods()).map(Method::getName))
+                .contains("requiresAccountSelection", "listAuthorizableAccounts");
     }
 
     // --- [auto] meta.json declares both publish actions and the connector is not singleInstance ---
