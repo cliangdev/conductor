@@ -1,5 +1,6 @@
 package com.conductor.integration.connector.meta;
 
+import com.conductor.entity.Asset;
 import com.conductor.integration.ActionConnector;
 import com.conductor.integration.ActionResult;
 import com.conductor.integration.ConnectionContext;
@@ -9,15 +10,23 @@ import com.conductor.integration.ConnectorMetadata;
 import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.FieldType;
 import com.conductor.integration.OAuth2Connector;
+import com.conductor.repository.AssetRepository;
+import com.conductor.service.AssetService;
+import com.conductor.service.StorageService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Meta publishing connector: one Facebook Page plus the Instagram Business account linked to it.
@@ -44,8 +53,9 @@ import java.util.Map;
  * <p>Personal Facebook profiles are not supported — Meta's publishing APIs are Page-only, and a user
  * with no Pages fails {@link #completeAuthorization} rather than connecting to something unpublishable.
  *
- * <p>The publish action bodies land in later tasks; {@link #invoke} declares both actions and returns
- * a permanent "not implemented" error for each until then.
+ * <p>Publishing itself lives in {@link FacebookPublishAction} and {@link InstagramPublishAction}; this
+ * class routes {@link #invoke} to them and owns the seam they resolve media through
+ * ({@link PublishMediaResolver}).
  */
 @Component
 @Profile("!local")
@@ -56,23 +66,42 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     static final String CONFIG_IG_ACCOUNT_ID = "instagramBusinessAccountId";
     static final String CONFIG_IG_USERNAME = "instagramUsername";
 
-    private static final String ACTION_PUBLISH_FACEBOOK = "publish_facebook_post";
-    private static final String ACTION_PUBLISH_INSTAGRAM = "publish_instagram_media";
+    /**
+     * A publish invocation's deadline. Far longer than the caller's webhook-shaped default because a
+     * Facebook video is uploaded in chunks and an Instagram video container is polled until Meta has
+     * finished ingesting it — both routinely outrun ten seconds, and a timeout is terminal-ambiguous
+     * (dead-lettered, never retried), so an under-sized deadline throws away posts that were succeeding.
+     */
+    private static final Duration INVOCATION_TIMEOUT = Duration.ofMinutes(12);
 
     private final Environment environment;
     private final MetaGraphClient graphClient;
+    private final FacebookPublishAction facebookPublisher;
+    private final InstagramPublishAction instagramPublisher;
 
-    // @Autowired is load-bearing with two constructors: without it Spring looks for a no-arg
+    // @Autowired is load-bearing with several constructors: without it Spring looks for a no-arg
     // constructor and the context fails at deploy only, since @Profile("!local") beans never
     // instantiate in tests (see DiscordActionConnector).
     @Autowired
-    public MetaConnector(Environment environment) {
-        this(environment, new MetaGraphClient());
+    public MetaConnector(Environment environment, AssetRepository assetRepository, StorageService storageService) {
+        this(environment, new MetaGraphClient(),
+                new AssetPublishMediaResolver(assetRepository, storageService));
     }
 
     MetaConnector(Environment environment, MetaGraphClient graphClient) {
+        this(environment, graphClient, workItemId -> List.of());
+    }
+
+    MetaConnector(Environment environment, MetaGraphClient graphClient, PublishMediaResolver mediaResolver) {
         this.environment = environment;
         this.graphClient = graphClient;
+        this.facebookPublisher = new FacebookPublishAction(graphClient, mediaResolver);
+        this.instagramPublisher = new InstagramPublishAction(graphClient, mediaResolver);
+    }
+
+    /** The Instagram publisher, so a test can shrink its container poll interval. */
+    InstagramPublishAction instagramPublisher() {
+        return instagramPublisher;
     }
 
     /** Which surface a connected Meta account can publish to. */
@@ -279,13 +308,22 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
     }
 
     @Override
+    public Optional<Duration> getInvocationTimeout() {
+        return Optional.of(INVOCATION_TIMEOUT);
+    }
+
+    @Override
     public ActionResult invoke(String actionId, Map<String, Object> input, ConnectionContext ctx) {
-        // Both action bodies are separate follow-up tasks. A returned error is PERMANENT per the
-        // ActionConnector contract, so an accidental invocation dead-letters instead of retrying.
-        if (ACTION_PUBLISH_FACEBOOK.equals(actionId) || ACTION_PUBLISH_INSTAGRAM.equals(actionId)) {
-            return ActionResult.error("Meta action '" + actionId + "' is not implemented yet");
-        }
-        return ActionResult.error("Unknown Meta action: " + actionId);
+        Map<String, Object> safeInput = input != null ? input : Map.of();
+        return switch (actionId == null ? "" : actionId) {
+            case FacebookPublishAction.ACTION_PUBLISH -> facebookPublisher.publish(safeInput, ctx);
+            case FacebookPublishAction.ACTION_DELETE -> facebookPublisher.delete(safeInput, ctx);
+            case FacebookPublishAction.ACTION_GET -> facebookPublisher.get(safeInput, ctx);
+            case InstagramPublishAction.ACTION_PUBLISH -> instagramPublisher.publish(safeInput, ctx);
+            // A returned error is PERMANENT per the ActionConnector contract, so a misrouted invocation
+            // dead-letters instead of retrying an action that will never exist.
+            default -> ActionResult.error("Unknown Meta action: " + actionId);
+        };
     }
 
     private MetaGraphClient.PageAccount selectPage(List<MetaGraphClient.PageAccount> pages, String selectedPageId) {
@@ -328,5 +366,168 @@ public class MetaConnector implements OAuth2Connector, ActionConnector {
         }
         String text = value.toString();
         return text.isBlank() ? null : text;
+    }
+
+    // ---- media resolution ------------------------------------------------------------------------
+
+    /**
+     * One piece of publishable media, with a read URL Meta can fetch. {@code gcsPath} is kept alongside
+     * it because Facebook's resumable video upload sends bytes rather than a URL.
+     */
+    public record PublishMedia(String url, String gcsPath, String contentType, Long sizeBytes) {
+
+        public boolean isVideo() {
+            return contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("video/");
+        }
+
+        public boolean isImage() {
+            return contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("image/");
+        }
+    }
+
+    /**
+     * How a publisher turns a Work Item handle into media Meta can fetch.
+     *
+     * <p><b>Every URL this returns must be minted by the call itself.</b> The publish payload carries a
+     * {@code work_item_id}, never a media URL, precisely so the signed read URL is created at fire time:
+     * Meta fetches the bytes during the publish/container-create call, and a URL signed when a human
+     * approved the post — possibly days earlier — would have expired by then.
+     */
+    public interface PublishMediaResolver {
+
+        /** This Work Item's uploaded media, in upload order, each with a freshly signed read URL. */
+        List<PublishMedia> resolve(String workItemId);
+
+        /** The raw bytes behind a resolved item, for the upload paths that send content instead of a URL. */
+        default byte[] download(PublishMedia media) {
+            throw new IllegalStateException("This Meta connection cannot read media bytes for upload");
+        }
+    }
+
+    /**
+     * The production resolver: confirmed file uploads on the Work Item, signed for reading now. Only
+     * {@code UPLOADED} assets with a stored {@code gcs_path} qualify — a {@code PENDING} row names an
+     * object that may not exist, and handing Meta a URL to nothing fails the post at fire time.
+     */
+    static final class AssetPublishMediaResolver implements PublishMediaResolver {
+
+        /**
+         * Signed-read lifetime. Longer than the 15-minute preview URL because Meta may still be pulling a
+         * large video minutes after the call, and short enough that the URL is useless by the next
+         * scheduled post.
+         */
+        static final int MEDIA_URL_EXPIRY_MINUTES = 60;
+
+        private final AssetRepository assetRepository;
+        private final StorageService storageService;
+
+        AssetPublishMediaResolver(AssetRepository assetRepository, StorageService storageService) {
+            this.assetRepository = assetRepository;
+            this.storageService = storageService;
+        }
+
+        @Override
+        public List<PublishMedia> resolve(String workItemId) {
+            if (workItemId == null || workItemId.isBlank()) {
+                return List.of();
+            }
+            return assetRepository.findAllByWorkItemId(workItemId).stream()
+                    .filter(asset -> AssetService.KIND_FILE.equals(asset.getKind()))
+                    .filter(asset -> AssetService.UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus()))
+                    .filter(asset -> asset.getGcsPath() != null && !asset.getGcsPath().isBlank())
+                    .sorted(Comparator.comparing(Asset::getCreatedAt,
+                                    Comparator.nullsLast(Comparator.naturalOrder()))
+                            .thenComparing(Asset::getId))
+                    .map(asset -> new PublishMedia(
+                            storageService.generateSignedUrl(asset.getGcsPath(), MEDIA_URL_EXPIRY_MINUTES),
+                            asset.getGcsPath(), asset.getContentType(), asset.getSizeBytes()))
+                    .filter(media -> media.url() != null && !media.url().isBlank())
+                    .toList();
+        }
+
+        @Override
+        public byte[] download(PublishMedia media) {
+            return storageService.download(media.gcsPath());
+        }
+    }
+
+    // ---- shared publisher helpers ----------------------------------------------------------------
+
+    /**
+     * Input/context reading and failure classification shared by the Facebook and Instagram publishers.
+     * Lives here rather than in either publisher so neither one owns the other's vocabulary.
+     */
+    static final class MetaActions {
+
+        private MetaActions() {}
+
+        /** A non-blank string action parameter, or null. */
+        static String string(Map<String, Object> input, String key) {
+            Object value = input != null ? input.get(key) : null;
+            if (value == null) {
+                return null;
+            }
+            String text = value.toString().trim();
+            return text.isEmpty() ? null : text;
+        }
+
+        /** A non-blank value from the connection's non-secret config, or null. */
+        static String stringConfig(ConnectionContext ctx, String key) {
+            return ctx == null ? null : stringValue(ctx.config(), key);
+        }
+
+        /** The Page access token this connection publishes with, or null when it has none. */
+        static String tokenOrNull(ConnectionContext ctx) {
+            String token = ctx != null ? ctx.accessToken() : null;
+            return token != null && !token.isBlank() ? token : null;
+        }
+
+        /**
+         * The media this invocation publishes: an explicitly supplied URL when the caller named one,
+         * otherwise the Work Item's own media with its read URL minted <b>now</b>, inside the invocation.
+         * Video wins over image when the Work Item carries both, because a video post can't be satisfied
+         * by the still.
+         */
+        static PublishMedia resolveMedia(PublishMediaResolver resolver, Map<String, Object> input,
+                                         String explicitImageUrl, String explicitVideoUrl) {
+            if (explicitVideoUrl != null) {
+                return new PublishMedia(explicitVideoUrl, null, "video/*", null);
+            }
+            if (explicitImageUrl != null) {
+                return new PublishMedia(explicitImageUrl, null, "image/*", null);
+            }
+            List<PublishMedia> media = resolver.resolve(string(input, "work_item_id"));
+            if (media.isEmpty()) {
+                return null;
+            }
+            return media.stream().filter(PublishMedia::isVideo).findFirst()
+                    .orElseGet(() -> media.stream().filter(PublishMedia::isImage).findFirst()
+                            .orElse(media.get(0)));
+        }
+
+        /**
+         * Translates a 4xx into the {@link ActionConnector} contract's PERMANENT branch — a returned
+         * error, dead-lettered without retry, because Meta rejected this exact request and repeating it
+         * would only burn attempts.
+         *
+         * <p>{@code 429} is the deliberate exception: it says "not now", not "not ever", so it is
+         * rethrown to land on the TRANSIENT branch and be retried with backoff. The response body is
+         * truncated because Meta's error payloads carry long debug traces.
+         */
+        static ActionResult permanentOrRethrow(HttpClientErrorException e, String context) {
+            if (e.getStatusCode().value() == 429) {
+                throw e;
+            }
+            return ActionResult.error(context + ": " + e.getStatusCode().value() + " "
+                    + truncate(e.getResponseBodyAsString()));
+        }
+
+        private static String truncate(String body) {
+            if (body == null || body.isBlank()) {
+                return "(no response body)";
+            }
+            String trimmed = body.trim();
+            return trimmed.length() <= 500 ? trimmed : trimmed.substring(0, 500) + "…";
+        }
     }
 }

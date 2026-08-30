@@ -285,7 +285,8 @@ class MetaConnectorTest {
 
         assertThat(spec.description()).isNotBlank();
         assertThat(spec.actions()).extracting(ActionSpec::id)
-                .containsExactlyInAnyOrder("publish_facebook_post", "publish_instagram_media");
+                .containsExactlyInAnyOrder("publish_facebook_post", "publish_instagram_media",
+                        "delete_facebook_post", "get_facebook_post");
 
         ActionSpec facebook = actionById(spec, "publish_facebook_post");
         assertThat(facebook.params()).isNotEmpty();
@@ -297,11 +298,27 @@ class MetaConnectorTest {
     }
 
     @Test
-    void getActions_derivesBothActionsFromToolSpec() {
+    void toolSpec_declaresTheRevokeAndConfirmActionsOtherServicesAlreadyCall() {
+        IntegrationToolSpec spec = connector.getToolSpec();
+
+        // NativeHandoffService revokes a scheduled post through exactly this action id and param.
+        ActionSpec delete = actionById(spec, "delete_facebook_post");
+        assertThat(delete.params()).containsKey("post_id");
+        assertThat(delete.outputKeys()).contains("post_id");
+
+        // The native-lane confirmation poller asks whether a scheduled post has gone live.
+        ActionSpec get = actionById(spec, "get_facebook_post");
+        assertThat(get.params()).containsKey("post_id");
+        assertThat(get.outputKeys()).contains("is_published", "permalink");
+    }
+
+    @Test
+    void getActions_derivesEveryActionFromToolSpec() {
         List<ActionDescriptor> actions = connector.getActions();
 
         assertThat(actions).extracting(ActionDescriptor::id)
-                .containsExactlyInAnyOrder("publish_facebook_post", "publish_instagram_media");
+                .containsExactlyInAnyOrder("publish_facebook_post", "publish_instagram_media",
+                        "delete_facebook_post", "get_facebook_post");
         assertThat(actions).allSatisfy(a -> assertThat(a.inputKeys()).isNotEmpty());
     }
 
@@ -331,20 +348,31 @@ class MetaConnectorTest {
         assertThat(connectionService.isSingleInstance("meta")).isFalse();
     }
 
-    // --- publish action bodies land in later tasks (T5.2 / T5.3) ---
+    // --- routing and invocation shape (bodies are covered by the per-action tests) ---
 
     @Test
-    void publishActions_areDeclaredButNotYetImplemented() {
-        ConnectionContext ctx = new ConnectionContext("proj", "meta", "conn", "page-token", null, null,
+    void invoke_routesEveryDeclaredActionToAPublisher_ratherThanReportingItUnknown() {
+        ConnectionContext ctx = new ConnectionContext("proj", "meta", "conn", null, null, null,
                 Map.of("pageId", "page-1", "instagramBusinessAccountId", "ig-1"), null);
 
-        ActionResult facebook = connector.invoke("publish_facebook_post", Map.of("message", "hi"), ctx);
-        ActionResult instagram = connector.invoke("publish_instagram_media", Map.of("image_url", "x"), ctx);
+        // With no Page token every action fails its own credential guard — which is precisely the proof
+        // that each was routed to its publisher instead of falling through to "Unknown Meta action".
+        for (String actionId : List.of("publish_facebook_post", "delete_facebook_post",
+                "get_facebook_post", "publish_instagram_media")) {
+            ActionResult result = connector.invoke(actionId, Map.of("post_id", "p", "message", "hi"), ctx);
+            assertThat(result.success()).isFalse();
+            assertThat(result.message()).doesNotContain("Unknown Meta action");
+        }
+        org.mockito.Mockito.verifyNoInteractions(graphClient);
+    }
 
-        assertThat(facebook.success()).isFalse();
-        assertThat(facebook.message()).contains("not implemented");
-        assertThat(instagram.success()).isFalse();
-        assertThat(instagram.message()).contains("not implemented");
+    @Test
+    void invocationTimeout_isFarLongerThanTheWebhookShapedDefault_becausePublishingUploadsAndPolls() {
+        // A timeout is terminal-ambiguous (dead-lettered, never retried), so an under-sized deadline
+        // throws away posts that were in fact succeeding.
+        assertThat(connector.getInvocationTimeout()).isPresent();
+        assertThat(connector.getInvocationTimeout().orElseThrow())
+                .isGreaterThan(java.time.Duration.ofMinutes(1));
     }
 
     @Test
