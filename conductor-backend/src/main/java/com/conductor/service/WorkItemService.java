@@ -24,7 +24,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -114,8 +117,32 @@ public class WorkItemService {
     @Transactional
     public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
                                   String status, String assigneeId, User caller) {
+        return patchWorkItem(projectId, workItemId, title, description, status, assigneeId, null, null, caller);
+    }
+
+    /**
+     * Patch overload carrying the generic per-item scheduling fields (V111). {@code scheduledFor} and
+     * {@code scheduleTimezone} follow the same PATCH semantics as the rest: {@code null} means "field
+     * absent — leave unchanged"; a blank {@code scheduleTimezone} clears the stored zone (mirroring how a
+     * blank {@code assigneeId} unassigns). {@code scheduleTimezone} must be a zone {@link ZoneId#of} can
+     * resolve — an unknown zone is a {@link BusinessException} (400), raised before anything is written so
+     * a rejected patch persists none of its other fields either.
+     */
+    @Transactional
+    public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
+                                  String status, String assigneeId, OffsetDateTime scheduledFor,
+                                  String scheduleTimezone, User caller) {
         verifyMembership(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+
+        String validatedTimezone = validateTimezone(scheduleTimezone);
+
+        if (scheduledFor != null) {
+            workItem.setScheduledFor(scheduledFor);
+        }
+        if (scheduleTimezone != null) {
+            workItem.setScheduleTimezone(validatedTimezone);
+        }
 
         if (title != null) {
             workItem.setTitle(title);
@@ -333,6 +360,25 @@ public class WorkItemService {
             throw new EntityNotFoundException("No tasks found for Work Item " + workItemId);
         }
         return tasks;
+    }
+
+    /**
+     * Resolve a caller-supplied schedule timezone to the value to store: {@code null} for absent or blank
+     * (blank clears), otherwise the zone id itself once {@link ZoneId#of} confirms it resolves. Unknown
+     * zones surface as a {@link BusinessException} so {@code GlobalExceptionHandler} renders an RFC 7807
+     * 400 rather than letting a bad zone reach the column.
+     */
+    private static String validateTimezone(String scheduleTimezone) {
+        if (scheduleTimezone == null || scheduleTimezone.isBlank()) {
+            return null;
+        }
+        try {
+            ZoneId.of(scheduleTimezone);
+        } catch (DateTimeException e) {
+            throw new BusinessException("Unknown time zone: '" + scheduleTimezone
+                    + "'. Expected an IANA zone id such as America/New_York.");
+        }
+        return scheduleTimezone;
     }
 
     private void verifyMembership(String projectId, String userId) {

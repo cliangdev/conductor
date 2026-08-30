@@ -100,6 +100,20 @@ public class WorkItem {
     @ColumnTransformer(write = "?::jsonb")
     private JsonNode outcomeMetric;
 
+    // --- Generic per-item scheduling (V111). Workflow-agnostic: any Workflow can put an item on a clock. ---
+
+    /** When this Work Item is due, as an absolute instant. Null when the item is not scheduled. */
+    @Column(name = "scheduled_for")
+    private OffsetDateTime scheduledFor;
+
+    /**
+     * IANA zone id the schedule was authored in (e.g. {@code America/New_York}), kept alongside the
+     * absolute instant so a local-wall-clock reading of the schedule survives DST. Null when unscheduled
+     * or when the author expressed no zone.
+     */
+    @Column(name = "schedule_timezone", length = 64)
+    private String scheduleTimezone;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -163,6 +177,12 @@ public class WorkItem {
 
     public JsonNode getOutcomeMetric() { return outcomeMetric; }
     public void setOutcomeMetric(JsonNode outcomeMetric) { this.outcomeMetric = outcomeMetric; }
+
+    public OffsetDateTime getScheduledFor() { return scheduledFor; }
+    public void setScheduledFor(OffsetDateTime scheduledFor) { this.scheduledFor = scheduledFor; }
+
+    public String getScheduleTimezone() { return scheduleTimezone; }
+    public void setScheduleTimezone(String scheduleTimezone) { this.scheduleTimezone = scheduleTimezone; }
 
     public JsonNode getWorkItemTasks() { return workItemTasks; }
     public void setWorkItemTasks(JsonNode workItemTasks) { this.workItemTasks = workItemTasks; }

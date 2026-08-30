@@ -1602,6 +1602,19 @@ components:
           type: integer
         assignee:
           $ref: "#/components/schemas/WorkItemAssignee"
+        scheduledFor:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this Work Item is due, as an ISO-8601 date-time. Workflow-agnostic — any Workflow may put
+            an item on a clock. Null when the item is not scheduled.
+        scheduleTimezone:
+          type: string
+          nullable: true
+          description: >-
+            IANA zone id the schedule was authored in (e.g. America/New_York), retained alongside the
+            absolute instant so a local-wall-clock reading survives DST. Null when unscheduled.
 
     WorkItemAssignee:
       type: object
@@ -1659,6 +1672,19 @@ components:
           type: string
           nullable: true
           description: User ID to assign to this Work Item, or null to unassign
+        scheduledFor:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this Work Item is due, as an ISO-8601 date-time. Omit to leave the existing schedule
+            unchanged.
+        scheduleTimezone:
+          type: string
+          nullable: true
+          description: >-
+            IANA zone id the schedule is authored in (e.g. America/New_York). Omit to leave unchanged, or
+            send an empty string to clear it. An unrecognized zone is rejected with a 400.
 
     AvailableTransition:
       type: object
