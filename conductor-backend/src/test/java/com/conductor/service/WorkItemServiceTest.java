@@ -23,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -73,6 +74,9 @@ class WorkItemServiceTest {
     @Mock
     private AssetService assetService;
 
+    @Mock
+    private NativeHandoffService nativeHandoffService;
+
     @InjectMocks
     private WorkItemService workItemService;
 
@@ -119,6 +123,66 @@ class WorkItemServiceTest {
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    // --- native-lane handoff wiring (T4.5) ---
+
+    /**
+     * Entering the scheduled status must hand off native-lane targets, so a Facebook/YouTube post whose fire
+     * time is inside the platform window is actually given to the platform.
+     */
+    @Test
+    void enteringScheduledHandsOffNativeTargets() {
+        testIssue.setCurrentStatus("APPROVED");
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
+                .thenReturn(Optional.of(memberAs(MemberRole.ADMIN)));
+
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, "SCHEDULED", null, null, null, caller);
+
+        verify(nativeHandoffService).handoffForPost(testIssue);
+        verify(nativeHandoffService, never()).unschedule(any());
+    }
+
+    /**
+     * Leaving the scheduled status must revoke first. A handed-off post already exists on the platform, so an
+     * unschedule/edit-revert that skipped revocation would still go live.
+     */
+    @Test
+    void leavingScheduledRevokesBeforeTheStatusChange() {
+        testIssue.setCurrentStatus("SCHEDULED");
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
+                .thenReturn(Optional.of(memberAs(MemberRole.ADMIN)));
+
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, "APPROVED", null, null, null, caller);
+
+        InOrder inOrder = Mockito.inOrder(nativeHandoffService, workItemRepository);
+        inOrder.verify(nativeHandoffService).unschedule(testIssue);
+        inOrder.verify(workItemRepository).save(testIssue);
+        verify(nativeHandoffService, never()).handoffForPost(any());
+    }
+
+    /** Deleting a scheduled Post must not leave a live post behind on the platform. */
+    @Test
+    void deletingAWorkItemRevokesAnyNativeHandoff() {
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+
+        workItemService.deleteWorkItem("proj-1", "issue-1");
+
+        InOrder inOrder = Mockito.inOrder(nativeHandoffService, workItemRepository);
+        inOrder.verify(nativeHandoffService).unschedule(testIssue);
+        inOrder.verify(workItemRepository).delete(testIssue);
+    }
+
+    private ProjectMember memberAs(MemberRole role) {
+        ProjectMember member = new ProjectMember();
+        member.setProject(project);
+        member.setUser(caller);
+        member.setRole(role);
+        return member;
     }
 
     @Test

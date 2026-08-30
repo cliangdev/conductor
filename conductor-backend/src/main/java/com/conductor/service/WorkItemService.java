@@ -51,6 +51,7 @@ public class WorkItemService {
     private final UserRepository userRepository;
     private final WorkItemWorkflowService workItemWorkflowService;
     private final AssetService assetService;
+    private final NativeHandoffService nativeHandoffService;
 
     public WorkItemService(
             WorkItemRepository workItemRepository,
@@ -61,7 +62,8 @@ public class WorkItemService {
             CommentRepository commentRepository,
             UserRepository userRepository,
             WorkItemWorkflowService workItemWorkflowService,
-            AssetService assetService) {
+            AssetService assetService,
+            NativeHandoffService nativeHandoffService) {
         this.workItemRepository = workItemRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
@@ -71,6 +73,7 @@ public class WorkItemService {
         this.userRepository = userRepository;
         this.workItemWorkflowService = workItemWorkflowService;
         this.assetService = assetService;
+        this.nativeHandoffService = nativeHandoffService;
     }
 
     /**
@@ -159,11 +162,25 @@ public class WorkItemService {
         if (status != null) {
             verifyCallerCanChangeStatus(projectId, caller.getId());
             workItemWorkflowService.validateTransition(projectId, workItem, status);
+            // Leaving the scheduled status revokes any native-lane handoff FIRST, inside this transaction:
+            // a Facebook/YouTube post already handed to the platform would otherwise still go live after an
+            // unschedule, edit-revert or delete. A failed revocation throws, so the status change never
+            // commits and we never strand a live scheduled post.
+            if (NativeHandoffService.SCHEDULED_STATUS.equals(previousStatus)
+                    && !NativeHandoffService.SCHEDULED_STATUS.equals(status)) {
+                nativeHandoffService.unschedule(workItem);
+            }
             workItem.setCurrentStatus(status);
             statusChanged = true;
         }
 
         workItemRepository.save(workItem);
+
+        // Entering the scheduled status hands off native-lane targets whose fire time is inside the
+        // platform window; far-future ones stay PENDING for NativeHandoffService's deferred sweep.
+        if (statusChanged && NativeHandoffService.SCHEDULED_STATUS.equals(workItem.getCurrentStatus())) {
+            nativeHandoffService.handoffForPost(workItem);
+        }
 
         if (statusChanged) {
             // PR link (if any) lives in github_pr Assets now, not on the Work Item; surfaced on the merge event.
@@ -399,6 +416,8 @@ public class WorkItemService {
     @Transactional
     public void deleteWorkItem(String projectId, String workItemId) {
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        // Deleting a scheduled Post must not leave a live post behind on the platform.
+        nativeHandoffService.unschedule(workItem);
         workItemRepository.delete(workItem);
     }
 
