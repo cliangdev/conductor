@@ -15,7 +15,10 @@ import java.util.Map;
 
 /**
  * Executes workflow steps of type "action". Resolves the ACTIVE connection for the given
- * connectorId (like {@link IntegrationStepExecutor}), interpolates {@code with.input} values
+ * connectorId (like {@link IntegrationStepExecutor}) — or, when the step supplies an optional
+ * {@code with.connection_id}, that exact connection, so a project with several accounts on one
+ * platform can target one of them; steps that omit it resolve exactly as before. Interpolates
+ * {@code with.input} values
  * (like {@link AgentStepExecutor}'s {@code context} block — the orchestrator does not
  * pre-interpolate {@code with:}, executors do it themselves), and calls
  * {@link ActionInvocationService#invoke} with an idempotency key derived from this job run + step,
@@ -64,11 +67,26 @@ public class ActionStepExecutor implements WorkflowExecutionBackend {
             return StepResult.failed("", "Step 'with.action' is required for action step");
         }
 
-        Connection conn = activeConnectionResolver.resolve(projectId, connectorId).orElse(null);
-        if (conn == null) {
-            return StepResult.failed(
-                    "No active connection found for connector: " + connectorId,
-                    "Integration not connected: " + connectorId);
+        String connectionId = (String) withBlock.get("connection_id");
+        Connection conn;
+        if (connectionId != null && !connectionId.isBlank()) {
+            // An explicitly named connection is never silently swapped for another account: if it
+            // does not resolve we fail rather than falling back to connector-only resolution.
+            conn = activeConnectionResolver.resolveById(projectId, connectionId)
+                    .filter(c -> connectorId.equals(c.getConnectorId()))
+                    .orElse(null);
+            if (conn == null) {
+                return StepResult.failed(
+                        "No active connection '" + connectionId + "' for connector: " + connectorId,
+                        "Integration connection not available: " + connectorId);
+            }
+        } else {
+            conn = activeConnectionResolver.resolve(projectId, connectorId).orElse(null);
+            if (conn == null) {
+                return StepResult.failed(
+                        "No active connection found for connector: " + connectorId,
+                        "Integration not connected: " + connectorId);
+            }
         }
 
         // The orchestrator hands executors the raw `with:` map, unlike other interpolated fields
