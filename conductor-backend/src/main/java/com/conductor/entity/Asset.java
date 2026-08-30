@@ -46,6 +46,23 @@ public class Asset {
     @Column(name = "done", nullable = false)
     private boolean done = false;
 
+    /**
+     * Upload lifecycle of a {@code file} asset: {@code PENDING} while the signed URL is outstanding,
+     * {@code UPLOADED} once the object is confirmed in the bucket. Null for {@code link} assets.
+     */
+    @Column(name = "upload_status", length = 16)
+    private String uploadStatus;
+
+    @Column(name = "content_type", length = 128)
+    private String contentType;
+
+    @Column(name = "size_bytes")
+    private Long sizeBytes;
+
+    /** Object path in the storage bucket; always set once {@code uploadStatus} is {@code UPLOADED}. */
+    @Column(name = "gcs_path", columnDefinition = "TEXT")
+    private String gcsPath;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -86,6 +103,18 @@ public class Asset {
 
     public boolean isDone() { return done; }
     public void setDone(boolean done) { this.done = done; }
+
+    public String getUploadStatus() { return uploadStatus; }
+    public void setUploadStatus(String uploadStatus) { this.uploadStatus = uploadStatus; }
+
+    public String getContentType() { return contentType; }
+    public void setContentType(String contentType) { this.contentType = contentType; }
+
+    public Long getSizeBytes() { return sizeBytes; }
+    public void setSizeBytes(Long sizeBytes) { this.sizeBytes = sizeBytes; }
+
+    public String getGcsPath() { return gcsPath; }
+    public void setGcsPath(String gcsPath) { this.gcsPath = gcsPath; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
