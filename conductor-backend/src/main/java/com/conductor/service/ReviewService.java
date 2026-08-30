@@ -17,6 +17,8 @@ import com.conductor.signal.Signal;
 import com.conductor.signal.SignalBus;
 import com.conductor.signal.SignalOrigin;
 import com.conductor.signal.SignalTypes;
+import com.conductor.workflow.lifecycle.Statechart;
+import com.conductor.workflow.lifecycle.StatechartTransition;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +27,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 @Service
@@ -32,12 +35,20 @@ public class ReviewService {
 
     private static final Set<String> VALID_VERDICTS = Set.of("APPROVED", "CHANGES_REQUESTED", "COMMENTED");
 
+    /** The verdict that routes a Work Item back to its Workflow's changes-requested lane. */
+    private static final String CHANGES_REQUESTED_VERDICT = "CHANGES_REQUESTED";
+
+    /** The {@code reviewOutcomes} token a Workflow declares to opt its gated edge into that routing. */
+    private static final String REQUEST_CHANGES_OUTCOME = "request_changes";
+
     private final ReviewRepository reviewRepository;
     private final WorkItemReviewerRepository workItemReviewerRepository;
     private final ProjectMemberRepository projectMemberRepository;
     private final WorkItemRepository workItemRepository;
     private final UserRepository userRepository;
     private final SignalBus signalBus;
+    private final WorkItemWorkflowService workItemWorkflowService;
+    private final WorkItemService workItemService;
 
     public ReviewService(
             ReviewRepository reviewRepository,
@@ -45,13 +56,17 @@ public class ReviewService {
             ProjectMemberRepository projectMemberRepository,
             WorkItemRepository workItemRepository,
             UserRepository userRepository,
-            SignalBus signalBus) {
+            SignalBus signalBus,
+            WorkItemWorkflowService workItemWorkflowService,
+            WorkItemService workItemService) {
         this.reviewRepository = reviewRepository;
         this.workItemReviewerRepository = workItemReviewerRepository;
         this.projectMemberRepository = projectMemberRepository;
         this.workItemRepository = workItemRepository;
         this.userRepository = userRepository;
         this.signalBus = signalBus;
+        this.workItemWorkflowService = workItemWorkflowService;
+        this.workItemService = workItemService;
     }
 
     @Transactional
@@ -96,7 +111,54 @@ public class ReviewService {
                 Map.of("workItemId", workItemId, "workItemTitle", workItemTitle, "verdict", verdict),
                 new SignalOrigin("work_item", workItemId)));
 
+        routeOnVerdict(projectId, workItem, verdict);
+
         return review;
+    }
+
+    /**
+     * Move the Work Item onto the lane its bound Workflow declares for a {@code CHANGES_REQUESTED} verdict,
+     * so a reviewer's rejection lands the item back with its author instead of leaving it parked in the
+     * review status waiting for a human to move it by hand.
+     *
+     * <p>Entirely definition-driven — no status name is hardcoded here. A Workflow opts in by declaring both
+     * halves of the contract:
+     * <ol>
+     *   <li>the review-gated edge out of the current status lists {@code request_changes} among its
+     *       {@code reviewOutcomes} (i.e. the Workflow says this gate can be rejected, not just approved), and</li>
+     *   <li>the Workflow declares an edge from the current status to a status whose id <em>is</em> the verdict
+     *       ({@code CHANGES_REQUESTED}) — that edge, and the status it targets, are the definition's own
+     *       statement of where a rejected item goes.</li>
+     * </ol>
+     * A Workflow declaring neither (ENGINEERING, whose gated {@code CODE_REVIEW -> DONE} edge has no
+     * changes-requested lane) is untouched: reviews there stay advisory exactly as before.
+     *
+     * <p>An {@code APPROVED} verdict deliberately moves nothing. Approval only <em>satisfies</em> the gate;
+     * choosing to take the now-unblocked edge stays with the doer (or with a system trigger such as
+     * {@code pr_merged}), which is what keeps the gate a gate rather than an auto-advance.
+     */
+    private void routeOnVerdict(String projectId, WorkItem workItem, String verdict) {
+        if (workItem == null || !CHANGES_REQUESTED_VERDICT.equals(verdict)) {
+            return;
+        }
+        Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
+        String fromStatus = workItem.getCurrentStatus();
+
+        boolean gateAcceptsRejection = statechart.transitionsFrom(fromStatus).stream()
+                .filter(StatechartTransition::requiresReview)
+                .anyMatch(t -> t.reviewOutcomes().contains(REQUEST_CHANGES_OUTCOME));
+        if (!gateAcceptsRejection) {
+            return;
+        }
+
+        Optional<StatechartTransition> route = statechart.transition(fromStatus, verdict);
+        if (route.isEmpty()) {
+            return;
+        }
+
+        workItem.setCurrentStatus(route.get().to());
+        workItemRepository.save(workItem);
+        workItemService.publishStatusChanged(projectId, workItem, fromStatus, workItem.getCurrentStatus(), null);
     }
 
     @Transactional(readOnly = true)
