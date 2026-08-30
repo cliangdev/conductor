@@ -4,7 +4,10 @@ import com.conductor.entity.Asset;
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.WorkItemAssetsApi;
 import com.conductor.generated.v2.model.AssetResponse;
+import com.conductor.generated.v2.model.ConfirmAssetUploadRequest;
 import com.conductor.generated.v2.model.CreateAssetRequest;
+import com.conductor.generated.v2.model.CreateAssetUploadRequest;
+import com.conductor.generated.v2.model.CreateAssetUploadResponse;
 import com.conductor.generated.v2.model.PatchAssetRequest;
 import com.conductor.service.AssetService;
 import com.conductor.service.view.AssetInput;
@@ -13,6 +16,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 /**
@@ -27,9 +32,20 @@ import java.util.List;
  *
  * <p>No {@code @Transactional} here: the mapping only reads the Asset's own columns and the parent id
  * ({@code asset.getWorkItem().getId()} resolves off the already-loaded reference), so no lazy load is triggered.
+ *
+ * <p><b>File uploads (COND-23).</b> {@code POST .../assets/uploads} mints a PENDING row plus the URL the client
+ * PUTs bytes to, and {@code POST .../assets/{assetId}/confirm} flips it to UPLOADED — both thin wrappers over
+ * {@link AssetService}, which owns the allowlist, the size ceiling and the review-gate lock. {@code previewUrl}
+ * is minted per response rather than stored, so it is filled in only for UPLOADED file Assets.
  */
 @RestController
 public class WorkItemAssetsController implements WorkItemAssetsApi {
+
+    /**
+     * Mirrors {@code AssetService}'s upload-URL lifetime, which isn't exposed on its public surface. Only used
+     * to report {@code expiresAt} back to the client; the real expiry is enforced by the signed URL itself.
+     */
+    private static final int UPLOAD_URL_EXPIRY_MINUTES = 60;
 
     private final AssetService assetService;
 
@@ -39,8 +55,9 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
 
     @Override
     public ResponseEntity<List<AssetResponse>> listWorkItemAssets(String projectId, String workItemId) {
-        List<AssetResponse> body = assetService.listAssets(projectId, workItemId, currentUser()).stream()
-                .map(WorkItemAssetsController::toV2)
+        User caller = currentUser();
+        List<AssetResponse> body = assetService.listAssets(projectId, workItemId, caller).stream()
+                .map(asset -> toV2(projectId, workItemId, asset, caller))
                 .toList();
         return ResponseEntity.ok(body);
     }
@@ -51,16 +68,43 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
         AssetInput input = new AssetInput(
                 request.getType(), request.getLabel(), request.getKind().getValue(),
                 request.getRef(), request.getDone());
-        Asset created = assetService.createAsset(projectId, workItemId, input, currentUser());
-        return ResponseEntity.status(201).body(toV2(created));
+        User caller = currentUser();
+        Asset created = assetService.createAsset(projectId, workItemId, input, caller);
+        return ResponseEntity.status(201).body(toV2(projectId, workItemId, created, caller));
+    }
+
+    @Override
+    public ResponseEntity<CreateAssetUploadResponse> createWorkItemAssetUpload(String projectId, String workItemId,
+                                                                              CreateAssetUploadRequest request) {
+        AssetService.FileAssetInput input = new AssetService.FileAssetInput(
+                request.getType(), request.getLabel(), request.getFilename(),
+                request.getContentType(), request.getSizeBytes());
+        AssetService.FileAssetUploadTicket ticket =
+                assetService.createFileAsset(projectId, workItemId, input, currentUser());
+        Asset asset = ticket.asset();
+        CreateAssetUploadResponse body = new CreateAssetUploadResponse(
+                asset.getId(),
+                ticket.uploadUrl(),
+                asset.getGcsPath(),
+                OffsetDateTime.now(ZoneOffset.UTC).plusMinutes(UPLOAD_URL_EXPIRY_MINUTES));
+        return ResponseEntity.status(201).body(body);
+    }
+
+    @Override
+    public ResponseEntity<Void> confirmWorkItemAssetUpload(String projectId, String workItemId, String assetId,
+                                                           ConfirmAssetUploadRequest request) {
+        Long observedSizeBytes = request != null ? request.getSizeBytes() : null;
+        assetService.confirmUpload(projectId, workItemId, assetId, observedSizeBytes, currentUser());
+        return ResponseEntity.noContent().build();
     }
 
     @Override
     public ResponseEntity<AssetResponse> patchWorkItemAsset(String projectId, String workItemId, String assetId,
                                                             PatchAssetRequest request) {
         AssetPatch patch = new AssetPatch(request.getLabel(), request.getRef(), request.getDone());
-        Asset updated = assetService.patchAsset(projectId, workItemId, assetId, patch, currentUser());
-        return ResponseEntity.ok(toV2(updated));
+        User caller = currentUser();
+        Asset updated = assetService.patchAsset(projectId, workItemId, assetId, patch, caller);
+        return ResponseEntity.ok(toV2(projectId, workItemId, updated, caller));
     }
 
     @Override
@@ -69,8 +113,13 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
         return ResponseEntity.noContent().build();
     }
 
-    private static AssetResponse toV2(Asset asset) {
-        return new AssetResponse(
+    /**
+     * A {@code previewUrl} is minted per response, never persisted, and only for a file Asset whose bytes are
+     * actually there — {@code AssetService#resolvePreviewUrl} refuses a PENDING row, so the status check here is
+     * the precondition, not an optimization.
+     */
+    private AssetResponse toV2(String projectId, String workItemId, Asset asset, User caller) {
+        AssetResponse response = new AssetResponse(
                 asset.getId(),
                 asset.getWorkItem().getId(),
                 asset.getType(),
@@ -79,7 +128,15 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
                 asset.isDone(),
                 asset.getCreatedAt(),
                 asset.getUpdatedAt())
-                .label(asset.getLabel());
+                .label(asset.getLabel())
+                .uploadStatus(asset.getUploadStatus())
+                .contentType(asset.getContentType())
+                .sizeBytes(asset.getSizeBytes());
+        if (AssetService.KIND_FILE.equals(asset.getKind())
+                && AssetService.UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus())) {
+            response.previewUrl(assetService.resolvePreviewUrl(projectId, workItemId, asset.getId(), caller));
+        }
+        return response;
     }
 
     private User currentUser() {

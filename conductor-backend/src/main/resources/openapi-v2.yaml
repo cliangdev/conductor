@@ -1270,6 +1270,67 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/work-items/{workItemId}/assets/uploads:
+    post:
+      tags:
+        - work-item-assets
+      summary: Mint an upload URL for a file Asset
+      description: >-
+        Creates a PENDING file Asset row and returns the URL the client PUTs the raw bytes to
+        directly, so payloads never traverse the backend. On GCS this is a signed PUT URL bound to
+        the declared contentType; on the local profile (no signed-upload mechanism) it is the
+        internal passthrough `PUT /internal/v1/work-items/{workItemId}/assets/{assetId}/content`.
+        Content type, size and filename are validated before any row or URL is produced, so a
+        disallowed request yields neither. Finish with
+        `POST .../assets/{assetId}/confirm`. (COND-23.)
+      operationId: createWorkItemAssetUpload
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAssetUploadRequest"
+      responses:
+        "201":
+          description: PENDING Asset created and upload URL minted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateAssetUploadResponse"
+        "400":
+          description: >-
+            Validation error — content type off the allowlist, size missing/over the ceiling,
+            unusable filename, asset type not allowed by the Workflow, or the Work Item is past its
+            review gate (assets locked).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found (also returned to a non-member of the project)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /projects/{projectId}/work-items/{workItemId}/assets/{assetId}:
     patch:
       tags:
@@ -1353,6 +1414,65 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Asset or Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/assets/{assetId}/confirm:
+    post:
+      tags:
+        - work-item-assets
+      summary: Confirm a file Asset upload finished
+      description: >-
+        Flips a PENDING file Asset to UPLOADED after the client's PUT landed. The content type is not
+        a parameter — the only type trusted is the one persisted at mint, which is what the signed URL
+        was bound to; it is re-checked against the allowlist here as defence in depth. `sizeBytes` is
+        the byte count actually written and is re-validated against the upload ceiling. (COND-23.)
+      operationId: confirmWorkItemAssetUpload
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmAssetUploadRequest"
+      responses:
+        "204":
+          description: Upload confirmed; the Asset is now UPLOADED
+        "400":
+          description: >-
+            Not a file asset, stored content type off the allowlist, observed size over the ceiling,
+            or the Work Item is past its review gate (assets locked).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Asset or Work Item not found (also returned to a non-member of the project)
           content:
             application/json:
               schema:
@@ -2026,12 +2146,96 @@ components:
           description: A URL (kind=link) or a stored-file reference (kind=file).
         done:
           type: boolean
+        uploadStatus:
+          type: string
+          nullable: true
+          description: >-
+            Upload lifecycle of a kind=file Asset: PENDING once the upload URL is minted, UPLOADED
+            once the client confirms. Null for kind=link Assets and for file rows recorded without
+            the upload flow. One of PENDING, UPLOADED. (COND-23.)
+        contentType:
+          type: string
+          nullable: true
+          description: Media type of the stored object (kind=file only).
+        sizeBytes:
+          type: integer
+          format: int64
+          nullable: true
+          description: Size of the stored object in bytes (kind=file only).
+        previewUrl:
+          type: string
+          nullable: true
+          description: >-
+            Short-lived (15 minute) signed read URL for the stored object. Populated only for a
+            kind=file Asset whose uploadStatus is UPLOADED; null otherwise. Never persisted — it is
+            minted per response, so don't cache it.
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
+
+    CreateAssetUploadRequest:
+      type: object
+      required:
+        - type
+        - filename
+        - contentType
+        - sizeBytes
+      properties:
+        type:
+          type: string
+          description: Asset type, validated against the Workflow's asset_types (e.g. instagram_post).
+        label:
+          type: string
+          description: Human label; defaults to the sanitized filename.
+        filename:
+          type: string
+          description: >-
+            Client-supplied file name. Sanitized to a single safe path segment before it is appended
+            to the storage path.
+        contentType:
+          type: string
+          description: >-
+            Media type of the bytes about to be uploaded. Must be on the server's allowlist
+            (image/png, image/jpeg, image/gif, image/webp, video/mp4, video/quicktime).
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Size of the bytes about to be uploaded. Must be positive and within the server ceiling.
+
+    CreateAssetUploadResponse:
+      type: object
+      required:
+        - assetId
+        - uploadUrl
+        - gcsPath
+        - expiresAt
+      properties:
+        assetId:
+          type: string
+          description: Id of the PENDING Asset row; use it to confirm the upload.
+        uploadUrl:
+          type: string
+          description: URL to PUT the raw bytes to (signed PUT on GCS, internal passthrough locally).
+        gcsPath:
+          type: string
+          description: Object path the bytes are stored at.
+        expiresAt:
+          type: string
+          format: date-time
+          description: When uploadUrl stops being usable.
+
+    ConfirmAssetUploadRequest:
+      type: object
+      properties:
+        sizeBytes:
+          type: integer
+          format: int64
+          description: >-
+            Bytes actually written. Re-validated against the upload ceiling and persisted when
+            present; the size declared at mint is kept when omitted.
 
     CreateAssetRequest:
       type: object
