@@ -19,6 +19,7 @@ import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSke
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { PostTargetPicker, workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
+import { PublishOutcomePanel } from '@/components/marketing/PublishOutcomePanel'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
 import { toastError, toastSuccess } from '@/components/ui/toast'
 import { ExternalLink, FileText, FileX2 } from 'lucide-react'
@@ -816,6 +817,19 @@ export function WorkItemDetailView({
                 status={issue.status}
                 workflowView={workflowView}
                 onChanged={refreshIssueStatus}
+              />
+            )}
+            {/* What came back from each platform. Directly under the picker, because a permalink and
+                the error next to it answer the same question the account list raises — "did this
+                actually go out?" — and a mixed result has to read as "needs attention" rather than
+                as the roll-up status alone. Renders nothing until the Post has targets. */}
+            {activeTab !== 'activity' && workflowDeclaresPublishTargets(workflowView) && (
+              <PublishOutcomePanel
+                projectId={projectId}
+                workItemId={issueId}
+                token={accessToken!}
+                workflowView={workflowView}
+                onRetried={refreshIssueStatus}
               />
             )}
           </div>
