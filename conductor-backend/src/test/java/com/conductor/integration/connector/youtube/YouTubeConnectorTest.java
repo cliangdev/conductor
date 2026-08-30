@@ -228,7 +228,7 @@ class YouTubeConnectorTest {
                 .thenReturn(new ResponseEntity<>("", responseHeaders, HttpStatus.PERMANENT_REDIRECT));
 
         YouTubeDataClient.ChunkOutcome outcome = new YouTubeDataClient(restTemplate).uploadChunk(ACCESS_TOKEN,
-                "https://upload.example/session", new byte[262144], 262144, 0L, 1_000_000L);
+                "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=s1", new byte[262144], 262144, 0L, 1_000_000L);
 
         assertThat(outcome.complete()).isFalse();
         assertThat(outcome.nextOffset()).isEqualTo(262144L);
@@ -245,7 +245,7 @@ class YouTubeConnectorTest {
                 .thenReturn(ResponseEntity.ok("{\"id\":\"vid-123\",\"status\":{\"privacyStatus\":\"private\"}}"));
 
         YouTubeDataClient.ChunkOutcome outcome = new YouTubeDataClient(restTemplate).uploadChunk(ACCESS_TOKEN,
-                "https://upload.example/session", new byte[10], 10, 999_990L, 1_000_000L);
+                "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=s1", new byte[10], 10, 999_990L, 1_000_000L);
 
         assertThat(outcome.complete()).isTrue();
         assertThat(outcome.videoId()).isEqualTo("vid-123");

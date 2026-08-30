@@ -139,12 +139,12 @@ public class MetaGraphClient {
      */
     public LongLivedToken exchangeForLongLivedUserToken(String appId, String appSecret,
                                                         String shortLivedUserToken) {
-        URI uri = UriComponentsBuilder.fromUriString(GRAPH_BASE + "/oauth/access_token")
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/oauth/access_token")
                 .queryParam("grant_type", "fb_exchange_token")
                 .queryParam("client_id", appId)
                 .queryParam("client_secret", appSecret)
                 .queryParam("fb_exchange_token", shortLivedUserToken)
-                .build().toUri();
+                .encode().build().toUri());
         ResponseEntity<TokenResponse> response =
                 restTemplate.exchange(uri, HttpMethod.GET, HttpEntity.EMPTY, TokenResponse.class);
         TokenResponse body = response.getBody();
@@ -160,10 +160,10 @@ public class MetaGraphClient {
      * appear here — a user with no Pages gets an empty list.
      */
     public List<PageAccount> listPages(String userAccessToken) {
-        URI uri = UriComponentsBuilder.fromUriString(GRAPH_BASE + "/me/accounts")
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/me/accounts")
                 .queryParam("fields", "id,name,access_token,instagram_business_account{id,username}")
                 .queryParam("limit", 200)
-                .build().toUri();
+                .encode().build().toUri());
         ResponseEntity<AccountsResponse> response = restTemplate.exchange(
                 uri, HttpMethod.GET, new HttpEntity<>(bearer(userAccessToken)), AccountsResponse.class);
         AccountsResponse body = response.getBody();
@@ -320,9 +320,9 @@ public class MetaGraphClient {
      * scheduled post live yet?" — is {@link PagePost#published()}.
      */
     public PagePost readPost(String postId, String pageToken) {
-        URI uri = UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + postId)
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + postId)
                 .queryParam("fields", "id,is_published,permalink_url,scheduled_publish_time")
-                .build().toUri();
+                .encode().build().toUri());
         ResponseEntity<PostResponse> response = restTemplate.exchange(
                 uri, HttpMethod.GET, new HttpEntity<>(bearer(pageToken)), PostResponse.class);
         PostResponse body = response.getBody();
@@ -352,9 +352,9 @@ public class MetaGraphClient {
      * minted against an exhausted quota is wasted work that expires unpublished in 24 hours.
      */
     public PublishingLimit readContentPublishingLimit(String igUserId, String token) {
-        URI uri = UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + igUserId + "/content_publishing_limit")
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + igUserId + "/content_publishing_limit")
                 .queryParam("fields", "config,quota_usage")
-                .build().toUri();
+                .encode().build().toUri());
         ResponseEntity<PublishingLimitResponse> response = restTemplate.exchange(
                 uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), PublishingLimitResponse.class);
         PublishingLimitResponse body = response.getBody();
@@ -389,9 +389,9 @@ public class MetaGraphClient {
 
     /** Where a container is in Meta's server-side processing — {@code FINISHED} means publishable. */
     public ContainerStatus readContainerStatus(String containerId, String token) {
-        URI uri = UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + containerId)
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + containerId)
                 .queryParam("fields", "status_code,status")
-                .build().toUri();
+                .encode().build().toUri());
         ResponseEntity<ContainerStatusResponse> response = restTemplate.exchange(
                 uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), ContainerStatusResponse.class);
         ContainerStatusResponse body = response.getBody();
@@ -414,9 +414,9 @@ public class MetaGraphClient {
 
     /** The published media's own permalink, which only exists once {@code media_publish} has run. */
     public InstagramMedia readMedia(String mediaId, String token) {
-        URI uri = UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + mediaId)
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + mediaId)
                 .queryParam("fields", "id,permalink")
-                .build().toUri();
+                .encode().build().toUri());
         ResponseEntity<InstagramMediaResponse> response = restTemplate.exchange(
                 uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), InstagramMediaResponse.class);
         InstagramMediaResponse body = response.getBody();
@@ -535,4 +535,26 @@ public class MetaGraphClient {
     @JsonIgnoreProperties(ignoreUnknown = true)
     record InstagramMediaResponse(@JsonProperty("id") String id,
                                   @JsonProperty("permalink") String permalink) {}
+
+    /** The only host this client may ever call. */
+    private static final String GRAPH_HOST = "graph.facebook.com";
+
+    /**
+     * Asserts a built Graph URI still points at Graph before anything is sent to it.
+     *
+     * <p>These URIs interpolate caller-supplied values — access tokens, page ids, media URLs — into the path
+     * and query string, and every request carries a credential. Unencoded input could otherwise steer the
+     * request somewhere else entirely, which turns a token exchange into credential exfiltration. Values are
+     * now percent-encoded at build time, and this is the belt-and-braces check that the host survived it.
+     */
+    static URI requireGraphUri(URI uri) {
+        String host = uri.getHost();
+        if (!"https".equalsIgnoreCase(uri.getScheme())
+                || host == null || !GRAPH_HOST.equalsIgnoreCase(host)) {
+            // Deliberately does not echo the URI, which may embed a token.
+            throw new IllegalArgumentException("Meta Graph request must target https://" + GRAPH_HOST);
+        }
+        return uri;
+    }
+
 }

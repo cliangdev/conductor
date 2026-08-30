@@ -15,6 +15,9 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.util.Set;
+import java.util.Locale;
+import java.net.URISyntaxException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -186,8 +189,8 @@ public class YouTubeDataClient {
         // Only a short final chunk is copied; a full chunk is sent straight out of the caller's buffer.
         byte[] payload = length == chunk.length ? chunk : java.util.Arrays.copyOf(chunk, length);
 
-        ResponseEntity<String> response = restTemplate.exchange(URI.create(sessionUri), HttpMethod.PUT,
-                new HttpEntity<>(payload, headers), String.class);
+        ResponseEntity<String> response = restTemplate.exchange(requireGoogleUploadUri(sessionUri),
+                HttpMethod.PUT, new HttpEntity<>(payload, headers), String.class);
 
         if (response.getStatusCode().is2xxSuccessful()) {
             String videoId = readString(response.getBody(), "id");
@@ -316,4 +319,40 @@ public class YouTubeDataClient {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ChannelSnippet(@JsonProperty("title") String title) {}
+
+    /**
+     * Hosts a resumable upload session may legitimately live on. Google returns the session URI in the
+     * {@code Location} header of the initiate call, and it is checkpointed to {@code resume_checkpoint} so a
+     * retried invocation can resume — which means it re-enters this client from persisted state rather than
+     * straight off the wire.
+     */
+    private static final Set<String> UPLOAD_HOSTS =
+            Set.of("www.googleapis.com", "googleapis.com", "upload.googleapis.com");
+
+    /**
+     * Validates a resumable session URI before anything is sent to it.
+     *
+     * <p>This request carries the video bytes AND an {@code Authorization: Bearer} header. The session URI
+     * reaches us through a stored checkpoint, so treating it as trusted would mean that anything able to
+     * influence that stored value could redirect an OAuth access token to a host of its choosing — a
+     * server-side request forgery with credential exfiltration as the payload, not merely an unwanted
+     * outbound call. Restricting the scheme and host keeps the token on Google's upload endpoints.
+     */
+    static URI requireGoogleUploadUri(String sessionUri) {
+        URI uri;
+        try {
+            uri = new URI(sessionUri);
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException("YouTube upload session URI is not a valid URI", e);
+        }
+        String host = uri.getHost();
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null
+                || !UPLOAD_HOSTS.contains(host.toLowerCase(Locale.ROOT))) {
+            // Deliberately does not echo the URI: it is attacker-influenced in the case this guards against.
+            throw new IllegalArgumentException(
+                    "YouTube upload session URI must be an https Google upload endpoint");
+        }
+        return uri;
+    }
+
 }
