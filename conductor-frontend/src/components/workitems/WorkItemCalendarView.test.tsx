@@ -273,3 +273,134 @@ describe('workflow-agnostic', () => {
     expect(screen.getByTestId('calendar-chip-1').className).toContain('status-done')
   })
 })
+
+describe('the unscheduled tray beside the grid', () => {
+  function grid() {
+    return screen.getByTestId('work-item-calendar-grid')
+  }
+
+  function tray() {
+    return screen.getByTestId('work-item-calendar-tray')
+  }
+
+  it('puts an unscheduled non-terminal item in the tray and on no day cell', () => {
+    renderCalendar([
+      item({ id: '1', scheduledFor: '2026-03-05T15:00:00Z' }),
+      item({ id: '2', scheduledFor: null }),
+    ])
+
+    expect(within(tray()).getByTestId('tray-item-2')).toBeInTheDocument()
+    expect(within(grid()).queryByTestId('calendar-chip-2')).not.toBeInTheDocument()
+  })
+
+  it('keeps a scheduled item on the grid and out of the tray', () => {
+    renderCalendar([
+      item({ id: '1', scheduledFor: '2026-03-05T15:00:00Z' }),
+      item({ id: '2', scheduledFor: null }),
+    ])
+
+    expect(within(day('2026-03-05')).getByTestId('calendar-chip-1')).toBeInTheDocument()
+    expect(within(tray()).queryByTestId('tray-item-1')).not.toBeInTheDocument()
+  })
+
+  it('leaves a terminal unscheduled item out of both the grid and the tray', () => {
+    renderCalendar([
+      item({ id: '1', scheduledFor: '2026-03-05T15:00:00Z' }),
+      item({ id: '2', status: 'DONE', scheduledFor: null }),
+    ])
+
+    expect(within(grid()).queryByTestId('calendar-chip-2')).not.toBeInTheDocument()
+    expect(within(tray()).queryByTestId('tray-item-2')).not.toBeInTheDocument()
+  })
+
+  it('places every non-terminal item exactly once across the grid and the tray', () => {
+    const issues = [
+      item({ id: '1', status: 'DRAFT', scheduledFor: '2026-03-05T15:00:00Z' }),
+      item({ id: '2', status: 'IN_PROGRESS', scheduledFor: null }),
+      item({ id: '3', status: 'DRAFT' }),
+      item({ id: '4', status: 'IN_PROGRESS', scheduledFor: '2026-03-20T09:30:00Z' }),
+      item({ id: '5', status: 'DRAFT', scheduledFor: '2026-03-06T02:00:00Z', scheduleTimezone: 'America/New_York' }),
+    ]
+    renderCalendar(issues)
+
+    for (const issue of issues) {
+      const placements =
+        screen.queryAllByTestId(`calendar-chip-${issue.id}`).length +
+        screen.queryAllByTestId(`tray-item-${issue.id}`).length
+      expect(placements, `${issue.id} must be placed exactly once`).toBe(1)
+    }
+  })
+
+  it('shows the tray empty state when everything is scheduled', () => {
+    renderCalendar([item({ id: '1', scheduledFor: '2026-03-05T15:00:00Z' })])
+
+    expect(within(tray()).getByTestId('tray-empty')).toBeInTheDocument()
+  })
+
+  it('renders the tray even when nothing at all is scheduled', () => {
+    renderCalendar([item({ id: '1', scheduledFor: null })])
+
+    expect(screen.queryByTestId('work-item-calendar-grid')).not.toBeInTheDocument()
+    expect(within(tray()).getByTestId('tray-item-1')).toBeInTheDocument()
+  })
+})
+
+describe('schedule timezone on a chip', () => {
+  const VIEWER_ZONE = new Intl.DateTimeFormat().resolvedOptions().timeZone
+  // A zone that is never the runner's own, so the "and here is your local time" half is exercised.
+  const OTHER_ZONE = VIEWER_ZONE === 'America/Denver' ? 'Pacific/Auckland' : 'America/Denver'
+
+  it('names the schedule timezone the item carries', () => {
+    // 16:00Z on 2026-03-05 is 09:00 in America/Denver (MST, before that year's DST change).
+    renderCalendar([
+      item({ id: '1', scheduledFor: '2026-03-05T16:00:00Z', scheduleTimezone: 'America/Denver' }),
+    ])
+
+    const title = screen.getByTestId('calendar-chip-1').getAttribute('title') ?? ''
+    expect(title).toContain('America/Denver')
+    expect(title).toContain('9:00')
+  })
+
+  it('adds the viewer-local rendering when the two zones differ', () => {
+    renderCalendar([
+      item({ id: '1', scheduledFor: '2026-03-05T16:00:00Z', scheduleTimezone: OTHER_ZONE }),
+    ])
+
+    const localTime = new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: VIEWER_ZONE,
+    }).format(new Date('2026-03-05T16:00:00Z'))
+
+    const title = screen.getByTestId('calendar-chip-1').getAttribute('title') ?? ''
+    expect(title).toContain(OTHER_ZONE)
+    expect(title).toContain(localTime)
+  })
+
+  it('falls back to the viewer zone when the item carries none', () => {
+    renderCalendar([
+      item({ id: '1', scheduledFor: '2026-03-05T16:00:00Z', scheduleTimezone: null }),
+    ])
+
+    expect(screen.getByTestId('calendar-chip-1').getAttribute('title')).toContain(VIEWER_ZONE)
+  })
+
+  it('falls back to the viewer zone on an unusable zone id rather than throwing', () => {
+    renderCalendar([
+      item({ id: '1', scheduledFor: '2026-03-05T16:00:00Z', scheduleTimezone: 'Not/AZone' }),
+    ])
+
+    expect(screen.getByTestId('calendar-chip-1').getAttribute('title')).toContain(VIEWER_ZONE)
+  })
+
+  it('still names the item and its status in the tooltip', () => {
+    renderCalendar([
+      item({ id: '1', title: 'A quiet morning', status: 'IN_PROGRESS', scheduledFor: '2026-03-05T16:00:00Z' }),
+    ])
+
+    const title = screen.getByTestId('calendar-chip-1').getAttribute('title') ?? ''
+    expect(title).toContain('ED-1')
+    expect(title).toContain('A quiet morning')
+    expect(title).toContain('In Progress')
+  })
+})

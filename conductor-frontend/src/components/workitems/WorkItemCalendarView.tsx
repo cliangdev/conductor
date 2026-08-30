@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { statusHueClasses } from '@/components/ui/status-badge'
 import { pluralizeNoun, statusHue, statusMeta, workItemDetailPath } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
+import { WorkItemCalendarTray } from './WorkItemCalendarTray'
 
 /**
  * The slice of a Work Item the calendar needs. Structurally satisfied by the list surface's
@@ -58,6 +59,41 @@ function zonedDayKey(iso: string, timeZone?: string | null): string | null {
     // Unknown/garbage zone id — fall back to the viewer's own calendar rather than dropping the item.
     return new Intl.DateTimeFormat('en-CA', parts).format(instant)
   }
+}
+
+/** The zone the viewer's own browser reads dates in — the grid itself is drawn in this zone. */
+const VIEWER_ZONE = new Intl.DateTimeFormat().resolvedOptions().timeZone
+
+/** The item's own zone when the runtime accepts it, else the viewer's — as {@link zonedDayKey} does. */
+function resolveZone(timeZone?: string | null): string {
+  if (!timeZone) return VIEWER_ZONE
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone })
+    return timeZone
+  } catch {
+    return VIEWER_ZONE
+  }
+}
+
+function formatInZone(instant: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone }).format(
+    instant,
+  )
+}
+
+/**
+ * The scheduled moment spelled out in the zone it was scheduled in and named as such — plus the
+ * viewer's own rendering whenever the two differ, so a viewer sitting in another zone reads the
+ * same instant without doing the arithmetic themselves.
+ */
+function scheduleTooltip(iso: string, timeZone?: string | null): string | null {
+  const instant = new Date(iso)
+  if (Number.isNaN(instant.getTime())) return null
+  const source = resolveZone(timeZone)
+  const inSourceZone = `${formatInZone(instant, source)} (${source})`
+  return source === VIEWER_ZONE
+    ? inSourceZone
+    : `${inSourceZone} · ${formatInZone(instant, VIEWER_ZONE)} local`
 }
 
 function startOfMonth(date: Date): Date {
@@ -194,7 +230,7 @@ export function WorkItemCalendarView({
             data-testid="work-item-calendar-grid"
             className="border border-border rounded-lg overflow-hidden"
           >
-            <div className="grid grid-cols-7 bg-surface-2 border-b border-border">
+            <div className="grid grid-cols-7 bg-surface-raised border-b border-border">
               {WEEKDAY_HEADINGS.map((label) => (
                 <div
                   key={label}
@@ -222,7 +258,7 @@ export function WorkItemCalendarView({
                       data-testid={`calendar-day-${key}`}
                       aria-label={DAY_LABEL.format(date)}
                       className={`min-h-[92px] border-r border-border last:border-r-0 p-1 flex flex-col gap-0.5 ${
-                        inMonth ? 'bg-card' : 'bg-surface-2/40'
+                        inMonth ? 'bg-card' : 'bg-surface-raised/40'
                       }`}
                     >
                       <span
@@ -240,12 +276,20 @@ export function WorkItemCalendarView({
                       {shown.map((issue) => {
                         const meta = statusMeta(workflowView, issue.status)
                         const hue = statusHueClasses(statusHue(issue.status, meta.category))
+                        const when = issue.scheduledFor
+                          ? scheduleTooltip(issue.scheduledFor, issue.scheduleTimezone)
+                          : null
                         return (
                           <Link
                             key={issue.id}
                             data-testid={`calendar-chip-${issue.id}`}
                             href={workItemDetailPath(projectId, area, noun, issue.displayId ?? '')}
-                            title={`${issue.displayId ? `${issue.displayId} · ` : ''}${issue.title} — ${meta.label}`}
+                            title={[
+                              `${issue.displayId ? `${issue.displayId} · ` : ''}${issue.title} — ${meta.label}`,
+                              when,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')}
                             className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs border transition-colors hover:border-border-strong ${hue.bg} ${hue.text} ${hue.border}`}
                           >
                             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${hue.dot}`} />
@@ -272,6 +316,14 @@ export function WorkItemCalendarView({
           </div>
         )}
       </div>
+
+      <WorkItemCalendarTray
+        projectId={projectId}
+        area={area}
+        noun={noun}
+        workflowView={workflowView}
+        issues={issues}
+      />
     </div>
   )
 }
