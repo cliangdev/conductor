@@ -1,0 +1,27 @@
+{
+  "description": "Publish to a Facebook Page and its linked Instagram Business account",
+  "actions": [
+    {
+      "id": "publish_facebook_post",
+      "description": "Publish a post to the connected Facebook Page",
+      "params": {
+        "message": "Post text (required unless link or image_url is supplied)",
+        "link": "URL to attach to the post (optional)",
+        "image_url": "Publicly reachable image URL to attach as a photo post (optional)",
+        "scheduled_publish_time": "ISO-8601 instant to schedule the post for (optional; immediate when omitted)"
+      },
+      "outputKeys": ["post_id", "permalink"]
+    },
+    {
+      "id": "publish_instagram_media",
+      "description": "Publish an image or video to the Instagram Business account linked to the connected Page",
+      "params": {
+        "media_type": "IMAGE, VIDEO or REELS (optional; defaults to IMAGE)",
+        "image_url": "Publicly reachable image URL (required for IMAGE)",
+        "video_url": "Publicly reachable video URL (required for VIDEO/REELS)",
+        "caption": "Caption text, including any hashtags (optional)"
+      },
+      "outputKeys": ["media_id", "permalink"]
+    }
+  ]
+}
