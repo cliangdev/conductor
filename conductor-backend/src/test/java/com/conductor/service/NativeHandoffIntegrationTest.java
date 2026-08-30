@@ -83,6 +83,7 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
      */
     private NativePublishConfirmationPoller confirmationPoller;
     @Autowired private PostPublishTargetRepository targetRepository;
+    @Autowired private PublishTargetService publishTargetService;
     @Autowired private WorkItemRepository workItemRepository;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
@@ -606,4 +607,43 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
                     .invoke(any(), anyString(), any(), eq(t.getIdempotencyKey()), any());
         }
     }
+    /**
+     * Regression: re-stamping a target's fire time and then handing it off must not self-deadlock.
+     *
+     * <p>{@code WorkItemService.patchWorkItem} is {@code @Transactional}. It re-stamps PENDING targets with
+     * the Post's current schedule, then hands off native-lane targets — and the hand-off claims each row in
+     * its own {@code REQUIRES_NEW} transaction. If the re-stamp wrote through the caller's transaction, the
+     * caller would still hold that row's lock and the claim would block on it forever: a request that hangs
+     * rather than fails. {@code PublishTargetService.restampFireTimes} is therefore {@code REQUIRES_NEW}, so
+     * its write commits and releases the lock before the hand-off asks for it.
+     *
+     * <p>The timeout is the assertion: without the fix, this test does not fail on an assertion, it blocks.
+     * {@code SEPARATE_THREAD} is required — a deadlocked JDBC call ignores JUnit's default same-thread
+     * timeout, which only checks the clock after the test method returns, so the default mode would hang the
+     * build instead of failing it. Verified by reverting the propagation: the run blocked past ten minutes.
+     */
+    @Test
+    @org.junit.jupiter.api.Timeout(
+            value = 30, threadMode = org.junit.jupiter.api.Timeout.ThreadMode.SEPARATE_THREAD)
+    void reStampingThenHandingOffDoesNotDeadlock() {
+        WorkItem scheduledPost = post(NativeHandoffService.SCHEDULED_STATUS);
+        OffsetDateTime rescheduled = OffsetDateTime.now().plusDays(5).withNano(0);
+        scheduledPost.setScheduledFor(rescheduled);
+        scheduledPost = workItemRepository.saveAndFlush(scheduledPost);
+        PostPublishTarget target = target(scheduledPost, "facebook", PublishLane.NATIVE,
+                PostPublishTargetState.PENDING, OffsetDateTime.now().plusDays(2), null);
+
+        // Exactly the production order: re-stamp inside a caller transaction, then hand off.
+        final WorkItem post = scheduledPost;
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager).execute(status -> {
+            publishTargetService.restampFireTimes(post);
+            service.handoffForPost(post);
+            return null;
+        });
+
+        PostPublishTarget after = reload(target);
+        assertThat(after.getFireTime()).isEqualTo(rescheduled);
+        assertThat(after.getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
+    }
+
 }

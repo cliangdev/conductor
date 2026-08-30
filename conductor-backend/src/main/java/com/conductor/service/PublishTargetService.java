@@ -15,6 +15,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
@@ -153,9 +154,19 @@ public class PublishTargetService {
      * that a silent re-stamp would desynchronise, and every exit from the scheduled status revokes those rows
      * anyway ({@code NativeHandoffService.unschedule}), so they are re-created rather than re-timed.
      *
-     * <p>Returns the number of rows re-stamped. Runs in the caller's transaction.
+     * <p>Runs in its OWN transaction ({@code REQUIRES_NEW}) and returns the number of rows re-stamped. That
+     * propagation is load-bearing, not incidental: the caller ({@code WorkItemService.patchWorkItem}) hands off
+     * native-lane targets immediately afterwards, and {@code NativeHandoffService} claims each row in its own
+     * {@code REQUIRES_NEW} transaction. If the re-stamp wrote through the caller's transaction, the caller
+     * would still hold the row lock, and the hand-off would block on a lock its own caller owns — a
+     * self-deadlock that hangs the request forever rather than failing. Committing the re-stamp first
+     * releases the lock before the hand-off asks for it.
+     *
+     * <p>The cost of the separate transaction is that a re-stamp survives a caller rollback. That is benign:
+     * the row's fire time is only read once the Post is in the scheduled status, and every entry into that
+     * status re-stamps again.
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int restampFireTimes(WorkItem workItem) {
         if (workItem == null || workItem.getScheduledFor() == null) {
             return 0;
