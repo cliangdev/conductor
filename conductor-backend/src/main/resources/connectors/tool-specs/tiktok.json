@@ -1,0 +1,21 @@
+{
+  "description": "Publish videos to a connected TikTok creator account",
+  "actions": [
+    {
+      "id": "publish_video",
+      "description": "Publish a video to the connected TikTok creator account. The video must be no longer than the connection's cached maxVideoPostDurationSec, and privacy_level must be one of its cached privacyLevelOptions. While the app is pending TikTok's content-posting audit, TikTok forces every post to SELF_ONLY and allows at most 5 posting users per 24 hours.",
+      "params": {
+        "asset_id": "Id of the recorded video asset to publish (required unless video_url is given)",
+        "video_url": "Publicly reachable URL TikTok should pull the video from, as an alternative to asset_id (optional)",
+        "title": "Caption shown on the post, including any hashtags or @mentions (optional)",
+        "privacy_level": "Post visibility — one of the connection's privacyLevelOptions, e.g. PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS, FOLLOWER_OF_CREATOR, SELF_ONLY (defaults to SELF_ONLY)",
+        "disable_comment": "Turn off comments on this post (optional, default false)",
+        "disable_duet": "Turn off Duet for this post (optional, default false)",
+        "disable_stitch": "Turn off Stitch for this post (optional, default false)",
+        "brand_content_toggle": "Disclosure flag: the post is a paid partnership / branded content (optional, default false)",
+        "brand_organic_toggle": "Disclosure flag: the post promotes the creator's own business (optional, default false)"
+      },
+      "outputKeys": ["post_id", "permalink"]
+    }
+  ]
+}
