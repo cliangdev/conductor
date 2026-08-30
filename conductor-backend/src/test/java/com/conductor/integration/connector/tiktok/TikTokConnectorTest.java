@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -20,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TikTokConnectorTest {
@@ -201,14 +203,22 @@ class TikTokConnectorTest {
         assertThat(connector.getMetadata().id()).isEqualTo("tiktok");
     }
 
-    // --- publish action body lands in a later task (T5.5) ---
+    // --- [auto] publish_video is delegated to the chunked upload body ---
 
     @Test
-    void publishVideo_isDeclaredButNotYetImplemented() {
-        ActionResult result = connector.invoke("publish_video", Map.of("asset_id", "asset-1"), context());
+    void publishVideo_delegatesToThePublishActionWithTheCallersInputAndConnection() {
+        TikTokPublishAction publishAction = mock(TikTokPublishAction.class);
+        TikTokConnector wired = new TikTokConnector(client, publishAction);
+        ConnectionContext ctx = context();
+        Map<String, Object> input = Map.of("work_item_id", "post-1", "target_id", "target-1");
+        when(publishAction.publish(input, ctx))
+                .thenReturn(ActionResult.ok(Map.of("post_id", "7280", "permalink", "https://tiktok/x")));
 
-        assertThat(result.success()).isFalse();
-        assertThat(result.message()).contains("not implemented");
+        ActionResult result = wired.invoke("publish_video", input, ctx);
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("post_id", "7280");
+        verify(publishAction).publish(input, ctx);
     }
 
     @Test
@@ -217,6 +227,16 @@ class TikTokConnectorTest {
 
         assertThat(result.success()).isFalse();
         assertThat(result.message()).contains("dance");
+    }
+
+    // --- [auto] the connector declares a timeout well above the framework's 10s default ---
+
+    @Test
+    void invocationTimeout_isFarAboveTheTenSecondDefault_soAChunkedUploadIsNotKilled() {
+        assertThat(connector.getInvocationTimeout()).isPresent();
+        assertThat(connector.getInvocationTimeout().orElseThrow())
+                .isGreaterThan(Duration.ofSeconds(10))
+                .isGreaterThanOrEqualTo(Duration.ofMinutes(10));
     }
 
     private static ConnectionContext context() {

@@ -9,12 +9,15 @@ import com.conductor.integration.ConnectorMetadata;
 import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.FieldType;
 import com.conductor.integration.OAuth2Connector;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * TikTok publishing connector: one connected creator account, via the Content Posting API.
@@ -48,8 +51,10 @@ import java.util.Map;
  * allowed per rolling 24 hours. Both limits are TikTok's, enforced server-side regardless of what we
  * send, and both lift once the audit is granted.
  *
- * <p>The publish action body lands in a later task (T5.5); {@link #invoke} declares the action and
- * returns a permanent "not implemented" error until then.
+ * <p><b>Publishing.</b> {@code publish_video} is delegated wholesale to {@link TikTokPublishAction},
+ * which uploads the video to TikTok in chunks ({@code FILE_UPLOAD}) and waits for the post to go live.
+ * Because that can take far longer than the framework's webhook-shaped default deadline, this connector
+ * declares its own via {@link #getInvocationTimeout()}.
  */
 @Component
 @Profile("!local")
@@ -62,14 +67,34 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
 
     private static final String ACTION_PUBLISH_VIDEO = "publish_video";
 
+    /**
+     * How long the framework waits for a {@code publish_video} call. A 4 GB video cut into 10 MB chunks
+     * is hundreds of sequential PUTs followed by however long TikTok takes to process the result, so the
+     * shared 10-second default would kill every upload that mattered. Nothing else about failure handling
+     * changes: overrunning this is still terminal-ambiguous and still dead-lettered — but a retry under
+     * the same idempotency key resumes from {@link TikTokPublishAction}'s chunk checkpoint.
+     */
+    static final Duration PUBLISH_TIMEOUT = Duration.ofMinutes(45);
+
     private final TikTokClient client;
+    private final TikTokPublishAction publishAction;
 
     public TikTokConnector() {
-        this(new TikTokClient());
+        this(new TikTokClient(), null);
     }
 
     TikTokConnector(TikTokClient client) {
+        this(client, null);
+    }
+
+    @Autowired
+    public TikTokConnector(TikTokPublishAction publishAction) {
+        this(new TikTokClient(), publishAction);
+    }
+
+    TikTokConnector(TikTokClient client, TikTokPublishAction publishAction) {
         this.client = client;
+        this.publishAction = publishAction;
     }
 
     /**
@@ -210,13 +235,22 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector {
         return new TikTokAuthorization(accessToken, Map.copyOf(config));
     }
 
+    /** {@inheritDoc} See {@link #PUBLISH_TIMEOUT} for why a chunked video upload needs its own. */
+    @Override
+    public Optional<Duration> getInvocationTimeout() {
+        return Optional.of(PUBLISH_TIMEOUT);
+    }
+
     @Override
     public ActionResult invoke(String actionId, Map<String, Object> input, ConnectionContext ctx) {
-        // The publish body is a separate follow-up task (T5.5). A returned error is PERMANENT per the
-        // ActionConnector contract, so an accidental invocation dead-letters instead of retrying.
-        if (ACTION_PUBLISH_VIDEO.equals(actionId)) {
-            return ActionResult.error("TikTok action '" + actionId + "' is not implemented yet");
+        // A returned error is PERMANENT per the ActionConnector contract, so an unknown action
+        // dead-letters instead of burning retries on something that will never resolve.
+        if (!ACTION_PUBLISH_VIDEO.equals(actionId)) {
+            return ActionResult.error("Unknown TikTok action: " + actionId);
         }
-        return ActionResult.error("Unknown TikTok action: " + actionId);
+        if (publishAction == null) {
+            return ActionResult.error("TikTok publishing is not available on this deployment");
+        }
+        return publishAction.publish(input, ctx);
     }
 }
