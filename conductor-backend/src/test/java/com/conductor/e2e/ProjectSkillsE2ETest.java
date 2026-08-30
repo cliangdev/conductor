@@ -51,10 +51,13 @@ class ProjectSkillsE2ETest extends AbstractE2ETest {
         assertThat(before).anyMatch(s -> "conductor:implement".equals(s.get("id")) && Boolean.TRUE.equals(s.get("builtIn")));
         assertThat(before).noneMatch(s -> "marketing:seo-report".equals(s.get("id")));
 
-        // --- Author a MARKETING lifecycle that binds an unregistered skill. Create succeeds (create doesn't
+        // --- Author a custom SEO lifecycle that binds an unregistered skill. Create succeeds (create does not
         //     validate the statechart); publish is the gate. ---
+        // NOTE: the slug must not collide with a workflow the platform seeds into every new project
+        // (ENGINEERING, and MARKETING since COND-23) — a project cannot author a second workflow under a
+        // seeded slug. This test is about skill registration gating publish; the slug is incidental.
         Map<String, Object> definition = Map.of(
-                "schemaVersion", 1, "id", "MARKETING", "area", "MARKETING", "version", 1, "state", "DRAFT",
+                "schemaVersion", 1, "id", "SEO", "area", "SEO", "version", 1, "state", "DRAFT",
                 "noun", "Campaign", "default_view", "list", "types", List.of("SEO_AUDIT"),
                 "statuses", List.of(
                         Map.of("id", "OPEN", "category", "open", "initial", true),
@@ -63,7 +66,7 @@ class ProjectSkillsE2ETest extends AbstractE2ETest {
                         "from", "OPEN", "to", "DONE", "label", "Finish",
                         "steps", List.of(Map.of("kind", "skill", "mode", "BLOCKING", "skill", "marketing:seo-report")))));
         var createResp = rest.exchange(workflowsUrl, HttpMethod.POST,
-                new HttpEntity<>(Map.of("name", "Marketing Lifecycle", "area", "MARKETING", "definition", definition), authHeaders),
+                new HttpEntity<>(Map.of("name", "SEO Lifecycle", "area", "SEO", "definition", definition), authHeaders),
                 Map.class);
         assertThat(createResp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         @SuppressWarnings("unchecked")
