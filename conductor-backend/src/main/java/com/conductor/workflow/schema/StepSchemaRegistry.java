@@ -295,6 +295,14 @@ public class StepSchemaRegistry {
                         new StepFieldSchema("action", STRING, true,
                                 "Action id the connector declares (e.g. post_message) — see "
                                         + "list_integration_tools / list_connector_catalog."),
+                        new StepFieldSchema("connection_id", STRING, false,
+                                "Id of one specific connection to act through, for a project holding "
+                                        + "several connections on the same connector (e.g. two Instagram "
+                                        + "accounts). Omit it — the usual case — and the step resolves the "
+                                        + "project's single ACTIVE connection for with.connector.",
+                                "not checked by WorkflowValidator; at runtime the connection must exist, "
+                                        + "be ACTIVE, and belong to with.connector — a miss fails the step "
+                                        + "rather than falling back to connector-only resolution"),
                         new StepFieldSchema("input", MAP, false,
                                 "Map passed to the action. String values are interpolated; other values "
                                         + "pass through as-is.")
