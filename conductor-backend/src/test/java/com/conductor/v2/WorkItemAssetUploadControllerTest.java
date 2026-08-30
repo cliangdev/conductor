@@ -1,16 +1,20 @@
 package com.conductor.v2;
 
+import com.conductor.repository.AssetRepository;
 import com.conductor.support.AbstractE2ETest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -35,6 +39,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WorkItemAssetUploadControllerTest extends AbstractE2ETest {
 
     private static final String PNG = "image/png";
+    private static final String MP4 = "video/mp4";
+
+    @Autowired
+    private AssetRepository assetRepository;
 
     private HttpHeaders authHeaders;
     private String projectId;
@@ -136,6 +144,35 @@ class WorkItemAssetUploadControllerTest extends AbstractE2ETest {
         String otherWorkItemId = createPost("Another post");
         var foreignResp = putContent(otherWorkItemId, assetId, content);
         assertThat(foreignResp.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    // [auto] A video mint carries the browser-measured width, height and duration onto the Asset row.
+    // Nothing server-side can recover them later — the JDK has no container parser — so the mint request
+    // is the only door they come through, and MediaTargetValidator blocks approval without them.
+    @Test
+    void videoMintPersistsTheClientMeasuredWidthHeightAndDuration() {
+        Map<String, Object> body = new HashMap<>(mintBody("clip.mp4", MP4, 8_000L));
+        body.put("width", 1080);
+        body.put("height", 1920);
+        body.put("durationSeconds", 12.5);
+
+        var resp = rest.exchange(uploadsUrl(), HttpMethod.POST, new HttpEntity<>(body, authHeaders), Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        var asset = assetRepository.findById((String) resp.getBody().get("assetId")).orElseThrow();
+        assertThat(asset.getWidth()).isEqualTo(1080);
+        assertThat(asset.getHeight()).isEqualTo(1920);
+        assertThat(asset.getDurationSeconds()).isEqualByComparingTo(new BigDecimal("12.5"));
+    }
+
+    // [auto] The media fields stay optional — a caller that measures nothing still gets a PENDING row
+    @Test
+    void mintWithoutMediaMetadataLeavesTheShapeUnmeasured() {
+        var asset = assetRepository.findById(mintAsset("hero.png", PNG, 2048L)).orElseThrow();
+
+        assertThat(asset.getWidth()).isNull();
+        assertThat(asset.getHeight()).isNull();
+        assertThat(asset.getDurationSeconds()).isNull();
     }
 
     // --- helpers -------------------------------------------------------------------------------------

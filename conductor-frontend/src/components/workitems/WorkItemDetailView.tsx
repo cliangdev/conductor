@@ -17,6 +17,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSkeleton'
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
+import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
 import { toastError, toastSuccess } from '@/components/ui/toast'
 import { ExternalLink, FileText, FileX2 } from 'lucide-react'
@@ -42,7 +43,6 @@ import {
   workItemListPath,
 } from '@/lib/workflows'
 import type { Comment, PendingCommentDraft } from '@/components/comments/types'
-import type { WorkItemAsset } from '@/types/workItem'
 import type { DetailDocument, DetailIssue, DetailReview, DetailReviewer } from '@/components/workitems/detailTypes'
 import type { Member } from '@/components/workitems/listTypes'
 import type { Verdict } from '@/components/reviews/verdict'
@@ -192,7 +192,7 @@ export function WorkItemDetailView({
 
   const [issue, setIssue] = useState<DetailIssue | null>(null)
   const [documents, setDocuments] = useState<DetailDocument[]>([])
-  const [assets, setAssets] = useState<WorkItemAsset[]>([])
+  const [assets, setAssets] = useState<MediaAsset[]>([])
   const [reviewers, setReviewers] = useState<DetailReviewer[]>([])
   const [reviews, setReviews] = useState<DetailReview[]>([])
   const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
@@ -274,7 +274,7 @@ export function WorkItemDetailView({
   const fetchAssets = useCallback(async () => {
     if (!accessToken) return
     try {
-      const data = await apiGet<WorkItemAsset[]>(
+      const data = await apiGet<MediaAsset[]>(
         `/api/v2/projects/${projectId}/work-items/${issueId}/assets`,
         accessToken
       )
@@ -772,7 +772,23 @@ export function WorkItemDetailView({
           aria-labelledby={tabButtonId(contentTabId)}
           className={cn('flex-1 min-w-0', activeTab === 'details' ? 'hidden md:block' : 'block')}
         >
-          <div className="max-w-[45rem] mx-auto">{mainContent}</div>
+          <div className="max-w-[45rem] mx-auto space-y-6">
+            {mainContent}
+            {/* File assets live with the copy they ship alongside, not in the properties rail — a
+                Post's creative is content, not metadata. Offered only where the bound Workflow
+                declares asset types, since the mint validates `type` against exactly that list. */}
+            {activeTab !== 'activity' && (workflowView?.assetTypes?.length ?? 0) > 0 && (
+              <MediaUploadPanel
+                projectId={projectId}
+                workItemId={issueId}
+                token={accessToken!}
+                status={issue.status}
+                workflowView={workflowView}
+                assets={assets}
+                onUploaded={fetchAssets}
+              />
+            )}
+          </div>
         </div>
 
         <aside

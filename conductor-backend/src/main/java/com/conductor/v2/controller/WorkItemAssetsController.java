@@ -37,6 +37,12 @@ import java.util.List;
  * PUTs bytes to, and {@code POST .../assets/{assetId}/confirm} flips it to UPLOADED — both thin wrappers over
  * {@link AssetService}, which owns the allowlist, the size ceiling and the review-gate lock. {@code previewUrl}
  * is minted per response rather than stored, so it is filled in only for UPLOADED file Assets.
+ *
+ * <p>The mint request's optional {@code width}/{@code height}/{@code durationSeconds} are passed straight
+ * through. They exist for video: the JDK can read an image's dimensions out of its bytes at confirm, but it
+ * has no container parser, so a video's shape and duration only ever reach the row if the browser measures
+ * them off an {@code HTMLVideoElement} and sends them here — and without them the media rules at approval
+ * block on an unmeasured value.
  */
 @RestController
 public class WorkItemAssetsController implements WorkItemAssetsApi {
@@ -78,7 +84,8 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
                                                                               CreateAssetUploadRequest request) {
         AssetService.FileAssetInput input = new AssetService.FileAssetInput(
                 request.getType(), request.getLabel(), request.getFilename(),
-                request.getContentType(), request.getSizeBytes());
+                request.getContentType(), request.getSizeBytes(),
+                request.getWidth(), request.getHeight(), request.getDurationSeconds());
         AssetService.FileAssetUploadTicket ticket =
                 assetService.createFileAsset(projectId, workItemId, input, currentUser());
         Asset asset = ticket.asset();

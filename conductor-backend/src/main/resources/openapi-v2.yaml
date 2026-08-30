@@ -2204,6 +2204,22 @@ components:
           type: integer
           format: int64
           description: Size of the bytes about to be uploaded. Must be positive and within the server ceiling.
+        width:
+          type: integer
+          format: int32
+          description: >-
+            Client-measured pixel width of the media. Optional. An image's real width is re-derived
+            from the bytes at confirm, so this only matters for video.
+        height:
+          type: integer
+          format: int32
+          description: Client-measured pixel height of the media. Same provenance as width.
+        durationSeconds:
+          type: number
+          description: >-
+            Client-measured playback length in seconds. Video only, and the browser is the only
+            source — no container parser ships with the JDK, so a video that omits it can never
+            satisfy a per-target duration rule at approval.
 
     CreateAssetUploadResponse:
       type: object
