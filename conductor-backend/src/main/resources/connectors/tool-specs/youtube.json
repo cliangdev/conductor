@@ -1,0 +1,17 @@
+{
+  "description": "Publish videos to a connected YouTube channel",
+  "actions": [
+    {
+      "id": "publish_video",
+      "description": "Upload a video to the connected YouTube channel",
+      "params": {
+        "asset_ref": "Reference to the recorded video asset to upload (required)",
+        "title": "Video title, max 100 characters (required)",
+        "description": "Video description, max 5000 characters (optional)",
+        "privacy_status": "public, unlisted or private (optional; defaults to private)",
+        "publish_at": "ISO-8601 instant to make the video public at (optional; requires privacy_status=private, and is silently ignored while the API project is unaudited)"
+      },
+      "outputKeys": ["video_id", "permalink"]
+    }
+  ]
+}
