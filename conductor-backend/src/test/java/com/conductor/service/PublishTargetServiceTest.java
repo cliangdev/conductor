@@ -426,4 +426,70 @@ class PublishTargetServiceTest {
     private static ArgumentCaptor<List<PostPublishTarget>> captor() {
         return ArgumentCaptor.forClass(List.class);
     }
+    // --- restampFireTimes: a rescheduled Post must not fire its targets at the old time ---
+
+    @Test
+    void restampFireTimesUpdatesPendingTargetsToThePostsCurrentSchedule() {
+        WorkItem post = new WorkItem();
+        post.setId("wi-restamp");
+        OffsetDateTime original = OffsetDateTime.parse("2026-09-01T09:00:00Z");
+        OffsetDateTime rescheduled = OffsetDateTime.parse("2026-09-04T17:30:00Z");
+        post.setScheduledFor(rescheduled);
+
+        PostPublishTarget pending = new PostPublishTarget();
+        pending.setId("t-pending");
+        pending.setState(PostPublishTargetState.PENDING);
+        pending.setFireTime(original);
+
+        when(targetRepository.findAllByWorkItemIdAndState("wi-restamp", PostPublishTargetState.PENDING))
+                .thenReturn(List.of(pending));
+
+        int restamped = service.restampFireTimes(post);
+
+        assertThat(restamped).isEqualTo(1);
+        assertThat(pending.getFireTime()).isEqualTo(rescheduled);
+        verify(targetRepository).save(pending);
+    }
+
+    /**
+     * A HANDED_OFF row carries platform-side state (the scheduled post already exists on Facebook/YouTube at
+     * the old time), so silently re-timing it would desynchronise the two. Those rows are revoked and
+     * re-created on any exit from Scheduled instead — the query itself is scoped to PENDING.
+     */
+    @Test
+    void restampFireTimesOnlyTouchesPendingTargets() {
+        WorkItem post = new WorkItem();
+        post.setId("wi-restamp");
+        post.setScheduledFor(OffsetDateTime.parse("2026-09-04T17:30:00Z"));
+        when(targetRepository.findAllByWorkItemIdAndState("wi-restamp", PostPublishTargetState.PENDING))
+                .thenReturn(List.of());
+
+        assertThat(service.restampFireTimes(post)).isZero();
+
+        verify(targetRepository, never()).findAllByWorkItemIdAndState(
+                "wi-restamp", PostPublishTargetState.HANDED_OFF);
+        verify(targetRepository, never()).save(any());
+    }
+
+    @Test
+    void restampFireTimesIsANoOpForAnUnscheduledPostAndDoesNotRewriteAnUnchangedFireTime() {
+        WorkItem unscheduled = new WorkItem();
+        unscheduled.setId("wi-restamp");
+        assertThat(service.restampFireTimes(unscheduled)).isZero();
+        assertThat(service.restampFireTimes(null)).isZero();
+
+        WorkItem post = new WorkItem();
+        post.setId("wi-restamp");
+        OffsetDateTime same = OffsetDateTime.parse("2026-09-04T17:30:00Z");
+        post.setScheduledFor(same);
+        PostPublishTarget unchanged = new PostPublishTarget();
+        unchanged.setState(PostPublishTargetState.PENDING);
+        unchanged.setFireTime(same);
+        when(targetRepository.findAllByWorkItemIdAndState("wi-restamp", PostPublishTargetState.PENDING))
+                .thenReturn(List.of(unchanged));
+
+        assertThat(service.restampFireTimes(post)).isZero();
+        verify(targetRepository, never()).save(any());
+    }
+
 }

@@ -53,6 +53,7 @@ public class WorkItemService {
     private final AssetService assetService;
     private final NativeHandoffService nativeHandoffService;
     private final PublishBundleGuard publishBundleGuard;
+    private final PublishTargetService publishTargetService;
 
     public WorkItemService(
             WorkItemRepository workItemRepository,
@@ -65,7 +66,8 @@ public class WorkItemService {
             WorkItemWorkflowService workItemWorkflowService,
             AssetService assetService,
             NativeHandoffService nativeHandoffService,
-            PublishBundleGuard publishBundleGuard) {
+            PublishBundleGuard publishBundleGuard,
+            PublishTargetService publishTargetService) {
         this.workItemRepository = workItemRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
@@ -77,6 +79,7 @@ public class WorkItemService {
         this.assetService = assetService;
         this.nativeHandoffService = nativeHandoffService;
         this.publishBundleGuard = publishBundleGuard;
+        this.publishTargetService = publishTargetService;
     }
 
     /**
@@ -189,6 +192,13 @@ public class WorkItemService {
 
         bundleRevert.ifPresent(revert ->
                 publishStatusChanged(projectId, workItem, revert.fromStatus(), revert.toStatus(), null));
+
+        // A target's fireTime is copied from the Post when the target is selected, so a Post rescheduled
+        // after its targets were chosen would otherwise fire at the old time — the schedulers read fireTime
+        // off the row, never off the Work Item. Re-stamp before any handoff reads it.
+        if (statusChanged && NativeHandoffService.SCHEDULED_STATUS.equals(workItem.getCurrentStatus())) {
+            publishTargetService.restampFireTimes(workItem);
+        }
 
         // Entering the scheduled status hands off native-lane targets whose fire time is inside the
         // platform window; far-future ones stay PENDING for NativeHandoffService's deferred sweep.

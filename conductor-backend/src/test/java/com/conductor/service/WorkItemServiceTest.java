@@ -80,6 +80,9 @@ class WorkItemServiceTest {
     @Mock
     private PublishBundleGuard publishBundleGuard;
 
+    @Mock
+    private PublishTargetService publishTargetService;
+
     @InjectMocks
     private WorkItemService workItemService;
 
@@ -144,6 +147,7 @@ class WorkItemServiceTest {
 
         workItemService.patchWorkItem("proj-1", "issue-1", null, null, "SCHEDULED", null, null, null, caller);
 
+        verify(publishTargetService).restampFireTimes(testIssue);
         verify(nativeHandoffService).handoffForPost(testIssue);
         verify(nativeHandoffService, never()).unschedule(any());
     }

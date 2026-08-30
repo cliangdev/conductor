@@ -9,6 +9,7 @@ import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
+import java.time.OffsetDateTime;
 import com.conductor.repository.WorkItemRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -142,6 +143,36 @@ public class PublishTargetService {
     }
 
     /** The targets currently selected on a Work Item. */
+    /**
+     * Re-stamps every not-yet-dispatched target with the Work Item's current {@code scheduledFor}.
+     *
+     * <p>A target's {@code fireTime} is copied from the Post at selection time, so without this a Post whose
+     * schedule is edited after its targets were chosen would keep firing at the old time — the schedulers read
+     * {@code fireTime} off the row, never off the Work Item. Only {@code PENDING} rows are touched: a row that
+     * has already been handed to the platform ({@code HANDED_OFF}) or dispatched carries platform-side state
+     * that a silent re-stamp would desynchronise, and every exit from the scheduled status revokes those rows
+     * anyway ({@code NativeHandoffService.unschedule}), so they are re-created rather than re-timed.
+     *
+     * <p>Returns the number of rows re-stamped. Runs in the caller's transaction.
+     */
+    @Transactional
+    public int restampFireTimes(WorkItem workItem) {
+        if (workItem == null || workItem.getScheduledFor() == null) {
+            return 0;
+        }
+        OffsetDateTime fireTime = workItem.getScheduledFor();
+        int restamped = 0;
+        for (PostPublishTarget target : targetRepository.findAllByWorkItemIdAndState(
+                workItem.getId(), PostPublishTargetState.PENDING)) {
+            if (!fireTime.isEqual(target.getFireTime() == null ? fireTime.minusYears(1) : target.getFireTime())) {
+                target.setFireTime(fireTime);
+                targetRepository.save(target);
+                restamped++;
+            }
+        }
+        return restamped;
+    }
+
     @Transactional(readOnly = true)
     public List<PostPublishTarget> listSelectedTargets(String projectId, String workItemId, User caller) {
         verifyMembership(projectId, caller);
