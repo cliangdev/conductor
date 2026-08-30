@@ -5804,6 +5804,23 @@ components:
         healthStatus:
           type: string
           nullable: true
+          description: >
+            Whether this connection is usable. UNHEALTHY means the platform has rejected its
+            credentials (expired or revoked token, withdrawn permission) and a human must
+            reconnect the account — the connection is still ACTIVE, it just cannot be used.
+            HEALTHY/DEGRADED/SETUP_REQUIRED grade the connector's last data fetch instead.
+            UNHEALTHY takes precedence over a fetch grade. Null when never checked.
+        healthCheckedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the connection's own health was last determined.
+        healthMessage:
+          type: string
+          nullable: true
+          description: >
+            The platform's explanation of an UNHEALTHY verdict, for display to the human who has
+            to fix it. Null while healthy.
         fetchedAt:
           type: string
           format: date-time

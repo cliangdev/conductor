@@ -61,6 +61,9 @@ class OAuthFlowServiceTest {
     @Mock
     private Environment environment;
 
+    @Mock
+    private ConnectionHealthService connectionHealthService;
+
     private OAuthFlowService service;
 
     private static final String PROJECT_ID = "proj-1";
@@ -69,7 +72,8 @@ class OAuthFlowServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry, environment, new ObjectMapper());
+        service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry, environment,
+                new ObjectMapper(), connectionHealthService);
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(service, "frontendUrl", "http://localhost:3000");
     }

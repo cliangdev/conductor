@@ -47,6 +47,7 @@ import com.conductor.integration.ingest.ConnectorFeedRepository;
 import com.conductor.integration.ingest.ConnectorFeedStatus;
 import com.conductor.repository.ConnectionDataCacheRepository;
 import com.conductor.repository.WebhookEventRepository;
+import com.conductor.service.ConnectionHealthService;
 import com.conductor.service.ConnectionService;
 import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.OAuthFlowService;
@@ -641,6 +642,15 @@ public class IntegrationController implements IntegrationsApi {
             summary.setHealthStatus(cache.getHealthStatus());
             summary.setFetchedAt(cache.getFetchedAt());
         });
+        // The cache grades the last data *fetch*; the connection carries its own health (can the
+        // platform still be reached with these credentials at all). UNHEALTHY is the more actionable
+        // of the two, so it wins; otherwise the connection's health only fills a gap the cache left.
+        if (ConnectionHealthService.UNHEALTHY.equals(conn.getHealthStatus())
+                || summary.getHealthStatus() == null) {
+            summary.setHealthStatus(conn.getHealthStatus());
+        }
+        summary.setHealthCheckedAt(conn.getHealthCheckedAt());
+        summary.setHealthMessage(conn.getHealthMessage());
         return summary;
     }
 

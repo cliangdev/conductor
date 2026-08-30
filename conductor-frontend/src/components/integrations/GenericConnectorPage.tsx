@@ -7,11 +7,10 @@ import { buildConnectionPayload } from '@/lib/connectorConnectForm';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { useConnectorCatalogItem } from './ConnectorCatalogContext';
 import { ConnectorConfigFields } from './ConnectorConfigFields';
-import { ConnectorIcon } from './ConnectorIcon';
+import { ConnectionRow } from './ConnectionRow';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useCan } from '@/contexts/PermissionsContext';
-import { CheckCircleIcon } from 'lucide-react';
 
 /**
  * Fallback overview page for any connector without a bespoke dashboard (e.g. action-only connectors
@@ -130,39 +129,16 @@ export default function GenericConnectorPage({
       {item.connections.length > 0 && (
         <div className="space-y-3 mb-6">
           {item.connections.map((conn) => (
-            <div
+            <ConnectionRow
               key={conn.id}
-              className="bg-card rounded-lg border border-border p-4 flex items-center gap-4"
-            >
-              <ConnectorIcon connectorId={item.connectorId} iconLabel={item.iconLabel} className="h-8 w-8" />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-foreground truncate">
-                  {conn.label || item.name}
-                </div>
-                <div className="text-xs text-muted-foreground flex items-center gap-1">
-                  {conn.status === 'ACTIVE' ? (
-                    <>
-                      <CheckCircleIcon className="h-3.5 w-3.5 text-status-done" />
-                      Connected
-                    </>
-                  ) : (
-                    conn.status
-                  )}
-                </div>
-              </div>
-              {canMutate && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleDisconnect(conn.id)}
-                  disabled={disconnecting === conn.id}
-                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                >
-                  {disconnecting === conn.id ? 'Disconnecting…' : 'Disconnect'}
-                </Button>
-              )}
-            </div>
+              connection={conn}
+              connectorId={item.connectorId}
+              connectorName={item.name}
+              iconLabel={item.iconLabel}
+              canMutate={canMutate}
+              disconnecting={disconnecting === conn.id}
+              onDisconnect={handleDisconnect}
+            />
           ))}
         </div>
       )}

@@ -48,6 +48,7 @@ public class OAuthFlowService {
     private final Environment environment;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final ConnectionHealthService connectionHealthService;
 
     @Value("${FRONTEND_URL:http://localhost:3000}")
     private String frontendUrl;
@@ -59,12 +60,14 @@ public class OAuthFlowService {
                             ConnectionService connectionService,
                             ConnectorRegistry connectorRegistry,
                             Environment environment,
-                            ObjectMapper objectMapper) {
+                            ObjectMapper objectMapper,
+                            ConnectionHealthService connectionHealthService) {
         this.oAuthStateRepository = oAuthStateRepository;
         this.connectionService = connectionService;
         this.connectorRegistry = connectorRegistry;
         this.environment = environment;
         this.objectMapper = objectMapper;
+        this.connectionHealthService = connectionHealthService;
         this.restTemplate = new RestTemplate();
     }
 
@@ -187,6 +190,12 @@ public class OAuthFlowService {
         try {
             response = restTemplate.exchange(connector.tokenUrl(), HttpMethod.POST, request, Map.class);
         } catch (HttpClientErrorException e) {
+            // Only a permanent auth rejection costs the connection its health. A rate limit, a 5xx,
+            // or a network blip (which never reaches this catch at all) is transient: retrying the
+            // same credentials can still succeed, so the connection stays as healthy as it was.
+            if (isAuthFailure(e)) {
+                connectionHealthService.markUnhealthy(conn.getId(), providerMessage(e));
+            }
             if (isInvalidGrant(e)) {
                 throw new OAuthReauthRequiredException(
                         "Refresh token for connection " + conn.getId() + " is no longer valid ("
@@ -208,6 +217,9 @@ public class OAuthFlowService {
                 : null;
 
         connectionService.updateAccessToken(conn, newAccessToken, newExpiresAt);
+        // The provider just honoured these credentials, which is the strongest health signal there
+        // is — so a connection previously marked unhealthy clears itself without human intervention.
+        connectionHealthService.markHealthy(conn.getId());
         log.info("Access token refreshed for connection={}", conn.getId());
         return newAccessToken;
     }
@@ -218,6 +230,45 @@ public class OAuthFlowService {
     private boolean isInvalidGrant(HttpClientErrorException e) {
         String body = e.getResponseBodyAsString();
         return body != null && body.contains("invalid_grant");
+    }
+
+    /**
+     * Whether the provider rejected who we are rather than failing for a transient reason: a 401/403
+     * outright, or one of the OAuth error codes that mean the grant or the client is no longer
+     * usable. Anything else (429, 5xx, a network error) is transient by default — the safe direction
+     * to be wrong in, since a false UNHEALTHY tells a human to reconnect a connection that is fine.
+     */
+    private boolean isAuthFailure(HttpClientErrorException e) {
+        if (e.getStatusCode().value() == 401 || e.getStatusCode().value() == 403) {
+            return true;
+        }
+        String body = e.getResponseBodyAsString();
+        return body != null && (body.contains("invalid_grant")
+                || body.contains("invalid_client")
+                || body.contains("unauthorized_client")
+                || body.contains("invalid_token"));
+    }
+
+    /** The provider's own explanation if it gave one, so the UI can show a human what went wrong. */
+    private String providerMessage(HttpClientErrorException e) {
+        String body = e.getResponseBodyAsString();
+        if (body != null && !body.isBlank()) {
+            try {
+                Map<?, ?> parsed = objectMapper.readValue(body, Map.class);
+                Object description = parsed.get("error_description");
+                Object error = parsed.get("error");
+                if (description != null) {
+                    return String.valueOf(description);
+                }
+                if (error != null) {
+                    return String.valueOf(error);
+                }
+            } catch (Exception ignored) {
+                // Not JSON, or not the shape we expect — fall through to the raw status line.
+            }
+        }
+        return "The provider rejected this connection's credentials (" + e.getStatusCode()
+                + "). Reconnect the account.";
     }
 
     @SuppressWarnings("unchecked")
