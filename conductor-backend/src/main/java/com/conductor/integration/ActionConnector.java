@@ -1,7 +1,9 @@
 package com.conductor.integration;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * OUTBOUND capability: a connector that performs actions/notifications (Slack/Discord post,
@@ -42,6 +44,23 @@ public interface ActionConnector extends Connector {
                 .map(spec -> new ActionDescriptor(spec.id(), spec.description(),
                         spec.params() != null ? List.copyOf(spec.params().keySet()) : List.of()))
                 .toList();
+    }
+
+    /**
+     * How long the caller waits for {@link #invoke} before treating the call as timed out. Empty (the
+     * default) means "use the caller's standard deadline" — a short, webhook-shaped bound that fits
+     * every request/response action. A connector whose action is inherently long-running (a chunked
+     * multi-gigabyte media upload, say) overrides this with its own, much longer deadline; nothing
+     * else about its failure handling changes.
+     *
+     * <p>The timeout branch of the contract above is unaffected by the value: exceeding whatever
+     * deadline applies is still TERMINAL-AMBIGUOUS and still dead-lettered without a retry. A
+     * connector that wants an over-running upload resumed rather than restarted should record its
+     * progress through {@code ActionInvocationService}'s resume checkpoint (keyed by the invocation's
+     * idempotency key) so the next attempt under that key can pick up where this one stopped.
+     */
+    default Optional<Duration> getInvocationTimeout() {
+        return Optional.empty();
     }
 
     ActionResult invoke(String actionId, Map<String, Object> input, ConnectionContext ctx);

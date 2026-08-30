@@ -1,0 +1,14 @@
+-- COND-23 Marketing Publishing Pipeline: resume state for long-running outbound actions.
+--
+-- action_invocation (V88) was shaped for webhook-sized calls: a failed attempt simply re-runs from
+-- scratch on the next inline retry or background sweep. That is fine for a POST and ruinous for a
+-- multi-gigabyte video upload, where restarting from byte zero can cost more than the whole publish
+-- window. A connector doing a chunked/resumable transfer writes its progress here (resumable session
+-- URI, byte offset, chunk index) so the next attempt for the SAME idempotency_key picks up where the
+-- failed one stopped.
+--
+-- TEXT and uninterpreted by SQL (same choice as post_publish_target.resume_checkpoint in V112) --
+-- only the media-upload code that wrote the payload parses it. Nullable: every existing invocation,
+-- and every connector that never opts in, leaves it NULL. Scoping needs no index -- the checkpoint is
+-- only ever reached through the existing unique idempotency_key.
+ALTER TABLE action_invocation ADD COLUMN resume_checkpoint TEXT;
