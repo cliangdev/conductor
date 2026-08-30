@@ -40,6 +40,7 @@ class AssetServiceTest {
     private WorkItemRepository workItemRepository;
     private ProjectSecurityService projectSecurityService;
     private SignalBus signalBus;
+    private StorageService storageService;
     private AssetService service;
 
     @BeforeEach
@@ -48,6 +49,7 @@ class AssetServiceTest {
         workItemRepository = Mockito.mock(WorkItemRepository.class);
         projectSecurityService = Mockito.mock(ProjectSecurityService.class);
         signalBus = Mockito.mock(SignalBus.class);
+        storageService = Mockito.mock(StorageService.class);
         // Resolution is DB-only: back the resolver with a mock version repo returning the seeded ENGINEERING
         // published snapshot (ENGINEERING allows only the github_pr asset type).
         WorkflowDefinitionVersionRepository versionRepository =
@@ -56,7 +58,7 @@ class AssetServiceTest {
                 .thenReturn(Optional.of(engineeringSnapshot()));
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository);
         service = new AssetService(assetRepository, workItemRepository, projectSecurityService, resolver,
-                signalBus);
+                signalBus, storageService, "http://localhost:8080");
         when(assetRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
     }
