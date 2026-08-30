@@ -66,6 +66,16 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
     @Autowired private NativePublishConfirmationPoller confirmationPollerBean;
 
     /**
+     * The service's raw target, used ONLY to set tuning fields. {@code batchSize} lives on the target
+     * instance, so assigning it through the CGLIB proxy writes a field nothing reads and {@code runSweep}
+     * would silently keep the default batch against a globally scoped finder — passing today, but flaky the
+     * moment another test leaves enough due rows to fill the batch. Method CALLS must still go through
+     * {@code service} (the proxy): {@code unschedule} is {@code @Transactional}, and invoking it on the
+     * target runs outside a session, which fails on the first lazy association.
+     */
+    private NativeHandoffService serviceTarget;
+
+    /**
      * The poller behind its transactional proxy. Its tuning fields ({@code batchSize},
      * {@code maxConfirmationAttempts}) live on the target instance, so setting them on the CGLIB proxy
      * would be silently ignored — the proxy has fields of its own that nothing reads. Its own
@@ -89,6 +99,7 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        serviceTarget = AopTestUtils.getTargetObject(service);
         confirmationPoller = AopTestUtils.getTargetObject(confirmationPollerBean);
         when(actionInvocationService.invoke(any(), anyString(), any(), anyString(), any()))
                 .thenReturn(ActionResult.ok(Map.of("post_id", "page_1_post_99", "video_id", "vid_99")));
@@ -176,14 +187,14 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     @AfterEach
     void resetBatchSize() {
-        service.batchSize = 50;
+        serviceTarget.batchSize = 50;
         confirmationPoller.batchSize = 50;
         confirmationPoller.maxConfirmationAttempts = 20;
     }
 
     private void runSweep(OffsetDateTime now) {
         // Keep the (globally scoped) batch generous so this test's own row is always reached.
-        service.batchSize = 500;
+        serviceTarget.batchSize = 500;
         service.runTick(now);
     }
 

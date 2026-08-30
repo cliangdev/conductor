@@ -19,6 +19,7 @@ import com.google.cloud.storage.BlobId;
 import com.google.cloud.storage.Storage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Profile;
@@ -124,6 +125,7 @@ public class TikTokPublishAction {
      * {@code ConnectorRegistry}, which collects every {@code Connector} bean, one of which is
      * {@code TikTokConnector}, which depends on this class.
      */
+    @Autowired
     public TikTokPublishAction(AssetRepository assetRepository,
                                PostPublishTargetRepository targetRepository,
                                @Lazy ActionInvocationService actionInvocationService,

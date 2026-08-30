@@ -17,6 +17,7 @@ import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.ActionInvocationService;
 import com.conductor.service.StorageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
@@ -107,6 +108,7 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
     private final YouTubeDataClient dataClient;
     private final YouTubePublishAction publishAction;
 
+    @Autowired
     public YouTubeConnector(AssetRepository assetRepository,
                             StorageService storageService,
                             PostPublishTargetRepository targetRepository,
