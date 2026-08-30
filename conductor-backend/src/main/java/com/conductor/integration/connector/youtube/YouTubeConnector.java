@@ -9,12 +9,25 @@ import com.conductor.integration.ConnectorMetadata;
 import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.FieldType;
 import com.conductor.integration.OAuth2Connector;
+import com.conductor.integration.connector.youtube.YouTubePublishAction.AssetMediaLocator;
+import com.conductor.integration.connector.youtube.YouTubePublishAction.InvocationCheckpoints;
+import com.conductor.integration.connector.youtube.YouTubePublishAction.UploadCheckpoints;
+import com.conductor.repository.AssetRepository;
+import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.ActionInvocationService;
+import com.conductor.service.StorageService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * YouTube publishing connector: uploads videos to one YouTube channel.
@@ -54,8 +67,19 @@ import java.util.Map;
  *       rather than queueing it.</li>
  * </ul>
  *
- * <p>The publish action body lands in T5.4; {@link #invoke} declares the action and returns a
- * permanent "not implemented" error until then.
+ * <h2>Actions</h2>
+ * <ul>
+ *   <li>{@code publish_video} — the resumable, checkpointed upload, in {@link YouTubePublishAction}.</li>
+ *   <li>{@code unpublish_video} — re-privatizes an upload and clears its {@code publishAt}, which is how
+ *       {@code NativeHandoffService} takes back a scheduled post. It strands the video harmlessly rather
+ *       than destroying something a human may still want.</li>
+ *   <li>{@code get_video_status} — the read-back the native lane's confirmation poller uses to tell a
+ *       scheduled publish that actually fired from one still sitting private.</li>
+ * </ul>
+ *
+ * <p>Failure classification is centralized in {@link #invoke}: a 4xx comes back as a permanent
+ * {@link ActionResult#error}, while a 5xx or IO failure propagates as the transient signal that earns a
+ * retry — and, for an upload, a retry that resumes from its checkpoint.
  */
 @Component
 @Profile("!local")
@@ -65,15 +89,45 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
     static final String CONFIG_CHANNEL_TITLE = "channelTitle";
 
     private static final String ACTION_PUBLISH_VIDEO = "publish_video";
+    private static final String ACTION_UNPUBLISH_VIDEO = "unpublish_video";
+    private static final String ACTION_GET_VIDEO_STATUS = "get_video_status";
+
+    /** Privacy a revoked upload is parked at, and the default a publish is created with. */
+    private static final String PRIVATE = "private";
+
+    /**
+     * How long the framework waits for one {@link #invoke}. Two hours, against a 10-second default that
+     * exists for webhook-shaped calls: this connector streams the whole video through the backend, so its
+     * deadline has to cover a multi-gigabyte transfer on an unremarkable uplink. An attempt that runs past
+     * it is dead-lettered without a retry (a timeout is terminal-ambiguous), which is precisely why the
+     * upload checkpoints as it goes rather than relying on the deadline being generous enough.
+     */
+    static final Duration INVOCATION_TIMEOUT = Duration.ofHours(2);
 
     private final YouTubeDataClient dataClient;
+    private final YouTubePublishAction publishAction;
 
-    public YouTubeConnector() {
-        this(new YouTubeDataClient());
+    public YouTubeConnector(AssetRepository assetRepository,
+                            StorageService storageService,
+                            PostPublishTargetRepository targetRepository,
+                            ObjectProvider<ActionInvocationService> actionInvocations,
+                            ObjectMapper objectMapper) {
+        this.dataClient = new YouTubeDataClient();
+        // ObjectProvider, not the service itself: ActionInvocationService reaches every ActionConnector
+        // through the registry, so injecting it eagerly here would close a bean cycle.
+        this.publishAction = new YouTubePublishAction(dataClient,
+                new AssetMediaLocator(assetRepository, storageService,
+                        com.conductor.integration.ConnectorHttp.restTemplate(YouTubeDataClient.REQUEST_TIMEOUT)),
+                new InvocationCheckpoints(actionInvocations::getObject, targetRepository, objectMapper));
     }
 
     YouTubeConnector(YouTubeDataClient dataClient) {
+        this(dataClient, new YouTubePublishAction(dataClient, input -> null, UploadCheckpoints.none()));
+    }
+
+    YouTubeConnector(YouTubeDataClient dataClient, YouTubePublishAction publishAction) {
         this.dataClient = dataClient;
+        this.publishAction = publishAction;
     }
 
     /**
@@ -167,13 +221,90 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector {
         return new YouTubeAuthorization(accessToken, Map.copyOf(config));
     }
 
+    /**
+     * A whole video's upload can outlast the framework's webhook-shaped default many times over, so this
+     * connector declares its own deadline. See {@link #INVOCATION_TIMEOUT}.
+     */
+    @Override
+    public Optional<Duration> getInvocationTimeout() {
+        return Optional.of(INVOCATION_TIMEOUT);
+    }
+
+    /**
+     * One place where the transient/permanent split is decided for every action: a 4xx is YouTube
+     * rejecting the request as invalid, which no number of retries will fix, so it returns an error and
+     * dead-letters. Everything else — 5xx, connection resets, read timeouts — propagates and is retried.
+     */
     @Override
     public ActionResult invoke(String actionId, Map<String, Object> input, ConnectionContext ctx) {
-        // The publish body is a separate follow-up task (T5.4). A returned error is PERMANENT per the
-        // ActionConnector contract, so an accidental invocation dead-letters instead of retrying.
-        if (ACTION_PUBLISH_VIDEO.equals(actionId)) {
-            return ActionResult.error("YouTube action '" + actionId + "' is not implemented yet");
+        if (ctx == null || ctx.accessToken() == null || ctx.accessToken().isBlank()) {
+            return ActionResult.error("This YouTube connection has no access token; reconnect the channel");
         }
-        return ActionResult.error("Unknown YouTube action: " + actionId);
+        try {
+            return switch (actionId == null ? "" : actionId) {
+                case ACTION_PUBLISH_VIDEO -> publishAction.publish(input, ctx);
+                case ACTION_UNPUBLISH_VIDEO -> unpublishVideo(input, ctx);
+                case ACTION_GET_VIDEO_STATUS -> getVideoStatus(input, ctx);
+                default -> ActionResult.error("Unknown YouTube action: " + actionId);
+            };
+        } catch (HttpClientErrorException e) {
+            // PERMANENT: YouTube has already rejected this request; retrying it wastes attempts.
+            return ActionResult.error("YouTube rejected the " + actionId + " request: "
+                    + e.getStatusCode().value() + " " + e.getStatusText());
+        }
+    }
+
+    /**
+     * Takes a scheduled upload back: re-privatizes it and clears {@code publishAt}. The cleared field is
+     * the point — an omitted {@code publishAt} would leave the scheduled publish standing, and the video
+     * would go live at the time a human just cancelled. A null {@code publish_at} in the payload is
+     * therefore honoured as "clear it", not read as "unspecified".
+     */
+    private ActionResult unpublishVideo(Map<String, Object> input, ConnectionContext ctx) {
+        String videoId = YouTubePublishAction.stringValue(input, "video_id");
+        if (videoId == null) {
+            return ActionResult.error("unpublish_video requires a video_id");
+        }
+        String privacyStatus = YouTubePublishAction.stringValue(input, "privacy_status");
+        Instant publishAt;
+        try {
+            publishAt = YouTubePublishAction.instantValue(input, "publish_at");
+        } catch (Exception e) {
+            return ActionResult.error("publish_at is not an ISO-8601 instant: " + input.get("publish_at"));
+        }
+
+        YouTubeDataClient.VideoStatus status = dataClient.updateVideoStatus(ctx.accessToken(), videoId,
+                privacyStatus == null ? PRIVATE : privacyStatus, publishAt);
+        return ActionResult.ok(describe(status != null ? status
+                : new YouTubeDataClient.VideoStatus(videoId, null, PRIVATE, publishAt)));
+    }
+
+    /** Whether the upload has actually gone public yet, for the native lane's confirmation poller. */
+    private ActionResult getVideoStatus(Map<String, Object> input, ConnectionContext ctx) {
+        String videoId = YouTubePublishAction.stringValue(input, "video_id");
+        if (videoId == null) {
+            return ActionResult.error("get_video_status requires a video_id");
+        }
+        YouTubeDataClient.VideoStatus status = dataClient.getVideo(ctx.accessToken(), videoId);
+        if (status == null) {
+            // PERMANENT: the channel no longer holds this video, and polling again will not bring it back.
+            return ActionResult.error("YouTube holds no video " + videoId + " on this channel");
+        }
+        return ActionResult.ok(describe(status));
+    }
+
+    private Map<String, Object> describe(YouTubeDataClient.VideoStatus status) {
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("video_id", status.id());
+        output.put("privacy_status", status.privacyStatus());
+        output.put("is_public", status.isPublic());
+        output.put("permalink", YouTubeDataClient.WATCH_URL_PREFIX + status.id());
+        if (status.publishAt() != null) {
+            output.put("publish_at", status.publishAt().toString());
+        }
+        if (status.title() != null) {
+            output.put("title", status.title());
+        }
+        return output;
     }
 }
