@@ -2955,6 +2955,25 @@ components:
           type: string
           nullable: true
           description: The platform's id for the created post, once it exists.
+        permalink:
+          type: string
+          nullable: true
+          description: >-
+            Link to the live post on the platform, captured when the target reaches PUBLISHED. This is the
+            per-target evidence the Post detail renders; null until the publish is confirmed.
+        errorMessage:
+          type: string
+          nullable: true
+          description: >-
+            The platform's own failure text, preserved verbatim for a human to read. Null unless the target
+            is FAILED.
+        fireTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this target publishes. Copied from the Work Item's scheduledFor and re-stamped whenever the
+            Post re-enters its scheduled status, so it is the authoritative time for this target.
 
     RetryPublishResponse:
       type: object

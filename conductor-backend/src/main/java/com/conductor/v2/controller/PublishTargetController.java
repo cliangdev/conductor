@@ -91,7 +91,10 @@ public class PublishTargetController implements PublishTargetsApi {
                 PublishTargetResponse.LaneEnum.fromValue(target.getLane().name()),
                 target.getState().name())
                 .label(target.getPlatformAccountLabel())
-                .platformPostId(target.getPlatformPostId());
+                .platformPostId(target.getPlatformPostId())
+                .permalink(target.getPermalink())
+                .errorMessage(target.getErrorMessage())
+                .fireTime(target.getFireTime());
     }
 
     private User currentUser() {

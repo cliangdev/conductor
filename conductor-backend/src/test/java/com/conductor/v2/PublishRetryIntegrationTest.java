@@ -233,4 +233,56 @@ class PublishRetryIntegrationTest extends AbstractE2ETest {
                 .map(row -> String.valueOf(row.get("state")))
                 .orElseThrow();
     }
+    /**
+     * The permalink and the platform's error are the whole point of outcome tracking — they are what a human
+     * reads on the Post detail. Both live on {@code post_publish_target}, but for a while neither was
+     * serialized: {@code PublishTargetResponse} omitted them and both {@code toResponse} mappers skipped
+     * them, so the outcome panel rendered every row with a state and nothing else. Every test on both sides
+     * stayed green, because the backend asserted the columns in the DB and the frontend asserted against the
+     * documented shape. This asserts the wire itself.
+     *
+     * <p>Read through the list endpoint, which is what the panel loads: the retry response deliberately
+     * clears a retried target's error, so it is the wrong place to assert one.
+     */
+    @Test
+    void theTargetListCarriesEachTargetsPermalinkErrorAndFireTime() {
+        PostPublishTarget published = seedTarget("facebook", PostPublishTargetState.PUBLISHED);
+        published.setPermalink("https://facebook.com/1/posts/7");
+        published.setPlatformAccountLabel("Rexcipe Page");
+        targetRepository.saveAndFlush(published);
+
+        PostPublishTarget failed = seedTarget("instagram", PostPublishTargetState.FAILED);
+        failed.setErrorMessage("The media aspect ratio is not supported.");
+        targetRepository.saveAndFlush(failed);
+        setStatus("FAILED");
+
+        var resp = rest.exchange(
+                url("/api/v2/projects/" + projectId + "/work-items/" + postId + "/publish-targets"),
+                HttpMethod.GET, new HttpEntity<>(ownerHeaders), String.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody())
+                .as("the published target's permalink must reach the client, not just the database")
+                .contains("https://facebook.com/1/posts/7")
+                .as("the platform's own error text must reach the client verbatim")
+                .contains("The media aspect ratio is not supported.")
+                .as("each target carries its own fire time")
+                .contains("fireTime");
+    }
+
+    /** A retried target is reset, so its stale error must NOT come back with the retry response. */
+    @Test
+    void theRetryResponseClearsTheRetriedTargetsStaleError() {
+        PostPublishTarget failed = seedTarget("instagram", PostPublishTargetState.FAILED);
+        failed.setErrorMessage("The media aspect ratio is not supported.");
+        targetRepository.saveAndFlush(failed);
+        setStatus("FAILED");
+
+        var resp = rest.exchange(retryUrl(), HttpMethod.POST, new HttpEntity<>(ownerHeaders), String.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resp.getBody()).doesNotContain("The media aspect ratio is not supported.");
+        assertThat(reload(failed).getErrorMessage()).isNull();
+    }
+
 }
