@@ -1,8 +1,13 @@
 package com.conductor.service;
 
+import com.conductor.entity.Asset;
+import com.conductor.entity.Connection;
 import com.conductor.entity.MemberRole;
+import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PostPublishTargetState;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
+import com.conductor.entity.PublishLane;
 import com.conductor.entity.Review;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
@@ -10,6 +15,9 @@ import com.conductor.entity.WorkItemReviewer;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.exception.UnprocessableEntityException;
+import com.conductor.repository.AssetRepository;
+import com.conductor.repository.ConnectionRepository;
+import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.ReviewRepository;
@@ -32,6 +40,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 
@@ -51,6 +61,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *   <li>reaching APPROVED publishes {@code conductor.work_item.status_changed}, which
  *       {@code WorkflowAutomationSignalSubscriber} turns into a run of a status-filtered YAML automation.</li>
  * </ul>
+ *
+ * <p>Every Post here is set up with a complete publish bundle (see {@code completePublishBundle}) because
+ * {@code PostScheduleValidator} refuses the approval gate without one. That is deliberate rather than
+ * incidental for {@code approveEdgeIsHiddenAndRejectedWhileThePostHasNoApprovedReview}: with the bundle
+ * complete, the "requires an approved review" rejection can only be the review gate, which
+ * {@code WorkItemWorkflowService#validateTransition} evaluates before the schedule validator.
  *
  * <p>Carries its own private {@code @Container} rather than extending {@code AbstractPostgresIntegrationTest}:
  * the automation assertion creates a WorkflowRun, which enqueues workflow jobs, and the job-queue scheduler
@@ -89,6 +105,9 @@ class MarketingReviewGateIntegrationTest {
     @Autowired private ReviewRepository reviewRepository;
     @Autowired private WorkflowDefinitionRepository workflowDefinitionRepository;
     @Autowired private WorkflowRunRepository workflowRunRepository;
+    @Autowired private ConnectionRepository connectionRepository;
+    @Autowired private PostPublishTargetRepository postPublishTargetRepository;
+    @Autowired private AssetRepository assetRepository;
     @Autowired private ObjectMapper objectMapper;
 
     private User author;
@@ -116,6 +135,7 @@ class MarketingReviewGateIntegrationTest {
         workflowSeeder.seedMarketing(project);
 
         post = workItemService.createWorkItem(project.getId(), "POST", "Launch teaser", "Body", MARKETING, author);
+        completePublishBundle();
     }
 
     // [auto] The APPROVED transition is hidden and rejected without an APPROVED review
@@ -252,6 +272,68 @@ class MarketingReviewGateIntegrationTest {
         review.setReviewerId(user.getId());
         review.setVerdict(verdict);
         reviewRepository.save(review);
+    }
+
+    /**
+     * Everything {@link PostScheduleValidator} requires before a Post may cross the MARKETING approval gate:
+     * a publish target, a fire time well clear of the ten-minute floor with a valid IANA zone, and an
+     * uploaded media file. Applied at setup, before any review round opens, so an approval's bundle hash
+     * covers the finished bundle and nothing here invalidates it later.
+     */
+    private void completePublishBundle() {
+        addTarget("meta", "facebook", null);
+        schedule(OffsetDateTime.now(ZoneOffset.UTC).plusDays(1));
+        addUploadedAsset("teaser.png");
+    }
+
+    /** A publish target plus the {@code connection} row {@code post_publish_target.connection_id} points at. */
+    private void addTarget(String connectorId, String platform, String captionOverride) {
+        Connection connection = new Connection();
+        connection.setProjectId(project.getId());
+        connection.setConnectorId(connectorId);
+        connection.setAuthType("oauth2");
+        connection.setStatus("ACTIVE");
+        connection = connectionRepository.save(connection);
+
+        PostPublishTarget target = new PostPublishTarget();
+        target.setWorkItem(reload());
+        target.setConnectorId(connectorId);
+        target.setConnectionId(connection.getId());
+        target.setPlatform(platform);
+        target.setLane(PublishLane.APP_MANAGED);
+        target.setState(PostPublishTargetState.PENDING);
+        target.setCaptionOverride(captionOverride);
+        target.setIdempotencyKey("key-" + UUID.randomUUID());
+        postPublishTargetRepository.save(target);
+    }
+
+    /**
+     * An UPLOADED {@code file} Asset, shaped the way {@link AssetService#createFileAsset} plus
+     * {@link AssetService#confirmUpload} leave one. {@code gcs_path} and {@code content_type} are mandatory
+     * for an UPLOADED row (the V113 {@code chk_assets_uploaded_has_storage} check), and {@code ref} is NOT NULL.
+     */
+    private void addUploadedAsset(String filename) {
+        String assetId = UUID.randomUUID().toString();
+        String gcsPath = "marketing-assets/" + project.getId() + "/" + post.getId() + "/" + assetId + "-" + filename;
+
+        Asset asset = new Asset();
+        asset.setId(assetId);
+        asset.setWorkItem(reload());
+        asset.setType("instagram_post");
+        asset.setLabel(filename);
+        asset.setKind(AssetService.KIND_FILE);
+        asset.setRef(gcsPath);
+        asset.setGcsPath(gcsPath);
+        asset.setContentType("image/png");
+        asset.setSizeBytes(2048L);
+        asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+        asset.setDone(true);
+        assetRepository.save(asset);
+    }
+
+    private void schedule(OffsetDateTime fireTime) {
+        workItemService.patchWorkItem(project.getId(), post.getId(), null, null, null, null, fireTime,
+                "America/New_York", author);
     }
 
     private void moveTo(String status) {

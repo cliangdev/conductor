@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.PostPublishTarget;
@@ -12,6 +13,7 @@ import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.WorkItemReviewer;
 import com.conductor.exception.UnprocessableEntityException;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -65,6 +67,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
     @Autowired private ReviewRepository reviewRepository;
     @Autowired private ConnectionRepository connectionRepository;
     @Autowired private PostPublishTargetRepository postPublishTargetRepository;
+    @Autowired private AssetRepository assetRepository;
 
     private User admin;
     private User reviewerA;
@@ -146,7 +149,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     @Test
     void reapprovingTheChangedBundleSatisfiesTheGateAgain() {
-        addTarget("meta", "facebook", null);
+        completePublishBundle();
         moveTo(post, "IN_REVIEW");
         assignReviewer(reviewerA);
         reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewerA);
@@ -163,6 +166,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     @Test
     void anApprovalFromBeforeAnotherReviewersRejectionNoLongerSatisfiesTheGate() {
+        completePublishBundle();
         moveTo(post, "IN_REVIEW");
         assignReviewer(reviewerA);
         assignReviewer(reviewerB);
@@ -190,7 +194,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     @Test
     void aPreExistingReviewWithNoRoundOrHashStillSatisfiesTheGate() {
-        addTarget("meta", "facebook", null);
+        completePublishBundle();
         moveTo(post, "IN_REVIEW");
         recordLegacyReview(post, reviewerA);
 
@@ -320,6 +324,41 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
         target.setCaptionOverride(captionOverride);
         target.setIdempotencyKey("key-" + UUID.randomUUID());
         postPublishTargetRepository.save(target);
+    }
+
+    /**
+     * An UPLOADED {@code file} Asset, shaped the way {@link AssetService#createFileAsset} plus
+     * {@link AssetService#confirmUpload} leave one. {@code gcs_path} and {@code content_type} are mandatory
+     * for an UPLOADED row (the V113 {@code chk_assets_uploaded_has_storage} check), and {@code ref} is NOT NULL.
+     */
+    private void addUploadedAsset(String filename) {
+        String assetId = UUID.randomUUID().toString();
+        String gcsPath = "marketing-assets/" + project.getId() + "/" + post.getId() + "/" + assetId + "-" + filename;
+
+        Asset asset = new Asset();
+        asset.setId(assetId);
+        asset.setWorkItem(reload(post));
+        asset.setType("instagram_post");
+        asset.setLabel(filename);
+        asset.setKind(AssetService.KIND_FILE);
+        asset.setRef(gcsPath);
+        asset.setGcsPath(gcsPath);
+        asset.setContentType("image/png");
+        asset.setSizeBytes(2048L);
+        asset.setUploadStatus(AssetService.UPLOAD_STATUS_UPLOADED);
+        asset.setDone(true);
+        assetRepository.save(asset);
+    }
+
+    /**
+     * Everything {@link PostScheduleValidator} requires before a Post may cross its approval gate: a target,
+     * a fire time well clear of the ten-minute floor with a valid IANA zone, and an uploaded media file.
+     * Applied before the review round opens, so the approval's bundle hash covers the finished bundle.
+     */
+    private void completePublishBundle() {
+        addTarget("meta", "facebook", null);
+        schedule(OffsetDateTime.now(ZoneOffset.UTC).plusDays(1));
+        addUploadedAsset("teaser.png");
     }
 
     private void editCaption(String caption) {
