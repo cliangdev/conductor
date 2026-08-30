@@ -30,6 +30,8 @@ tags:
     description: Step-run records on a Work Item
   - name: area-assets
     description: Area-scoped asset library across every Workflow in an Area
+  - name: publish-targets
+    description: Publishable social accounts a project can select on a Post
 
 paths:
   /projects/{projectId}/work-items:
@@ -1770,6 +1772,153 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/publish-targets:
+    get:
+      tags:
+        - publish-targets
+      summary: List the publishable targets a project can select
+      description: >-
+        Derived at request time from the project's ACTIVE social connections — nothing is stored.
+        One target per (platform, connection): a Meta connection yields a `facebook` target and,
+        only when the Page has a linked Instagram Business account, an `instagram` one; a YouTube
+        connection yields `youtube`; a TikTok connection yields `tiktok`. A platform the project has
+        no connection for simply does not appear, and two accounts on the same platform appear as
+        two targets with different `connectionId`s. `healthStatus`/`healthMessage` carry the last
+        credential verdict so a picker can disable an unhealthy account and explain why. (COND-23.)
+      operationId: listProjectPublishTargets
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The project's selectable publish targets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PublishTargetOption"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/publish-targets:
+    get:
+      tags:
+        - publish-targets
+      summary: List the publish targets selected on a Work Item
+      operationId: listWorkItemPublishTargets
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Work Item's selected publish targets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PublishTargetResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags:
+        - publish-targets
+      summary: Replace the publish targets selected on a Work Item
+      description: >-
+        Idempotent set-replace. Newly selected targets are created, deselected ones are deleted, and
+        a target that was already selected is left untouched — its row keeps its state, its
+        `platformPostId` and its idempotency key, so re-saving an unchanged selection never
+        re-creates a row that has already been handed to a platform. Editing the selection on an
+        Approved-or-later Post revokes any native-lane hand-off and reverts the Post to its review
+        status first; if that revocation fails the whole request fails and the selection is
+        unchanged. (COND-23 AC-P0-1.5.)
+      operationId: replaceWorkItemPublishTargets
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplacePublishTargetsRequest"
+      responses:
+        "200":
+          description: The Work Item's publish targets after the replace
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PublishTargetResponse"
+        "400":
+          description: A selected target is not one of the project's selectable targets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2632,6 +2781,127 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    PublishTargetOption:
+      type: object
+      description: >-
+        One selectable publishing destination, derived from an ACTIVE connection rather than stored.
+        (COND-23 T3.6.)
+      required:
+        - platform
+        - connectorId
+        - connectionId
+        - label
+        - lane
+      properties:
+        platform:
+          type: string
+          description: The surface a post goes out on.
+          enum:
+            - facebook
+            - instagram
+            - youtube
+            - tiktok
+        connectorId:
+          type: string
+          description: Connector the target publishes through (meta, youtube, tiktok).
+        connectionId:
+          type: string
+          description: >-
+            The specific connected account. Two accounts on one platform differ only here, so it is
+            what a selection must carry.
+        label:
+          type: string
+          description: Human-readable account name (Page name, @handle, channel title, creator nickname).
+        lane:
+          type: string
+          description: >-
+            NATIVE hands the post and its schedule to the platform's own scheduler; APP_MANAGED keeps
+            it here until its fire time and Conductor publishes it.
+          enum:
+            - NATIVE
+            - APP_MANAGED
+        healthStatus:
+          type: string
+          nullable: true
+          description: >-
+            Last credential verdict on the underlying connection — HEALTHY or UNHEALTHY, or null when
+            it has never been checked. An UNHEALTHY target should be offered disabled, not hidden.
+        healthMessage:
+          type: string
+          nullable: true
+          description: The platform's own explanation of an UNHEALTHY verdict; null while healthy.
+
+    PublishTargetResponse:
+      type: object
+      description: One publish target selected on a Work Item (a persisted post_publish_target row).
+      required:
+        - id
+        - workItemId
+        - platform
+        - connectorId
+        - connectionId
+        - lane
+        - state
+      properties:
+        id:
+          type: string
+        workItemId:
+          type: string
+        platform:
+          type: string
+          enum:
+            - facebook
+            - instagram
+            - youtube
+            - tiktok
+        connectorId:
+          type: string
+        connectionId:
+          type: string
+        label:
+          type: string
+          nullable: true
+          description: Account label captured at selection time (post_publish_target.platform_account_label).
+        lane:
+          type: string
+          enum:
+            - NATIVE
+            - APP_MANAGED
+        state:
+          type: string
+          description: One of PENDING, HANDED_OFF, PUBLISHING, PUBLISHED, FAILED, REVOKED.
+        platformPostId:
+          type: string
+          nullable: true
+          description: The platform's id for the created post, once it exists.
+
+    PublishTargetSelection:
+      type: object
+      required:
+        - platform
+        - connectionId
+      properties:
+        platform:
+          type: string
+          enum:
+            - facebook
+            - instagram
+            - youtube
+            - tiktok
+        connectionId:
+          type: string
+
+    ReplacePublishTargetsRequest:
+      type: object
+      required:
+        - targets
+      properties:
+        targets:
+          type: array
+          description: The complete selection. An empty array clears every target on the Work Item.
+          items:
+            $ref: "#/components/schemas/PublishTargetSelection"
 
     ErrorResponse:
       type: object

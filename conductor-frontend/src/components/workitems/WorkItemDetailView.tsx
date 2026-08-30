@@ -18,6 +18,7 @@ import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSkeleton'
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
+import { PostTargetPicker, workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
 import { toastError, toastSuccess } from '@/components/ui/toast'
 import { ExternalLink, FileText, FileX2 } from 'lucide-react'
@@ -283,6 +284,22 @@ export function WorkItemDetailView({
       // Non-fatal — the assets list simply renders nothing.
     }
   }, [accessToken, projectId, issueId])
+
+  // Editing a Post's publish bundle can revert it out of Approved (PublishBundleGuard), so the status
+  // chip and the review panel have to be re-read after the picker saves rather than assumed unchanged.
+  const refreshIssueStatus = useCallback(async () => {
+    if (!accessToken) return
+    try {
+      const data = await apiGet<DetailIssue>(
+        `/api/v2/projects/${projectId}/work-items/${issueId}`,
+        accessToken
+      )
+      setIssue(data)
+    } catch {
+      // Non-fatal — a stale chip corrects itself on the next load.
+    }
+    await fetchReviews()
+  }, [accessToken, projectId, issueId, fetchReviews])
 
   useEffect(() => {
     if (!accessToken) return
@@ -786,6 +803,19 @@ export function WorkItemDetailView({
                 workflowView={workflowView}
                 assets={assets}
                 onUploaded={fetchAssets}
+              />
+            )}
+            {/* Where the Post goes. Sits with the creative for the same reason: the accounts are part
+                of what a reviewer approves, not metadata. Offered only where the bound Workflow's
+                asset types name a publishable platform, so engineering items never see it. */}
+            {activeTab !== 'activity' && workflowDeclaresPublishTargets(workflowView) && (
+              <PostTargetPicker
+                projectId={projectId}
+                workItemId={issueId}
+                token={accessToken!}
+                status={issue.status}
+                workflowView={workflowView}
+                onChanged={refreshIssueStatus}
               />
             )}
           </div>
