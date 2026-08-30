@@ -78,9 +78,10 @@ public class ProjectService {
         project.setKey(resolveUniqueKey(name));
         projectRepository.save(project);
 
-        // Every workspace starts with the built-in ENGINEERING lifecycle Workflow so its Work Items
-        // (Issues) render and the sidebar has a nav entry from day one. (COND-22)
+        // Every workspace starts with the built-in lifecycle Workflows so its Work Items render and the
+        // sidebar has nav entries from day one: ENGINEERING Issues (COND-22) and MARKETING Posts (COND-23).
         workflowSeeder.seedEngineering(project);
+        workflowSeeder.seedMarketing(project);
 
         ProjectMember adminMember = new ProjectMember();
         adminMember.setProject(project);
