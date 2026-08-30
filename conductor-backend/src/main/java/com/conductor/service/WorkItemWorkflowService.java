@@ -52,6 +52,7 @@ public class WorkItemWorkflowService {
     private final WorkflowDefinitionResolver resolver;
     private final SystemTriggerRegistry systemTriggerRegistry;
     private final PublishBundleHasher publishBundleHasher;
+    private final PostScheduleValidator postScheduleValidator;
 
     public WorkItemWorkflowService(WorkItemRepository workItemRepository,
                                    ProjectSecurityService projectSecurityService,
@@ -59,7 +60,8 @@ public class WorkItemWorkflowService {
                                    ReviewRepository reviewRepository,
                                    WorkflowDefinitionResolver resolver,
                                    SystemTriggerRegistry systemTriggerRegistry,
-                                   PublishBundleHasher publishBundleHasher) {
+                                   PublishBundleHasher publishBundleHasher,
+                                   PostScheduleValidator postScheduleValidator) {
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
@@ -67,6 +69,7 @@ public class WorkItemWorkflowService {
         this.resolver = resolver;
         this.systemTriggerRegistry = systemTriggerRegistry;
         this.publishBundleHasher = publishBundleHasher;
+        this.postScheduleValidator = postScheduleValidator;
     }
 
     /** The Workflow's initial status id (e.g. {@code DRAFT}), used to stamp a freshly created Work Item. */
@@ -123,6 +126,11 @@ public class WorkItemWorkflowService {
             throw new UnprocessableEntityException(
                     "Transition to " + newStatus + " requires an approved review");
         }
+        // Publishing workflows additionally require a complete, schedulable publish bundle before approval
+        // (fire time + timezone, at least one target, at least one uploaded asset, 10-minute floor). The
+        // validator is a no-op for every transition it does not apply to, so calling it unconditionally is
+        // safe — see PostScheduleValidator for the definition-driven rule that decides when it applies.
+        postScheduleValidator.validateForTransition(workItem, statechart, newStatus);
     }
 
     /**
