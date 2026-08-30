@@ -77,6 +77,9 @@ class WorkItemServiceTest {
     @Mock
     private NativeHandoffService nativeHandoffService;
 
+    @Mock
+    private PublishBundleGuard publishBundleGuard;
+
     @InjectMocks
     private WorkItemService workItemService;
 

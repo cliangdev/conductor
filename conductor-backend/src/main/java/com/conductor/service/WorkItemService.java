@@ -52,6 +52,7 @@ public class WorkItemService {
     private final WorkItemWorkflowService workItemWorkflowService;
     private final AssetService assetService;
     private final NativeHandoffService nativeHandoffService;
+    private final PublishBundleGuard publishBundleGuard;
 
     public WorkItemService(
             WorkItemRepository workItemRepository,
@@ -63,7 +64,8 @@ public class WorkItemService {
             UserRepository userRepository,
             WorkItemWorkflowService workItemWorkflowService,
             AssetService assetService,
-            NativeHandoffService nativeHandoffService) {
+            NativeHandoffService nativeHandoffService,
+            PublishBundleGuard publishBundleGuard) {
         this.workItemRepository = workItemRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
@@ -74,6 +76,7 @@ public class WorkItemService {
         this.workItemWorkflowService = workItemWorkflowService;
         this.assetService = assetService;
         this.nativeHandoffService = nativeHandoffService;
+        this.publishBundleGuard = publishBundleGuard;
     }
 
     /**
@@ -132,6 +135,14 @@ public class WorkItemService {
 
         String validatedTimezone = validateTimezone(scheduleTimezone);
 
+        // COND-23 AC-P0-1.5: editing the publish bundle of an Approved-or-later Post revokes any native-lane
+        // hand-off, reverts the Post to its review status and voids the standing approval — all BEFORE the
+        // edit is applied, in this transaction. A failed revocation throws here, so the patch never commits.
+        // Placement matters: `previousStatus` is read below, AFTER this, so on a revert it already reads
+        // IN_REVIEW and the exit-from-scheduled unschedule further down does not fire a second time.
+        Optional<PublishBundleGuard.Revert> bundleRevert = publishBundleGuard.revertForCaptionOrScheduleEdit(
+                projectId, workItem, description, scheduledFor, validatedTimezone);
+
         if (scheduledFor != null) {
             workItem.setScheduledFor(scheduledFor);
         }
@@ -175,6 +186,9 @@ public class WorkItemService {
         }
 
         workItemRepository.save(workItem);
+
+        bundleRevert.ifPresent(revert ->
+                publishStatusChanged(projectId, workItem, revert.fromStatus(), revert.toStatus(), null));
 
         // Entering the scheduled status hands off native-lane targets whose fire time is inside the
         // platform window; far-future ones stay PENDING for NativeHandoffService's deferred sweep.
