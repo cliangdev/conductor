@@ -1,0 +1,179 @@
+package com.conductor.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.PreUpdate;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
+
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+/**
+ * One place a post is going out to (COND-23): a Work Item plus a single (platform, connection) pair
+ * and the time it fires. This is the durable anchor the whole publishing pipeline hangs off — it is
+ * written before anything is handed to a platform, carries the globally unique idempotency key that
+ * makes publishing at-most-once, and is the record a revocation reads to know what it must undo.
+ *
+ * <p>A single connection can produce more than one target: a Meta connection yields both a
+ * {@code facebook} and an {@code instagram} row, which is why uniqueness is on the
+ * (work item, platform, connection) triple rather than on (work item, connection).
+ */
+@Entity
+@Table(name = "post_publish_target",
+        uniqueConstraints = {
+            @UniqueConstraint(name = "uq_post_publish_target_item_platform_connection",
+                    columnNames = {"work_item_id", "platform", "connection_id"}),
+            @UniqueConstraint(name = "uq_post_publish_target_idempotency_key",
+                    columnNames = {"idempotency_key"})
+        },
+        indexes = {
+            @Index(name = "idx_post_publish_target_due", columnList = "state, fire_time")
+        })
+public class PostPublishTarget {
+
+    @Id
+    @Column(name = "id", length = 36, nullable = false, updatable = false)
+    private String id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "work_item_id", nullable = false)
+    private WorkItem workItem;
+
+    /** Connector this target publishes through (e.g. {@code meta}, {@code youtube}, {@code tiktok}). */
+    @Column(name = "connector_id", length = 64, nullable = false)
+    private String connectorId;
+
+    @Column(name = "connection_id", length = 36, nullable = false)
+    private String connectionId;
+
+    /** {@code facebook} | {@code instagram} | {@code youtube} | {@code tiktok}. */
+    @Column(name = "platform", length = 32, nullable = false)
+    private String platform;
+
+    /** Human-readable account this posts to, for display (e.g. a page name or handle). */
+    @Column(name = "platform_account_label", length = 255)
+    private String platformAccountLabel;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "lane", length = 16, nullable = false)
+    private PublishLane lane;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "state", length = 24, nullable = false)
+    private PostPublishTargetState state;
+
+    /** When this target publishes; for the NATIVE lane it is also the time handed to the platform. */
+    @Column(name = "fire_time")
+    private OffsetDateTime fireTime;
+
+    /** The platform's id for the created post, set once the platform accepts it. */
+    @Column(name = "platform_post_id", length = 255)
+    private String platformPostId;
+
+    @Column(name = "permalink", columnDefinition = "TEXT")
+    private String permalink;
+
+    @Column(name = "error_message", columnDefinition = "TEXT")
+    private String errorMessage;
+
+    @Column(name = "attempts", nullable = false)
+    private int attempts;
+
+    /** Per-target caption, overriding the Work Item's shared copy for this platform. */
+    @Column(name = "caption_override", columnDefinition = "TEXT")
+    private String captionOverride;
+
+    /**
+     * Opaque JSON resume state for a chunked media upload (resumable session URI, byte offset, chunk
+     * index). Only the media-upload code parses it; everything else passes it through untouched.
+     */
+    @Column(name = "resume_checkpoint", columnDefinition = "TEXT")
+    private String resumeCheckpoint;
+
+    /** Globally unique at-most-once anchor; a retried scheduling pass collides here instead of double-posting. */
+    @Column(name = "idempotency_key", length = 255, nullable = false)
+    private String idempotencyKey;
+
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private OffsetDateTime createdAt;
+
+    @Column(name = "updated_at", nullable = false)
+    private OffsetDateTime updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        if (id == null) {
+            id = UUID.randomUUID().toString();
+        }
+        createdAt = OffsetDateTime.now();
+        updatedAt = OffsetDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = OffsetDateTime.now();
+    }
+
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+
+    public WorkItem getWorkItem() { return workItem; }
+    public void setWorkItem(WorkItem workItem) { this.workItem = workItem; }
+
+    public String getConnectorId() { return connectorId; }
+    public void setConnectorId(String connectorId) { this.connectorId = connectorId; }
+
+    public String getConnectionId() { return connectionId; }
+    public void setConnectionId(String connectionId) { this.connectionId = connectionId; }
+
+    public String getPlatform() { return platform; }
+    public void setPlatform(String platform) { this.platform = platform; }
+
+    public String getPlatformAccountLabel() { return platformAccountLabel; }
+    public void setPlatformAccountLabel(String platformAccountLabel) { this.platformAccountLabel = platformAccountLabel; }
+
+    public PublishLane getLane() { return lane; }
+    public void setLane(PublishLane lane) { this.lane = lane; }
+
+    public PostPublishTargetState getState() { return state; }
+    public void setState(PostPublishTargetState state) { this.state = state; }
+
+    public OffsetDateTime getFireTime() { return fireTime; }
+    public void setFireTime(OffsetDateTime fireTime) { this.fireTime = fireTime; }
+
+    public String getPlatformPostId() { return platformPostId; }
+    public void setPlatformPostId(String platformPostId) { this.platformPostId = platformPostId; }
+
+    public String getPermalink() { return permalink; }
+    public void setPermalink(String permalink) { this.permalink = permalink; }
+
+    public String getErrorMessage() { return errorMessage; }
+    public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+
+    public int getAttempts() { return attempts; }
+    public void setAttempts(int attempts) { this.attempts = attempts; }
+
+    public String getCaptionOverride() { return captionOverride; }
+    public void setCaptionOverride(String captionOverride) { this.captionOverride = captionOverride; }
+
+    public String getResumeCheckpoint() { return resumeCheckpoint; }
+    public void setResumeCheckpoint(String resumeCheckpoint) { this.resumeCheckpoint = resumeCheckpoint; }
+
+    public String getIdempotencyKey() { return idempotencyKey; }
+    public void setIdempotencyKey(String idempotencyKey) { this.idempotencyKey = idempotencyKey; }
+
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
+
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
+}
