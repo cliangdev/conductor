@@ -38,6 +38,9 @@ public class ReviewService {
     /** The verdict that routes a Work Item back to its Workflow's changes-requested lane. */
     private static final String CHANGES_REQUESTED_VERDICT = "CHANGES_REQUESTED";
 
+    /** The verdict that satisfies a review gate, and the only one a publish-bundle hash is recorded for. */
+    private static final String APPROVED_VERDICT = "APPROVED";
+
     /** The {@code reviewOutcomes} token a Workflow declares to opt its gated edge into that routing. */
     private static final String REQUEST_CHANGES_OUTCOME = "request_changes";
 
@@ -49,6 +52,7 @@ public class ReviewService {
     private final SignalBus signalBus;
     private final WorkItemWorkflowService workItemWorkflowService;
     private final WorkItemService workItemService;
+    private final PublishBundleHasher publishBundleHasher;
 
     public ReviewService(
             ReviewRepository reviewRepository,
@@ -58,7 +62,8 @@ public class ReviewService {
             UserRepository userRepository,
             SignalBus signalBus,
             WorkItemWorkflowService workItemWorkflowService,
-            WorkItemService workItemService) {
+            WorkItemService workItemService,
+            PublishBundleHasher publishBundleHasher) {
         this.reviewRepository = reviewRepository;
         this.workItemReviewerRepository = workItemReviewerRepository;
         this.projectMemberRepository = projectMemberRepository;
@@ -67,6 +72,7 @@ public class ReviewService {
         this.signalBus = signalBus;
         this.workItemWorkflowService = workItemWorkflowService;
         this.workItemService = workItemService;
+        this.publishBundleHasher = publishBundleHasher;
     }
 
     @Transactional
@@ -90,6 +96,8 @@ public class ReviewService {
             throw new ForbiddenException("You are not an assigned reviewer");
         }
 
+        WorkItem workItem = workItemRepository.findById(workItemId).orElse(null);
+
         Review review = reviewRepository.findByWorkItemIdAndReviewerId(workItemId, currentUser.getId())
                 .orElseGet(() -> {
                     Review r = new Review();
@@ -101,10 +109,10 @@ public class ReviewService {
         review.setVerdict(verdict);
         review.setBody(body);
         review.setSubmittedAt(OffsetDateTime.now());
+        bindToBundle(review, workItem, verdict);
 
         reviewRepository.save(review);
 
-        WorkItem workItem = workItemRepository.findById(workItemId).orElse(null);
         String workItemTitle = workItem != null ? workItem.getTitle() : workItemId;
         signalBus.publish(Signal.of(
                 SignalTypes.CONDUCTOR_WORK_ITEM_REVIEW_SUBMITTED, projectId, workItemId, Instant.now(),
@@ -114,6 +122,25 @@ public class ReviewService {
         routeOnVerdict(projectId, workItem, verdict);
 
         return review;
+    }
+
+    /**
+     * Pin the verdict to what it was cast against (COND-23): the review round now open on the item, and — when
+     * the item carries a publish bundle — the hash of that bundle. Both are re-stamped on every submission,
+     * because the row is upserted per (work item, reviewer) and a reviewer changing their mind is a new verdict
+     * about the bundle as it stands now.
+     *
+     * <p>Only an APPROVED verdict records a hash; anything else clears it, so a reviewer flipping an earlier
+     * approval to CHANGES_REQUESTED cannot leave a hash behind that outlives the approval it belonged to.
+     * An item with no publish targets records no hash at all and keeps gating on the review round alone.
+     */
+    private void bindToBundle(Review review, WorkItem workItem, String verdict) {
+        if (workItem == null) {
+            return;
+        }
+        review.setReviewRound(workItem.getCurrentReviewRound());
+        boolean approvesABundle = APPROVED_VERDICT.equals(verdict) && publishBundleHasher.appliesTo(workItem);
+        review.setBundleHash(approvesABundle ? publishBundleHasher.hash(workItem) : null);
     }
 
     /**
@@ -156,6 +183,10 @@ public class ReviewService {
             return;
         }
 
+        // The rejection closes the review round. Any approval already sitting on the item belongs to the round
+        // just closed, so it can no longer satisfy the gate when the item is resubmitted — which is what stops
+        // reviewer A's approval from clearing the gate after reviewer B sent the item back.
+        workItem.setCurrentReviewRound(workItem.getCurrentReviewRound() + 1);
         workItem.setCurrentStatus(route.get().to());
         workItemRepository.save(workItem);
         workItemService.publishStatusChanged(projectId, workItem, fromStatus, workItem.getCurrentStatus(), null);

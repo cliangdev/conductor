@@ -65,8 +65,9 @@ class WorkItemWorkflowServiceTest {
                 .thenReturn(Optional.of(snapshot));
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository);
         SystemTriggerRegistry systemTriggerRegistry = new SystemTriggerRegistry(new ObjectMapper());
+        PublishBundleHasher publishBundleHasher = Mockito.mock(PublishBundleHasher.class);
         service = new WorkItemWorkflowService(workItemRepository, projectSecurityService, projectMemberRepository,
-                reviewRepository, resolver, systemTriggerRegistry);
+                reviewRepository, resolver, systemTriggerRegistry, publishBundleHasher);
     }
 
     private WorkflowDefinitionVersion engineeringSnapshot() {

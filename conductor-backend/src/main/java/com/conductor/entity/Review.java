@@ -36,6 +36,26 @@ public class Review {
     @Column(name = "submitted_at", nullable = false)
     private OffsetDateTime submittedAt;
 
+    /**
+     * Hex SHA-256 of the publish bundle this verdict was cast against (COND-23), computed by
+     * {@code PublishBundleHasher}. An APPROVED review satisfies its gate only while the Work Item still
+     * hashes to this value, so editing the caption, targets, fire time or media revokes the approval.
+     *
+     * <p>Null means "not bundle-bound" and is the norm: pre-existing reviews and every review on an item
+     * with no publish targets (all of ENGINEERING) leave it null and gate exactly as they did before.
+     */
+    @Column(name = "bundle_hash", length = 64)
+    private String bundleHash;
+
+    /**
+     * The Work Item's {@code currentReviewRound} when this verdict was cast. A round closes whenever a
+     * CHANGES_REQUESTED verdict routes the item out of review, which is what stops one reviewer's earlier
+     * approval from satisfying the gate after another reviewer sent the item back. Null on pre-existing
+     * reviews, which are treated as belonging to whatever round is current.
+     */
+    @Column(name = "review_round")
+    private Integer reviewRound;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -63,4 +83,10 @@ public class Review {
 
     public OffsetDateTime getSubmittedAt() { return submittedAt; }
     public void setSubmittedAt(OffsetDateTime submittedAt) { this.submittedAt = submittedAt; }
+
+    public String getBundleHash() { return bundleHash; }
+    public void setBundleHash(String bundleHash) { this.bundleHash = bundleHash; }
+
+    public Integer getReviewRound() { return reviewRound; }
+    public void setReviewRound(Integer reviewRound) { this.reviewRound = reviewRound; }
 }

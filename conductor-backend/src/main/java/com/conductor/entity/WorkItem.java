@@ -114,6 +114,16 @@ public class WorkItem {
     @Column(name = "schedule_timezone", length = 64)
     private String scheduleTimezone;
 
+    /**
+     * The review round currently open on this item (COND-23, V115). Starts at 0 and is bumped whenever a
+     * CHANGES_REQUESTED verdict routes the item out of a review status: an APPROVED {@code Review} stamped
+     * with an earlier round no longer satisfies the gate, so an approval cast before a rejection cannot let
+     * the item through on resubmission. Workflows with no changes-requested lane (ENGINEERING) never leave
+     * round 0, which is why their gating is untouched.
+     */
+    @Column(name = "current_review_round", nullable = false)
+    private int currentReviewRound = 0;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -183,6 +193,9 @@ public class WorkItem {
 
     public String getScheduleTimezone() { return scheduleTimezone; }
     public void setScheduleTimezone(String scheduleTimezone) { this.scheduleTimezone = scheduleTimezone; }
+
+    public int getCurrentReviewRound() { return currentReviewRound; }
+    public void setCurrentReviewRound(int currentReviewRound) { this.currentReviewRound = currentReviewRound; }
 
     public JsonNode getWorkItemTasks() { return workItemTasks; }
     public void setWorkItemTasks(JsonNode workItemTasks) { this.workItemTasks = workItemTasks; }
