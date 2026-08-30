@@ -1,8 +1,10 @@
 package com.conductor.service;
 
 import com.conductor.entity.WorkItem;
+import com.conductor.exception.BusinessException;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.workflow.lifecycle.Statechart;
+import com.conductor.workflow.lifecycle.StatechartStatus;
 import com.conductor.workflow.lifecycle.StatechartTransition;
 import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import org.slf4j.Logger;
@@ -53,6 +55,19 @@ import java.util.Optional;
  * The guard applies only where {@link PublishBundleHasher#appliesTo} is true — the item has at least one
  * publish target, which is the same "does this carry a publish bundle?" test the review gate uses. Every
  * ENGINEERING item has none and is completely unaffected, even in a post-gate status such as {@code DONE}.
+ *
+ * <h2>Published is immutable; Failed is not (COND-23 P0-6)</h2>
+ * The locked set {@link AssetUploadPolicy#isApprovedOrLater} derives includes the workflow's <b>terminal</b>
+ * status — {@code PUBLISHED} for MARKETING — and reverting <em>that</em> would be a lie. A published Post has
+ * an approver, a fire time and a per-target outcome, and none of it can be un-happened: the posts are on the
+ * platforms. Sending such a Post back to In Review would rewrite the audit trail of something that already
+ * went out and make the pipeline look as if it could take it back. So a bundle edit on a Post in a terminal
+ * status is <b>refused</b> outright, not reverted; the way to change a published post's copy is a new Post.
+ *
+ * <p>{@code FAILED} is the opposite case and is deliberately left revertible. It is not terminal, it is the
+ * "needs attention" landing the roll-up puts a Post in, and fixing the caption or dropping the account that
+ * refused it is exactly what a human does before hitting retry. Every other Approved-or-later status behaves
+ * as before.
  *
  * <h2>Media is deliberately not here</h2>
  * A media change on an Approved-or-later Post is <em>refused</em> by {@link AssetService}, not silently
@@ -117,9 +132,12 @@ public class PublishBundleGuard {
      * no review gate at all, so callers can invoke it unconditionally.
      *
      * @return the revert that happened, or empty when the Post was left where it was
-     * @throws com.conductor.exception.BusinessException when a native-lane hand-off could not be revoked; the
-     *                                                   caller's transaction must roll back rather than commit
-     *                                                   an edit behind a live scheduled platform post
+     * @throws com.conductor.exception.BusinessException when the Post is in a terminal status — its publish
+     *                                                   record is immutable and the edit is refused, not
+     *                                                   reverted — or when a native-lane hand-off could not be
+     *                                                   revoked, in which case the caller's transaction must
+     *                                                   roll back rather than commit an edit behind a live
+     *                                                   scheduled platform post
      */
     @Transactional
     public Optional<Revert> revertForBundleEdit(String projectId, WorkItem post) {
@@ -134,6 +152,15 @@ public class PublishBundleGuard {
         String fromStatus = post.getCurrentStatus();
         if (!AssetUploadPolicy.isApprovedOrLater(statechart, fromStatus)) {
             return Optional.empty();
+        }
+        // A published Post cannot be un-published, so reverting it would misdescribe what happened. Refuse
+        // the edit instead and leave the audit trail — approver, fire time, per-target outcome — intact.
+        if (statechart.isTerminal(fromStatus)) {
+            String noun = statechart.noun();
+            throw new BusinessException("This " + noun + " is " + statusLabel(statechart, fromStatus)
+                    + " and its publish record is immutable: the approval it went out under, the time it"
+                    + " fired and each target's outcome are the record of posts that are already live."
+                    + " Create a new " + noun + " instead of editing this one.");
         }
         String reviewStatus = AssetUploadPolicy.reviewGate(statechart)
                 .map(StatechartTransition::from)
@@ -185,6 +212,10 @@ public class PublishBundleGuard {
 
     private static boolean sameInstant(OffsetDateTime left, OffsetDateTime right) {
         return left != null && right != null && left.toInstant().equals(right.toInstant());
+    }
+
+    private static String statusLabel(Statechart statechart, String statusId) {
+        return statechart.status(statusId).map(StatechartStatus::displayLabel).orElse(statusId);
     }
 
     private static String blankToNull(String value) {

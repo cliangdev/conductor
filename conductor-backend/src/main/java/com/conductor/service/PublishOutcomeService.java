@@ -2,17 +2,38 @@ package com.conductor.service;
 
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetState;
+import com.conductor.entity.PublishLane;
+import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
+import com.conductor.exception.BusinessException;
 import com.conductor.integration.ActionResult;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.repository.WorkItemRepository;
+import com.conductor.workflow.lifecycle.Statechart;
+import com.conductor.workflow.lifecycle.StatechartTransition;
+import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -41,8 +62,45 @@ import java.util.regex.Pattern;
  * <h2>Terminal states are never overwritten</h2>
  * {@code REVOKED} and {@code PUBLISHED} are respected: a late failure never buries a success, and a
  * revocation is never undone by an outcome that was already in flight when it landed. Every entry point
- * returns whether <em>this</em> call is what moved the row, which is what the roll-up and retry work
- * (T6.2) builds on — it is deliberately not computed here.
+ * returns whether <em>this</em> call is what moved the row, and a call that <em>did</em> move one is what
+ * triggers the Post-level roll-up below.
+ *
+ * <h2>The Post-level roll-up (T6.2)</h2>
+ * A target is one destination; a human reads the Post. So every time a target lands in a terminal state the
+ * Post is re-evaluated: once nothing is still in flight, <b>every</b> target {@code PUBLISHED} moves the Post
+ * to its published status, and <b>any</b> failure moves it to its failed status. A mixed outcome therefore
+ * reads <b>Failed</b> — "needs attention", not "nothing published": the targets that did go out keep their
+ * {@code PUBLISHED} state and their permalink Assets, and those are what the Post detail shows alongside the
+ * failure. Reading a mixed Post as Published would be the dangerous direction; reading it as Failed is merely
+ * pessimistic, and the per-target evidence is right there to disambiguate.
+ *
+ * <p>{@code REVOKED} targets are excluded from the tally entirely — a destination that was taken back is not
+ * an outcome — and the roll-up only ever fires while the Post is still in its scheduled status, so it can
+ * never drag a Post that a human or {@link PublishBundleGuard} has since moved back into the pipeline.
+ *
+ * <p>Both statuses come off the Work Item's own version-pinned {@link Statechart}, never a hardcoded name:
+ * see {@link #publishedStatus} and {@link #failedStatus}. The roll-up writes the status and nothing else —
+ * it deliberately does not publish {@code WORK_ITEM_STATUS_CHANGED}, because that enrichment lives on
+ * {@code WorkItemService}, which depends (through {@code PublishBundleGuard} → {@code NativeHandoffService})
+ * on this service. Announcing the roll-up is the call site's to wire.
+ *
+ * <h2>Retry, and why the key has to be new</h2>
+ * {@link #retryFailedTargets} re-fires <em>only</em> {@code FAILED} rows. Each is reset to {@code PENDING}
+ * with a <b>freshly minted</b> {@code idempotency_key}: {@link ActionInvocationService} is claim-or-return on
+ * that key, so reusing it would hand back the failed attempt's stored result forever instead of posting.
+ * A {@code PUBLISHED} row is not touched by any part of it.
+ *
+ * <h2>Stranded rows are reconciled, never re-dispatched</h2>
+ * {@code PostPublishScheduler} claims a row {@code PENDING -> PUBLISHING} before it calls the platform. A
+ * process that dies in between leaves that row {@code PUBLISHING} forever — no poller picks it up, and no
+ * human ever hears about it. {@link #reconcileStrandedTargets} resolves such a row into {@code FAILED} once
+ * it is past {@link #strandedAfter}, and the Post rolls up as usual.
+ *
+ * <p>What it must <em>not</em> do is republish it. The row was handed to the platform; the post may well be
+ * live. So the recorded message says the outcome is <em>unknown</em> and asks a human to look, and the row
+ * lands in {@code FAILED} — a state neither poller dispatches — rather than back in {@code PENDING}. Getting
+ * it out again is then an explicit human retry, which is exactly the at-most-once boundary this pipeline is
+ * built on.
  *
  * <h2>Transactions</h2>
  * Every entry point runs {@code REQUIRES_NEW}. The platform side effect has already happened by the time
@@ -97,16 +155,106 @@ public class PublishOutcomeService {
                     + "|authentication[ _-]?fail",
             Pattern.CASE_INSENSITIVE);
 
+    /** States a target can still leave on its own; while any remain, the Post has not finished publishing. */
+    private static final Set<PostPublishTargetState> IN_FLIGHT = Set.of(
+            PostPublishTargetState.PENDING,
+            PostPublishTargetState.HANDED_OFF,
+            PostPublishTargetState.PUBLISHING);
+
+    /**
+     * What a stranded row records. Every word is load-bearing: the dispatch reached the platform, so the
+     * post may be live, and a human has to look before re-firing it.
+     */
+    static final String STRANDED_MESSAGE =
+            "Publishing was interrupted after this post was handed to the platform, and no outcome ever came"
+                    + " back. The outcome is unknown — the post may or may not have gone out. Check the"
+                    + " account before retrying, because a retry will post again if it did not.";
+
+    /**
+     * The stranded finder. Not on {@link PostPublishTargetRepository} because this is the only caller;
+     * issued through the shared {@code EntityManager} the same way the two schedulers issue their claims.
+     */
+    private static final String STRANDED_QUERY = """
+            SELECT t.id FROM PostPublishTarget t
+             WHERE t.state = com.conductor.entity.PostPublishTargetState.PUBLISHING
+               AND t.updatedAt <= :cutoff
+             ORDER BY t.updatedAt ASC
+            """;
+
+    /**
+     * The reconciliation, taken atomically. The {@code state = PUBLISHING} and {@code updatedAt <= :cutoff}
+     * predicates are re-evaluated under the row lock, so a real outcome landing at the same moment wins the
+     * race and this updates nothing. {@code updatedAt} is set explicitly because {@code @PreUpdate} does not
+     * fire for a bulk update.
+     */
+    private static final String RECONCILE_QUERY = """
+            UPDATE PostPublishTarget t
+               SET t.state = com.conductor.entity.PostPublishTargetState.FAILED,
+                   t.errorMessage = :message,
+                   t.attempts = t.attempts + 1,
+                   t.updatedAt = :now
+             WHERE t.id = :id
+               AND t.state = com.conductor.entity.PostPublishTargetState.PUBLISHING
+               AND t.updatedAt <= :cutoff
+            """;
+
+    /**
+     * How long a row may sit in {@code PUBLISHING} before it is presumed stranded. Deliberately generous:
+     * an app-managed publish uploads the media inline, and a long video on a slow connection is a normal
+     * publish, not a dead process. Overriding it via {@code conductor.post-publish.stranded-after-minutes}
+     * costs no config file change because the default is declared here.
+     */
+    private final Duration strandedAfter;
+
+    /** Bounds one reconciliation pass; anything not reached is picked up on the next one. */
+    int reconcileBatchSize = 50;
+
+    /**
+     * How far out a retried NATIVE target is re-timed. A native platform refuses a schedule inside its
+     * minimum lead time, and {@code NativeHandoffService} re-evaluates that window at the sweep's own
+     * "now" — some minutes after this call — so a retry stamped at exactly the minimum would be refused
+     * for being too soon and the row would sit {@code PENDING} forever. Doubling the lead is the headroom.
+     */
+    static final Duration NATIVE_RETRY_LEAD = PostScheduleValidator.MINIMUM_LEAD_TIME.multipliedBy(2);
+
     private final PostPublishTargetRepository targetRepository;
     private final AssetService assetService;
     private final ConnectionHealthService connectionHealthService;
+    private final WorkItemRepository workItemRepository;
+    private final WorkflowDefinitionResolver resolver;
+    private final ProjectSecurityService projectSecurityService;
+    private final boolean reconciliationEnabled;
+
+    /**
+     * Transaction-bound shared {@code EntityManager}, used for the stranded finder and the conditional
+     * reconciliation UPDATE. Field-injected because that is the supported form of
+     * {@code @PersistenceContext}; package-private so unit tests can supply a stub.
+     */
+    @PersistenceContext
+    EntityManager entityManager;
+
+    /** Self-reference so the {@code REQUIRES_NEW} reconciliation runs through the Spring proxy. */
+    @Autowired
+    @Lazy
+    PublishOutcomeService self;
 
     public PublishOutcomeService(PostPublishTargetRepository targetRepository,
                                  AssetService assetService,
-                                 ConnectionHealthService connectionHealthService) {
+                                 ConnectionHealthService connectionHealthService,
+                                 WorkItemRepository workItemRepository,
+                                 WorkflowDefinitionResolver resolver,
+                                 ProjectSecurityService projectSecurityService,
+                                 @Value("${conductor.post-publish.enabled:true}") boolean reconciliationEnabled,
+                                 @Value("${conductor.post-publish.stranded-after-minutes:60}")
+                                 long strandedAfterMinutes) {
         this.targetRepository = targetRepository;
         this.assetService = assetService;
         this.connectionHealthService = connectionHealthService;
+        this.workItemRepository = workItemRepository;
+        this.resolver = resolver;
+        this.projectSecurityService = projectSecurityService;
+        this.reconciliationEnabled = reconciliationEnabled;
+        this.strandedAfter = Duration.ofMinutes(strandedAfterMinutes);
     }
 
     /**
@@ -173,6 +321,303 @@ public class PublishOutcomeService {
         return target != null && applyFailure(target, errorMessage, permanentAuthFailure);
     }
 
+    /**
+     * What a retry did: the Post as it stands afterwards, every one of its targets, and how many were
+     * actually re-fired.
+     */
+    public record RetryResult(WorkItem post, List<PostPublishTarget> targets, int retried) {}
+
+    /**
+     * Re-fires the Post's {@code FAILED} publish targets and nothing else.
+     *
+     * <p>Each failed row is reset to {@code PENDING}, its stored error cleared, and — the load-bearing part —
+     * stamped with a <b>fresh</b> {@code idempotency_key}. {@link ActionInvocationService} is claim-or-return
+     * on that key, so re-dispatching under the old one would replay the failed attempt's recorded result
+     * instead of posting. A {@code PUBLISHED}, {@code REVOKED} or still-in-flight row is never touched, so a
+     * destination that already went out is never published twice and keeps its permalink Asset.
+     *
+     * <p>The Post moves back to its scheduled status so the due poller picks the reset rows up, and the retry
+     * is refused unless the Post is already sitting at its failed or its scheduled status — a Post that a
+     * bundle edit has sent back for review must not re-publish under an approval that no longer describes it.
+     *
+     * <p>A Post with no failed targets is a no-op that reports the current state, which makes a double-click
+     * harmless rather than an error.
+     *
+     * <p>Runs in the caller's transaction (not {@code REQUIRES_NEW}): unlike the outcome-recording entry
+     * points, nothing has reached a platform yet, so a failure here should roll the whole request back.
+     *
+     * @throws EntityNotFoundException when the caller is not a member, or the Post is not in the project
+     * @throws BusinessException when the Post is not in a status a retry can fire from
+     */
+    @Transactional
+    public RetryResult retryFailedTargets(String projectId, String workItemId, User caller) {
+        if (caller == null || !projectSecurityService.isProjectMember(projectId, caller.getId())) {
+            // A non-member must not be able to tell a project apart from one that does not exist.
+            throw new EntityNotFoundException("Project not found");
+        }
+        WorkItem post = workItemRepository.findById(workItemId)
+                .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+
+        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(post.getId());
+        List<PostPublishTarget> failed = targets.stream()
+                .filter(target -> target.getState() == PostPublishTargetState.FAILED)
+                .toList();
+        if (failed.isEmpty()) {
+            log.info("Retry requested for post {} but no target has failed; nothing to re-fire", post.getId());
+            return new RetryResult(post, sorted(targets), 0);
+        }
+
+        Statechart statechart = statechartFor(post);
+        String scheduledStatus = NativeHandoffService.SCHEDULED_STATUS;
+        String fromStatus = post.getCurrentStatus();
+        String failedStatus = statechart == null ? null : failedStatus(statechart).orElse(null);
+        if (!scheduledStatus.equals(fromStatus) && !(failedStatus != null && failedStatus.equals(fromStatus))) {
+            String noun = statechart == null ? "Post" : statechart.noun();
+            throw new BusinessException("This " + noun + " is " + statusLabel(statechart, fromStatus)
+                    + ", so there is nothing to retry. Only a " + noun
+                    + " that failed to publish, or one still waiting to, can be re-fired.");
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        for (PostPublishTarget target : failed) {
+            target.setState(PostPublishTargetState.PENDING);
+            target.setErrorMessage(null);
+            target.setIdempotencyKey(freshIdempotencyKey(post.getId(), target));
+            target.setFireTime(retryFireTime(target, now));
+            targetRepository.save(target);
+            log.info("Retrying target {} on {} for post {} under a fresh idempotency key, firing at {}",
+                    target.getId(), target.getPlatform(), post.getId(), target.getFireTime());
+        }
+
+        if (!scheduledStatus.equals(fromStatus)) {
+            post.setCurrentStatus(scheduledStatus);
+            workItemRepository.save(post);
+            log.info("Post {} moved {} -> {} while {} retried target(s) are in flight",
+                    post.getId(), fromStatus, scheduledStatus, failed.size());
+        }
+        return new RetryResult(post, sorted(targetRepository.findAllByWorkItemId(post.getId())), failed.size());
+    }
+
+    /**
+     * Resolves rows stranded in {@code PUBLISHING} — claimed for dispatch by a process that then died — into
+     * {@code FAILED}, so they surface to a human instead of hanging forever.
+     *
+     * <p>Shares {@code conductor.post-publish.enabled} with {@code PostPublishScheduler}: this sweep is that
+     * lane's own housekeeping, and its finder is globally scoped in exactly the same way, so it has to be off
+     * wherever that poller is (local, and the test profile). Tests call {@link #runReconciliationTick} directly.
+     */
+    @Scheduled(fixedDelay = 300_000)
+    public void reconcileStrandedTargets() {
+        if (!reconciliationEnabled) {
+            return;
+        }
+        runReconciliationTick(OffsetDateTime.now());
+    }
+
+    /**
+     * {@link #strandedAfter}, read through the bean rather than off the field: this class is proxied for
+     * {@code @Transactional}, and a test reading the field off the proxy would get the proxy's own
+     * uninitialized copy.
+     */
+    Duration strandedAfter() {
+        return strandedAfter;
+    }
+
+    /** One reconciliation pass. Package-private so tests drive it without flipping the config guard on. */
+    int runReconciliationTick(OffsetDateTime now) {
+        OffsetDateTime cutoff = now.minus(strandedAfter);
+        List<String> strandedIds = entityManager.createQuery(STRANDED_QUERY, String.class)
+                .setParameter("cutoff", cutoff)
+                .setMaxResults(reconcileBatchSize)
+                .getResultList();
+
+        int reconciled = 0;
+        for (String targetId : strandedIds) {
+            try {
+                if (self.reconcileStrandedTarget(targetId, cutoff)) {
+                    reconciled++;
+                }
+            } catch (Exception e) {
+                log.error("Reconciling stranded publish target {} failed: {}", targetId, e.getMessage(), e);
+            }
+        }
+        return reconciled;
+    }
+
+    /**
+     * Moves one stranded row to {@code FAILED} with {@link #STRANDED_MESSAGE} and rolls its Post up.
+     *
+     * <p>The move is a conditional UPDATE re-asserting both {@code PUBLISHING} and the staleness cutoff, so a
+     * genuine outcome that lands at the same moment wins and this updates nothing. It deliberately does not
+     * go back to {@code PENDING}: the dispatch reached the platform, the post may be live, and neither poller
+     * touches a {@code FAILED} row — getting it out again is an explicit human retry.
+     *
+     * @return true when this call is what moved the row
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean reconcileStrandedTarget(String targetId, OffsetDateTime cutoff) {
+        PostPublishTarget target = targetRepository.findById(targetId).orElse(null);
+        if (target == null || target.getState() != PostPublishTargetState.PUBLISHING) {
+            return false;
+        }
+        String postId = target.getWorkItem() == null ? null : target.getWorkItem().getId();
+
+        int moved = entityManager.createQuery(RECONCILE_QUERY)
+                .setParameter("id", targetId)
+                .setParameter("cutoff", cutoff)
+                .setParameter("now", OffsetDateTime.now())
+                .setParameter("message", STRANDED_MESSAGE)
+                .executeUpdate();
+        // The bulk update bypassed the persistence context, so drop the now-stale copy rather than let it
+        // flush a PUBLISHING state back over the reconciliation.
+        entityManager.detach(target);
+        if (moved == 0) {
+            return false;
+        }
+
+        log.warn("Publish target {} was stranded in PUBLISHING past {}; recorded as FAILED with an unknown"
+                + " outcome — it will not be re-dispatched automatically", targetId, cutoff);
+        rollUpPost(postId);
+        return true;
+    }
+
+    /**
+     * The status a Post reaches when every target published: the status the workflow's scheduled status
+     * transitions to that the workflow itself marks terminal. Publishing is the one way out of the pipeline
+     * that ends the item's life, so "terminal" is what identifies it — no status name is assumed.
+     */
+    static Optional<String> publishedStatus(Statechart statechart) {
+        return statechart.transitionsFrom(NativeHandoffService.SCHEDULED_STATUS).stream()
+                .map(StatechartTransition::to)
+                .filter(statechart::isTerminal)
+                .findFirst();
+    }
+
+    /**
+     * The status a Post reaches when a target failed: the non-terminal status the scheduled status
+     * transitions to that is neither the review gate's approved status (the "unschedule" edge back) nor the
+     * review status itself. What is left is the workflow's own "publish failed" landing — {@code FAILED} in
+     * MARKETING, whatever a different workflow calls it.
+     */
+    static Optional<String> failedStatus(Statechart statechart) {
+        Optional<StatechartTransition> gate = AssetUploadPolicy.reviewGate(statechart);
+        String approved = gate.map(StatechartTransition::to).orElse(null);
+        String review = gate.map(StatechartTransition::from).orElse(null);
+        return statechart.transitionsFrom(NativeHandoffService.SCHEDULED_STATUS).stream()
+                .map(StatechartTransition::to)
+                .filter(to -> !statechart.isTerminal(to))
+                .filter(to -> !to.equals(approved) && !to.equals(review))
+                .findFirst();
+    }
+
+    private void rollUp(PostPublishTarget target) {
+        rollUpPost(target.getWorkItem() == null ? null : target.getWorkItem().getId());
+    }
+
+    /**
+     * Re-reads the Post's whole set of targets and moves the Post on once none is still in flight: every
+     * target published → the published status, anything else → the failed status.
+     *
+     * <p>A Workflow that cannot be resolved, or one that declares no published/failed status out of its
+     * scheduled status, costs a log line and nothing else. The outcome already recorded is durable evidence
+     * of something that happened on a platform, and it must survive whatever the roll-up cannot work out.
+     */
+    private void rollUpPost(String postId) {
+        if (postId == null) {
+            return;
+        }
+        WorkItem post = workItemRepository.findById(postId).orElse(null);
+        if (post == null || !NativeHandoffService.SCHEDULED_STATUS.equals(post.getCurrentStatus())) {
+            return;
+        }
+
+        // A revoked destination is not an outcome — it was taken back down — so it is out of the tally.
+        List<PostPublishTarget> counted = targetRepository.findAllByWorkItemId(postId).stream()
+                .filter(target -> target.getState() != PostPublishTargetState.REVOKED)
+                .toList();
+        if (counted.isEmpty() || counted.stream().anyMatch(t -> IN_FLIGHT.contains(t.getState()))) {
+            return;
+        }
+        boolean everyTargetPublished = counted.stream()
+                .allMatch(t -> t.getState() == PostPublishTargetState.PUBLISHED);
+
+        Statechart statechart = statechartFor(post);
+        if (statechart == null) {
+            log.warn("Post {} finished publishing but its workflow could not be resolved; status left at {}",
+                    postId, post.getCurrentStatus());
+            return;
+        }
+        Optional<String> toStatus = everyTargetPublished ? publishedStatus(statechart) : failedStatus(statechart);
+        if (toStatus.isEmpty()) {
+            log.warn("Post {} finished publishing ({} of {} targets published) but workflow {} declares no "
+                            + "{} status out of {}; status left at {}",
+                    postId, counted.stream().filter(t -> t.getState() == PostPublishTargetState.PUBLISHED).count(),
+                    counted.size(), statechart.slug(), everyTargetPublished ? "published" : "failed",
+                    NativeHandoffService.SCHEDULED_STATUS, post.getCurrentStatus());
+            return;
+        }
+
+        String fromStatus = post.getCurrentStatus();
+        post.setCurrentStatus(toStatus.get());
+        workItemRepository.save(post);
+        log.info("Post {} rolled up {} -> {}: {} of {} targets published",
+                postId, fromStatus, toStatus.get(),
+                counted.stream().filter(t -> t.getState() == PostPublishTargetState.PUBLISHED).count(),
+                counted.size());
+    }
+
+    /**
+     * The Post's version-pinned Statechart, or null when it cannot be resolved. Deliberately the optional
+     * form of the resolver: the roll-up runs inside the outcome record and must never throw out of it.
+     */
+    private Statechart statechartFor(WorkItem post) {
+        if (post == null || post.getProject() == null) {
+            return null;
+        }
+        String slug = post.getWorkflow() != null ? post.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
+        return resolver.resolve(post.getProject().getId(), slug, post.getWorkflowVersion()).orElse(null);
+    }
+
+    private static String statusLabel(Statechart statechart, String statusId) {
+        if (statechart == null) {
+            return statusId;
+        }
+        return statechart.status(statusId).map(s -> s.displayLabel()).orElse(statusId);
+    }
+
+    /**
+     * A brand-new at-most-once anchor for a retried target, in the same shape
+     * {@code PublishTargetService} mints at selection time so operators read one vocabulary. The random
+     * suffix is the whole point: the column is uniquely constrained and the invocation layer is
+     * claim-or-return on it, so only a genuinely new key can reach the platform again.
+     */
+    private static String freshIdempotencyKey(String postId, PostPublishTarget target) {
+        return "pub:" + postId + ":" + target.getPlatform() + ":" + target.getConnectionId()
+                + ":" + UUID.randomUUID();
+    }
+
+    /**
+     * When a retried target should fire. An app-managed row keeps its own time (a past one is simply due
+     * now); a native row is pushed out past the platform's minimum lead so the hand-off sweep will accept
+     * it instead of refusing it as too soon and leaving it PENDING forever.
+     */
+    private static OffsetDateTime retryFireTime(PostPublishTarget target, OffsetDateTime now) {
+        if (target.getLane() == PublishLane.NATIVE) {
+            OffsetDateTime earliest = now.plus(NATIVE_RETRY_LEAD);
+            return target.getFireTime() == null || target.getFireTime().isBefore(earliest)
+                    ? earliest : target.getFireTime();
+        }
+        return target.getFireTime() == null ? now : target.getFireTime();
+    }
+
+    private static List<PostPublishTarget> sorted(List<PostPublishTarget> targets) {
+        return targets.stream()
+                .sorted(Comparator.comparing(PostPublishTarget::getPlatform)
+                        .thenComparing(PostPublishTarget::getConnectionId))
+                .toList();
+    }
+
     /** The Asset type a published destination on {@code platform} becomes, or null if unrecognised. */
     static String assetTypeFor(String platform) {
         OutcomePlatform outcome = platformFor(platform);
@@ -215,6 +660,7 @@ public class PublishOutcomeService {
         recordDestinationAsset(target, permalink);
         log.info("Target {} published on {} (platform post {})",
                 target.getId(), target.getPlatform(), target.getPlatformPostId());
+        rollUp(target);
         return true;
     }
 
@@ -237,6 +683,7 @@ public class PublishOutcomeService {
         if (permanentAuthFailure) {
             connectionHealthService.reportPublishAuthFailure(target.getConnectionId(), errorMessage);
         }
+        rollUp(target);
         return true;
     }
 

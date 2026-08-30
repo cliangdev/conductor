@@ -261,6 +261,36 @@ class PublishBundleGuardIntegrationTest extends AbstractNoneWebIntegrationTest {
         assertThat(reloadTarget(handedOff).getPlatformPostId()).isEqualTo("page_1_post_99");
     }
 
+    // --- [auto] A Published Post's audit trail is immutable (COND-23 P0-6) -----------------------
+
+    @Test
+    void editingThePublishBundleOfAPublishedPostIsRefusedAndChangesNothing() {
+        approvedPost();
+        forceStatus("PUBLISHED");
+        int roundBefore = reload(post).getCurrentReviewRound();
+
+        assertThatThrownBy(() -> editCaption("Rewritten after it went out"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("immutable");
+
+        WorkItem unchanged = reload(post);
+        assertThat(unchanged.getCurrentStatus()).isEqualTo("PUBLISHED");
+        assertThat(unchanged.getDescription()).isEqualTo("Original caption");
+        assertThat(unchanged.getCurrentReviewRound()).isEqualTo(roundBefore);
+    }
+
+    @Test
+    void editingThePublishBundleOfAFailedPostStillRevertsItSoItCanBeFixedAndRetried() {
+        approvedPost();
+        forceStatus("FAILED");
+
+        editCaption("Fixed caption");
+
+        WorkItem edited = reload(post);
+        assertThat(edited.getCurrentStatus()).isEqualTo("IN_REVIEW");
+        assertThat(edited.getDescription()).isEqualTo("Fixed caption");
+    }
+
     // --- [auto] Editing a Draft or In Review Post does not change its status ---------------------
 
     @Test
@@ -462,6 +492,17 @@ class PublishBundleGuardIntegrationTest extends AbstractNoneWebIntegrationTest {
 
     private void moveTo(String status) {
         moveTo(post, status);
+    }
+
+    /**
+     * Puts the Post in a post-publish status without going through {@code patchWorkItem}. What is under test
+     * is what the guard does at that status, not how the item got there — and the transition path would drag
+     * in the native hand-off sweep, which is covered by its own tests.
+     */
+    private void forceStatus(String status) {
+        WorkItem stored = reload(post);
+        stored.setCurrentStatus(status);
+        workItemRepository.saveAndFlush(stored);
     }
 
     private void moveTo(WorkItem workItem, String status) {

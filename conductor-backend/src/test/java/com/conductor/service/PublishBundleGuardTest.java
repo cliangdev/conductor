@@ -95,13 +95,97 @@ class PublishBundleGuardTest {
     }
 
     @Test
-    void revertsEveryStatusTheWorkflowPlacesAtOrBeyondItsReviewGate() {
-        for (String status : List.of("APPROVED", "SCHEDULED", "PUBLISHED", "FAILED")) {
+    void revertsEveryNonTerminalStatusTheWorkflowPlacesAtOrBeyondItsReviewGate() {
+        // PUBLISHED is deliberately absent: it is terminal, and a terminal Post is refused, not reverted.
+        for (String status : List.of("APPROVED", "SCHEDULED", "FAILED")) {
             WorkItem post = marketingPost(status);
 
             assertThat(guard.revertForBundleEdit(PROJECT_ID, post)).isPresent();
             assertThat(post.getCurrentStatus()).isEqualTo("IN_REVIEW");
         }
+    }
+
+    // --- [auto] A Published Post's audit trail is immutable: edits are refused, not reverted -----
+
+    @Test
+    void refusesABundleEditOnAPublishedPostInsteadOfRevertingIt() {
+        WorkItem post = marketingPost("PUBLISHED");
+
+        assertThatThrownBy(() -> guard.revertForBundleEdit(PROJECT_ID, post))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Published")
+                .hasMessageContaining("immutable");
+
+        assertThat(post.getCurrentStatus()).isEqualTo("PUBLISHED");
+        assertThat(post.getCurrentReviewRound()).isZero();
+        verify(workItemRepository, never()).save(any());
+        verifyNoInteractions(nativeHandoffService);
+    }
+
+    @Test
+    void refusesACaptionEditOnAPublishedPostThroughThePatchEntryPointToo() {
+        WorkItem post = marketingPost("PUBLISHED");
+
+        assertThatThrownBy(() -> guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post,
+                "Rewritten after the fact", null, null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("immutable");
+
+        assertThat(post.getCurrentStatus()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void aPatchThatChangesNoBundleFieldOnAPublishedPostIsStillANoOpRatherThanARefusal() {
+        WorkItem post = marketingPost("PUBLISHED");
+
+        assertThat(guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, post.getDescription(), FIRE_TIME,
+                "America/New_York")).isEmpty();
+        assertThat(post.getCurrentStatus()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void theImmutableStatusIsTheOneTheWorkflowMarksTerminalWhateverItIsCalled() {
+        Statechart custom = parse("""
+                {
+                  "slug": "SIGNOFF", "area": "ops", "version": 1, "noun": "Notice",
+                  "statuses": [
+                    {"id": "WRITING", "label": "Writing", "initial": true},
+                    {"id": "AWAITING_SIGNOFF", "label": "Awaiting Signoff"},
+                    {"id": "CLEARED", "label": "Cleared"},
+                    {"id": "SENT", "label": "Sent", "terminal": true}
+                  ],
+                  "transitions": [
+                    {"from": "WRITING", "to": "AWAITING_SIGNOFF"},
+                    {"from": "AWAITING_SIGNOFF", "to": "CLEARED", "requiresReview": true},
+                    {"from": "CLEARED", "to": "SENT"}
+                  ]
+                }
+                """);
+        WorkItem sent = workItem("SIGNOFF", "SENT");
+        givenStatechart(sent, custom);
+
+        assertThatThrownBy(() -> guard.revertForBundleEdit(PROJECT_ID, sent))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Notice")
+                .hasMessageContaining("Sent");
+
+        WorkItem cleared = workItem("SIGNOFF", "CLEARED");
+        givenStatechart(cleared, custom);
+        assertThat(guard.revertForBundleEdit(PROJECT_ID, cleared)).isPresent();
+    }
+
+    // --- [auto] A Failed Post is still editable so it can be fixed and retried -------------------
+
+    @Test
+    void stillRevertsAFailedPostSoItCanBeFixedBeforeARetry() {
+        WorkItem post = marketingPost("FAILED");
+
+        Optional<PublishBundleGuard.Revert> revert =
+                guard.revertForCaptionOrScheduleEdit(PROJECT_ID, post, "Fixed caption", null, null);
+
+        assertThat(revert).contains(new PublishBundleGuard.Revert("FAILED", "IN_REVIEW"));
+        assertThat(post.getCurrentStatus()).isEqualTo("IN_REVIEW");
+        verify(workItemRepository).save(post);
     }
 
     // --- [auto] The review status is resolved from the statechart, not hardcoded -----------------

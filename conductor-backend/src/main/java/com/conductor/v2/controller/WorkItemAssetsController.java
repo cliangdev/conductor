@@ -39,7 +39,7 @@ import java.util.List;
  * is minted per response rather than stored, so it is filled in only for UPLOADED file Assets.
  *
  * <p>The mint request's optional {@code width}/{@code height}/{@code durationSeconds} are passed straight
- * through. They exist for video: the JDK can read an image's dimensions out of its bytes at confirm, but it
+ * through, and read back on every {@code AssetResponse} so the measured shape is not write-only. They exist for video: the JDK can read an image's dimensions out of its bytes at confirm, but it
  * has no container parser, so a video's shape and duration only ever reach the row if the browser measures
  * them off an {@code HTMLVideoElement} and sends them here — and without them the media rules at approval
  * block on an unmeasured value.
@@ -138,7 +138,12 @@ public class WorkItemAssetsController implements WorkItemAssetsApi {
                 .label(asset.getLabel())
                 .uploadStatus(asset.getUploadStatus())
                 .contentType(asset.getContentType())
-                .sizeBytes(asset.getSizeBytes());
+                .sizeBytes(asset.getSizeBytes())
+                // The measured media shape, read straight off the row: derived from the bytes at confirm
+                // for an image, client-measured for a video, and null for a link Asset, which has none.
+                .width(asset.getWidth())
+                .height(asset.getHeight())
+                .durationSeconds(asset.getDurationSeconds());
         if (AssetService.KIND_FILE.equals(asset.getKind())
                 && AssetService.UPLOAD_STATUS_UPLOADED.equals(asset.getUploadStatus())) {
             response.previewUrl(assetService.resolvePreviewUrl(projectId, workItemId, asset.getId(), caller));

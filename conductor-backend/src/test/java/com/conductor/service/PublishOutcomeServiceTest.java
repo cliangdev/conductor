@@ -2,32 +2,45 @@ package com.conductor.service;
 
 import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
+import com.conductor.entity.MemberRole;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetState;
 import com.conductor.entity.Project;
+import com.conductor.entity.ProjectMember;
 import com.conductor.entity.PublishLane;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
+import com.conductor.exception.BusinessException;
 import com.conductor.integration.ActionResult;
 import com.conductor.repository.AssetRepository;
 import com.conductor.repository.ConnectionRepository;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.support.AbstractNoneWebIntegrationTest;
+import com.conductor.workflow.lifecycle.Statechart;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.groups.Tuple.tuple;
 
 /**
@@ -49,11 +62,18 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private ConnectionRepository connectionRepository;
+    @Autowired private ProjectMemberRepository projectMemberRepository;
+    @Autowired private WorkflowSeeder workflowSeeder;
+    @Autowired private PlatformTransactionManager transactionManager;
+
+    @PersistenceContext private EntityManager entityManager;
 
     private User creator;
+    private User outsider;
     private Project project;
     private String connectionId;
     private int nextSequenceNumber = 1;
+    private TransactionTemplate tx;
 
     @BeforeEach
     void setUp() {
@@ -68,6 +88,23 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         project.setKey("PO" + String.valueOf(UUID.randomUUID()).substring(0, 6).toUpperCase());
         project.setCreatedBy(creator);
         project = projectRepository.save(project);
+
+        ProjectMember membership = new ProjectMember();
+        membership.setProject(project);
+        membership.setUser(creator);
+        membership.setRole(MemberRole.ADMIN);
+        projectMemberRepository.save(membership);
+
+        outsider = new User();
+        outsider.setFirebaseUid("outcome-outsider-" + UUID.randomUUID());
+        outsider.setEmail(UUID.randomUUID() + "@example.com");
+        outsider.setName("Not A Member");
+        outsider = userRepository.save(outsider);
+
+        // The roll-up reads the Post's published/failed statuses off its own version-pinned statechart, so
+        // the project needs its MARKETING workflow as a real row — the resolver has no classpath fallback.
+        workflowSeeder.seedMarketing(project);
+        tx = new TransactionTemplate(transactionManager);
 
         Connection connection = new Connection();
         connection.setProjectId(project.getId());
@@ -129,6 +166,36 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
 
     private Connection reloadConnection() {
         return connectionRepository.findById(connectionId).orElseThrow();
+    }
+
+    private String statusOf(WorkItem owner) {
+        return workItemRepository.findById(owner.getId()).orElseThrow().getCurrentStatus();
+    }
+
+    private void setStatus(WorkItem owner, String status) {
+        WorkItem stored = workItemRepository.findById(owner.getId()).orElseThrow();
+        stored.setCurrentStatus(status);
+        workItemRepository.saveAndFlush(stored);
+    }
+
+    /**
+     * Ages a row's {@code updated_at} without touching anything else. A bulk update is the only way:
+     * {@code @PreUpdate} would stamp it back to now on any entity write.
+     */
+    private void backdate(PostPublishTarget target, Duration age) {
+        tx.executeWithoutResult(status -> entityManager
+                .createQuery("UPDATE PostPublishTarget t SET t.updatedAt = :ts WHERE t.id = :id")
+                .setParameter("ts", OffsetDateTime.now().minus(age))
+                .setParameter("id", target.getId())
+                .executeUpdate());
+    }
+
+    private static Statechart parse(String json) {
+        try {
+            return Statechart.parse(new ObjectMapper().readTree(json));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     // --- [auto] Each successful target records a typed Asset carrying its permalink ---------------
@@ -351,6 +418,312 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(PublishOutcomeService.isPermanentAuthFailure(
                 "Action timed out after 10s; outcome unknown")).isFalse();
         assertThat(PublishOutcomeService.isPermanentAuthFailure(null)).isFalse();
+    }
+
+    // --- [auto] The Post reaches Published only when every target succeeded, and Failed otherwise --
+
+    @Test
+    void aPostRollsUpToItsPublishedStatusOnlyOnceEveryTargetHasPublished() {
+        WorkItem sharedPost = post();
+        PostPublishTarget facebook = target(sharedPost, "facebook", PostPublishTargetState.PUBLISHING,
+                "Acme Coffee Page");
+        PostPublishTarget instagram = target(sharedPost, "instagram", PostPublishTargetState.PUBLISHING,
+                "@acme.coffee");
+
+        service.recordSuccess(facebook.getId(), "page_1_post_7", "https://facebook.com/1/posts/7");
+        assertThat(statusOf(sharedPost))
+                .as("one target is still in flight, so the Post has not finished publishing")
+                .isEqualTo("SCHEDULED");
+
+        service.recordSuccess(instagram.getId(), "media_7", "https://instagram.com/p/7/");
+
+        assertThat(statusOf(sharedPost)).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void aMixedOutcomeReadsAsFailedWhileTheSuccessfulTargetKeepsItsPermalink() {
+        WorkItem sharedPost = post();
+        PostPublishTarget facebook = target(sharedPost, "facebook", PostPublishTargetState.PUBLISHING,
+                "Acme Coffee Page");
+        PostPublishTarget instagram = target(sharedPost, "instagram", PostPublishTargetState.PUBLISHING,
+                "@acme.coffee");
+
+        service.recordSuccess(facebook.getId(), "page_1_post_7", "https://facebook.com/1/posts/7");
+        service.recordFailure(instagram.getId(), "(#100) Unsupported aspect ratio");
+
+        assertThat(statusOf(sharedPost)).isEqualTo("FAILED");
+        // "Failed" must never be read as "nothing published": the target that went out keeps its state,
+        // its permalink and the Asset a human clicks.
+        PostPublishTarget published = reload(facebook);
+        assertThat(published.getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(published.getPermalink()).isEqualTo("https://facebook.com/1/posts/7");
+        assertThat(assetRepository.findAllByWorkItemId(sharedPost.getId()))
+                .extracting(Asset::getType, Asset::getRef)
+                .containsExactly(tuple("facebook_post", "https://facebook.com/1/posts/7"));
+        assertThat(reload(instagram).getErrorMessage()).isEqualTo("(#100) Unsupported aspect ratio");
+    }
+
+    @Test
+    void aFailureThatArrivesBeforeTheSuccessStillLeavesThePostFailed() {
+        WorkItem sharedPost = post();
+        PostPublishTarget facebook = target(sharedPost, "facebook", PostPublishTargetState.PUBLISHING,
+                "Acme Coffee Page");
+        PostPublishTarget instagram = target(sharedPost, "instagram", PostPublishTargetState.PUBLISHING,
+                "@acme.coffee");
+
+        service.recordFailure(instagram.getId(), "(#100) Unsupported aspect ratio");
+        assertThat(statusOf(sharedPost)).isEqualTo("SCHEDULED");
+
+        service.recordSuccess(facebook.getId(), "page_1_post_7", "https://facebook.com/1/posts/7");
+
+        assertThat(statusOf(sharedPost)).isEqualTo("FAILED");
+    }
+
+    @Test
+    void aSoleFailedTargetRollsThePostUpToFailed() {
+        PostPublishTarget target = publishing("instagram");
+
+        service.recordOutcome(target.getId(), ActionResult.error("(#100) Unsupported aspect ratio"));
+
+        assertThat(statusOf(target.getWorkItem())).isEqualTo("FAILED");
+    }
+
+    @Test
+    void aRevokedTargetIsNotCountedAgainstTheRollUp() {
+        WorkItem sharedPost = post();
+        target(sharedPost, "facebook", PostPublishTargetState.REVOKED, "Acme Coffee Page");
+        PostPublishTarget instagram = target(sharedPost, "instagram", PostPublishTargetState.PUBLISHING,
+                "@acme.coffee");
+
+        service.recordSuccess(instagram.getId(), "media_7", "https://instagram.com/p/7/");
+
+        assertThat(statusOf(sharedPost)).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void aPostThatIsNoLongerScheduledIsNeverDraggedBackIntoThePipeline() {
+        PostPublishTarget target = publishing("instagram");
+        setStatus(target.getWorkItem(), "IN_REVIEW");
+
+        service.recordSuccess(target.getId(), "media_7", "https://instagram.com/p/7/");
+
+        assertThat(statusOf(target.getWorkItem())).isEqualTo("IN_REVIEW");
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+    }
+
+    @Test
+    void theRollUpStatusesAreReadOffTheStatechartNotHardcoded() {
+        Statechart custom = parse("""
+                {
+                  "slug": "BROADCAST", "area": "ops", "version": 1, "noun": "Broadcast",
+                  "statuses": [
+                    {"id": "WRITING", "label": "Writing", "initial": true},
+                    {"id": "AWAITING_SIGNOFF", "label": "Awaiting Signoff"},
+                    {"id": "CLEARED", "label": "Cleared"},
+                    {"id": "SCHEDULED", "label": "Scheduled"},
+                    {"id": "ON_AIR", "label": "On Air", "terminal": true},
+                    {"id": "MISFIRED", "label": "Misfired"}
+                  ],
+                  "transitions": [
+                    {"from": "WRITING", "to": "AWAITING_SIGNOFF"},
+                    {"from": "AWAITING_SIGNOFF", "to": "CLEARED", "requiresReview": true},
+                    {"from": "CLEARED", "to": "SCHEDULED"},
+                    {"from": "SCHEDULED", "to": "CLEARED"},
+                    {"from": "SCHEDULED", "to": "ON_AIR"},
+                    {"from": "SCHEDULED", "to": "MISFIRED"}
+                  ]
+                }
+                """);
+
+        assertThat(PublishOutcomeService.publishedStatus(custom)).contains("ON_AIR");
+        assertThat(PublishOutcomeService.failedStatus(custom)).contains("MISFIRED");
+    }
+
+    // --- [auto] Retry re-attempts only failed targets and never republishes a successful one -------
+
+    @Test
+    void retryReFiresOnlyTheFailedTargetAndLeavesThePublishedOneUntouched() {
+        WorkItem sharedPost = post();
+        PostPublishTarget facebook = target(sharedPost, "facebook", PostPublishTargetState.PUBLISHING,
+                "Acme Coffee Page");
+        PostPublishTarget instagram = target(sharedPost, "instagram", PostPublishTargetState.PUBLISHING,
+                "@acme.coffee");
+        service.recordSuccess(facebook.getId(), "page_1_post_7", "https://facebook.com/1/posts/7");
+        service.recordFailure(instagram.getId(), "(#100) Unsupported aspect ratio");
+        String publishedKeyBefore = reload(facebook).getIdempotencyKey();
+        String failedKeyBefore = reload(instagram).getIdempotencyKey();
+
+        PublishOutcomeService.RetryResult result =
+                service.retryFailedTargets(project.getId(), sharedPost.getId(), creator);
+
+        assertThat(result.retried()).isEqualTo(1);
+        PostPublishTarget retried = reload(instagram);
+        assertThat(retried.getState()).isEqualTo(PostPublishTargetState.PENDING);
+        assertThat(retried.getErrorMessage()).isNull();
+        assertThat(retried.getIdempotencyKey())
+                .as("a reused key would make the invocation layer replay the failed attempt's result")
+                .isNotEqualTo(failedKeyBefore);
+
+        PostPublishTarget untouched = reload(facebook);
+        assertThat(untouched.getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(untouched.getIdempotencyKey()).isEqualTo(publishedKeyBefore);
+        assertThat(untouched.getPermalink()).isEqualTo("https://facebook.com/1/posts/7");
+        assertThat(assetRepository.findAllByWorkItemId(sharedPost.getId())).hasSize(1);
+    }
+
+    @Test
+    void retryMovesThePostBackToItsScheduledStatusWhileTheRetryIsInFlight() {
+        PostPublishTarget target = publishing("instagram");
+        service.recordFailure(target.getId(), "(#4) Application request limit reached");
+        assertThat(statusOf(target.getWorkItem())).isEqualTo("FAILED");
+
+        PublishOutcomeService.RetryResult result =
+                service.retryFailedTargets(project.getId(), target.getWorkItem().getId(), creator);
+
+        assertThat(result.post().getCurrentStatus()).isEqualTo("SCHEDULED");
+        assertThat(statusOf(target.getWorkItem())).isEqualTo("SCHEDULED");
+        assertThat(result.targets()).extracting(PostPublishTarget::getState)
+                .containsExactly(PostPublishTargetState.PENDING);
+    }
+
+    @Test
+    void aRetriedAppManagedTargetIsDueImmediately() {
+        PostPublishTarget target = publishing("instagram");
+        service.recordFailure(target.getId(), "boom");
+
+        service.retryFailedTargets(project.getId(), target.getWorkItem().getId(), creator);
+
+        assertThat(targetRepository.findDueAppManagedTargets(OffsetDateTime.now().plusSeconds(1)))
+                .extracting(PostPublishTarget::getId)
+                .contains(target.getId());
+    }
+
+    @Test
+    void aRetriedNativeTargetIsPushedPastThePlatformsMinimumLeadTime() {
+        WorkItem sharedPost = post();
+        PostPublishTarget facebook = new PostPublishTarget();
+        facebook.setWorkItem(sharedPost);
+        facebook.setConnectorId("meta");
+        facebook.setConnectionId(connectionId);
+        facebook.setPlatform("facebook");
+        facebook.setLane(PublishLane.NATIVE);
+        facebook.setState(PostPublishTargetState.FAILED);
+        facebook.setFireTime(OffsetDateTime.now().minusHours(1));
+        facebook.setIdempotencyKey("pub:" + UUID.randomUUID());
+        facebook = targetRepository.saveAndFlush(facebook);
+        setStatus(sharedPost, "FAILED");
+
+        service.retryFailedTargets(project.getId(), sharedPost.getId(), creator);
+
+        assertThat(reload(facebook).getFireTime())
+                .as("a native platform refuses a schedule inside its minimum lead time")
+                .isAfter(OffsetDateTime.now().plus(PostScheduleValidator.MINIMUM_LEAD_TIME));
+    }
+
+    @Test
+    void retryingAPostWithNothingFailedIsANoOp() {
+        PostPublishTarget target = publishing("instagram");
+        service.recordSuccess(target.getId(), "media_7", "https://instagram.com/p/7/");
+
+        PublishOutcomeService.RetryResult result =
+                service.retryFailedTargets(project.getId(), target.getWorkItem().getId(), creator);
+
+        assertThat(result.retried()).isZero();
+        assertThat(statusOf(target.getWorkItem())).isEqualTo("PUBLISHED");
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+    }
+
+    @Test
+    void retryIsRefusedForAPostThatHasBeenSentBackForReview() {
+        PostPublishTarget target = publishing("instagram");
+        service.recordFailure(target.getId(), "boom");
+        setStatus(target.getWorkItem(), "IN_REVIEW");
+        String postId = target.getWorkItem().getId();
+
+        assertThatThrownBy(() -> service.retryFailedTargets(project.getId(), postId, creator))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("nothing to retry");
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.FAILED);
+    }
+
+    @Test
+    void aNonMemberIsRefusedTheRetryAndCannotTellTheProjectExists() {
+        PostPublishTarget target = publishing("instagram");
+        service.recordFailure(target.getId(), "boom");
+        String postId = target.getWorkItem().getId();
+
+        assertThatThrownBy(() -> service.retryFailedTargets(project.getId(), postId, outsider))
+                .isInstanceOf(EntityNotFoundException.class)
+                .hasMessageContaining("Project not found");
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.FAILED);
+    }
+
+    // --- [auto] A target stranded in PUBLISHING is reconciled rather than hanging forever ----------
+
+    @Test
+    void aTargetStrandedInPublishingIsReconciledToFailedWithAnUnknownOutcome() {
+        PostPublishTarget target = publishing("instagram");
+        backdate(target, service.strandedAfter().plusMinutes(5));
+
+        assertThat(service.runReconciliationTick(OffsetDateTime.now())).isPositive();
+
+        PostPublishTarget stored = reload(target);
+        assertThat(stored.getState()).isEqualTo(PostPublishTargetState.FAILED);
+        assertThat(stored.getErrorMessage())
+                .contains("outcome is unknown")
+                .contains("may or may not have gone out");
+        assertThat(stored.getAttempts()).isEqualTo(1);
+    }
+
+    @Test
+    void aReconciledTargetIsNeverAutomaticallyReDispatched() {
+        PostPublishTarget target = publishing("instagram");
+        backdate(target, service.strandedAfter().plusMinutes(5));
+
+        service.runReconciliationTick(OffsetDateTime.now());
+
+        // FAILED, not PENDING: the row already reached the platform once, so only a human may fire it again.
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.FAILED);
+        assertThat(targetRepository.findDueAppManagedTargets(OffsetDateTime.now().plusDays(1)))
+                .extracting(PostPublishTarget::getId)
+                .doesNotContain(target.getId());
+    }
+
+    @Test
+    void reconcilingTheLastStrandedTargetRollsThePostUpToFailed() {
+        PostPublishTarget target = publishing("instagram");
+        backdate(target, service.strandedAfter().plusMinutes(5));
+
+        service.runReconciliationTick(OffsetDateTime.now());
+
+        assertThat(statusOf(target.getWorkItem())).isEqualTo("FAILED");
+        assertThat(assetRepository.findAllByWorkItemId(target.getWorkItem().getId())).isEmpty();
+    }
+
+    @Test
+    void aTargetStillWithinTheThresholdIsLeftPublishing() {
+        PostPublishTarget target = publishing("instagram");
+
+        assertThat(service.reconcileStrandedTarget(target.getId(),
+                OffsetDateTime.now().minus(service.strandedAfter()))).isFalse();
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PUBLISHING);
+        assertThat(statusOf(target.getWorkItem())).isEqualTo("SCHEDULED");
+    }
+
+    @Test
+    void aRealOutcomeThatLandsFirstWinsTheRaceWithTheReconciler() {
+        PostPublishTarget target = publishing("instagram");
+        backdate(target, service.strandedAfter().plusMinutes(5));
+        service.recordSuccess(target.getId(), "media_7", "https://instagram.com/p/7/");
+
+        assertThat(service.reconcileStrandedTarget(target.getId(),
+                OffsetDateTime.now().minus(service.strandedAfter()))).isFalse();
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(reload(target).getErrorMessage()).isNull();
     }
 
     // --- [auto] Consuming an ActionResult directly -------------------------------------------------

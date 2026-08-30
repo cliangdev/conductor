@@ -32,6 +32,8 @@ tags:
     description: Area-scoped asset library across every Workflow in an Area
   - name: publish-targets
     description: Publishable social accounts a project can select on a Post
+  - name: publish-outcomes
+    description: Per-target publish outcomes on a Post, and retrying the ones that failed
 
 paths:
   /projects/{projectId}/work-items:
@@ -1919,6 +1921,66 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/work-items/{workItemId}/publish-targets/retry:
+    post:
+      tags:
+        - publish-outcomes
+      summary: Re-fire the publish targets that failed on a Post
+      description: >-
+        Re-attempts **only** the targets in state `FAILED`. Each one is reset to `PENDING`, its stored
+        error is cleared and it is stamped with a **fresh** idempotency key — a reused key would make
+        the action-invocation layer's claim-or-return replay the previous attempt's result instead of
+        posting. Targets in any other state are left completely untouched: a `PUBLISHED` target is
+        never re-published, and its permalink Asset stays exactly where it is.
+
+
+        The Post itself is moved back to its scheduled status while the retry is in flight, so the
+        due poller picks the reset rows up. Calling this on a Post with no failed targets is a
+        no-op that returns the current state, which makes a double-click harmless. (COND-23 T6.2.)
+      operationId: retryFailedPublishTargets
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Post's status and publish targets after the retry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetryPublishResponse"
+        "400":
+          description: >-
+            The Post is not in a status a retry can fire from — only a Post sitting at its failed or
+            its scheduled status may be retried, so a Post sent back for review never re-publishes
+            under an approval that no longer describes it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2419,6 +2481,24 @@ components:
           format: int64
           nullable: true
           description: Size of the stored object in bytes (kind=file only).
+        width:
+          type: integer
+          format: int32
+          nullable: true
+          description: >-
+            Pixel width of the media, or null when unknown. Derived from the bytes at confirm for
+            images; for video it is only ever what the client measured at upload. (COND-23.)
+        height:
+          type: integer
+          format: int32
+          nullable: true
+          description: Pixel height of the media, or null when unknown. Same provenance as width.
+        durationSeconds:
+          type: number
+          nullable: true
+          description: >-
+            Playback length in seconds for a video Asset, or null when unknown. The browser is the
+            only source — no container parser ships with the JDK.
         previewUrl:
           type: string
           nullable: true
@@ -2875,6 +2955,34 @@ components:
           type: string
           nullable: true
           description: The platform's id for the created post, once it exists.
+
+    RetryPublishResponse:
+      type: object
+      description: >-
+        The result of re-firing a Post's failed publish targets: the Post's status afterwards and
+        every one of its targets, so a client can render the new state without a second request.
+      required:
+        - workItemId
+        - status
+        - retriedCount
+        - targets
+      properties:
+        workItemId:
+          type: string
+        status:
+          type: string
+          description: >-
+            The Post's Workflow-defined status after the retry — its scheduled status when anything
+            was re-fired, otherwise whatever it already was.
+        retriedCount:
+          type: integer
+          format: int32
+          description: How many targets were reset to PENDING. Zero when nothing had failed.
+        targets:
+          type: array
+          description: Every publish target on the Post after the retry, failed or not.
+          items:
+            $ref: "#/components/schemas/PublishTargetResponse"
 
     PublishTargetSelection:
       type: object
