@@ -12,6 +12,8 @@ import com.conductor.generated.model.ConnectionDataResponse;
 import com.conductor.generated.model.ConnectionHealthResponse;
 import com.conductor.generated.model.ConnectionResponse;
 import com.conductor.generated.model.ConnectionSummary;
+import com.conductor.generated.model.ConnectorAppCredentialStatusDto;
+import com.conductor.generated.model.ConnectorAppCredentialVerificationReport;
 import com.conductor.generated.model.ConnectorCatalogConfigFieldDto;
 import com.conductor.generated.model.ConnectorCatalogEntryDto;
 import com.conductor.generated.model.ConnectorCatalogIngestDto;
@@ -28,8 +30,10 @@ import com.conductor.generated.model.OAuthAccountDto;
 import com.conductor.generated.model.OAuthAccountsResponse;
 import com.conductor.generated.model.OAuthAuthorizeResponse;
 import com.conductor.generated.model.SelectOAuthAccountRequest;
+import com.conductor.generated.model.SetConnectorAppCredentialRequest;
 import com.conductor.generated.model.UpdateConnectionRequest;
 import com.conductor.generated.model.UpdateConnectorFeedRequest;
+import com.conductor.generated.model.VerificationCheck;
 import com.conductor.generated.model.WebhookEventSummary;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.Capability;
@@ -43,6 +47,7 @@ import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.DecryptedCredentials;
 import com.conductor.integration.FetchConnector;
 import com.conductor.integration.IngestSpec;
+import com.conductor.integration.OAuth2Connector;
 import com.conductor.integration.connector.GcpBillingConnector;
 import com.conductor.integration.connector.gsc.GscConnector;
 import com.conductor.integration.ingest.ConnectorFeed;
@@ -52,6 +57,9 @@ import com.conductor.repository.ConnectionDataCacheRepository;
 import com.conductor.repository.WebhookEventRepository;
 import com.conductor.service.ConnectionHealthService;
 import com.conductor.service.ConnectionService;
+import com.conductor.service.ConnectorAppCredentialService;
+import com.conductor.service.ConnectorAppCredentialService.AppCredentialStatus;
+import com.conductor.service.ConnectorAppCredentialVerificationService;
 import com.conductor.service.IntegrationFetchService;
 import com.conductor.service.OAuthFlowService;
 import com.conductor.security.ProjectScopedPrincipal;
@@ -102,6 +110,8 @@ public class IntegrationController implements IntegrationsApi {
     /** Present only outside the {@code local} profile (the real {@link GscConnector} is {@code @Profile("!local")}). */
     private final Optional<GscConnector> gscConnector;
     private final RuntimeTargetService runtimeTargetService;
+    private final ConnectorAppCredentialService appCredentialService;
+    private final ConnectorAppCredentialVerificationService appCredentialVerificationService;
 
     @Value("${BACKEND_URL:}")
     private String backendUrl;
@@ -117,6 +127,8 @@ public class IntegrationController implements IntegrationsApi {
                                 Optional<GcpBillingConnector> gcpBillingConnector,
                                 Optional<GscConnector> gscConnector,
                                 RuntimeTargetService runtimeTargetService,
+                                ConnectorAppCredentialService appCredentialService,
+                                ConnectorAppCredentialVerificationService appCredentialVerificationService,
                                 ObjectMapper objectMapper) {
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
@@ -129,6 +141,8 @@ public class IntegrationController implements IntegrationsApi {
         this.gcpBillingConnector = gcpBillingConnector;
         this.gscConnector = gscConnector;
         this.runtimeTargetService = runtimeTargetService;
+        this.appCredentialService = appCredentialService;
+        this.appCredentialVerificationService = appCredentialVerificationService;
         this.objectMapper = objectMapper;
     }
 
@@ -162,8 +176,10 @@ public class IntegrationController implements IntegrationsApi {
     @Override
     public ResponseEntity<List<ConnectorCatalogEntryDto>> listConnectorCatalog(String projectId) {
         requireMember(projectId);
+        List<Connector> registered = connectorRegistry.getAll();
+        Map<String, ConnectorAppCredentialStatusDto> appCredentials = appCredentialStatuses(projectId, registered);
         List<ConnectorCatalogEntryDto> items = new ArrayList<>();
-        for (Connector connector : connectorRegistry.getAll()) {
+        for (Connector connector : registered) {
             ConnectorMetadata meta = connector.getMetadata();
             ConnectorSpec spec = connector.getSpec();
             // "Connected"/active here means a usable connection (ACTIVE status), not merely a row
@@ -184,9 +200,58 @@ public class IntegrationController implements IntegrationsApi {
                     .configFields(toCatalogConfigFieldDtos(spec))
                     .connected(!activeConnectionIds.isEmpty())
                     .activeConnectionIds(activeConnectionIds)
-                    .ingest(toCatalogIngestDtos(connector)));
+                    .ingest(toCatalogIngestDtos(connector))
+                    // Null for a non-OAuth2 connector -- it has no app credential to configure.
+                    .appCredential(appCredentials.get(connector.getId())));
         }
         return ResponseEntity.ok(items);
+    }
+
+    @Override
+    public ResponseEntity<ConnectorAppCredentialStatusDto> getConnectorAppCredential(
+            String projectId, String connectorId) {
+        requireMember(projectId);
+        OAuth2Connector connector = requireOAuth2Connector(connectorId);
+        return ResponseEntity.ok(toAppCredentialDto(appCredentialService.status(projectId, connector)));
+    }
+
+    /**
+     * The ADMIN rule itself belongs to {@link ConnectorAppCredentialService#put} -- it owns why these
+     * credentials are admin-only -- so this deliberately does not re-check the role. All the controller
+     * adds is that the caller is a real {@link User}: a project-scoped machine principal holds no role
+     * at all, and would otherwise reach the service as a null caller.
+     */
+    @Override
+    public ResponseEntity<ConnectorAppCredentialStatusDto> setConnectorAppCredential(
+            String projectId, String connectorId, SetConnectorAppCredentialRequest request) {
+        requireMember(projectId);
+        OAuth2Connector connector = requireOAuth2Connector(connectorId);
+        appCredentialService.put(projectId, connectorId, request.getClientId(), request.getClientSecret(),
+                requireUserPrincipal());
+        return ResponseEntity.ok(toAppCredentialDto(appCredentialService.status(projectId, connector)));
+    }
+
+    @Override
+    public ResponseEntity<ConnectorAppCredentialStatusDto> clearConnectorAppCredential(
+            String projectId, String connectorId) {
+        requireMember(projectId);
+        OAuth2Connector connector = requireOAuth2Connector(connectorId);
+        appCredentialService.clear(projectId, connectorId, requireUserPrincipal());
+        return ResponseEntity.ok(toAppCredentialDto(appCredentialService.status(projectId, connector)));
+    }
+
+    /**
+     * Always 200, even when the probe failed: the report's own {@code status} carries the outcome
+     * (including {@code unknown}, meaning the probe could not tell), mirroring
+     * {@code verifyProviderCredential}.
+     */
+    @Override
+    public ResponseEntity<ConnectorAppCredentialVerificationReport> verifyConnectorAppCredential(
+            String projectId, String connectorId) {
+        requireAdminOrCreator(projectId);
+        OAuth2Connector connector = requireOAuth2Connector(connectorId);
+        return ResponseEntity.ok(toVerificationReport(
+                appCredentialVerificationService.verify(projectId, connector)));
     }
 
     @Override
@@ -583,6 +648,75 @@ public class IntegrationController implements IntegrationsApi {
                 .map(connector -> connector.getToolSpec().ingest().stream()
                         .collect(java.util.stream.Collectors.toMap(IngestSpec::id, s -> s)))
                 .orElseGet(Map::of);
+    }
+
+    /**
+     * One credential query for the whole catalog: {@link ConnectorAppCredentialService#statuses} loads
+     * the project's rows in a single query and resolves the rest from the deployment env, so catalog
+     * cost stays flat as OAuth2 connectors are added. Calling {@code status()} per connector here
+     * would reintroduce the N+1 that method exists to avoid.
+     */
+    private Map<String, ConnectorAppCredentialStatusDto> appCredentialStatuses(
+            String projectId, List<Connector> connectors) {
+        List<OAuth2Connector> oauthConnectors = connectors.stream()
+                .filter(OAuth2Connector.class::isInstance)
+                .map(OAuth2Connector.class::cast)
+                .toList();
+        if (oauthConnectors.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, ConnectorAppCredentialStatusDto> byConnectorId = new java.util.LinkedHashMap<>();
+        for (AppCredentialStatus status : appCredentialService.statuses(projectId, oauthConnectors)) {
+            byConnectorId.put(status.connectorId(), toAppCredentialDto(status));
+        }
+        return byConnectorId;
+    }
+
+    /** Masked throughout -- {@code clientSecretLast4} is the only secret-derived value that leaves here. */
+    private static ConnectorAppCredentialStatusDto toAppCredentialDto(AppCredentialStatus status) {
+        return new ConnectorAppCredentialStatusDto()
+                .connectorId(status.connectorId())
+                .credentialSource(ConnectorAppCredentialStatusDto.CredentialSourceEnum
+                        .fromValue(status.source().name()))
+                .configured(status.configured())
+                .clientId(status.clientId())
+                .clientSecretLast4(status.clientSecretLast4())
+                .missingProperties(status.missingProperties())
+                .updatedBy(status.updatedBy())
+                .updatedAt(status.updatedAt());
+    }
+
+    private static ConnectorAppCredentialVerificationReport toVerificationReport(
+            ConnectorAppCredentialVerificationService.VerificationReport report) {
+        return new ConnectorAppCredentialVerificationReport()
+                .connectorId(report.connectorId())
+                .status(ConnectorAppCredentialVerificationReport.StatusEnum.fromValue(report.status().value()))
+                .checkedAt(report.checkedAt())
+                .checks(report.checks().stream()
+                        .map(c -> new VerificationCheck()
+                                .name(c.name())
+                                .status(VerificationCheck.StatusEnum.fromValue(c.status().value()))
+                                .message(c.message()))
+                        .toList());
+    }
+
+    /**
+     * 404 rather than a 500 mid-flow for a connector id that is unknown, or known but not OAuth2 --
+     * {@link ConnectorAppCredentialService} has no registry and cannot make that distinction itself.
+     */
+    private OAuth2Connector requireOAuth2Connector(String connectorId) {
+        return connectorRegistry.findOAuth2(connectorId).orElseThrow(() -> new EntityNotFoundException(
+                "No OAuth2 connector with id '" + connectorId + "'"));
+    }
+
+    /** Only a real {@link User} can hold a project role, so a machine principal is refused here. */
+    private User requireUserPrincipal() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = auth != null ? auth.getPrincipal() : null;
+        if (!(principal instanceof User user)) {
+            throw new AccessDeniedException("Requires a signed-in project ADMIN");
+        }
+        return user;
     }
 
     private List<ConnectorCatalogIngestDto> toCatalogIngestDtos(Connector connector) {

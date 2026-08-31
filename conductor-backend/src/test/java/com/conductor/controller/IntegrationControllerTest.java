@@ -90,6 +90,8 @@ class IntegrationControllerTest {
     @MockitoBean private ConnectorFeedRepository connectorFeedRepository;
     @MockitoBean private GcpBillingConnector gcpBillingConnector;
     @MockitoBean private RuntimeTargetService runtimeTargetService;
+    @MockitoBean private com.conductor.service.ConnectorAppCredentialService appCredentialService;
+    @MockitoBean private com.conductor.service.ConnectorAppCredentialVerificationService appCredentialVerificationService;
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     // Security filter chain collaborators
