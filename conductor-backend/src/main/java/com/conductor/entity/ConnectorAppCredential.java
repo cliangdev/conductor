@@ -20,14 +20,16 @@ import java.util.UUID;
  * with no row, resolution falls back to those env vars. See
  * {@code ConnectorAppCredentialService#resolve}.
  *
- * <p>{@link #clientSecretEncrypted} is AES-256-GCM ciphertext produced by
- * {@code WorkflowSecretsEncryptionService} and is {@link JsonIgnore}d so it can never leave over the
- * wire. {@link #clientId} is deliberately stored in clear: it is a public value that travels in the
- * consent URL.
+ * <p>{@link #clientSecretEncrypted} is AES-256-GCM ciphertext under this row's own DEK, wrapped by
+ * the KMS KEK in {@link #kmsKeyReference} — the same envelope {@link Connection} tokens use, shared
+ * through {@link EnvelopeEncrypted} rather than reimplemented. It is {@link JsonIgnore}d so it can
+ * never leave over the wire, and {@link #clientSecretLast4} exists so the read paths that only need
+ * a preview never have to decrypt it at all. {@link #clientId} is deliberately stored in clear: it
+ * is a public value that travels in the consent URL.
  */
 @Entity
 @Table(name = "connector_app_credential")
-public class ConnectorAppCredential {
+public class ConnectorAppCredential implements EnvelopeEncrypted {
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
@@ -46,6 +48,23 @@ public class ConnectorAppCredential {
     @JsonIgnore
     @Column(name = "client_secret_encrypted", columnDefinition = "TEXT", nullable = false)
     private String clientSecretEncrypted;
+
+    /**
+     * This row's AES-256 DEK, wrapped by the KMS KEK and Base64-encoded. Null only on a row written
+     * before the envelope landed (Flyway V118); {@code ConnectorAppCredentialService} refuses to
+     * decrypt such a row rather than guess at it.
+     */
+    @JsonIgnore
+    @Column(name = "kms_key_reference", columnDefinition = "TEXT")
+    private String kmsKeyReference;
+
+    /**
+     * The last four characters of the plaintext secret, stored at write time so every read path that
+     * only shows a preview stays out of the crypto entirely — no decrypt, and on the KMS profile no
+     * per-row KMS round trip on a catalog load. Null for a pre-envelope row.
+     */
+    @Column(name = "client_secret_last4", length = 4)
+    private String clientSecretLast4;
 
     /** User who last wrote this row; null once that user is deleted. */
     @Column(name = "updated_by", length = 36)
@@ -86,6 +105,14 @@ public class ConnectorAppCredential {
 
     public String getClientSecretEncrypted() { return clientSecretEncrypted; }
     public void setClientSecretEncrypted(String clientSecretEncrypted) { this.clientSecretEncrypted = clientSecretEncrypted; }
+
+    @Override
+    public String getKmsKeyReference() { return kmsKeyReference; }
+    @Override
+    public void setKmsKeyReference(String kmsKeyReference) { this.kmsKeyReference = kmsKeyReference; }
+
+    public String getClientSecretLast4() { return clientSecretLast4; }
+    public void setClientSecretLast4(String clientSecretLast4) { this.clientSecretLast4 = clientSecretLast4; }
 
     public String getUpdatedBy() { return updatedBy; }
     public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }

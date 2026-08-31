@@ -19,11 +19,12 @@ import java.util.UUID;
  * partial unique index {@code uq_connection_single_instance}.
  *
  * <p>One per-connection DEK (wrapped in {@code kmsKeyReference}) encrypts all secrets on the row:
- * access token, refresh token, and webhook signing secret.
+ * access token, refresh token, and webhook signing secret. That envelope is
+ * {@code CredentialService}'s, reached through {@link EnvelopeEncrypted}.
  */
 @Entity
 @Table(name = "connection")
-public class Connection {
+public class Connection implements EnvelopeEncrypted {
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)

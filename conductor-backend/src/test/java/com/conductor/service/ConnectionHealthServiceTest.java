@@ -235,7 +235,7 @@ class ConnectionHealthServiceTest extends AbstractNoneWebIntegrationTest {
                 // No project row stored, so this resolves the mocked deployment env vars above.
                 new ConnectorAppCredentialService(
                         mock(com.conductor.repository.ConnectorAppCredentialRepository.class),
-                        new com.conductor.workflow.WorkflowSecretsEncryptionService("dGVzdC1zZWNyZXRzLWtleS0zMi1jaGFycy1wYWRkZWQ="),
+                        mock(CredentialService.class),
                         environment,
                         mock(ProjectSecurityService.class)),
                 new ObjectMapper(),

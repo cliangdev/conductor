@@ -15,7 +15,6 @@ import com.conductor.integration.connector.gsc.GscConnector;
 import com.conductor.integration.connector.tiktok.TikTokConnector;
 import com.conductor.repository.ConnectorAppCredentialRepository;
 import com.conductor.repository.IntegrationOAuthStateRepository;
-import com.conductor.workflow.WorkflowSecretsEncryptionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -79,8 +79,7 @@ class OAuthMultiConnectionTest {
         // No project row is ever stored here, so credential resolution falls through to the mocked
         // Environment — the deployment-env behaviour these tests pin.
         ConnectorAppCredentialService appCredentialService = new ConnectorAppCredentialService(
-                appCredentialRepository, new WorkflowSecretsEncryptionService("dGVzdC1zZWNyZXRzLWtleS0zMi1jaGFycy1wYWRkZWQ="),
-                environment, projectSecurityService);
+                appCredentialRepository, mock(CredentialService.class), environment, projectSecurityService);
         service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry,
                 appCredentialService, new ObjectMapper(), connectionHealthService);
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);

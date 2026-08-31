@@ -6,7 +6,6 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.integration.OAuth2Connector;
 import com.conductor.repository.ConnectorAppCredentialRepository;
-import com.conductor.workflow.WorkflowSecretsEncryptionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
@@ -35,16 +34,15 @@ import java.util.stream.Collectors;
  * every existing deployment keeps working untouched and one workspace's own app never leaks into
  * another's flows.
  *
- * <p><b>Crypto.</b> {@code CredentialService} (the connector envelope) is {@link
- * com.conductor.entity.Connection}-shaped — every method takes a {@code Connection} and stores the
- * wrapped DEK in its {@code kms_key_reference} column — so it cannot encrypt for an owner that is
- * not a connection. This class therefore reuses {@link WorkflowSecretsEncryptionService}, the
- * existing owner-agnostic AES-256-GCM seam already trusted with project-scoped secrets, rather than
- * hand-rolling crypto or widening the connection envelope.
+ * <p><b>Crypto.</b> The client secret rides the same envelope as every other Integrations secret:
+ * {@link CredentialService} generates a DEK for this row, wraps it with the KMS KEK into the row's
+ * {@code kms_key_reference}, and encrypts the secret under it. That is one implementation shared with
+ * connection tokens — reached through {@link com.conductor.entity.EnvelopeEncrypted} — not a second
+ * copy of the crypto, and not the single deployment-wide key this table originally used.
  *
- * <p>{@link #resolve} is the only path that yields a plaintext secret, and exists for the OAuth flow
- * itself. Everything a human or an API response needs comes from {@link #status}, which masks the
- * secret to its last four characters.
+ * <p>{@link #resolve} is the only path that decrypts at all, and exists for the OAuth flow itself.
+ * Everything a human or an API response needs comes from {@link #status}, which reads the stored
+ * {@code client_secret_last4} and so never touches the ciphertext.
  */
 @Service
 public class ConnectorAppCredentialService {
@@ -90,16 +88,16 @@ public class ConnectorAppCredentialService {
     }
 
     private final ConnectorAppCredentialRepository repository;
-    private final WorkflowSecretsEncryptionService encryptionService;
+    private final CredentialService credentialService;
     private final Environment environment;
     private final ProjectSecurityService projectSecurityService;
 
     public ConnectorAppCredentialService(ConnectorAppCredentialRepository repository,
-                                         WorkflowSecretsEncryptionService encryptionService,
+                                         CredentialService credentialService,
                                          Environment environment,
                                          ProjectSecurityService projectSecurityService) {
         this.repository = repository;
-        this.encryptionService = encryptionService;
+        this.credentialService = credentialService;
         this.environment = environment;
         this.projectSecurityService = projectSecurityService;
     }
@@ -116,7 +114,7 @@ public class ConnectorAppCredentialService {
                 : repository.findByProjectIdAndConnectorId(projectId, connector.getId()).orElse(null);
         if (row != null) {
             return new ResolvedAppCredentials(connector.getId(), CredentialSource.PROJECT,
-                    row.getClientId(), encryptionService.decrypt(row.getClientSecretEncrypted()), List.of());
+                    row.getClientId(), decryptClientSecret(row), List.of());
         }
         return resolveFromDeployment(connector);
     }
@@ -162,7 +160,8 @@ public class ConnectorAppCredentialService {
                     return created;
                 });
         row.setClientId(clientId.trim());
-        row.setClientSecretEncrypted(encryptionService.encrypt(clientSecret));
+        row.setClientSecretEncrypted(credentialService.encryptSecret(row, clientSecret));
+        row.setClientSecretLast4(last4(clientSecret));
         row.setUpdatedBy(caller.getId());
         repository.save(row);
         log.info("Connector app credential set for project={} connector={} by user={}",
@@ -203,13 +202,40 @@ public class ConnectorAppCredentialService {
 
     private AppCredentialStatus toStatus(OAuth2Connector connector, ConnectorAppCredential row) {
         if (row != null) {
+            if (isPreEnvelope(row)) {
+                log.error("Connector app credential project={} connector={} predates envelope encryption; "
+                        + "its secret cannot be read and an admin must re-enter it",
+                        row.getProjectId(), row.getConnectorId());
+            }
             return new AppCredentialStatus(connector.getId(), CredentialSource.PROJECT, row.getClientId(),
-                    last4(encryptionService.decrypt(row.getClientSecretEncrypted())), List.of(),
-                    row.getUpdatedBy(), row.getUpdatedAt());
+                    row.getClientSecretLast4(), List.of(), row.getUpdatedBy(), row.getUpdatedAt());
         }
         ResolvedAppCredentials deployment = resolveFromDeployment(connector);
         return new AppCredentialStatus(connector.getId(), deployment.source(), deployment.clientId(),
                 last4(deployment.clientSecret()), deployment.missingProperties(), null, null);
+    }
+
+    /**
+     * The stored secret, opened with this row's own DEK.
+     *
+     * <p>A row with no {@code kms_key_reference} was written before this table joined the envelope
+     * (Flyway V118 encrypted it under the single deployment-wide workflow-secrets key). Its ciphertext
+     * is not openable here, and the envelope would answer with null rather than an error — which for a
+     * client secret means silently sending an OAuth provider the wrong credentials. So this refuses,
+     * and names the one thing that fixes it. Only a developer database can hold such a row: V118 has
+     * never shipped.
+     */
+    private String decryptClientSecret(ConnectorAppCredential row) {
+        if (isPreEnvelope(row)) {
+            throw new BusinessException("The app credentials stored for connector '" + row.getConnectorId()
+                    + "' predate envelope encryption and can no longer be decrypted. A project admin must "
+                    + "re-enter the client secret in Settings -> Integrations.");
+        }
+        return credentialService.decryptSecret(row, row.getClientSecretEncrypted());
+    }
+
+    private static boolean isPreEnvelope(ConnectorAppCredential row) {
+        return isBlank(row.getKmsKeyReference());
     }
 
     private void requireProjectAdmin(String projectId, User caller) {

@@ -4,6 +4,7 @@ import com.conductor.entity.Connection;
 import com.conductor.entity.ConnectorAppCredential;
 import com.conductor.entity.IntegrationOAuthState;
 import com.conductor.entity.User;
+import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.ConnectorCategory;
@@ -15,8 +16,11 @@ import com.conductor.repository.ConnectorAppCredentialRepository;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.conductor.service.ConnectorAppCredentialService.CredentialSource;
 import com.conductor.service.ConnectorAppCredentialService.ResolvedAppCredentials;
-import com.conductor.workflow.WorkflowSecretsEncryptionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.cloud.kms.v1.DecryptResponse;
+import com.google.cloud.kms.v1.EncryptResponse;
+import com.google.cloud.kms.v1.KeyManagementServiceClient;
+import com.google.protobuf.ByteString;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,8 +45,11 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -53,6 +60,10 @@ import static org.mockito.Mockito.when;
  * byte-for-byte what the deployment resolved before this seam existed. The OAuth-threading section
  * at the bottom pins that against the real {@link OAuthFlowService}, since that is where a leaked or
  * dropped {@code projectId} would actually do damage.
+ *
+ * <p>The crypto here is the real {@link CredentialService} envelope, not a stub: the local-profile
+ * implementation for most tests, and the KMS one over a fake KEK for the envelope section, so the
+ * per-row DEK is exercised rather than described.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -62,7 +73,9 @@ class ConnectorAppCredentialServiceTest {
     private static final String PROJECT_B = "proj-b";
     private static final String CONNECTOR_ID = "acme";
     private static final String REDIRECT_URI = "http://localhost:8080/api/v1/oauth/callback";
-    private static final String TEST_ENCRYPTION_KEY = "dGVzdC1zZWNyZXRzLWtleS0zMi1jaGFycy1wYWRkZWQ=";
+    private static final String LOCAL_ENCRYPTION_KEY = "test-encryption-key-for-unit-tests";
+    /** Stand-in KEK for the fake KMS: reversible, and obviously not the DEK it wraps. */
+    private static final byte FAKE_KEK_MASK = 0x5A;
 
     @Mock private ConnectorAppCredentialRepository repository;
     @Mock private Environment environment;
@@ -73,14 +86,14 @@ class ConnectorAppCredentialServiceTest {
     @Mock private ConnectionHealthService connectionHealthService;
     @Mock private RestTemplate restTemplate;
 
-    private WorkflowSecretsEncryptionService encryptionService;
+    private CredentialService credentialService;
     private ConnectorAppCredentialService service;
     private final AcmeConnector connector = new AcmeConnector();
 
     @BeforeEach
     void setUp() {
-        encryptionService = new WorkflowSecretsEncryptionService(TEST_ENCRYPTION_KEY);
-        service = new ConnectorAppCredentialService(repository, encryptionService, environment,
+        credentialService = new LocalCredentialService(new ObjectMapper(), LOCAL_ENCRYPTION_KEY);
+        service = new ConnectorAppCredentialService(repository, credentialService, environment,
                 projectSecurityService);
     }
 
@@ -104,17 +117,30 @@ class ConnectorAppCredentialServiceTest {
     }
 
     private ConnectorAppCredential storedRow(String projectId, String clientId, String clientSecret) {
+        ConnectorAppCredential row = envelopeRow(projectId, clientId, clientSecret);
+        when(repository.findByProjectIdAndConnectorId(projectId, CONNECTOR_ID))
+                .thenReturn(Optional.of(row));
+        return row;
+    }
+
+    /** A row written the way {@link ConnectorAppCredentialService#put} writes one. */
+    private ConnectorAppCredential envelopeRow(String projectId, String clientId, String clientSecret) {
         ConnectorAppCredential row = new ConnectorAppCredential();
         row.setId("cred-" + projectId);
         row.setProjectId(projectId);
         row.setConnectorId(CONNECTOR_ID);
         row.setClientId(clientId);
-        row.setClientSecretEncrypted(encryptionService.encrypt(clientSecret));
+        row.setClientSecretEncrypted(credentialService.encryptSecret(row, clientSecret));
+        row.setClientSecretLast4(clientSecret.substring(clientSecret.length() - 4));
         row.setUpdatedBy("user-1");
         row.setUpdatedAt(OffsetDateTime.now());
-        when(repository.findByProjectIdAndConnectorId(projectId, CONNECTOR_ID))
-                .thenReturn(Optional.of(row));
         return row;
+    }
+
+    private ConnectorAppCredential savedRow() {
+        ArgumentCaptor<ConnectorAppCredential> captor = ArgumentCaptor.forClass(ConnectorAppCredential.class);
+        verify(repository).save(captor.capture());
+        return captor.getValue();
     }
 
     private User admin() {
@@ -213,7 +239,8 @@ class ConnectorAppCredentialServiceTest {
 
         assertThat(saved.getClientSecretEncrypted()).isNotEqualTo("sup3r-secret-value");
         assertThat(saved.getClientSecretEncrypted()).doesNotContain("sup3r-secret-value");
-        assertThat(encryptionService.decrypt(saved.getClientSecretEncrypted())).isEqualTo("sup3r-secret-value");
+        assertThat(credentialService.decryptSecret(saved, saved.getClientSecretEncrypted()))
+                .isEqualTo("sup3r-secret-value");
         assertThat(saved.getClientId()).isEqualTo("project-a-client-id");
         assertThat(saved.getUpdatedBy()).isEqualTo("user-1");
     }
@@ -248,11 +275,7 @@ class ConnectorAppCredentialServiceTest {
     @Test
     void statusesResolvesAWholeCatalogFromASingleQuery() {
         stubDeploymentEnv("deployment-client-id", "deployment-client-secret");
-        ConnectorAppCredential row = new ConnectorAppCredential();
-        row.setProjectId(PROJECT_A);
-        row.setConnectorId(CONNECTOR_ID);
-        row.setClientId("project-a-client-id");
-        row.setClientSecretEncrypted(encryptionService.encrypt("project-a-client-secret"));
+        ConnectorAppCredential row = envelopeRow(PROJECT_A, "project-a-client-id", "project-a-client-secret");
         when(repository.findByProjectId(PROJECT_A)).thenReturn(List.of(row));
 
         var statuses = service.statuses(PROJECT_A, List.of(connector));
@@ -261,6 +284,156 @@ class ConnectorAppCredentialServiceTest {
         assertThat(statuses.get(0).source()).isEqualTo(CredentialSource.PROJECT);
         assertThat(statuses.get(0).clientId()).isEqualTo("project-a-client-id");
         verify(repository, never()).findByProjectIdAndConnectorId(any(), any());
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // [auto] The secret rides the connection envelope: a per-row DEK, wrapped by the KMS KEK
+    // -------------------------------------------------------------------------------------------
+
+    /**
+     * A KMS whose KEK is a byte mask. Reversible, so a wrapped DEK really does unwrap to the DEK that
+     * was generated, and visibly not the DEK itself, so "wrapped" can be asserted rather than assumed.
+     */
+    private static KeyManagementServiceClient fakeKms() {
+        KeyManagementServiceClient kms = mock(KeyManagementServiceClient.class);
+        when(kms.encrypt(anyString(), any(ByteString.class))).thenAnswer(call ->
+                EncryptResponse.newBuilder().setCiphertext(maskedWithFakeKek(call.getArgument(1))).build());
+        when(kms.decrypt(anyString(), any(ByteString.class))).thenAnswer(call ->
+                DecryptResponse.newBuilder().setPlaintext(maskedWithFakeKek(call.getArgument(1))).build());
+        return kms;
+    }
+
+    private static ByteString maskedWithFakeKek(ByteString in) {
+        byte[] bytes = in.toByteArray();
+        for (int i = 0; i < bytes.length; i++) {
+            bytes[i] ^= FAKE_KEK_MASK;
+        }
+        return ByteString.copyFrom(bytes);
+    }
+
+    private ConnectorAppCredentialService kmsBackedService(CredentialService envelope) {
+        return new ConnectorAppCredentialService(repository, envelope, environment, projectSecurityService);
+    }
+
+    private static CredentialService kmsEnvelope() {
+        return new GcpKmsCredentialService(new ObjectMapper(), fakeKms(), "gcp-project", "global",
+                "conductor-secrets", "integration-credentials-kek");
+    }
+
+    @Test
+    void theStoredSecretRoundTripsThroughTheKmsEnvelope() {
+        ConnectorAppCredentialService kmsBacked = kmsBackedService(kmsEnvelope());
+
+        kmsBacked.put(PROJECT_A, CONNECTOR_ID, "project-a-client-id", "sup3r-secret-value", admin());
+        ConnectorAppCredential saved = savedRow();
+
+        assertThat(saved.getKmsKeyReference()).isNotBlank();
+        assertThat(saved.getClientSecretEncrypted()).doesNotContain("sup3r-secret-value");
+
+        when(repository.findByProjectIdAndConnectorId(PROJECT_A, CONNECTOR_ID)).thenReturn(Optional.of(saved));
+        assertThat(kmsBacked.resolve(PROJECT_A, connector).clientSecret()).isEqualTo("sup3r-secret-value");
+    }
+
+    @Test
+    void eachCredentialRowIsEncryptedUnderItsOwnDek() {
+        ConnectorAppCredentialService kmsBacked = kmsBackedService(kmsEnvelope());
+
+        kmsBacked.put(PROJECT_A, CONNECTOR_ID, "client-a", "identical-secret", admin());
+        kmsBacked.put(PROJECT_B, CONNECTOR_ID, "client-b", "identical-secret", admin());
+
+        ArgumentCaptor<ConnectorAppCredential> captor = ArgumentCaptor.forClass(ConnectorAppCredential.class);
+        verify(repository, times(2)).save(captor.capture());
+        ConnectorAppCredential rowA = captor.getAllValues().get(0);
+        ConnectorAppCredential rowB = captor.getAllValues().get(1);
+
+        assertThat(rowA.getKmsKeyReference()).isNotBlank();
+        assertThat(rowB.getKmsKeyReference()).isNotBlank();
+        assertThat(rowA.getKmsKeyReference()).isNotEqualTo(rowB.getKmsKeyReference());
+        // Same plaintext, different DEKs -- so the ciphertexts cannot match either.
+        assertThat(rowA.getClientSecretEncrypted()).isNotEqualTo(rowB.getClientSecretEncrypted());
+    }
+
+    @Test
+    void theLocalProfileEncryptsWithNoKmsConfigured() {
+        service.put(PROJECT_A, CONNECTOR_ID, "project-a-client-id", "sup3r-secret-value", admin());
+        ConnectorAppCredential saved = savedRow();
+
+        assertThat(saved.getKmsKeyReference()).isEqualTo("local");
+        assertThat(saved.getClientSecretEncrypted()).doesNotContain("sup3r-secret-value");
+
+        when(repository.findByProjectIdAndConnectorId(PROJECT_A, CONNECTOR_ID)).thenReturn(Optional.of(saved));
+        assertThat(service.resolve(PROJECT_A, connector).clientSecret()).isEqualTo("sup3r-secret-value");
+    }
+
+    @Test
+    void theStatusPathNeverDecryptsTheStoredSecret() {
+        CredentialService refusesToDecrypt = mock(CredentialService.class);
+        when(refusesToDecrypt.decryptSecret(any(), any()))
+                .thenThrow(new AssertionError("the status path must never decrypt the client secret"));
+        ConnectorAppCredential row = storedRow(PROJECT_A, "project-a-client-id", "sup3r-secret-value");
+        when(repository.findByProjectId(PROJECT_A)).thenReturn(List.of(row));
+        ConnectorAppCredentialService neverDecrypting = kmsBackedService(refusesToDecrypt);
+
+        assertThat(neverDecrypting.status(PROJECT_A, connector).clientSecretLast4()).isEqualTo("alue");
+        assertThat(neverDecrypting.statuses(PROJECT_A, List.of(connector)).get(0).clientSecretLast4())
+                .isEqualTo("alue");
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // [auto] A row written under the pre-envelope scheme fails loudly rather than resolving garbage
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    void aPreEnvelopeRowIsRefusedOnResolveRatherThanSilentlyMisread() {
+        ConnectorAppCredential legacy = new ConnectorAppCredential();
+        legacy.setId("cred-legacy");
+        legacy.setProjectId(PROJECT_A);
+        legacy.setConnectorId(CONNECTOR_ID);
+        legacy.setClientId("project-a-client-id");
+        // V118 ciphertext: written under the deployment-wide workflow-secrets key, no kms_key_reference.
+        legacy.setClientSecretEncrypted("Y2lwaGVydGV4dC13cml0dGVuLXVuZGVyLXRoZS1vbGQtc2NoZW1l");
+        when(repository.findByProjectIdAndConnectorId(PROJECT_A, CONNECTOR_ID))
+                .thenReturn(Optional.of(legacy));
+
+        assertThatThrownBy(() -> service.resolve(PROJECT_A, connector))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("re-enter the client secret");
+    }
+
+    @Test
+    void aPreEnvelopeRowStillShowsInStatusWithNoSecretPreview() {
+        ConnectorAppCredential legacy = new ConnectorAppCredential();
+        legacy.setProjectId(PROJECT_A);
+        legacy.setConnectorId(CONNECTOR_ID);
+        legacy.setClientId("project-a-client-id");
+        legacy.setClientSecretEncrypted("Y2lwaGVydGV4dC13cml0dGVuLXVuZGVyLXRoZS1vbGQtc2NoZW1l");
+        when(repository.findByProjectIdAndConnectorId(PROJECT_A, CONNECTOR_ID))
+                .thenReturn(Optional.of(legacy));
+
+        // The catalog and settings pages keep rendering -- the admin has to be able to reach the
+        // form that fixes the row -- but nothing claims to know the secret.
+        var status = service.status(PROJECT_A, connector);
+        assertThat(status.source()).isEqualTo(CredentialSource.PROJECT);
+        assertThat(status.clientId()).isEqualTo("project-a-client-id");
+        assertThat(status.clientSecretLast4()).isNull();
+    }
+
+    @Test
+    void rewritingAPreEnvelopeRowMovesItOntoTheEnvelope() {
+        ConnectorAppCredential legacy = new ConnectorAppCredential();
+        legacy.setProjectId(PROJECT_A);
+        legacy.setConnectorId(CONNECTOR_ID);
+        legacy.setClientId("project-a-client-id");
+        legacy.setClientSecretEncrypted("Y2lwaGVydGV4dC13cml0dGVuLXVuZGVyLXRoZS1vbGQtc2NoZW1l");
+        when(repository.findByProjectIdAndConnectorId(PROJECT_A, CONNECTOR_ID))
+                .thenReturn(Optional.of(legacy));
+        ConnectorAppCredentialService kmsBacked = kmsBackedService(kmsEnvelope());
+
+        kmsBacked.put(PROJECT_A, CONNECTOR_ID, "project-a-client-id", "re-entered-secret", admin());
+
+        ConnectorAppCredential saved = savedRow();
+        assertThat(saved.getKmsKeyReference()).isNotBlank();
+        assertThat(kmsBacked.resolve(PROJECT_A, connector).clientSecret()).isEqualTo("re-entered-secret");
     }
 
     // -------------------------------------------------------------------------------------------

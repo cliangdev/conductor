@@ -23,6 +23,7 @@ import com.conductor.repository.UserApiKeyRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.repository.WebhookEventRepository;
 import com.conductor.service.ConnectionService;
+import com.conductor.service.CredentialService;
 import com.conductor.service.ConnectorAppCredentialService;
 import com.conductor.service.ConnectorAppCredentialVerificationService;
 import com.conductor.service.ConnectorAppCredentialVerificationService.ReportStatus;
@@ -35,7 +36,6 @@ import com.conductor.service.RuntimeTargetService;
 import com.conductor.verification.Check;
 import com.conductor.verification.CheckStatus;
 import com.conductor.workflow.RunTokenService;
-import com.conductor.workflow.WorkflowSecretsEncryptionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -100,7 +100,9 @@ class ConnectorAppCredentialControllerTest {
     @MockitoBean private RuntimeTargetService runtimeTargetService;
     @MockitoBean private ConnectorAppCredentialVerificationService verificationService;
     @MockitoBean private ConnectorAppCredentialRepository appCredentialRepository;
-    @MockitoBean private WorkflowSecretsEncryptionService encryptionService;
+    /** The app-credential envelope. Nothing here reads a stored secret back -- the last-4 preview
+     *  comes from the row's own column -- so the crypto itself stays out of this slice. */
+    @MockitoBean private CredentialService credentialService;
     /** The controller's own mapper (connection-config parsing only) — response JSON is the framework's. */
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
@@ -133,9 +135,14 @@ class ConnectorAppCredentialControllerTest {
         when(connectorRegistry.findOAuth2("nope")).thenReturn(Optional.empty());
         when(connectionService.list(eq(PROJECT_ID), anyString())).thenReturn(List.<Connection>of());
 
-        when(encryptionService.encrypt(anyString())).thenAnswer(i -> "enc:" + i.getArgument(0));
-        when(encryptionService.decrypt(anyString()))
-                .thenAnswer(i -> i.getArgument(0, String.class).substring("enc:".length()));
+        // Stands in for the envelope: stamps the row's key reference the way a real DEK wrap would,
+        // so a stored row is indistinguishable from a production one for these assertions.
+        when(credentialService.encryptSecret(any(), anyString())).thenAnswer(i -> {
+            i.getArgument(0, com.conductor.entity.EnvelopeEncrypted.class).setKmsKeyReference("wrapped-dek");
+            return "enc:" + i.getArgument(1);
+        });
+        when(credentialService.decryptSecret(any(), anyString()))
+                .thenAnswer(i -> i.getArgument(1, String.class).substring("enc:".length()));
 
         when(appCredentialRepository.findByProjectIdAndConnectorId(eq(PROJECT_ID), anyString()))
                 .thenAnswer(i -> Optional.ofNullable(rows.get(i.getArgument(1, String.class))));
@@ -367,6 +374,8 @@ class ConnectorAppCredentialControllerTest {
         row.setConnectorId(connectorId);
         row.setClientId(clientId);
         row.setClientSecretEncrypted("enc:" + clientSecret);
+        row.setKmsKeyReference("wrapped-dek");
+        row.setClientSecretLast4(clientSecret.substring(clientSecret.length() - 4));
         row.setUpdatedBy("admin-user");
         row.setUpdatedAt(OffsetDateTime.now());
         rows.put(connectorId, row);
