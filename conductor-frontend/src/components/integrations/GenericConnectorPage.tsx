@@ -6,6 +6,11 @@ import { createConnection, deleteConnection, apiPost, apiErrorMessage } from '@/
 import { buildConnectionPayload } from '@/lib/connectorConnectForm';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { useConnectorCatalogItem } from './ConnectorCatalogContext';
+import {
+  ConnectorAppCredentialPanel,
+  appCredentialOf,
+  type ConnectorAppCredentialStatus,
+} from './ConnectorAppCredentialPanel';
 import { ConnectorConfigFields } from './ConnectorConfigFields';
 import { ConnectionRow } from './ConnectionRow';
 import { OAuthAccountPicker } from './OAuthAccountPicker';
@@ -37,6 +42,18 @@ export default function GenericConnectorPage({
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [pendingAccountConnectionId, setPendingAccountConnectionId] = useState<string | null>(null);
+  // The catalog entry carries readiness, so it's on screen with the first paint; the panel's own
+  // responses then take over. Derived during render rather than mirrored into state, so the Connect
+  // affordance below is never gated on a stale value for a frame. Keyed by connector because the
+  // App Router reuses this component across sibling connector routes — otherwise one connector's
+  // edited credential would carry over to the next.
+  const [credentialOverride, setCredentialOverride] = useState<
+    { connectorId: string; status: ConnectorAppCredentialStatus } | null
+  >(null);
+  const appCredential =
+    credentialOverride?.connectorId === connectorId
+      ? credentialOverride.status
+      : appCredentialOf(item);
 
   // The OAuth callback parks a connection here (`?selectAccount=<connectionId>`) when the grant
   // covers several publishable accounts and an admin still has to pick one. Read after mount rather
@@ -157,6 +174,16 @@ export default function GenericConnectorPage({
         />
       )}
 
+      {appCredential && (
+        <ConnectorAppCredentialPanel
+          projectId={projectId}
+          connectorId={item.connectorId}
+          connectorName={item.name}
+          status={appCredential}
+          onChange={(status) => setCredentialOverride({ connectorId, status })}
+        />
+      )}
+
       {item.connections.length > 0 && (
         <div className="space-y-3 mb-6">
           {item.connections.map((conn) => (
@@ -180,7 +207,22 @@ export default function GenericConnectorPage({
             {item.connections.length > 0 ? 'Add another connection' : `Connect ${item.name}`}
           </h2>
           {item.authType === 'OAUTH2' ? (
-            <Button type="button" onClick={handleOAuth}>Authorize</Button>
+            <>
+              {/* Without a platform app there is nothing to consent to — starting the flow anyway
+                  only produces a server error naming an environment variable. */}
+              <Button
+                type="button"
+                onClick={handleOAuth}
+                disabled={appCredential?.credentialSource === 'NONE'}
+              >
+                Authorize
+              </Button>
+              {appCredential?.credentialSource === 'NONE' && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Available once the platform app credentials above are configured.
+                </p>
+              )}
+            </>
           ) : (
             <form onSubmit={handleConnect} className="space-y-4">
               <ConnectorConfigFields
