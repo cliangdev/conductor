@@ -378,7 +378,9 @@ describe('appCredentialOf', () => {
   })
 
   it('returns null for a connector the catalog reports no app credential for', () => {
-    const { appCredential: _omitted, ...withoutField } = entry(null)
+    // The field is optional on the DTO, so "absent" and "explicitly null" both have to read null.
+    const withoutField: IntegrationListItem = { ...entry(null) }
+    delete withoutField.appCredential
     expect(appCredentialOf(withoutField)).toBeNull()
     expect(appCredentialOf(entry(null))).toBeNull()
     expect(appCredentialOf(undefined)).toBeNull()
@@ -391,26 +393,27 @@ describe('appCredentialOf', () => {
 })
 
 describe('ConnectorCard readiness', () => {
-  it('withholds the connect affordance and explains why when disabled', () => {
+  it('withholds the connect affordance, explains why, and leads to the page that fixes it', () => {
     render(
       <ConnectorCard
         icon={<span />}
         name="Meta"
         description="Marketing"
-        onClick={() => {}}
-        disabled
-        disabledReason="Set META_APP_ID and META_APP_SECRET before connecting."
+        href="/app/projects/proj-1/integrations/meta"
+        unavailableReason="Set META_APP_ID and META_APP_SECRET before connecting."
       />
     )
 
+    // No connect handler exists at all, so no click can reach a flow that would fail.
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
-    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    expect(screen.getByRole('link')).toHaveAttribute('href', '/app/projects/proj-1/integrations/meta')
     expect(screen.getByText('Set META_APP_ID and META_APP_SECRET before connecting.')).toBeInTheDocument()
   })
 
-  it('stays interactive when it is not disabled', () => {
+  it('stays a plain connect button when nothing blocks it', () => {
     render(<ConnectorCard icon={<span />} name="Meta" description="Marketing" onClick={() => {}} />)
     expect(screen.getByRole('button')).toBeInTheDocument()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 })
 
@@ -444,6 +447,29 @@ describe('GenericConnectorPage app credential readiness', () => {
 
     expect(await screen.findByRole('button', { name: /^authorize$/i })).toBeDisabled()
     expect(screen.getByText('META_APP_ID')).toBeInTheDocument()
+  })
+
+  // The browse grid sends a blocked connector here instead of into a doomed consent flow, so this
+  // page has to actually carry the fix — otherwise that redirect is just a nicer dead end.
+  it('renders the credential panel the browse grid routes a blocked connector to', async () => {
+    renderPage(metaConnector(NONE))
+
+    expect(await screen.findByText('Platform app credentials')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /set a credential for this workspace/i })).toBeInTheDocument()
+  })
+
+  it('unblocks the connector once an admin sets the credential, without a reload', async () => {
+    renderPage(metaConnector(NONE))
+
+    expect(await screen.findByRole('button', { name: /^authorize$/i })).toBeDisabled()
+
+    vi.mocked(api.apiPut).mockResolvedValue(PROJECT)
+    fireEvent.click(screen.getByRole('button', { name: /set a credential for this workspace/i }))
+    fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'proj-client-5678' } })
+    fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: 'sup3r-s3cret' } })
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /^authorize$/i })).toBeEnabled())
   })
 
   it('offers Connect once a deployment credential is inherited', async () => {

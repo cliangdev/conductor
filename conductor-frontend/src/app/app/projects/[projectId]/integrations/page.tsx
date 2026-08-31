@@ -73,15 +73,21 @@ export default function IntegrationsPage() {
 
   const connected = integrations.filter((i) => i.connected);
 
-  // A connector is managed on its own detail page when it holds multiple instances
-  // (e.g. GitHub repos) or is already connected. Single-instance connectors connect inline.
-  const usesDetailPage = (item: IntegrationListItem) => item.connected || !item.singleInstance;
-
   // An OAuth2 connector with no platform app behind it has nothing to consent to — starting the
   // flow from here would only redirect the user into a server error naming an environment
   // variable. Non-OAuth2 connectors carry no app credential at all, so they are never blocked.
   const blockedOnAppCredential = (item: IntegrationListItem) =>
     item.authType === 'OAUTH2' && item.appCredential?.credentialSource === 'NONE';
+
+  // A connector is managed on its own detail page when it holds multiple instances
+  // (e.g. GitHub repos) or is already connected. Single-instance connectors connect inline —
+  // unless they're blocked on a missing platform app, in which case the detail page is the only
+  // place that credential can be set, so the card has to lead there rather than nowhere.
+  const usesDetailPage = (item: IntegrationListItem) =>
+    item.connected || !item.singleInstance || blockedOnAppCredential(item);
+
+  const detailHref = (item: IntegrationListItem) =>
+    `/app/projects/${projectId}/integrations/${item.connectorId}`;
 
   const openConnectModal = (connector: IntegrationListItem) => {
     setConnectModal({ connector });
@@ -276,7 +282,12 @@ export default function IntegrationsPage() {
                       icon={<Icon item={item} />}
                       name={item.name}
                       description={item.description}
-                      href={`/app/projects/${projectId}/integrations/${item.connectorId}`}
+                      href={detailHref(item)}
+                      unavailableReason={
+                        blockedOnAppCredential(item)
+                          ? 'No platform app is configured, so nobody can connect this yet.'
+                          : undefined
+                      }
                       trailing={
                         item.connected ? (
                           <span className="flex items-center gap-1 text-xs text-status-done font-medium flex-shrink-0">
@@ -285,6 +296,8 @@ export default function IntegrationsPage() {
                               ? `${item.connections.length} connected`
                               : 'Connected'}
                           </span>
+                        ) : blockedOnAppCredential(item) ? (
+                          <span className="text-xs font-medium text-status-progress flex-shrink-0">Set up</span>
                         ) : (
                           <span className="text-xs font-medium text-primary flex-shrink-0">Manage</span>
                         )
@@ -297,21 +310,9 @@ export default function IntegrationsPage() {
                       name={item.name}
                       description={item.description}
                       onClick={() => (item.authType === 'OAUTH2' ? handleOAuth(item) : openConnectModal(item))}
-                      disabled={blockedOnAppCredential(item)}
-                      disabledReason="No platform app is configured, so nobody can connect this yet."
                       trailing={
-                        <span
-                          className={
-                            blockedOnAppCredential(item)
-                              ? 'text-xs font-medium text-muted-foreground flex-shrink-0'
-                              : 'text-xs font-medium text-primary flex-shrink-0'
-                          }
-                        >
-                          {blockedOnAppCredential(item)
-                            ? 'Unavailable'
-                            : item.authType === 'OAUTH2'
-                              ? 'Authorize'
-                              : 'Add'}
+                        <span className="text-xs font-medium text-primary flex-shrink-0">
+                          {item.authType === 'OAUTH2' ? 'Authorize' : 'Add'}
                         </span>
                       }
                     />

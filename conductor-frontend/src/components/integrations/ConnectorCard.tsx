@@ -15,18 +15,21 @@ interface ConnectorCardProps {
   /** Renders as a button when set (and no href). Neither prop renders a static, non-interactive card. */
   onClick?: () => void;
   /**
-   * Withholds the link/button entirely — for a connector that can't be connected yet (e.g. no
-   * platform app credential), where offering the affordance would only produce a server error.
+   * One short line explaining why this connector can't be connected yet — e.g. no platform app
+   * credential behind its consent flow. Shown under the description in any of the three variants,
+   * so a card that routes to the fix can still say what's wrong.
    */
-  disabled?: boolean;
-  /** One short line explaining why it's unavailable. Shown under the description when `disabled`. */
-  disabledReason?: string;
+  unavailableReason?: string;
 }
 
 /**
  * The one card shell for the integrations browse grid. Renders as a link, a button, or a
  * static div depending on whether the connector is navigable or connectable, while keeping
  * the three variants visually identical.
+ *
+ * A connector that can't be connected yet is given `href` (pointing at the page that fixes it)
+ * rather than a connect `onClick`, so the unavailable affordance isn't merely styled off — it is
+ * structurally absent, and no click can reach a flow that would fail.
  */
 export function ConnectorCard({
   icon,
@@ -35,14 +38,12 @@ export function ConnectorCard({
   trailing,
   href,
   onClick,
-  disabled,
-  disabledReason,
+  unavailableReason,
 }: ConnectorCardProps) {
-  const interactive = Boolean(href || onClick) && !disabled;
+  const interactive = Boolean(href || onClick);
   const className = cn(
     'bg-card rounded-lg border border-border p-4 flex items-center gap-4',
-    interactive && 'hover:border-primary/50 transition-colors',
-    disabled && 'opacity-70'
+    interactive && 'hover:border-primary/50 transition-colors'
   );
 
   const content = (
@@ -51,21 +52,13 @@ export function ConnectorCard({
       <div className="flex-1 min-w-0">
         <div className="font-medium text-sm text-foreground">{name}</div>
         <div className="text-xs text-muted-foreground truncate">{description}</div>
-        {disabled && disabledReason && (
-          <div className="text-xs text-status-progress mt-0.5">{disabledReason}</div>
+        {unavailableReason && (
+          <div className="text-xs text-status-progress mt-0.5">{unavailableReason}</div>
         )}
       </div>
       {trailing}
     </>
   );
-
-  if (disabled) {
-    return (
-      <div className={className} aria-disabled="true">
-        {content}
-      </div>
-    );
-  }
 
   if (href) {
     return (

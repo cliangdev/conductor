@@ -173,17 +173,20 @@ describe('IntegrationsPage — browse grid credential readiness', () => {
     vi.clearAllMocks()
   })
 
-  it('disables an OAuth2 card whose platform app is not configured and says why', async () => {
+  it('routes an OAuth2 card whose platform app is not configured to its setup page and says why', async () => {
     vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('NONE')])
     await openBrowse()
 
-    const card = (await screen.findByText('Meta')).closest('[aria-disabled="true"]')
-    expect(card).not.toBeNull()
-    expect(within(card as HTMLElement).getByText(/platform app/i)).toBeInTheDocument()
+    const link = (await screen.findByText('Meta')).closest('a') as HTMLAnchorElement
+    expect(link).not.toBeNull()
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/integrations/meta')
+    expect(within(link).getByText(/no platform app is configured/i)).toBeInTheDocument()
+    // The label points at the fix, not at a connect action that would fail.
+    expect(within(link).getByText('Set up')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /authorize/i })).not.toBeInTheDocument()
   })
 
-  it('starts no OAuth flow when the disabled card is clicked', async () => {
+  it('starts no OAuth flow when the blocked card is clicked — it navigates to the setup page', async () => {
     vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('NONE')])
     await openBrowse()
 
@@ -192,6 +195,10 @@ describe('IntegrationsPage — browse grid credential readiness', () => {
     fireEvent.click(await screen.findByText('Meta'))
 
     expect(api.apiPost).not.toHaveBeenCalled()
+    expect((await screen.findByText('Meta')).closest('a')).toHaveAttribute(
+      'href',
+      '/app/projects/proj-1/integrations/meta',
+    )
   })
 
   it('leaves a DEPLOYMENT-credentialed OAuth2 card connectable', async () => {
@@ -227,5 +234,15 @@ describe('IntegrationsPage — browse grid credential readiness', () => {
     const add = await screen.findByRole('button', { name: /add/i })
     expect(add).toBeInTheDocument()
     expect(screen.queryByText(/platform app/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('says nothing about platform apps on a connectable OAuth2 card', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('DEPLOYMENT')])
+    await openBrowse()
+
+    await screen.findByRole('button', { name: /authorize/i })
+    expect(screen.queryByText(/no platform app is configured/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('Set up')).not.toBeInTheDocument()
   })
 })
