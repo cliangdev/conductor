@@ -165,6 +165,19 @@ public class LocalMetaConnector implements OAuth2Connector, ActionConnector {
         return params;
     }
 
+    /**
+     * Authorizes without Meta. The consent URL above stays faithful in shape, but a developer machine
+     * has no {@code META_APP_ID}/{@code META_APP_SECRET} and no way to complete a Meta login, so the
+     * flow service sends the browser straight back to its own callback and cans the token exchange.
+     * Everything after that — the account picker below, {@link #completeAuthorization}, token storage
+     * — runs on the real path, which is the whole reason to stub the leg that cannot run locally
+     * rather than the connection itself.
+     */
+    @Override
+    public boolean usesStubAuthorization() {
+        return true;
+    }
+
     /** Same as the real connector: the grant covers several Pages, so a human picks one. */
     @Override
     public boolean requiresAccountSelection() {

@@ -28,6 +28,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -35,6 +36,13 @@ import java.util.Map;
 public class OAuthFlowService {
 
     private static final Logger log = LoggerFactory.getLogger(OAuthFlowService.class);
+
+    /**
+     * The code a stub-authorizing connector's consent URL hands straight back to the callback. It is
+     * never presented to a provider — {@link #exchangeCodeForTokens} short-circuits before any POST —
+     * and is spelled unmistakably so it can never be mistaken for a real grant in a log line.
+     */
+    private static final String STUB_AUTHORIZATION_CODE = "stub-authorization-code";
 
     /** Fallback scopes when a connector predates the {@link OAuth2Connector} scope declaration. */
     private static final List<String> DEFAULT_GOOGLE_SCOPES = List.of(
@@ -110,7 +118,11 @@ public class OAuthFlowService {
     @Transactional
     public String buildAuthorizationUrl(String projectId, String connectorId, String redirectUri) {
         OAuth2Connector connector = requireOAuth2Connector(connectorId);
-        OAuthCredentials creds = requireOAuthConfig(projectId, connector);
+        // A stub-authorizing connector has no provider to present credentials to, so it must not be
+        // held to having any. Every real connector still resolves its app credentials first, and
+        // still fails here — before a state row is written — when they are missing.
+        boolean stubAuthorization = connector.usesStubAuthorization();
+        OAuthCredentials creds = stubAuthorization ? null : requireOAuthConfig(projectId, connector);
         oAuthStateRepository.deleteByExpiresAtBefore(OffsetDateTime.now());
 
         byte[] bytes = new byte[16];
@@ -124,6 +136,16 @@ public class OAuthFlowService {
         oauthState.setExpiresAt(OffsetDateTime.now().plusMinutes(10));
         oauthState.setConfigJson(Map.of());
         oAuthStateRepository.save(oauthState);
+
+        if (stubAuthorization) {
+            // Straight back to our own callback, so the browser round trip completes without leaving
+            // the machine — carrying the same state parameter a provider would echo, which is what
+            // keeps the CSRF check and the project/connector round trip genuinely exercised.
+            return UriComponentsBuilder.fromUriString(redirectUri)
+                    .queryParam("code", STUB_AUTHORIZATION_CODE)
+                    .queryParam("state", state)
+                    .build().toUriString();
+        }
 
         String scopes = String.join(connector.scopeDelimiter(), scopesFor(connectorId));
         UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(connector.authorizationUrl())
@@ -359,6 +381,9 @@ public class OAuthFlowService {
     private Map<String, Object> exchangeCodeForTokens(String projectId, String connectorId, String code,
                                                       String redirectUri) {
         OAuth2Connector connector = requireOAuth2Connector(connectorId);
+        if (connector.usesStubAuthorization()) {
+            return stubTokenResponse(connectorId);
+        }
         OAuthCredentials creds = requireOAuthConfig(projectId, connector);
 
         HttpHeaders headers = new HttpHeaders();
@@ -377,6 +402,21 @@ public class OAuthFlowService {
         if (body == null || !body.containsKey("access_token")) {
             throw new com.conductor.exception.BusinessException("Token exchange failed: no access_token in response");
         }
+        return body;
+    }
+
+    /**
+     * The canned grant a stub-authorizing connector's exchange yields, shaped exactly as a provider's
+     * would be so the rest of {@code handleCallback} cannot tell the difference. The tokens name
+     * themselves as stubs: if one ever escaped to a real API the failure is legible rather than
+     * mysterious.
+     */
+    private Map<String, Object> stubTokenResponse(String connectorId) {
+        log.info("Stub OAuth token exchange for connector={} — no provider call made", connectorId);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("access_token", "stub-access-token-" + connectorId);
+        body.put("refresh_token", "stub-refresh-token-" + connectorId);
+        body.put("expires_in", 3600);
         return body;
     }
 }

@@ -167,4 +167,26 @@ public interface OAuth2Connector extends Connector {
     default List<OAuthAccount> listAuthorizableAccounts(String accessToken) {
         return List.of();
     }
+
+    /**
+     * Whether this connector authorizes against no provider at all: the flow service then skips the
+     * client-credential requirement, sends the browser straight back to its own callback with a
+     * synthetic code, and answers the code-for-token exchange with canned tokens instead of a POST.
+     * Everything downstream — the state row, {@link #completeAuthorization(OAuthCompletionRequest)},
+     * the account picker, token storage, config persistence — runs exactly as it does for a real
+     * provider, because the point of a stub authorization is to exercise that path, not to skip it.
+     *
+     * <p>Named for what it is rather than where it is used. "Stub" and not "offline" because OAuth2
+     * already spends the word {@code offline} on {@code access_type=offline}, which is about refresh
+     * tokens and unrelated.
+     *
+     * <p><b>This is deliberately a property of the connector implementation and of nothing else.</b>
+     * There is no property, env var or bean that can turn it on — a connector must override this
+     * method — and the only overrides in the codebase are the {@code @Profile("local")} stubs, so a
+     * production deployment cannot reach the stub path through configuration. The default is false,
+     * which leaves every real connector byte-for-byte unaffected.
+     */
+    default boolean usesStubAuthorization() {
+        return false;
+    }
 }

@@ -121,6 +121,17 @@ public class LocalYouTubeConnector implements OAuth2Connector, ActionConnector {
     }
 
     /**
+     * Authorizes without Google. A developer machine has no OAuth client for the YouTube scopes above
+     * (and the consent screen would refuse them before the audit clears), so the flow service returns
+     * the browser straight to its own callback and cans the token exchange. Everything after that —
+     * {@link #completeAuthorization}, token storage, config persistence — runs on the real path.
+     */
+    @Override
+    public boolean usesStubAuthorization() {
+        return true;
+    }
+
+    /**
      * Resolves the fake channel without a call out. The access token is passed through untouched rather
      * than validated: a local connection may carry a placeholder token, or none, and refusing it here
      * would block the very walk this class exists to enable.
