@@ -13,7 +13,9 @@ import com.conductor.integration.FieldType;
 import com.conductor.integration.OAuth2Connector;
 import com.conductor.integration.connector.gsc.GscConnector;
 import com.conductor.integration.connector.tiktok.TikTokConnector;
+import com.conductor.repository.ConnectorAppCredentialRepository;
 import com.conductor.repository.IntegrationOAuthStateRepository;
+import com.conductor.workflow.WorkflowSecretsEncryptionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,13 +69,20 @@ class OAuthMultiConnectionTest {
     @Mock private Environment environment;
     @Mock private ConnectionHealthService connectionHealthService;
     @Mock private RestTemplate restTemplate;
+    @Mock private ConnectorAppCredentialRepository appCredentialRepository;
+    @Mock private ProjectSecurityService projectSecurityService;
 
     private OAuthFlowService service;
 
     @BeforeEach
     void setUp() {
+        // No project row is ever stored here, so credential resolution falls through to the mocked
+        // Environment — the deployment-env behaviour these tests pin.
+        ConnectorAppCredentialService appCredentialService = new ConnectorAppCredentialService(
+                appCredentialRepository, new WorkflowSecretsEncryptionService("dGVzdC1zZWNyZXRzLWtleS0zMi1jaGFycy1wYWRkZWQ="),
+                environment, projectSecurityService);
         service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry,
-                environment, new ObjectMapper(), connectionHealthService);
+                appCredentialService, new ObjectMapper(), connectionHealthService);
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(service, "frontendUrl", "http://localhost:3000");
     }

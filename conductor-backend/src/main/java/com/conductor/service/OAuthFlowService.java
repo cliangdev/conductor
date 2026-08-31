@@ -12,7 +12,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -45,7 +44,7 @@ public class OAuthFlowService {
     private final IntegrationOAuthStateRepository oAuthStateRepository;
     private final ConnectionService connectionService;
     private final ConnectorRegistry connectorRegistry;
-    private final Environment environment;
+    private final ConnectorAppCredentialService appCredentialService;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final ConnectionHealthService connectionHealthService;
@@ -59,13 +58,13 @@ public class OAuthFlowService {
     public OAuthFlowService(IntegrationOAuthStateRepository oAuthStateRepository,
                             ConnectionService connectionService,
                             ConnectorRegistry connectorRegistry,
-                            Environment environment,
+                            ConnectorAppCredentialService appCredentialService,
                             ObjectMapper objectMapper,
                             ConnectionHealthService connectionHealthService) {
         this.oAuthStateRepository = oAuthStateRepository;
         this.connectionService = connectionService;
         this.connectorRegistry = connectorRegistry;
-        this.environment = environment;
+        this.appCredentialService = appCredentialService;
         this.objectMapper = objectMapper;
         this.connectionHealthService = connectionHealthService;
         this.restTemplate = new RestTemplate();
@@ -87,18 +86,21 @@ public class OAuthFlowService {
 
     private record OAuthCredentials(String clientId, String clientSecret) {}
 
-    private OAuthCredentials requireOAuthConfig(OAuth2Connector connector) {
-        String clientId = environment.getProperty(connector.clientIdProperty(), "");
-        if (clientId.isBlank()) {
-            throw new IllegalStateException(
-                    "OAuth client credentials not configured: " + connector.clientIdProperty());
+    /**
+     * The app credentials this project's flow runs as: its own stored pair if it has one, else the
+     * deployment env vars. A project that has set nothing therefore resolves exactly what this method
+     * resolved when it read {@code Environment} directly, down to the exception message — which names
+     * the first missing property, as it always has.
+     */
+    private OAuthCredentials requireOAuthConfig(String projectId, OAuth2Connector connector) {
+        var resolved = appCredentialService.resolve(projectId, connector);
+        if (!resolved.configured()) {
+            String missing = resolved.missingProperties().isEmpty()
+                    ? connector.clientIdProperty()
+                    : resolved.missingProperties().get(0);
+            throw new IllegalStateException("OAuth client credentials not configured: " + missing);
         }
-        String clientSecret = environment.getProperty(connector.clientSecretProperty(), "");
-        if (clientSecret.isBlank()) {
-            throw new IllegalStateException(
-                    "OAuth client credentials not configured: " + connector.clientSecretProperty());
-        }
-        return new OAuthCredentials(clientId, clientSecret);
+        return new OAuthCredentials(resolved.clientId(), resolved.clientSecret());
     }
 
     public String oauthCallbackUri() {
@@ -108,7 +110,7 @@ public class OAuthFlowService {
     @Transactional
     public String buildAuthorizationUrl(String projectId, String connectorId, String redirectUri) {
         OAuth2Connector connector = requireOAuth2Connector(connectorId);
-        OAuthCredentials creds = requireOAuthConfig(connector);
+        OAuthCredentials creds = requireOAuthConfig(projectId, connector);
         oAuthStateRepository.deleteByExpiresAtBefore(OffsetDateTime.now());
 
         byte[] bytes = new byte[16];
@@ -148,7 +150,7 @@ public class OAuthFlowService {
         String connectorId = oauthState.getConnectorId();
         OAuth2Connector connector = requireOAuth2Connector(connectorId);
 
-        Map<String, Object> tokenResponse = exchangeCodeForTokens(connectorId, code, redirectUri);
+        Map<String, Object> tokenResponse = exchangeCodeForTokens(projectId, connectorId, code, redirectUri);
 
         String accessToken = (String) tokenResponse.get("access_token");
         String refreshToken = (String) tokenResponse.get("refresh_token");
@@ -255,7 +257,8 @@ public class OAuthFlowService {
         OAuth2Connector connector = connectorRegistry.findOAuth2(conn.getConnectorId())
                 .orElseThrow(() -> new IllegalStateException(
                         "Connector does not support OAuth2 refresh: " + conn.getConnectorId()));
-        OAuthCredentials creds = requireOAuthConfig(connector);
+        // The connection's own project, so a refresh uses the same app the authorization ran as.
+        OAuthCredentials creds = requireOAuthConfig(conn.getProjectId(), connector);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
@@ -353,9 +356,10 @@ public class OAuthFlowService {
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> exchangeCodeForTokens(String connectorId, String code, String redirectUri) {
+    private Map<String, Object> exchangeCodeForTokens(String projectId, String connectorId, String code,
+                                                      String redirectUri) {
         OAuth2Connector connector = requireOAuth2Connector(connectorId);
-        OAuthCredentials creds = requireOAuthConfig(connector);
+        OAuthCredentials creds = requireOAuthConfig(projectId, connector);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);

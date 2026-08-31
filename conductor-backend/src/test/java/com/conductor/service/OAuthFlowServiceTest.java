@@ -10,7 +10,9 @@ import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.OAuth2Connector;
 import com.conductor.integration.OAuthReauthRequiredException;
 import com.conductor.integration.connector.gsc.GscConnector;
+import com.conductor.repository.ConnectorAppCredentialRepository;
 import com.conductor.repository.IntegrationOAuthStateRepository;
+import com.conductor.workflow.WorkflowSecretsEncryptionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,6 +64,12 @@ class OAuthFlowServiceTest {
     private Environment environment;
 
     @Mock
+    private ConnectorAppCredentialRepository appCredentialRepository;
+
+    @Mock
+    private ProjectSecurityService projectSecurityService;
+
+    @Mock
     private ConnectionHealthService connectionHealthService;
 
     private OAuthFlowService service;
@@ -72,8 +80,13 @@ class OAuthFlowServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry, environment,
-                new ObjectMapper(), connectionHealthService);
+        // No project ever stores its own app credentials here, so every resolve falls through to the
+        // mocked Environment — i.e. exactly the deployment-env behaviour these tests have always pinned.
+        ConnectorAppCredentialService appCredentialService = new ConnectorAppCredentialService(
+                appCredentialRepository, new WorkflowSecretsEncryptionService("dGVzdC1zZWNyZXRzLWtleS0zMi1jaGFycy1wYWRkZWQ="),
+                environment, projectSecurityService);
+        service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry,
+                appCredentialService, new ObjectMapper(), connectionHealthService);
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(service, "frontendUrl", "http://localhost:3000");
     }
