@@ -77,6 +77,12 @@ export default function IntegrationsPage() {
   // (e.g. GitHub repos) or is already connected. Single-instance connectors connect inline.
   const usesDetailPage = (item: IntegrationListItem) => item.connected || !item.singleInstance;
 
+  // An OAuth2 connector with no platform app behind it has nothing to consent to — starting the
+  // flow from here would only redirect the user into a server error naming an environment
+  // variable. Non-OAuth2 connectors carry no app credential at all, so they are never blocked.
+  const blockedOnAppCredential = (item: IntegrationListItem) =>
+    item.authType === 'OAUTH2' && item.appCredential?.credentialSource === 'NONE';
+
   const openConnectModal = (connector: IntegrationListItem) => {
     setConnectModal({ connector });
     setFormValues({});
@@ -291,9 +297,21 @@ export default function IntegrationsPage() {
                       name={item.name}
                       description={item.description}
                       onClick={() => (item.authType === 'OAUTH2' ? handleOAuth(item) : openConnectModal(item))}
+                      disabled={blockedOnAppCredential(item)}
+                      disabledReason="No platform app is configured, so nobody can connect this yet."
                       trailing={
-                        <span className="text-xs font-medium text-primary flex-shrink-0">
-                          {item.authType === 'OAUTH2' ? 'Authorize' : 'Add'}
+                        <span
+                          className={
+                            blockedOnAppCredential(item)
+                              ? 'text-xs font-medium text-muted-foreground flex-shrink-0'
+                              : 'text-xs font-medium text-primary flex-shrink-0'
+                          }
+                        >
+                          {blockedOnAppCredential(item)
+                            ? 'Unavailable'
+                            : item.authType === 'OAUTH2'
+                              ? 'Authorize'
+                              : 'Add'}
                         </span>
                       }
                     />

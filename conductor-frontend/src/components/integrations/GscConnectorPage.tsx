@@ -15,6 +15,12 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } f
 import { ExternalLink } from 'lucide-react';
 import { StatCard } from './StatCard';
 import { ConnectorHeader } from './ConnectorHeader';
+import { useConnectorCatalogItem } from './ConnectorCatalogContext';
+import {
+  ConnectorAppCredentialPanel,
+  appCredentialOf,
+  type ConnectorAppCredentialStatus,
+} from './ConnectorAppCredentialPanel';
 import { Alert } from '@/components/ui/alert';
 import { statusHueClasses } from '@/components/ui/status-badge';
 import { toastError } from '@/components/ui/toast';
@@ -66,6 +72,7 @@ const SEARCH_CONSOLE_URL = 'https://search.google.com/search-console';
 
 export default function GscConnectorPage({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth();
+  const { item } = useConnectorCatalogItem();
   const [response, setResponse] = useState<ConnectionDataResponse | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [connectionId, setConnectionId] = useState<string | null>(null);
@@ -79,6 +86,23 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
   const [sites, setSites] = useState<{ siteUrl: string; permissionLevel: string }[]>([]);
   const [loadingSites, setLoadingSites] = useState(false);
   const [manualEntry, setManualEntry] = useState(false);
+  // Same shape as GenericConnectorPage: the catalog entry carries readiness on the first paint and
+  // the panel's own responses take over once an admin edits the credential. Derived during render
+  // so the authorize button below is never gated on a stale value for a frame.
+  const [credentialOverride, setCredentialOverride] = useState<ConnectorAppCredentialStatus | null>(null);
+  const appCredential = credentialOverride ?? appCredentialOf(item);
+  // Without a platform app there is nothing to consent to — starting the flow anyway only produces
+  // a server error naming an environment variable.
+  const credentialBlocked = appCredential?.credentialSource === 'NONE';
+  const credentialPanel = appCredential ? (
+    <ConnectorAppCredentialPanel
+      projectId={projectId}
+      connectorId="gsc"
+      connectorName="Google Search Console"
+      status={appCredential}
+      onChange={setCredentialOverride}
+    />
+  ) : null;
 
   const loadData = useCallback(async (isRefresh = false) => {
     if (!accessToken) return;
@@ -217,6 +241,8 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
           </a>
         </div>
 
+        {credentialPanel}
+
         {!oauthConnected ? (
           /* Step 1: OAuth */
           <div className="bg-card rounded-lg border border-border p-8 max-w-lg space-y-6">
@@ -226,13 +252,20 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
                 Connect your Google account to view organic search performance.
               </p>
             </div>
-            <button
-              onClick={handleAuthorize}
-              disabled={authorizing}
-              className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {authorizing ? 'Redirecting to Google…' : 'Connect Google Search Console'}
-            </button>
+            <div className="space-y-2">
+              <button
+                onClick={handleAuthorize}
+                disabled={authorizing || credentialBlocked}
+                className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {authorizing ? 'Redirecting to Google…' : 'Connect Google Search Console'}
+              </button>
+              {credentialBlocked && (
+                <p className="text-xs text-muted-foreground">
+                  Available once the platform app credentials above are configured.
+                </p>
+              )}
+            </div>
           </div>
         ) : (
           /* Step 2: Pick the property */
@@ -365,6 +398,8 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
         refreshing={refreshing}
       />
 
+      {credentialPanel}
+
       {/* Always-visible connection health — shown without any user action */}
       <div className="flex items-center gap-4 mb-4 text-xs">
         <HealthDot ok={true} label="Google connected" />
@@ -387,7 +422,7 @@ export default function GscConnectorPage({ projectId }: { projectId: string }) {
             <button
               type="button"
               onClick={handleAuthorize}
-              disabled={authorizing}
+              disabled={authorizing || credentialBlocked}
               className="shrink-0 rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
             >
               {authorizing ? 'Redirecting…' : 'Reconnect Google'}

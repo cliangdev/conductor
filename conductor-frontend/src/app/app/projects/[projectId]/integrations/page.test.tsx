@@ -129,3 +129,103 @@ describe('IntegrationsPage — JSON field (gcp connector)', () => {
     })
   })
 })
+
+// ── Browse grid readiness ─────────────────────────────────────────────────────
+//
+// A single-instance, unconnected OAuth2 connector connects straight from the card. Without a
+// platform app credential that consent flow can only fail mid-redirect with a server error naming
+// an environment variable, so the card must withhold the affordance instead of offering it.
+
+const oauthConnector = (credentialSource: 'PROJECT' | 'DEPLOYMENT' | 'NONE' | null) => ({
+  connectorId: 'meta',
+  name: 'Meta',
+  category: 'Marketing',
+  authType: 'OAUTH2' as const,
+  capabilities: ['publish'],
+  singleInstance: true,
+  description: 'Publish to Facebook and Instagram',
+  iconLabel: 'MT',
+  connected: false,
+  configFields: [],
+  connections: [],
+  appCredential:
+    credentialSource === null
+      ? null
+      : {
+          connectorId: 'meta',
+          credentialSource,
+          configured: credentialSource !== 'NONE',
+          clientId: credentialSource === 'NONE' ? null : 'app-123',
+          clientSecretLast4: credentialSource === 'NONE' ? null : 'cdef',
+          missingProperties: credentialSource === 'NONE' ? ['META_APP_ID', 'META_APP_SECRET'] : [],
+          updatedBy: null,
+          updatedAt: null,
+        },
+})
+
+async function openBrowse() {
+  render(<IntegrationsPage />)
+  fireEvent.click(await screen.findByRole('tab', { name: 'Browse' }))
+}
+
+describe('IntegrationsPage — browse grid credential readiness', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('disables an OAuth2 card whose platform app is not configured and says why', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('NONE')])
+    await openBrowse()
+
+    const card = (await screen.findByText('Meta')).closest('[aria-disabled="true"]')
+    expect(card).not.toBeNull()
+    expect(within(card as HTMLElement).getByText(/platform app/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /authorize/i })).not.toBeInTheDocument()
+  })
+
+  it('starts no OAuth flow when the disabled card is clicked', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('NONE')])
+    await openBrowse()
+
+    // A click on the card body bubbles to whatever wrapper the card rendered — so this fails
+    // loudly if the connect affordance is ever restored for an unconfigured connector.
+    fireEvent.click(await screen.findByText('Meta'))
+
+    expect(api.apiPost).not.toHaveBeenCalled()
+  })
+
+  it('leaves a DEPLOYMENT-credentialed OAuth2 card connectable', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('DEPLOYMENT')])
+    vi.mocked(api.apiPost).mockResolvedValue({ authorizationUrl: 'https://example.com/consent' })
+    await openBrowse()
+
+    fireEvent.click(await screen.findByRole('button', { name: /authorize/i }))
+
+    await waitFor(() => {
+      expect(api.apiPost).toHaveBeenCalledWith(
+        '/api/v1/projects/proj-1/integrations/meta/oauth/authorize',
+        {},
+        'test-token',
+      )
+    })
+  })
+
+  it('leaves a PROJECT-credentialed OAuth2 card connectable', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue([oauthConnector('PROJECT')])
+    vi.mocked(api.apiPost).mockResolvedValue({ authorizationUrl: 'https://example.com/consent' })
+    await openBrowse()
+
+    fireEvent.click(await screen.findByRole('button', { name: /authorize/i }))
+
+    await waitFor(() => expect(api.apiPost).toHaveBeenCalled())
+  })
+
+  it('leaves a non-OAuth2 connector — which carries no app credential — untouched', async () => {
+    vi.mocked(api.apiGet).mockResolvedValue([serviceAccountConnector])
+    await openBrowse()
+
+    const add = await screen.findByRole('button', { name: /add/i })
+    expect(add).toBeInTheDocument()
+    expect(screen.queryByText(/platform app/i)).not.toBeInTheDocument()
+  })
+})

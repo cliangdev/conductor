@@ -11,30 +11,24 @@ import { Label } from '@/components/ui/label'
 import { StatusBadge, statusHueClasses, type StatusHue } from '@/components/ui/status-badge'
 import { useToast } from '@/components/ui/toast'
 import { useAuth } from '@/contexts/AuthContext'
-import { useCan, usePermissions } from '@/contexts/PermissionsContext'
-import { apiDelete, apiErrorMessage, apiGet, apiPost, apiPut } from '@/lib/api'
+import { useCan } from '@/contexts/PermissionsContext'
+import {
+  apiDelete,
+  apiErrorMessage,
+  apiGet,
+  apiPost,
+  apiPut,
+  type ConnectorAppCredentialStatus,
+  type ConnectorCredentialSource,
+  type IntegrationListItem,
+} from '@/lib/api'
 import { timeAgo } from '@/lib/format'
 import { fetchMembersCached } from '@/lib/workflows'
 import { cn } from '@/lib/utils'
 
-/**
- * Where the platform app behind a connector's consent flow comes from.
- * `DEPLOYMENT` is one app shared by every workspace on the deployment; `PROJECT` is this
- * workspace's own override of it; `NONE` means no consent flow can start at all.
- */
-export type ConnectorCredentialSource = 'PROJECT' | 'DEPLOYMENT' | 'NONE'
-
-/** Masked view of a connector's effective OAuth app credentials — the secret is never in it. */
-export interface ConnectorAppCredentialStatus {
-  connectorId: string
-  credentialSource: ConnectorCredentialSource
-  configured: boolean
-  clientId?: string | null
-  clientSecretLast4?: string | null
-  missingProperties: string[]
-  updatedBy?: string | null
-  updatedAt?: string | null
-}
+// The catalog DTOs themselves live with every other API shape in `lib/api.ts`; re-exported here
+// so consumers of the panel keep importing the status alongside the component that renders it.
+export type { ConnectorAppCredentialStatus, ConnectorCredentialSource }
 
 export interface ConnectorAppCredentialCheck {
   name: string
@@ -51,14 +45,13 @@ export interface ConnectorAppCredentialVerificationReport {
 
 /**
  * Reads the catalog entry's `appCredential`, which is null for every connector that doesn't use
- * OAuth2. Takes `unknown` because `IntegrationListItem` in `lib/api.ts` doesn't declare the field
- * yet — narrowing here keeps that gap in one place instead of a cast at every call site.
+ * OAuth2 and absent while the catalog is still loading — so every caller gets one nullable value
+ * rather than juggling three states.
  */
-export function appCredentialOf(item: unknown): ConnectorAppCredentialStatus | null {
-  if (!item || typeof item !== 'object') return null
-  const candidate = (item as { appCredential?: unknown }).appCredential
-  if (!candidate || typeof candidate !== 'object') return null
-  return candidate as ConnectorAppCredentialStatus
+export function appCredentialOf(
+  item: IntegrationListItem | null | undefined
+): ConnectorAppCredentialStatus | null {
+  return item?.appCredential ?? null
 }
 
 // Local vocabulary → status ramp, the same idiom ConnectorFeedsPanel uses for feed states. The
@@ -119,9 +112,9 @@ export function ConnectorAppCredentialPanel({
 }: ConnectorAppCredentialPanelProps) {
   const { accessToken } = useAuth()
   const { showToast } = useToast()
-  // No capability covers app credentials specifically (see lib/permissions.ts), and the endpoints
-  // gate writes on ADMIN — so gate on the role rather than letting a CREATOR walk into a 403.
-  const isAdmin = usePermissions().role === 'ADMIN'
+  // Writing the credential is admin-only (the endpoints return 403 to a CREATOR); running a
+  // read-only verification is not.
+  const canManage = useCan('integration.appCredential.manage')
   const canVerify = useCan('integration.manage')
 
   const [editing, setEditing] = useState(false)
@@ -322,7 +315,7 @@ export function ConnectorAppCredentialPanel({
             )}
 
             <div className="flex flex-wrap gap-2">
-              {isAdmin && source === 'PROJECT' && (
+              {canManage && source === 'PROJECT' && (
                 <>
                   <Button size="sm" variant="outline" onClick={openForm}>
                     Replace
@@ -332,12 +325,12 @@ export function ConnectorAppCredentialPanel({
                   </Button>
                 </>
               )}
-              {isAdmin && source === 'DEPLOYMENT' && (
+              {canManage && source === 'DEPLOYMENT' && (
                 <Button size="sm" variant="outline" onClick={openForm}>
                   Use a credential for this workspace instead
                 </Button>
               )}
-              {isAdmin && source === 'NONE' && (
+              {canManage && source === 'NONE' && (
                 <Button size="sm" onClick={openForm}>
                   Set a credential for this workspace
                 </Button>

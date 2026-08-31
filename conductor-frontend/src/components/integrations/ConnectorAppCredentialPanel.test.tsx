@@ -7,10 +7,16 @@ vi.mock('@/contexts/AuthContext', () => ({
 }))
 
 let mockRole: 'ADMIN' | 'CREATOR' | 'REVIEWER' = 'ADMIN'
-vi.mock('@/contexts/PermissionsContext', () => ({
-  usePermissions: () => ({ role: mockRole, loading: false, can: () => mockRole !== 'REVIEWER', refresh: () => {} }),
-  useCan: () => mockRole !== 'REVIEWER',
-}))
+// Resolve capabilities through the real rule table so the role→capability mapping under test is
+// the shipped one, not a stand-in that would hide an ADMIN-only capability being mis-assigned.
+vi.mock('@/contexts/PermissionsContext', async () => {
+  const { can } = await vi.importActual<typeof import('@/lib/permissions')>('@/lib/permissions')
+  const check = (capability: Parameters<typeof can>[1]) => can(mockRole, capability)
+  return {
+    usePermissions: () => ({ role: mockRole, loading: false, can: check, refresh: () => {} }),
+    useCan: check,
+  }
+})
 
 const showToast = vi.fn()
 vi.mock('@/components/ui/toast', () => ({
@@ -49,6 +55,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 import * as api from '@/lib/api'
+import type { IntegrationListItem } from '@/lib/api'
 import {
   ConnectorAppCredentialPanel,
   appCredentialOf,
@@ -355,15 +362,31 @@ describe('ConnectorAppCredentialPanel — verify', () => {
 })
 
 describe('appCredentialOf', () => {
+  const entry = (appCredential: ConnectorAppCredentialStatus | null): IntegrationListItem => ({
+    connectorId: 'discord',
+    name: 'Discord',
+    category: 'Communication',
+    authType: 'API_KEY',
+    capabilities: [],
+    singleInstance: true,
+    description: 'Post messages to a Discord channel',
+    iconLabel: 'DC',
+    connected: false,
+    configFields: [],
+    connections: [],
+    appCredential,
+  })
+
   it('returns null for a connector the catalog reports no app credential for', () => {
-    expect(appCredentialOf({ connectorId: 'discord' })).toBeNull()
-    expect(appCredentialOf({ connectorId: 'discord', appCredential: null })).toBeNull()
+    const { appCredential: _omitted, ...withoutField } = entry(null)
+    expect(appCredentialOf(withoutField)).toBeNull()
+    expect(appCredentialOf(entry(null))).toBeNull()
     expect(appCredentialOf(undefined)).toBeNull()
     expect(appCredentialOf(null)).toBeNull()
   })
 
   it('returns the status when the catalog carries one', () => {
-    expect(appCredentialOf({ appCredential: NONE })).toEqual(NONE)
+    expect(appCredentialOf(entry(NONE))).toEqual(NONE)
   })
 })
 

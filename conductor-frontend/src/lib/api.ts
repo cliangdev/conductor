@@ -194,6 +194,26 @@ export interface ConnectorConfigField {
   secret: boolean
 }
 
+/**
+ * Where the platform app behind a connector's consent flow comes from.
+ * `DEPLOYMENT` is one app shared by every workspace on the deployment; `PROJECT` is this
+ * workspace's own override of it; `NONE` means no consent flow can start at all.
+ */
+export type ConnectorCredentialSource = 'PROJECT' | 'DEPLOYMENT' | 'NONE'
+
+/** Masked view of a connector's effective OAuth app credentials — the secret is never in it. */
+export interface ConnectorAppCredentialStatus {
+  connectorId: string
+  credentialSource: ConnectorCredentialSource
+  configured: boolean
+  clientId?: string | null
+  clientSecretLast4?: string | null
+  /** Deployment environment variables that would have to be set for the fallback to resolve. */
+  missingProperties: string[]
+  updatedBy?: string | null
+  updatedAt?: string | null
+}
+
 export interface IntegrationListItem {
   connectorId: string
   name: string
@@ -206,6 +226,12 @@ export interface IntegrationListItem {
   connected: boolean
   configFields: ConnectorConfigField[]
   connections: ConnectionSummary[]
+  /**
+   * Readiness of the OAuth app this connector would authenticate as, so a missing platform app is
+   * visible before anyone attempts consent. Null/absent for connectors that don't use OAuth2 —
+   * they have no app credential to configure.
+   */
+  appCredential?: ConnectorAppCredentialStatus | null
 }
 
 export function listIntegrations(projectId: string, token: string): Promise<IntegrationListItem[]> {
