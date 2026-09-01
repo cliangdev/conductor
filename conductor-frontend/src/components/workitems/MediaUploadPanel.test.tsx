@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act, within } from '@testing-library/react'
 import type { WorkflowView } from '@/types/workItem'
 import { MediaUploadPanel, isApprovedOrLater, type MediaAsset } from './MediaUploadPanel'
 
@@ -422,10 +422,10 @@ describe('MediaUploadPanel', () => {
     expect(onUploaded).not.toHaveBeenCalled()
   })
 
-  it('uploads under the channel the user picks', async () => {
+  it('uploads under the asset type the user picks', async () => {
     renderPanel()
 
-    fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'youtube_video' } })
+    fireEvent.change(screen.getByLabelText(/Label this file as/i), { target: { value: 'youtube_video' } })
     selectFile(videoFile())
 
     await waitFor(() => expect(mintBodies).toHaveLength(1))
@@ -462,4 +462,28 @@ describe('isApprovedOrLater', () => {
   it('locks nothing when the workflow has not loaded yet', () => {
     expect(isApprovedOrLater(undefined, 'APPROVED')).toBe(false)
   })
+
+  describe('the asset-type field says what it actually does', () => {
+    it('does not call itself a channel, because it routes nothing', async () => {
+      // Every publish action selects media by content type; the whole bundle goes to every selected
+      // account whatever this says. A label promising routing turns correct behaviour into a mystery —
+      // tagging a PNG "facebook_post" does not exempt it from Instagram's JPEG rule at the gate.
+      renderPanel()
+
+      expect(await screen.findByLabelText(/Label this file as/i)).toBeInTheDocument()
+      expect(screen.queryByLabelText(/^Channel$/i)).not.toBeInTheDocument()
+      expect(
+        screen.getByText(/goes out to every account/i)
+      ).toBeInTheDocument()
+    })
+
+    it('shows the asset types readably rather than as raw slugs', async () => {
+      renderPanel()
+
+      const select = await screen.findByLabelText(/Label this file as/i)
+      expect(within(select).getByText('Instagram Post')).toBeInTheDocument()
+      expect(within(select).queryByText('instagram_post')).not.toBeInTheDocument()
+    })
+  })
+
 })

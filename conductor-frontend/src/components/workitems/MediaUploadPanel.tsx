@@ -16,6 +16,7 @@
 // blocks approval on any rule it cannot evaluate, so a video that skipped this step could never
 // reach Approved.
 
+import { humanizeId } from '@/lib/workflows'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Film, ImageIcon, UploadCloud } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
@@ -331,7 +332,12 @@ export function MediaUploadPanel({
           <>
             {assetTypes.length > 1 && (
               <div>
-                <Label htmlFor="media-asset-type">Channel</Label>
+                {/* Called "Channel" until it was pointed out that the name promises routing this does
+                    not do: every publish action selects media by content type, and the whole media
+                    bundle goes out to every selected account whatever this says. Tagging a PNG as a
+                    Facebook post does not exempt it from Instagram's JPEG rule — it will still block
+                    approval — so a label implying otherwise turns correct behaviour into a mystery. */}
+                <Label htmlFor="media-asset-type">Label this file as</Label>
                 <Select
                   id="media-asset-type"
                   value={selectedType}
@@ -340,10 +346,14 @@ export function MediaUploadPanel({
                 >
                   {assetTypes.map((type) => (
                     <option key={type} value={type}>
-                      {type}
+                      {humanizeId(type)}
                     </option>
                   ))}
                 </Select>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  For organising the asset library. Every file attached here goes out to every account
+                  this {workflowView?.noun?.toLowerCase() ?? 'item'} publishes to, whichever label you pick.
+                </p>
               </div>
             )}
 
