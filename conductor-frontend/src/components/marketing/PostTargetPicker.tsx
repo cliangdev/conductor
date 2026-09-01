@@ -27,6 +27,14 @@ import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPut } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { isApprovedOrLater } from '@/components/workitems/MediaUploadPanel'
+import {
+  EMPTY_TIKTOK_OPTIONS,
+  TikTokPublishOptions,
+  normalizeTikTokOptions,
+  tiktokOptionsProblem,
+  type TikTokPublishOptionValues,
+} from '@/components/marketing/TikTokPublishOptions'
+import type { TikTokConsentTarget } from '@/components/marketing/TikTokConsentStep'
 import type { WorkflowView } from '@/types/workItem'
 
 export type PublishPlatform = 'facebook' | 'instagram' | 'youtube' | 'tiktok'
@@ -41,6 +49,15 @@ export interface PublishTargetOption {
   lane: PublishLane
   healthStatus?: string | null
   healthMessage?: string | null
+  /**
+   * TIK-2. TikTok reports a different set of privacy levels per creator (a private account is
+   * offered fewer than a public one), so the choices come from the connection rather than from a
+   * table here. Absent/empty means TikTok has told us nothing — which is a broken connection, not
+   * permission to guess.
+   */
+  privacyLevelOptions?: string[] | null
+  /** The handle the creator would recognise, for the consent step's "you are posting to @…". */
+  creatorNickname?: string | null
 }
 
 /** One destination actually selected on this Post (a persisted post_publish_target row). */
@@ -54,6 +71,15 @@ export interface SelectedPublishTarget {
   lane: PublishLane
   state: string
   platformPostId?: string | null
+  /** Per-target publish options, currently TikTok-only. Partial — an older row carries nothing. */
+  publishOptions?: Partial<TikTokPublishOptionValues> | null
+}
+
+/** What a selection sends back. `publishOptions` rides along only where the platform has any. */
+interface PublishTargetSelectionPayload {
+  platform: PublishPlatform
+  connectionId: string
+  publishOptions?: TikTokPublishOptionValues
 }
 
 /** Render order, so the groups don't reshuffle as connections come and go. */
@@ -88,6 +114,23 @@ function isUnhealthy(option: PublishTargetOption): boolean {
   return option.healthStatus === 'UNHEALTHY'
 }
 
+/**
+ * The TikTok options carried by a set of persisted targets. `fallback` covers a backend that hasn't
+ * started echoing publishOptions yet — without it, a round-trip would silently blank an edit.
+ */
+function seedTikTokOptions(
+  targets: SelectedPublishTarget[],
+  fallback: Record<string, TikTokPublishOptionValues> = {}
+): Record<string, TikTokPublishOptionValues> {
+  const seeded: Record<string, TikTokPublishOptionValues> = {}
+  for (const target of targets) {
+    if (target.platform !== 'tiktok') continue
+    const key = targetKey(target.platform, target.connectionId)
+    seeded[key] = normalizeTikTokOptions(target.publishOptions ?? fallback[key])
+  }
+  return seeded
+}
+
 interface PostTargetPickerProps {
   projectId: string
   workItemId: string
@@ -97,6 +140,12 @@ interface PostTargetPickerProps {
   workflowView?: WorkflowView
   /** Fired after every successful save, so a parent can refresh anything bundle-derived. */
   onChanged?: (targets: SelectedPublishTarget[]) => void
+  /**
+   * Every selected TikTok destination with the options it currently carries, whenever that changes.
+   * The consent step lives beside the creative rather than in here (it needs the Post's media), so
+   * the picker publishes what it knows instead of owning that surface.
+   */
+  onTikTokChange?: (targets: TikTokConsentTarget[]) => void
 }
 
 export function PostTargetPicker({
@@ -106,9 +155,13 @@ export function PostTargetPicker({
   status,
   workflowView,
   onChanged,
+  onTikTokChange,
 }: PostTargetPickerProps) {
   const [options, setOptions] = useState<PublishTargetOption[]>([])
   const [selected, setSelected] = useState<SelectedPublishTarget[]>([])
+  // Per-target TikTok options, keyed the same way a target is. Kept beside `selected` rather than
+  // inside it because it is the thing being edited, and an edit that fails to save must not linger.
+  const [optionsByKey, setOptionsByKey] = useState<Record<string, TikTokPublishOptionValues>>({})
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -130,6 +183,7 @@ export function PostTargetPicker({
         if (cancelled) return
         setOptions(available)
         setSelected(current)
+        setOptionsByKey(seedTikTokOptions(current))
         setLoadError(null)
       })
       .catch((err) => {
@@ -180,11 +234,20 @@ export function PostTargetPicker({
   )
 
   const save = useCallback(
-    async (nextKeys: Set<string>) => {
+    async (nextKeys: Set<string>, nextOptions: Record<string, TikTokPublishOptionValues>) => {
       // Only ever send targets the project can still publish to; an orphan would be refused.
-      const payload = options
+      const payload: PublishTargetSelectionPayload[] = options
         .filter((o) => nextKeys.has(targetKey(o.platform, o.connectionId)))
-        .map((o) => ({ platform: o.platform, connectionId: o.connectionId }))
+        .map((o) =>
+          o.platform === 'tiktok'
+            ? {
+                platform: o.platform,
+                connectionId: o.connectionId,
+                publishOptions:
+                  nextOptions[targetKey(o.platform, o.connectionId)] ?? EMPTY_TIKTOK_OPTIONS,
+              }
+            : { platform: o.platform, connectionId: o.connectionId }
+        )
       setSaving(true)
       try {
         const updated = await apiPut<SelectedPublishTarget[]>(
@@ -193,6 +256,10 @@ export function PostTargetPicker({
           token
         )
         setSelected(updated)
+        // What was just sent is only committed once the server took it — an edit that 400s reverts
+        // to what is on the server. The server's echo wins where it has one, so a value it clamps
+        // shows as clamped rather than as what was typed.
+        setOptionsByKey({ ...nextOptions, ...seedTikTokOptions(updated, nextOptions) })
         onChanged?.(updated)
       } catch (err) {
         toastError(apiErrorMessage(err, 'Could not update publishing accounts'))
@@ -209,10 +276,44 @@ export function PostTargetPicker({
       const next = new Set(selectedKeys)
       if (next.has(key)) next.delete(key)
       else next.add(key)
-      void save(next)
+      void save(next, optionsByKey)
     },
-    [selectedKeys, save]
+    [selectedKeys, optionsByKey, save]
   )
+
+  const changeTikTokOptions = useCallback(
+    (option: PublishTargetOption, next: TikTokPublishOptionValues) => {
+      void save(selectedKeys, {
+        ...optionsByKey,
+        [targetKey(option.platform, option.connectionId)]: next,
+      })
+    },
+    [selectedKeys, optionsByKey, save]
+  )
+
+  /** Every selected TikTok destination, with the options it carries and why it isn't postable yet. */
+  const tiktokTargets = useMemo<TikTokConsentTarget[]>(
+    () =>
+      options
+        .filter(
+          (o) => o.platform === 'tiktok' && selectedKeys.has(targetKey(o.platform, o.connectionId))
+        )
+        .map((o) => {
+          const values = optionsByKey[targetKey(o.platform, o.connectionId)] ?? EMPTY_TIKTOK_OPTIONS
+          return {
+            connectionId: o.connectionId,
+            label: o.label,
+            creatorNickname: o.creatorNickname ?? null,
+            options: values,
+            problem: tiktokOptionsProblem(values),
+          }
+        }),
+    [options, selectedKeys, optionsByKey]
+  )
+
+  useEffect(() => {
+    onTikTokChange?.(tiktokTargets)
+  }, [tiktokTargets, onTikTokChange])
 
   const revertsOnEdit = isApprovedOrLater(workflowView, status)
   const noun = workflowView?.noun ?? 'Post'
@@ -279,7 +380,13 @@ export function PostTargetPicker({
                     option={option}
                     checked={selectedKeys.has(targetKey(option.platform, option.connectionId))}
                     unavailable={!availableKeys.has(targetKey(option.platform, option.connectionId))}
+                    saving={saving}
+                    tiktokOptions={
+                      optionsByKey[targetKey(option.platform, option.connectionId)] ??
+                      EMPTY_TIKTOK_OPTIONS
+                    }
                     onToggle={() => toggle(option)}
+                    onTikTokOptionsChange={(next) => changeTikTokOptions(option, next)}
                   />
                 ))}
               </div>
@@ -296,10 +403,21 @@ interface TargetRowProps {
   checked: boolean
   /** The connection behind an already-selected target has gone away. */
   unavailable: boolean
+  saving: boolean
+  tiktokOptions: TikTokPublishOptionValues
   onToggle: () => void
+  onTikTokOptionsChange: (next: TikTokPublishOptionValues) => void
 }
 
-function TargetRow({ option, checked, unavailable, onToggle }: TargetRowProps) {
+function TargetRow({
+  option,
+  checked,
+  unavailable,
+  saving,
+  tiktokOptions,
+  onToggle,
+  onTikTokOptionsChange,
+}: TargetRowProps) {
   const unhealthy = isUnhealthy(option)
   // An unhealthy account can't be added — its credentials no longer work — but one already on the
   // Post stays actionable, or a human could never take it back off.
@@ -311,29 +429,46 @@ function TargetRow({ option, checked, unavailable, onToggle }: TargetRowProps) {
       ? (option.healthMessage ?? 'This account needs to be reconnected before it can publish.')
       : null
 
+  // TikTok is the one platform whose post carries per-target choices, and TikTok's own guidelines
+  // require them to be made per account rather than once for the Post. They open with the account,
+  // and sit outside the <label> so a click on a control doesn't also un-pick the destination.
+  const showTikTokOptions = option.platform === 'tiktok' && checked && !unavailable
+
   return (
-    <label
-      className={cn(
-        'flex items-start gap-2.5 px-4 py-2',
-        disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-muted/50'
-      )}
-    >
-      <input
-        type="checkbox"
-        className="mt-0.5 rounded border-border"
-        checked={checked}
-        disabled={disabled}
-        aria-describedby={note ? noteId : undefined}
-        onChange={onToggle}
-      />
-      <span className="min-w-0">
-        <span className="block text-sm text-foreground">{option.label}</span>
-        {note && (
-          <span id={noteId} className={cn('block text-xs', statusHueClasses('amber').text)}>
-            {note}
-          </span>
+    <div>
+      <label
+        className={cn(
+          'flex items-start gap-2.5 px-4 py-2',
+          disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-muted/50'
         )}
-      </span>
-    </label>
+      >
+        <input
+          type="checkbox"
+          className="mt-0.5 rounded border-border"
+          checked={checked}
+          disabled={disabled}
+          aria-describedby={note ? noteId : undefined}
+          onChange={onToggle}
+        />
+        <span className="min-w-0">
+          <span className="block text-sm text-foreground">{option.label}</span>
+          {note && (
+            <span id={noteId} className={cn('block text-xs', statusHueClasses('amber').text)}>
+              {note}
+            </span>
+          )}
+        </span>
+      </label>
+      {showTikTokOptions && (
+        <TikTokPublishOptions
+          idPrefix={`tiktok-${option.connectionId}`}
+          accountLabel={option.label}
+          privacyLevelOptions={option.privacyLevelOptions ?? []}
+          value={tiktokOptions}
+          disabled={saving}
+          onChange={onTikTokOptionsChange}
+        />
+      )}
+    </div>
   )
 }

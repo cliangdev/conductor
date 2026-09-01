@@ -40,6 +40,20 @@ function option(overrides: Partial<PublishTargetOption> & Pick<PublishTargetOpti
   }
 }
 
+function tiktokOption(
+  connectionId: string,
+  overrides: Partial<PublishTargetOption> = {}
+): PublishTargetOption {
+  return option({
+    platform: 'tiktok',
+    connectionId,
+    label: `@${connectionId}`,
+    creatorNickname: connectionId,
+    privacyLevelOptions: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY'],
+    ...overrides,
+  })
+}
+
 function selection(o: PublishTargetOption, id = `target-${o.platform}-${o.connectionId}`): SelectedPublishTarget {
   return {
     id,
@@ -57,7 +71,9 @@ function selection(o: PublishTargetOption, id = `target-${o.platform}-${o.connec
 
 let availableTargets: PublishTargetOption[] = []
 let selectedTargets: SelectedPublishTarget[] = []
-let putBodies: Array<{ targets: Array<{ platform: string; connectionId: string }> }> = []
+let putBodies: Array<{
+  targets: Array<{ platform: string; connectionId: string; publishOptions?: unknown }>
+}> = []
 let putRejection: { status: number; detail: string } | null = null
 
 function jsonResponse(status: number, body: unknown) {
@@ -81,8 +97,13 @@ const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     if (putRejection) return jsonResponse(putRejection.status, { detail: putRejection.detail })
     const body = JSON.parse(init!.body as string)
     putBodies.push(body)
-    selectedTargets = body.targets.map((t: { platform: string; connectionId: string }) =>
-      selection(option({ platform: t.platform as PublishTargetOption['platform'], connectionId: t.connectionId }))
+    selectedTargets = body.targets.map(
+      (t: { platform: string; connectionId: string; publishOptions?: unknown }) => ({
+        ...selection(
+          option({ platform: t.platform as PublishTargetOption['platform'], connectionId: t.connectionId })
+        ),
+        publishOptions: t.publishOptions,
+      })
     )
     return jsonResponse(200, selectedTargets)
   }
@@ -285,5 +306,203 @@ describe('PostTargetPicker', () => {
 
     await waitFor(() => expect(checkbox).not.toBeChecked())
     expect(putBodies).toHaveLength(0)
+  })
+})
+
+// ── TIK-2: per-target TikTok publish options ────────────────────────────────
+
+describe('PostTargetPicker — TikTok publish options', () => {
+  it('reveals the options for a TikTok account once it is selected', async () => {
+    const tiktok = tiktokOption('acme')
+    availableTargets = [tiktok]
+    selectedTargets = [selection(tiktok)]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByLabelText(/who can view this video/i)).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Comment' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Duet' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: 'Stitch' })).toBeInTheDocument()
+    expect(screen.getByRole('switch', { name: /disclose commercial content/i })).toBeInTheDocument()
+  })
+
+  it('keeps the options out of the way until the account is chosen', async () => {
+    availableTargets = [tiktokOption('acme')]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByText('TikTok')).toBeInTheDocument()
+    expect(screen.queryByLabelText(/who can view this video/i)).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /@acme/ }))
+    expect(await screen.findByLabelText(/who can view this video/i)).toBeInTheDocument()
+  })
+
+  it('offers no publish options for a Facebook or YouTube target', async () => {
+    const facebook = option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' })
+    const youtube = option({ platform: 'youtube', connectionId: 'conn-yt', label: 'Acme Channel' })
+    availableTargets = [facebook, youtube]
+    selectedTargets = [selection(facebook), selection(youtube)]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByText('Facebook')).toBeInTheDocument()
+    expect(screen.queryByLabelText(/who can view this video/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+  })
+
+  it('lists exactly the privacy levels TikTok reported for that creator', async () => {
+    const tiktok = tiktokOption('acme', { privacyLevelOptions: ['PUBLIC_TO_EVERYONE', 'SELF_ONLY'] })
+    availableTargets = [tiktok]
+    selectedTargets = [selection(tiktok)]
+    renderPicker()
+    await loaded()
+
+    const select = await screen.findByLabelText(/who can view this video/i)
+    expect(Array.from(select.querySelectorAll('option')).map((o) => o.textContent)).toEqual([
+      'Select who can view this video…',
+      'Everyone',
+      'Only me (private)',
+    ])
+  })
+
+  it('preselects no privacy level', async () => {
+    const tiktok = tiktokOption('acme')
+    availableTargets = [tiktok]
+    selectedTargets = [selection(tiktok)]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByLabelText(/who can view this video/i)).toHaveValue('')
+  })
+
+  it('sends the chosen options alongside the whole selection', async () => {
+    const tiktok = tiktokOption('acme')
+    availableTargets = [tiktok]
+    selectedTargets = [selection(tiktok)]
+    renderPicker()
+    await loaded()
+
+    await userEvent.selectOptions(
+      await screen.findByLabelText(/who can view this video/i),
+      'PUBLIC_TO_EVERYONE'
+    )
+
+    await waitFor(() => expect(putBodies).toHaveLength(1))
+    expect(putBodies[0].targets).toEqual([
+      {
+        platform: 'tiktok',
+        connectionId: 'acme',
+        publishOptions: {
+          privacyLevel: 'PUBLIC_TO_EVERYONE',
+          disableComment: false,
+          disableDuet: false,
+          disableStitch: false,
+          brandContentToggle: false,
+          brandOrganicToggle: false,
+        },
+      },
+    ])
+  })
+
+  it('carries no publish options for a non-TikTok target', async () => {
+    const facebook = option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' })
+    availableTargets = [facebook]
+    renderPicker()
+    await loaded()
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: /Acme Page/ }))
+
+    await waitFor(() => expect(putBodies).toHaveLength(1))
+    expect(putBodies[0].targets[0]).not.toHaveProperty('publishOptions')
+  })
+
+  it('holds independent options for two TikTok accounts on one Post', async () => {
+    const acme = tiktokOption('acme')
+    const acmeUk = tiktokOption('acme_uk', { privacyLevelOptions: ['PUBLIC_TO_EVERYONE'] })
+    availableTargets = [acme, acmeUk]
+    selectedTargets = [selection(acme), selection(acmeUk)]
+    renderPicker()
+    await loaded()
+
+    const selects = await screen.findAllByLabelText(/who can view this video/i)
+    expect(selects).toHaveLength(2)
+    // The second creator reports fewer levels, and gets only those.
+    expect(Array.from(selects[1].querySelectorAll('option'))).toHaveLength(2)
+
+    await userEvent.selectOptions(selects[0], 'SELF_ONLY')
+
+    await waitFor(() => expect(putBodies).toHaveLength(1))
+    const [first, second] = putBodies[0].targets as Array<{
+      connectionId: string
+      publishOptions: { privacyLevel: string | null }
+    }>
+    expect(first.connectionId).toBe('acme')
+    expect(first.publishOptions.privacyLevel).toBe('SELF_ONLY')
+    expect(second.connectionId).toBe('acme_uk')
+    expect(second.publishOptions.privacyLevel).toBeNull()
+  })
+
+  it('hydrates the options already saved on the Post', async () => {
+    const tiktok = tiktokOption('acme')
+    availableTargets = [tiktok]
+    selectedTargets = [
+      {
+        ...selection(tiktok),
+        publishOptions: {
+          privacyLevel: 'MUTUAL_FOLLOW_FRIENDS',
+          disableStitch: true,
+          brandOrganicToggle: true,
+        },
+      },
+    ]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByLabelText(/who can view this video/i)).toHaveValue(
+      'MUTUAL_FOLLOW_FRIENDS'
+    )
+    expect(screen.getByRole('switch', { name: 'Stitch' })).not.toBeChecked()
+    expect(screen.getByRole('switch', { name: 'Your Brand' })).toBeChecked()
+  })
+
+  it('explains that branded content cannot be posted privately', async () => {
+    const tiktok = tiktokOption('acme')
+    availableTargets = [tiktok]
+    selectedTargets = [
+      { ...selection(tiktok), publishOptions: { privacyLevel: 'SELF_ONLY', brandContentToggle: true } },
+    ]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/branded content/i)
+    expect(screen.getByRole('alert')).toHaveTextContent(/can.t be posted privately/i)
+  })
+
+  it('reports each TikTok target upward so the consent step can name it', async () => {
+    const tiktok = tiktokOption('acme')
+    availableTargets = [tiktok, option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' })]
+    selectedTargets = [selection(tiktok)]
+    const onTikTokChange = vi.fn()
+    renderPicker({ onTikTokChange })
+
+    await loaded()
+    await waitFor(() => expect(onTikTokChange.mock.calls.at(-1)![0]).toHaveLength(1))
+    const reported = onTikTokChange.mock.calls.at(-1)![0]
+    expect(reported[0]).toMatchObject({
+      connectionId: 'acme',
+      label: '@acme',
+      creatorNickname: 'acme',
+    })
+    expect(reported[0].problem).toMatch(/who can see/i)
+  })
+
+  it('reports nothing to consent to when no TikTok account is selected', async () => {
+    availableTargets = [option({ platform: 'facebook', connectionId: 'conn-meta', label: 'Acme Page' })]
+    const onTikTokChange = vi.fn()
+    renderPicker({ onTikTokChange })
+    await loaded()
+
+    await waitFor(() => expect(onTikTokChange).toHaveBeenCalledWith([]))
   })
 })

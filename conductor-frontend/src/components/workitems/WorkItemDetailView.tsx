@@ -9,7 +9,7 @@
 // document-tabs + Activity reading column, and a right properties panel. Review is the GitHub-style
 // batch model — see ReviewBar and the pending-comment state below.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPost, apiDelete, apiErrorMessage } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,12 @@ import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemProperti
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { PostTargetPicker, workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
 import { PublishOutcomePanel } from '@/components/marketing/PublishOutcomePanel'
+import {
+  TikTokConsentStep,
+  TikTokPublishGateProvider,
+  tiktokSubmissionBlockedReason,
+  type TikTokConsentTarget,
+} from '@/components/marketing/TikTokConsentStep'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
 import { toastError, toastSuccess } from '@/components/ui/toast'
 import { ExternalLink, FileText, FileX2 } from 'lucide-react'
@@ -195,6 +201,12 @@ export function WorkItemDetailView({
   const [issue, setIssue] = useState<DetailIssue | null>(null)
   const [documents, setDocuments] = useState<DetailDocument[]>([])
   const [assets, setAssets] = useState<MediaAsset[]>([])
+  // TIK-2. TikTok's Content Sharing Guidelines require the creator to see the content and the
+  // account nickname it posts to, and to consent, before anything is uploaded — so consent is held
+  // here, beside the media the preview is built from, and published as a gate the status control
+  // reads. It is deliberately not persisted: it is this person, agreeing to this content, now.
+  const [tiktokTargets, setTikTokTargets] = useState<TikTokConsentTarget[]>([])
+  const [consentedTo, setConsentedTo] = useState<string | null>(null)
   const [reviewers, setReviewers] = useState<DetailReviewer[]>([])
   const [reviews, setReviews] = useState<DetailReview[]>([])
   const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
@@ -382,6 +394,20 @@ export function WorkItemDetailView({
     tabButtonRefs.current.get(nextId)?.focus()
     activateTab(nextId)
   }
+
+  const mediaAssets = useMemo(() => assets.filter((a) => a.kind === 'file'), [assets])
+
+  // Consent is to *this* content going to *these* accounts under *these* options, so it is stored
+  // as the thing consented to rather than as a bare flag. Swap an account, edit a privacy level or
+  // upload a different cut and it stops matching — which is the point: what was agreed to no longer
+  // exists, so it has to be agreed to again before the Post can move.
+  const consentSubject = useMemo(
+    () => JSON.stringify([tiktokTargets, mediaAssets.map((a) => a.id)]),
+    [tiktokTargets, mediaAssets]
+  )
+  const tiktokConsented = consentedTo === consentSubject
+
+  const tiktokBlockedReason = tiktokSubmissionBlockedReason(tiktokTargets, tiktokConsented)
 
   const isAssignedReviewer = reviewers.some((r) => r.userId === user?.id)
   const canManage = userRole === 'CREATOR' || userRole === 'ADMIN'
@@ -695,201 +721,216 @@ export function WorkItemDetailView({
   )
 
   return (
-    <PageContainer>
-      <PageHeader
-        breadcrumbs={crumbs}
-        title={issue.title}
-        status={<StatusBadge status={issue.status} {...statusMeta(workflowView, issue.status)} />}
-        description={byline}
-        actions={headerActions || undefined}
-      />
+    <TikTokPublishGateProvider reason={tiktokBlockedReason}>
+      <PageContainer>
+        <PageHeader
+          breadcrumbs={crumbs}
+          title={issue.title}
+          status={<StatusBadge status={issue.status} {...statusMeta(workflowView, issue.status)} />}
+          description={byline}
+          actions={headerActions || undefined}
+        />
 
-      {/* Document tabs + Activity (+ Details on mobile). TODO: not migrated to the shared <Tabs>
-          primitive (src/components/ui/tabs.tsx) — the tab set is dynamic (one per document, plus
-          Activity, plus a mobile-only Details tab with its own tabpanel/aria-controls), and the
-          "Details" tab reveals a second panel rather than swapping the same one, which the primitive
-          doesn't model. Revisit if Tabs grows multi-panel support. */}
-      <div
-        role="tablist"
-        aria-label="Work item content"
-        className="flex items-center gap-1 border-b border-border mb-4 overflow-x-auto overflow-y-hidden"
-      >
-        {documents.map((doc) => {
-          const binary = !isMarkdown(doc) && !isHtml(doc)
-          const active = activeTab === doc.id
-          const commentCount = unresolvedCountForDocument(comments, doc.id)
-          const countSuffix = commentCount > 0
-            ? `, ${commentCount} unresolved comment${commentCount !== 1 ? 's' : ''}`
-            : ''
-          return (
-            <button
-              key={doc.id}
-              id={tabButtonId(doc.id)}
-              ref={(el) => {
-                if (el) tabButtonRefs.current.set(doc.id, el)
-                else tabButtonRefs.current.delete(doc.id)
-              }}
-              role="tab"
-              aria-selected={active}
-              aria-controls="wi-tabpanel-main"
-              tabIndex={active ? 0 : -1}
-              onClick={() => selectDocument(doc)}
-              onKeyDown={(e) => handleTabKeyDown(e, tabIds, doc.id)}
-              className={cn(TAB_CLASSES, active ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
-              title={`${doc.filename}${countSuffix}`}
-              aria-label={`${doc.filename}${countSuffix}`}
-            >
-              <FileText className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate max-w-[10rem]">{doc.filename}</span>
-              {binary && <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />}
-              {tabCommentCount(commentCount, active)}
-            </button>
-          )
-        })}
-        <button
-          id={tabButtonId('activity')}
-          ref={(el) => {
-            if (el) tabButtonRefs.current.set('activity', el)
-            else tabButtonRefs.current.delete('activity')
-          }}
-          role="tab"
-          aria-selected={activeTab === 'activity'}
-          aria-controls="wi-tabpanel-main"
-          tabIndex={activeTab === 'activity' ? 0 : -1}
-          onClick={() => setActiveTab('activity')}
-          onKeyDown={(e) => handleTabKeyDown(e, tabIds, 'activity')}
-          className={cn(TAB_CLASSES, activeTab === 'activity' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
-          title={itemLevelCommentCount > 0 ? `Activity, ${itemLevelCommentCount} unresolved comment${itemLevelCommentCount !== 1 ? 's' : ''}` : undefined}
-          aria-label={itemLevelCommentCount > 0 ? `Activity, ${itemLevelCommentCount} unresolved comment${itemLevelCommentCount !== 1 ? 's' : ''}` : undefined}
-        >
-          Activity
-          {tabCommentCount(itemLevelCommentCount, activeTab === 'activity')}
-        </button>
-        <button
-          id={tabButtonId('details')}
-          ref={(el) => {
-            if (el) tabButtonRefs.current.set('details', el)
-            else tabButtonRefs.current.delete('details')
-          }}
-          role="tab"
-          aria-selected={activeTab === 'details'}
-          aria-controls="wi-tabpanel-details"
-          tabIndex={activeTab === 'details' ? 0 : -1}
-          onClick={() => setActiveTab('details')}
-          onKeyDown={(e) => handleTabKeyDown(e, tabIds, 'details')}
-          className={cn(TAB_CLASSES, 'md:hidden', activeTab === 'details' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
-        >
-          Details
-        </button>
-      </div>
-
-      <div className="flex gap-6 items-start">
+        {/* Document tabs + Activity (+ Details on mobile). TODO: not migrated to the shared <Tabs>
+            primitive (src/components/ui/tabs.tsx) — the tab set is dynamic (one per document, plus
+            Activity, plus a mobile-only Details tab with its own tabpanel/aria-controls), and the
+            "Details" tab reveals a second panel rather than swapping the same one, which the primitive
+            doesn't model. Revisit if Tabs grows multi-panel support. */}
         <div
-          id="wi-tabpanel-main"
-          role="tabpanel"
-          aria-labelledby={tabButtonId(contentTabId)}
-          className={cn('flex-1 min-w-0', activeTab === 'details' ? 'hidden md:block' : 'block')}
+          role="tablist"
+          aria-label="Work item content"
+          className="flex items-center gap-1 border-b border-border mb-4 overflow-x-auto overflow-y-hidden"
         >
-          <div className="max-w-[45rem] mx-auto space-y-6">
-            {mainContent}
-            {/* File assets live with the copy they ship alongside, not in the properties rail — a
-                Post's creative is content, not metadata. Offered only where the bound Workflow
-                declares asset types, since the mint validates `type` against exactly that list. */}
-            {activeTab !== 'activity' && (workflowView?.assetTypes?.length ?? 0) > 0 && (
-              <MediaUploadPanel
-                projectId={projectId}
-                workItemId={issueId}
-                token={accessToken!}
-                status={issue.status}
-                workflowView={workflowView}
-                assets={assets}
-                onUploaded={fetchAssets}
-              />
-            )}
-            {/* Where the Post goes. Sits with the creative for the same reason: the accounts are part
-                of what a reviewer approves, not metadata. Offered only where the bound Workflow's
-                asset types name a publishable platform, so engineering items never see it. */}
-            {activeTab !== 'activity' && workflowDeclaresPublishTargets(workflowView) && (
-              <PostTargetPicker
-                projectId={projectId}
-                workItemId={issueId}
-                token={accessToken!}
-                status={issue.status}
-                workflowView={workflowView}
-                onChanged={refreshIssueStatus}
-              />
-            )}
-            {/* What came back from each platform. Directly under the picker, because a permalink and
-                the error next to it answer the same question the account list raises — "did this
-                actually go out?" — and a mixed result has to read as "needs attention" rather than
-                as the roll-up status alone. Renders nothing until the Post has targets. */}
-            {activeTab !== 'activity' && workflowDeclaresPublishTargets(workflowView) && (
-              <PublishOutcomePanel
-                projectId={projectId}
-                workItemId={issueId}
-                token={accessToken!}
-                workflowView={workflowView}
-                onRetried={refreshIssueStatus}
-              />
-            )}
-          </div>
+          {documents.map((doc) => {
+            const binary = !isMarkdown(doc) && !isHtml(doc)
+            const active = activeTab === doc.id
+            const commentCount = unresolvedCountForDocument(comments, doc.id)
+            const countSuffix = commentCount > 0
+              ? `, ${commentCount} unresolved comment${commentCount !== 1 ? 's' : ''}`
+              : ''
+            return (
+              <button
+                key={doc.id}
+                id={tabButtonId(doc.id)}
+                ref={(el) => {
+                  if (el) tabButtonRefs.current.set(doc.id, el)
+                  else tabButtonRefs.current.delete(doc.id)
+                }}
+                role="tab"
+                aria-selected={active}
+                aria-controls="wi-tabpanel-main"
+                tabIndex={active ? 0 : -1}
+                onClick={() => selectDocument(doc)}
+                onKeyDown={(e) => handleTabKeyDown(e, tabIds, doc.id)}
+                className={cn(TAB_CLASSES, active ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
+                title={`${doc.filename}${countSuffix}`}
+                aria-label={`${doc.filename}${countSuffix}`}
+              >
+                <FileText className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate max-w-[10rem]">{doc.filename}</span>
+                {binary && <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />}
+                {tabCommentCount(commentCount, active)}
+              </button>
+            )
+          })}
+          <button
+            id={tabButtonId('activity')}
+            ref={(el) => {
+              if (el) tabButtonRefs.current.set('activity', el)
+              else tabButtonRefs.current.delete('activity')
+            }}
+            role="tab"
+            aria-selected={activeTab === 'activity'}
+            aria-controls="wi-tabpanel-main"
+            tabIndex={activeTab === 'activity' ? 0 : -1}
+            onClick={() => setActiveTab('activity')}
+            onKeyDown={(e) => handleTabKeyDown(e, tabIds, 'activity')}
+            className={cn(TAB_CLASSES, activeTab === 'activity' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
+            title={itemLevelCommentCount > 0 ? `Activity, ${itemLevelCommentCount} unresolved comment${itemLevelCommentCount !== 1 ? 's' : ''}` : undefined}
+            aria-label={itemLevelCommentCount > 0 ? `Activity, ${itemLevelCommentCount} unresolved comment${itemLevelCommentCount !== 1 ? 's' : ''}` : undefined}
+          >
+            Activity
+            {tabCommentCount(itemLevelCommentCount, activeTab === 'activity')}
+          </button>
+          <button
+            id={tabButtonId('details')}
+            ref={(el) => {
+              if (el) tabButtonRefs.current.set('details', el)
+              else tabButtonRefs.current.delete('details')
+            }}
+            role="tab"
+            aria-selected={activeTab === 'details'}
+            aria-controls="wi-tabpanel-details"
+            tabIndex={activeTab === 'details' ? 0 : -1}
+            onClick={() => setActiveTab('details')}
+            onKeyDown={(e) => handleTabKeyDown(e, tabIds, 'details')}
+            className={cn(TAB_CLASSES, 'md:hidden', activeTab === 'details' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
+          >
+            Details
+          </button>
         </div>
 
-        <aside
-          id="wi-tabpanel-details"
-          role="tabpanel"
-          aria-labelledby={tabButtonId('details')}
-          className={cn(
-            'w-full md:w-64 md:shrink-0 border-border md:border-l md:pl-6',
-            activeTab === 'details' ? 'block' : 'hidden md:block'
-          )}
-        >
-          <WorkItemPropertiesPanel
-            projectId={projectId}
-            issueId={issueId}
-            status={issue.status}
-            userRole={userRole}
-            token={accessToken!}
-            workflowSlug={workflowSlug}
-            onStatusChanged={(s) => setIssue((prev) => (prev ? { ...prev, status: s } : prev))}
-            statusTriggerRef={statusTriggerRef}
-            assignee={issue.assignee}
-            members={allMembers}
-            onAssigneeChanged={(a) => setIssue((prev) => (prev ? { ...prev, assignee: a } : prev))}
-            assigneeTriggerRef={assigneeTriggerRef}
-            reviewActive={reviewActive}
-            reviewers={reviewers}
-            reviews={reviews}
-            canManage={canManage}
-            assignableReviewers={assignableReviewers}
-            onAssignReviewer={handleAssignReviewer}
-            onUnassignReviewer={handleUnassignReviewer}
-            assets={assets}
+        <div className="flex gap-6 items-start">
+          <div
+            id="wi-tabpanel-main"
+            role="tabpanel"
+            aria-labelledby={tabButtonId(contentTabId)}
+            className={cn('flex-1 min-w-0', activeTab === 'details' ? 'hidden md:block' : 'block')}
+          >
+            <div className="max-w-[45rem] mx-auto space-y-6">
+              {mainContent}
+              {/* File assets live with the copy they ship alongside, not in the properties rail — a
+                  Post's creative is content, not metadata. Offered only where the bound Workflow
+                  declares asset types, since the mint validates `type` against exactly that list. */}
+              {activeTab !== 'activity' && (workflowView?.assetTypes?.length ?? 0) > 0 && (
+                <MediaUploadPanel
+                  projectId={projectId}
+                  workItemId={issueId}
+                  token={accessToken!}
+                  status={issue.status}
+                  workflowView={workflowView}
+                  assets={assets}
+                  onUploaded={fetchAssets}
+                />
+              )}
+              {/* Where the Post goes. Sits with the creative for the same reason: the accounts are part
+                  of what a reviewer approves, not metadata. Offered only where the bound Workflow's
+                  asset types name a publishable platform, so engineering items never see it. */}
+              {activeTab !== 'activity' && workflowDeclaresPublishTargets(workflowView) && (
+                <PostTargetPicker
+                  projectId={projectId}
+                  workItemId={issueId}
+                  token={accessToken!}
+                  status={issue.status}
+                  workflowView={workflowView}
+                  onChanged={refreshIssueStatus}
+                  onTikTokChange={setTikTokTargets}
+                />
+              )}
+              {/* The consent TikTok's audit requires. Renders nothing unless the Post actually carries
+                  a TikTok target, and sits directly under the picker because the accounts it names are
+                  the ones just chosen there. */}
+              {activeTab !== 'activity' && (
+                <TikTokConsentStep
+                  targets={tiktokTargets}
+                  assets={mediaAssets}
+                  caption={issue.title}
+                  consented={tiktokConsented}
+                  onConsentChange={(given) => setConsentedTo(given ? consentSubject : null)}
+                />
+              )}
+              {/* What came back from each platform. Directly under the picker, because a permalink and
+                  the error next to it answer the same question the account list raises — "did this
+                  actually go out?" — and a mixed result has to read as "needs attention" rather than
+                  as the roll-up status alone. Renders nothing until the Post has targets. */}
+              {activeTab !== 'activity' && workflowDeclaresPublishTargets(workflowView) && (
+                <PublishOutcomePanel
+                  projectId={projectId}
+                  workItemId={issueId}
+                  token={accessToken!}
+                  workflowView={workflowView}
+                  onRetried={refreshIssueStatus}
+                />
+              )}
+            </div>
+          </div>
+
+          <aside
+            id="wi-tabpanel-details"
+            role="tabpanel"
+            aria-labelledby={tabButtonId('details')}
+            className={cn(
+              'w-full md:w-64 md:shrink-0 border-border md:border-l md:pl-6',
+              activeTab === 'details' ? 'block' : 'hidden md:block'
+            )}
+          >
+            <WorkItemPropertiesPanel
+              projectId={projectId}
+              issueId={issueId}
+              status={issue.status}
+              userRole={userRole}
+              token={accessToken!}
+              workflowSlug={workflowSlug}
+              onStatusChanged={(s) => setIssue((prev) => (prev ? { ...prev, status: s } : prev))}
+              statusTriggerRef={statusTriggerRef}
+              assignee={issue.assignee}
+              members={allMembers}
+              onAssigneeChanged={(a) => setIssue((prev) => (prev ? { ...prev, assignee: a } : prev))}
+              assigneeTriggerRef={assigneeTriggerRef}
+              reviewActive={reviewActive}
+              reviewers={reviewers}
+              reviews={reviews}
+              canManage={canManage}
+              assignableReviewers={assignableReviewers}
+              onAssignReviewer={handleAssignReviewer}
+              onUnassignReviewer={handleUnassignReviewer}
+              assets={assets}
+            />
+          </aside>
+        </div>
+
+        {reviewMode && (
+          <ReviewBar
+            pendingCount={pendingComments.length}
+            reviewOutcomes={reviewOutcomes}
+            submitting={reviewSubmitting}
+            onSubmit={handleSubmitReview}
+            onCancel={handleCancelReview}
           />
-        </aside>
-      </div>
+        )}
 
-      {reviewMode && (
-        <ReviewBar
-          pendingCount={pendingComments.length}
-          reviewOutcomes={reviewOutcomes}
-          submitting={reviewSubmitting}
-          onSubmit={handleSubmitReview}
-          onCancel={handleCancelReview}
-        />
-      )}
-
-      <ConfirmModal
-        open={cancelConfirmOpen}
-        title="Discard pending comments?"
-        description={`You have ${pendingComments.length} unsaved comment${pendingComments.length !== 1 ? 's' : ''} that will be lost.`}
-        cancelLabel="Keep reviewing"
-        confirmLabel="Discard"
-        onConfirm={discardReview}
-        onCancel={() => setCancelConfirmOpen(false)}
-      >
-        <p className="text-sm text-muted-foreground">This can&apos;t be undone.</p>
-      </ConfirmModal>
-    </PageContainer>
+        <ConfirmModal
+          open={cancelConfirmOpen}
+          title="Discard pending comments?"
+          description={`You have ${pendingComments.length} unsaved comment${pendingComments.length !== 1 ? 's' : ''} that will be lost.`}
+          cancelLabel="Keep reviewing"
+          confirmLabel="Discard"
+          onConfirm={discardReview}
+          onCancel={() => setCancelConfirmOpen(false)}
+        >
+          <p className="text-sm text-muted-foreground">This can&apos;t be undone.</p>
+        </ConfirmModal>
+      </PageContainer>
+    </TikTokPublishGateProvider>
   )
 }
