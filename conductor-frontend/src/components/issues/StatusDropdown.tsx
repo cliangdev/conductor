@@ -12,8 +12,10 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
 import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
+import { useTikTokPublishGate } from '@/components/marketing/TikTokConsentStep'
 import {
   DEFAULT_WORKFLOW_SLUG,
+  statusHasReviewGate,
   statusMeta,
   useWorkflowView,
 } from '@/lib/workflows'
@@ -75,6 +77,15 @@ export function StatusDropdown({
   const view = useWorkflowView(projectId, workflowSlug, token)
   const { label: displayLabel, category } = statusMeta(view, currentStatus)
 
+  // TIK-4: why a Post carrying TikTok targets can't be sent for approval yet — null for everything
+  // else, so no other Work Item sees a difference. Published by TikTokConsentStep's provider.
+  const tiktokBlock = useTikTokPublishGate()
+
+  /** A move into a review-gated status is the submit-for-approval move the consent gate guards. */
+  function blockedReason(toStatus: string): string | null {
+    return tiktokBlock && statusHasReviewGate(view, toStatus) ? tiktokBlock : null
+  }
+
   useEffect(() => {
     if (userRole === 'REVIEWER' || !token) return
     let cancelled = false
@@ -103,6 +114,12 @@ export function StatusDropdown({
   }
 
   async function handleSelect(newStatus: string) {
+    // A Post going to TikTok can't enter a review-gated status until the creator has consented.
+    const blocked = blockedReason(newStatus)
+    if (blocked) {
+      toastError(blocked)
+      return
+    }
     setLoading(true)
     try {
       await apiPatch(
@@ -146,11 +163,18 @@ export function StatusDropdown({
       <DropdownMenuContent align="end">
         {transitions.map((t) => {
           const meta = statusMeta(view, t.toStatus)
+          const blocked = blockedReason(t.toStatus)
           return (
             <DropdownMenuItem
               key={t.toStatus}
+              disabled={!!blocked}
+              title={blocked ?? undefined}
               onClick={() => handleSelect(t.toStatus)}
-              className="cursor-pointer"
+              className={
+                blocked
+                  ? 'max-w-xs items-start whitespace-normal'
+                  : 'cursor-pointer'
+              }
             >
               <StatusBadge
                 status={t.toStatus}
@@ -158,7 +182,11 @@ export function StatusDropdown({
                 label={t.label || meta.label}
                 className="mr-2"
               />
-              {t.requiresReview && <span className="text-xs opacity-60">needs review</span>}
+              {blocked ? (
+                <span className="text-xs text-muted-foreground">{blocked}</span>
+              ) : (
+                t.requiresReview && <span className="text-xs opacity-60">needs review</span>
+              )}
             </DropdownMenuItem>
           )
         })}
