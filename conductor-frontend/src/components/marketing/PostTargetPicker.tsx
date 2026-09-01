@@ -38,13 +38,20 @@ import type { TikTokConsentTarget } from '@/components/marketing/TikTokConsentSt
 import type { WorkflowView } from '@/types/workItem'
 
 export type PublishPlatform = 'facebook' | 'instagram' | 'youtube' | 'tiktok'
-export type PublishLane = 'NATIVE' | 'APP_MANAGED'
+export type PublishLane = 'NATIVE' | 'APP_MANAGED' | 'MANUAL'
 
-/** One selectable destination, derived from an ACTIVE connection. */
+/**
+ * One selectable destination.
+ *
+ * Automated options are derived from an ACTIVE connection. The MANUAL option for each platform is not
+ * derived from anything — it is always offered, with `connectionId` null, and is what a project with no
+ * social integration publishes through: a human posts it and pastes the link back.
+ */
 export interface PublishTargetOption {
   platform: PublishPlatform
-  connectorId: string
-  connectionId: string
+  connectorId: string | null
+  /** Null on the MANUAL lane: there is no account, and one manual destination per platform. */
+  connectionId: string | null
   label: string
   lane: PublishLane
   healthStatus?: string | null
@@ -65,8 +72,8 @@ export interface SelectedPublishTarget {
   id: string
   workItemId: string
   platform: PublishPlatform
-  connectorId: string
-  connectionId: string
+  connectorId: string | null
+  connectionId: string | null
   label?: string | null
   lane: PublishLane
   state: string
@@ -78,7 +85,8 @@ export interface SelectedPublishTarget {
 /** What a selection sends back. `publishOptions` rides along only where the platform has any. */
 interface PublishTargetSelectionPayload {
   platform: PublishPlatform
-  connectionId: string
+  /** Omitted (null) selects the platform's manual destination. */
+  connectionId: string | null
   publishOptions?: TikTokPublishOptionValues
 }
 
@@ -105,9 +113,17 @@ export function workflowDeclaresPublishTargets(view: WorkflowView | undefined): 
   })
 }
 
-/** (platform, connection) is a target's identity — the same pair the backend's uniqueness is on. */
-function targetKey(platform: string, connectionId: string): string {
-  return `${platform} ${connectionId}`
+/**
+ * (platform, connection) is a target's identity — the same pair the backend's uniqueness is on. A manual
+ * destination has no connection, so it keys on the same `manual` sentinel the backend uses, which is also
+ * what makes "one manual destination per platform" fall out for free.
+ */
+function targetKey(platform: string, connectionId: string | null): string {
+  return `${platform} ${connectionId ?? 'manual'}`
+}
+
+function isManual(option: PublishTargetOption | SelectedPublishTarget): boolean {
+  return option.lane === 'MANUAL'
 }
 
 function isUnhealthy(option: PublishTargetOption): boolean {
@@ -218,7 +234,7 @@ export function PostTargetPicker({
         platform: t.platform,
         connectorId: t.connectorId,
         connectionId: t.connectionId,
-        label: t.label ?? t.connectionId,
+        label: t.label ?? t.connectionId ?? 'Manual',
         lane: t.lane,
       }))
     return [...options, ...orphans]
@@ -239,7 +255,11 @@ export function PostTargetPicker({
       const payload: PublishTargetSelectionPayload[] = options
         .filter((o) => nextKeys.has(targetKey(o.platform, o.connectionId)))
         .map((o) =>
-          o.platform === 'tiktok'
+          // Options ride along only for an API TikTok target. A manual one never uses them — they are
+          // the payload we would send TikTok, and on that lane the creator sets every one of them in
+          // TikTok's own composer — and sending them anyway would store a bag of meaningless falses on
+          // the row that then counts as part of the publish bundle.
+          o.platform === 'tiktok' && !isManual(o)
             ? {
                 platform: o.platform,
                 connectionId: o.connectionId,
@@ -296,12 +316,18 @@ export function PostTargetPicker({
     () =>
       options
         .filter(
-          (o) => o.platform === 'tiktok' && selectedKeys.has(targetKey(o.platform, o.connectionId))
+          (o) =>
+            o.platform === 'tiktok' &&
+            // A manual TikTok destination needs no consent: the creator posts it inside TikTok, seeing
+            // TikTok's own preview. Mirrors PublishConsentService.requiresConsent exactly — if these two
+            // disagreed, the UI would ask for a consent the approval gate does not want.
+            !isManual(o) &&
+            selectedKeys.has(targetKey(o.platform, o.connectionId))
         )
         .map((o) => {
           const values = optionsByKey[targetKey(o.platform, o.connectionId)] ?? EMPTY_TIKTOK_OPTIONS
           return {
-            connectionId: o.connectionId,
+            connectionId: o.connectionId ?? '',
             label: o.label,
             creatorNickname: o.creatorNickname ?? null,
             options: values,
@@ -350,9 +376,12 @@ export function PostTargetPicker({
       )}
 
       {!loadError && groups.length === 0 && (
+        // Unreachable against a current backend, which always offers a manual destination per platform.
+        // Kept as the honest rendering of an empty list rather than removed, so an older or partial
+        // response degrades into an explanation instead of a blank card.
         <EmptyState
           icon={Share2}
-          title="No connected accounts"
+          title="Nowhere to publish"
           description={`Connect a Facebook Page, Instagram, YouTube or TikTok account in Integrations to choose where this ${noun} publishes.`}
         />
       )}
@@ -422,17 +451,22 @@ function TargetRow({
   // An unhealthy account can't be added — its credentials no longer work — but one already on the
   // Post stays actionable, or a human could never take it back off.
   const disabled = unhealthy && !checked
-  const noteId = `${option.platform}-${option.connectionId}-note`
+  const noteId = `${option.platform}-${option.connectionId ?? 'manual'}-note`
   const note = unavailable
     ? 'This account is no longer connected — it will be removed when you change the selection.'
     : unhealthy
       ? (option.healthMessage ?? 'This account needs to be reconnected before it can publish.')
-      : null
+      : isManual(option)
+        ? "Conductor won't post this one. It still goes through review and onto the calendar; when it's due you'll be asked to post it yourself and paste the link back."
+        : null
 
   // TikTok is the one platform whose post carries per-target choices, and TikTok's own guidelines
   // require them to be made per account rather than once for the Post. They open with the account,
   // and sit outside the <label> so a click on a control doesn't also un-pick the destination.
-  const showTikTokOptions = option.platform === 'tiktok' && checked && !unavailable
+  // Only for an API target: the per-target options are the payload we send TikTok, and on the manual
+  // lane the creator sets all of them in TikTok's own composer.
+  const showTikTokOptions =
+    option.platform === 'tiktok' && checked && !unavailable && !isManual(option)
 
   return (
     <div>
@@ -453,7 +487,17 @@ function TargetRow({
         <span className="min-w-0">
           <span className="block text-sm text-foreground">{option.label}</span>
           {note && (
-            <span id={noteId} className={cn('block text-xs', statusHueClasses('amber').text)}>
+            <span
+              id={noteId}
+              className={cn(
+                'block text-xs',
+                // A manual destination is a normal choice, not a problem to warn about — amber is
+                // reserved for the two rows a human has to do something about.
+                isManual(option) && !unavailable && !unhealthy
+                  ? 'text-muted-foreground'
+                  : statusHueClasses('amber').text
+              )}
+            >
               {note}
             </span>
           )}

@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.entity.Asset;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
@@ -7,6 +8,7 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -28,6 +30,7 @@ import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +46,7 @@ public class WorkItemService {
     // WorkItemWorkflowService against the resolved Statechart.
 
     private final WorkItemRepository workItemRepository;
+    private final AssetRepository assetRepository;
     private final ProjectRepository projectRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
@@ -67,7 +71,9 @@ public class WorkItemService {
             AssetService assetService,
             NativeHandoffService nativeHandoffService,
             PublishBundleGuard publishBundleGuard,
-            PublishTargetService publishTargetService) {
+            PublishTargetService publishTargetService,
+                           AssetRepository assetRepository) {
+        this.assetRepository = assetRepository;
         this.workItemRepository = workItemRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
@@ -284,6 +290,33 @@ public class WorkItemService {
                     counts.put((String) row[0], (Long) row[1]));
         }
         return counts;
+    }
+
+    /**
+     * Where these Work Items ended up outside Conductor, keyed by Work Item id — their link Assets, oldest
+     * first.
+     *
+     * <p>Deliberately says nothing about publishing. It is the item's own recorded links, whatever they
+     * are: a Post's live posts, an Issue's pull request. That keeps the Work Item list and calendar free of
+     * any one area's vocabulary while still answering the question a human actually has in front of them —
+     * "it says published; where *is* it?" — without opening the item.
+     *
+     * <p>One query for the whole batch. The alternative walks each item's assets in turn, which on a list
+     * surface is an N+1 that grows with the backlog.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, List<Asset>> externalLinks(List<String> workItemIds) {
+        if (workItemIds == null || workItemIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<Asset>> byItem = new HashMap<>();
+        for (Asset asset : assetRepository.findLinkAssetsByWorkItemIds(workItemIds)) {
+            if (asset.getWorkItem() == null) {
+                continue;
+            }
+            byItem.computeIfAbsent(asset.getWorkItem().getId(), id -> new ArrayList<>()).add(asset);
+        }
+        return byItem;
     }
 
     /**

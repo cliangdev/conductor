@@ -50,6 +50,8 @@ let currentTargets: PublishOutcome[] = []
 let retryResult: { workItemId: string; status: string; retriedCount: number; targets: PublishOutcome[] } | null = null
 let retryRejection: { status: number; detail: string } | null = null
 let retryCalls = 0
+let manualCalls: Array<{ url: string; body: { permalink: string; publishedAt: string | null } }> = []
+let manualRejection: { status: number; detail: string } | null = null
 
 function jsonResponse(status: number, body: unknown) {
   return {
@@ -62,6 +64,18 @@ function jsonResponse(status: number, body: unknown) {
 
 const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
   const method = init?.method ?? 'GET'
+  if (method === 'POST' && url.includes('/manual-publish')) {
+    manualCalls.push({ url, body: JSON.parse(String(init?.body ?? '{}')) })
+    if (manualRejection) return jsonResponse(manualRejection.status, { detail: manualRejection.detail })
+    const targetId = url.split('/publish-targets/')[1].replace('/manual-publish', '')
+    const updated: PublishOutcome = {
+      ...currentTargets.find((t) => t.id === targetId)!,
+      state: 'PUBLISHED',
+      permalink: manualCalls[manualCalls.length - 1].body.permalink,
+    }
+    currentTargets = currentTargets.map((t) => (t.id === targetId ? updated : t))
+    return jsonResponse(200, updated)
+  }
   if (method === 'POST' && url.endsWith(`/work-items/${WORK_ITEM}/publish-targets/retry`)) {
     retryCalls += 1
     if (retryRejection) return jsonResponse(retryRejection.status, { detail: retryRejection.detail })
@@ -79,6 +93,8 @@ beforeEach(() => {
   retryResult = null
   retryRejection = null
   retryCalls = 0
+  manualCalls = []
+  manualRejection = null
   toastErrorSpy.mockClear()
   fetchMock.mockClear()
   vi.stubEnv('NEXT_PUBLIC_API_URL', API)
@@ -282,4 +298,103 @@ describe('PublishOutcomePanel', () => {
 
     expect(await screen.findByText('conn-instagram')).toBeVisible()
   })
+
+  // ── the MANUAL lane: a destination a human posts by hand (MKT-2) ──────────────────────────
+
+  function manualTarget(state: string, overrides: Partial<PublishOutcome> = {}): PublishOutcome {
+    return {
+      id: 'target-manual-tiktok',
+      workItemId: WORK_ITEM,
+      platform: 'tiktok',
+      connectorId: null,
+      connectionId: null,
+      platformAccountLabel: 'TikTok (manual)',
+      lane: 'MANUAL',
+      state,
+      ...overrides,
+    }
+  }
+
+  it('asks the reader to post a manual destination that has come due', async () => {
+    currentTargets = [manualTarget('AWAITING_MANUAL')]
+    renderPanel()
+
+    expect(await screen.findByText(/publishes by hand/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Mark published/i })).toBeInTheDocument()
+    expect(screen.getByText('Post it now')).toBeInTheDocument()
+  })
+
+  it('records the link a human pastes back and shows the destination as published', async () => {
+    currentTargets = [manualTarget('AWAITING_MANUAL')]
+    renderPanel()
+
+    await userEvent.click(await screen.findByRole('button', { name: /Mark published/i }))
+    await userEvent.type(
+      screen.getByLabelText(/Link to the published post/i),
+      'https://tiktok.com/@acme/video/1'
+    )
+    await userEvent.click(screen.getByRole('button', { name: /Record as published/i }))
+
+    await waitFor(() => expect(manualCalls).toHaveLength(1))
+    expect(manualCalls[0].body.permalink).toBe('https://tiktok.com/@acme/video/1')
+    expect(manualCalls[0].url).toContain('/publish-targets/target-manual-tiktok/manual-publish')
+    expect(await screen.findByText('Published')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /tiktok.com/ })).toHaveAttribute(
+      'href',
+      'https://tiktok.com/@acme/video/1'
+    )
+  })
+
+  it('will not record a manual publish without a link', async () => {
+    // The link is the only record this destination ever went out — there is no platform to ask.
+    currentTargets = [manualTarget('AWAITING_MANUAL')]
+    renderPanel()
+
+    await userEvent.click(await screen.findByRole('button', { name: /Mark published/i }))
+
+    expect(screen.getByRole('button', { name: /Record as published/i })).toBeDisabled()
+    expect(manualCalls).toHaveLength(0)
+  })
+
+  it('keeps the row exactly as it was when recording fails, and says why', async () => {
+    currentTargets = [manualTarget('AWAITING_MANUAL')]
+    manualRejection = { status: 422, detail: 'This destination was taken back down' }
+    renderPanel()
+
+    await userEvent.click(await screen.findByRole('button', { name: /Mark published/i }))
+    await userEvent.type(screen.getByLabelText(/Link to the published post/i), 'https://tiktok.com/x')
+    await userEvent.click(screen.getByRole('button', { name: /Record as published/i }))
+
+    await waitFor(() => expect(toastErrorSpy).toHaveBeenCalled())
+    expect(toastErrorSpy.mock.calls[0][0]).toContain('taken back down')
+    expect(screen.getByText('Post it now')).toBeInTheDocument()
+  })
+
+  it('offers no manual controls on a target that publishes automatically', async () => {
+    // The refusal the backend enforces, mirrored here so the button never appears to promise it.
+    currentTargets = [target({ platform: 'instagram', state: 'PENDING' })]
+    renderPanel()
+
+    await screen.findByText('Waiting')
+    expect(screen.queryByRole('button', { name: /Mark published/i })).not.toBeInTheDocument()
+  })
+
+  it('offers no manual controls on a manual target that is not due yet', async () => {
+    currentTargets = [manualTarget('PENDING')]
+    renderPanel()
+
+    await screen.findByText('Waiting')
+    expect(screen.queryByRole('button', { name: /Mark published/i })).not.toBeInTheDocument()
+  })
+
+  it('shows a manual destination that was already published as published, with its link', async () => {
+    currentTargets = [
+      manualTarget('PUBLISHED', { permalink: 'https://tiktok.com/@acme/video/9' }),
+    ]
+    renderPanel()
+
+    expect(await screen.findByText('Published')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Mark published/i })).not.toBeInTheDocument()
+  })
+
 })

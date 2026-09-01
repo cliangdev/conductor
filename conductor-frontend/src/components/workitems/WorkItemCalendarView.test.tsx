@@ -227,6 +227,43 @@ describe('empty state', () => {
   })
 })
 
+describe('links out to where an item ended up', () => {
+  it('puts a reachable link on the chip of an item that has one', () => {
+    // The gap this closes: a month of chips saying an item is done, with no way to reach the thing.
+    renderCalendar([
+      item({
+        id: '1',
+        status: 'DONE',
+        scheduledFor: '2026-03-05T15:00:00Z',
+        externalLinks: [{ url: 'https://example.com/live/1', type: 'example_item', label: 'Acme' }],
+      }),
+    ])
+
+    const outward = screen.getByRole('link', { name: /Open Acme/ })
+    expect(outward).toHaveAttribute('href', 'https://example.com/live/1')
+  })
+
+  it('leaves the chip alone when the item has no links', () => {
+    renderCalendar([item({ id: '1', status: 'DONE', scheduledFor: '2026-03-05T15:00:00Z' })])
+
+    expect(screen.getAllByRole('link')).toHaveLength(1)
+  })
+
+  it('does not nest the outward link inside the chip link', () => {
+    // An <a> may not contain another <a>. Nested, React renders it but the HTML parser hoists it out of
+    // the server-rendered markup and hydration disagrees with the DOM.
+    renderCalendar([
+      item({
+        id: '1',
+        scheduledFor: '2026-03-05T15:00:00Z',
+        externalLinks: [{ url: 'https://example.com/live/1', type: 'example_item' }],
+      }),
+    ])
+
+    expect(screen.getByTestId('calendar-chip-1').querySelector('a')).toBeNull()
+  })
+})
+
 describe('workflow-agnostic', () => {
   const source = readFileSync(
     resolve(__dirname, 'WorkItemCalendarView.tsx'),

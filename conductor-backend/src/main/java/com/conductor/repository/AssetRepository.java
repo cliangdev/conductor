@@ -22,6 +22,20 @@ public interface AssetRepository extends JpaRepository<Asset, String> {
     boolean existsByWorkItemIdAndTypeAndRef(String workItemId, String type, String ref);
 
     /**
+     * Every link Asset on any of {@code workItemIds}, oldest first — where these Work Items ended up
+     * outside Conductor.
+     *
+     * <p>Takes a collection so a list response resolves in one query rather than one per row: the Work Item
+     * list is the surface this exists for, and an N+1 there would scale with the size of a project's
+     * backlog. File Assets are excluded because their {@code ref} is a storage path, not an address anyone
+     * can follow.
+     */
+    @Query("SELECT a FROM Asset a WHERE a.workItem.id IN :workItemIds "
+            + "AND a.kind = 'link' AND a.ref IS NOT NULL "
+            + "ORDER BY a.createdAt ASC")
+    List<Asset> findLinkAssetsByWorkItemIds(@Param("workItemIds") Collection<String> workItemIds);
+
+    /**
      * One flat row of the Area asset library: the Asset's own columns plus everything needed to label and
      * link the Work Item that produced it. A projection rather than the {@link Asset} entity precisely so
      * the owning Work Item (and its Project, for the display id) come back in the same select — walking

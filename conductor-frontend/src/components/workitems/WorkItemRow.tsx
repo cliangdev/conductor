@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
+import { ExternalLinkCell } from '@/components/workitems/ExternalLinkCell'
 import { CommentCount } from '@/components/ui/comment-count'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import { AssigneeCell } from '@/components/workitems/AssigneeCell'
@@ -111,6 +112,10 @@ export function WorkItemRow({
       </Badge>
 
       <div className="flex items-center gap-3 ml-auto shrink-0">
+        {/* Where it ended up outside Conductor. Sits outside the row anchor so a click opens the live
+            post rather than the Work Item — the whole reason for putting it here is to save that trip. */}
+        <ExternalLinkCell links={issue.externalLinks} />
+
         <CommentCount count={issue.unresolvedCommentCount} className="text-muted-foreground" />
 
         {accessToken && (

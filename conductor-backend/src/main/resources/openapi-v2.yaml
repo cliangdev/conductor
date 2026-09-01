@@ -2231,6 +2231,40 @@ components:
           description: >-
             IANA zone id the schedule was authored in (e.g. America/New_York), retained alongside the
             absolute instant so a local-wall-clock reading survives DST. Null when unscheduled.
+        externalLinks:
+          type: array
+          description: >-
+            Where this Work Item ended up outside Conductor: every link Asset recorded on it, oldest first.
+            Workflow-agnostic by construction — it is whatever the item's own `asset_types` allow, so a
+            Post carries the live posts it published to and an Issue carries its pull request. Empty until
+            something is recorded.
+
+
+            It is on the list response, not only the detail one, because a link nobody can reach without
+            opening the item is a link nobody finds: the calendar and list surfaces are where a human looks
+            to ask "did that go out, and where is it?".
+          items:
+            $ref: "#/components/schemas/WorkItemExternalLink"
+
+    WorkItemExternalLink:
+      type: object
+      required:
+        - url
+        - type
+      properties:
+        url:
+          type: string
+          description: The Asset's ref — the address of the thing itself.
+        type:
+          type: string
+          description: >-
+            The Asset type, one of the bound Workflow's declared `asset_types` (e.g. `instagram_post`,
+            `github_pr`). A client uses it to choose an icon or a label; it is not an enum here because the
+            set is Workflow-defined.
+        label:
+          type: string
+          nullable: true
+          description: Human-readable name captured when the link was recorded (e.g. the account it went to).
 
     WorkItemAssignee:
       type: object

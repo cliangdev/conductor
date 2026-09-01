@@ -19,6 +19,8 @@ import { statusHueClasses } from '@/components/ui/status-badge'
 import { pluralizeNoun, statusHue, statusMeta, workItemDetailPath } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
 import { WorkItemCalendarTray } from './WorkItemCalendarTray'
+import { ExternalLinkCell } from './ExternalLinkCell'
+import type { WorkItemExternalLink } from './listTypes'
 
 /**
  * The slice of a Work Item the calendar needs. Structurally satisfied by the list surface's
@@ -33,6 +35,12 @@ export interface CalendarWorkItem {
   scheduledFor?: string | null
   /** IANA zone the item was scheduled in; the day it lands on is resolved in this zone. */
   scheduleTimezone?: string | null
+  /**
+   * Where this item ended up outside Conductor — its recorded link Assets, whatever they are for the
+   * bound Workflow. On a month grid this is the difference between chips that only say a thing is done
+   * and chips that reach the thing itself; answering "where is it?" should not cost a page load.
+   */
+  externalLinks?: WorkItemExternalLink[]
 }
 
 /** Chips shown before a day collapses into a "+N more" affordance. */
@@ -280,21 +288,26 @@ export function WorkItemCalendarView({
                           ? scheduleTooltip(issue.scheduledFor, issue.scheduleTimezone)
                           : null
                         return (
-                          <Link
-                            key={issue.id}
-                            data-testid={`calendar-chip-${issue.id}`}
-                            href={workItemDetailPath(projectId, area, noun, issue.displayId ?? '')}
-                            title={[
-                              `${issue.displayId ? `${issue.displayId} · ` : ''}${issue.title} — ${meta.label}`,
-                              when,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
-                            className={`flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs border transition-colors hover:border-border-strong ${hue.bg} ${hue.text} ${hue.border}`}
-                          >
-                            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${hue.dot}`} />
-                            <span className="truncate">{issue.title}</span>
-                          </Link>
+                          // The outward link sits beside the chip, not inside it. An <a> may not contain
+                          // another <a>: nested, it renders under React but the HTML parser hoists it out
+                          // of the server-rendered markup, and hydration then disagrees with the DOM.
+                          <div key={issue.id} className="flex min-w-0 items-center gap-1">
+                            <Link
+                              data-testid={`calendar-chip-${issue.id}`}
+                              href={workItemDetailPath(projectId, area, noun, issue.displayId ?? '')}
+                              title={[
+                                `${issue.displayId ? `${issue.displayId} · ` : ''}${issue.title} — ${meta.label}`,
+                                when,
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')}
+                              className={`flex min-w-0 flex-1 items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors hover:border-border-strong ${hue.bg} ${hue.text} ${hue.border}`}
+                            >
+                              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${hue.dot}`} />
+                              <span className="truncate">{issue.title}</span>
+                            </Link>
+                            <ExternalLinkCell links={issue.externalLinks} />
+                          </div>
                         )
                       })}
 

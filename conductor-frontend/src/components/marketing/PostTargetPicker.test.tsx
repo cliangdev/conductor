@@ -34,7 +34,7 @@ const VIEW: WorkflowView = {
 function option(overrides: Partial<PublishTargetOption> & Pick<PublishTargetOption, 'platform' | 'connectionId'>): PublishTargetOption {
   return {
     connectorId: overrides.platform === 'facebook' || overrides.platform === 'instagram' ? 'meta' : overrides.platform,
-    label: overrides.connectionId,
+    label: overrides.connectionId ?? 'Manual',
     lane: overrides.platform === 'facebook' || overrides.platform === 'youtube' ? 'NATIVE' : 'APP_MANAGED',
     ...overrides,
   }
@@ -52,6 +52,23 @@ function tiktokOption(
     privacyLevelOptions: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY'],
     ...overrides,
   })
+}
+
+/** A destination a human publishes by hand: no account, no connector, always offered. */
+function manualOption(platform: PublishTargetOption['platform']): PublishTargetOption {
+  const labels: Record<string, string> = {
+    facebook: 'Facebook (manual)',
+    instagram: 'Instagram (manual)',
+    youtube: 'YouTube (manual)',
+    tiktok: 'TikTok (manual)',
+  }
+  return {
+    platform,
+    connectorId: null,
+    connectionId: null,
+    label: labels[platform],
+    lane: 'MANUAL',
+  }
 }
 
 function selection(o: PublishTargetOption, id = `target-${o.platform}-${o.connectionId}`): SelectedPublishTarget {
@@ -72,7 +89,7 @@ function selection(o: PublishTargetOption, id = `target-${o.platform}-${o.connec
 let availableTargets: PublishTargetOption[] = []
 let selectedTargets: SelectedPublishTarget[] = []
 let putBodies: Array<{
-  targets: Array<{ platform: string; connectionId: string; publishOptions?: unknown }>
+  targets: Array<{ platform: string; connectionId: string | null; publishOptions?: unknown }>
 }> = []
 let putRejection: { status: number; detail: string } | null = null
 
@@ -288,11 +305,57 @@ describe('PostTargetPicker', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('offers nothing but guidance when the project has no connected accounts', async () => {
+  it('explains itself rather than showing a blank card when the response carries nothing', async () => {
+    // Against a current backend this cannot happen — a manual destination is offered per platform
+    // whether or not anything is connected. Kept so a partial or older response degrades into an
+    // explanation instead of an empty card.
     renderPicker()
 
-    expect(await screen.findByText('No connected accounts')).toBeInTheDocument()
+    expect(await screen.findByText('Nowhere to publish')).toBeInTheDocument()
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+  })
+
+  it('offers a manual destination to a project with no connected accounts at all', async () => {
+    // The case the manual lane exists for. Before it, this project could pick no target, could not
+    // clear the approval gate, and its Posts could never leave In Review.
+    availableTargets = [manualOption('tiktok'), manualOption('facebook')]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByRole('checkbox', { name: /TikTok \(manual\)/ })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: /Facebook \(manual\)/ })).toBeInTheDocument()
+  })
+
+  it('sends a null connectionId when a manual destination is picked', async () => {
+    availableTargets = [manualOption('tiktok')]
+    renderPicker()
+    await loaded()
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: /TikTok \(manual\)/ }))
+
+    await waitFor(() => expect(putBodies).toHaveLength(1))
+    // Null, not the string "manual": the platform alone identifies a manual destination, and the
+    // backend's CHECK constraint ties a null connection to the MANUAL lane.
+    expect(putBodies[0].targets).toEqual([{ platform: 'tiktok', connectionId: null }])
+  })
+
+  it('says plainly that a manual destination will not publish itself', async () => {
+    availableTargets = [manualOption('tiktok')]
+    renderPicker()
+    await loaded()
+
+    expect(await screen.findByText(/post it yourself and paste the link back/i)).toBeInTheDocument()
+  })
+
+  it('offers no TikTok publish options for a manual destination', async () => {
+    // Those options are the payload we send TikTok's API. On this lane the creator sets every one of
+    // them in TikTok's own composer, so offering them here would collect answers nobody reads.
+    availableTargets = [manualOption('tiktok')]
+    selectedTargets = [selection(manualOption('tiktok'))]
+    renderPicker()
+    await loaded()
+
+    expect(screen.queryByText(/Privacy level/i)).not.toBeInTheDocument()
   })
 
   it('keeps the previous selection visible when the save fails', async () => {
