@@ -79,6 +79,8 @@ export const EVENT_TYPE_SUBTITLES: Record<string, string> = {
   MEMBER_ROLE_CHANGED: "When a member's role is updated",
   WORKFLOW_RUN_FAILED: 'When a workflow run reaches a terminal failed status',
   WORKFLOW_AUTO_PAUSED: 'When a workflow is auto-disabled after too many consecutive failed runs',
+  POST_AWAITING_MANUAL:
+    'When a destination that publishes by hand comes due and is waiting for someone to post it',
 }
 
 export const ALL_EVENT_TYPES = Object.keys(EVENT_TYPE_DESCRIPTIONS)
@@ -99,6 +101,15 @@ export const CHANNEL_GROUPS: { value: string; label: string; eventTypes: string[
       'COMMENT_ADDED',
       'COMMENT_REPLY',
     ],
+  },
+  {
+    // Carries WORK_ITEM_STATUS_CHANGED as Issues does: a Post moving through review is the same event an
+    // Issue fires, and this group exists only to send it to a different channel. The backend prefers this
+    // group for items on a publishing Workflow and falls back to Issues when it is not configured, so
+    // adding it takes nothing away from a project that already had notifications.
+    value: 'PUBLISHING',
+    label: 'Publishing',
+    eventTypes: ['WORK_ITEM_STATUS_CHANGED', 'POST_AWAITING_MANUAL'],
   },
   {
     value: 'MEMBERS',

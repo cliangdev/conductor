@@ -128,6 +128,90 @@ class NotificationDeliveryServiceTest {
         assertThatNoException().isThrownBy(() -> deliveryService.deliver(event));
     }
 
+    // ── Routing a publishing Workflow's events to their own channel ────────────────────────────
+
+    private NotificationMessage publishingEventOf(EventType type) {
+        return NotificationMessage.of(type, PROJECT_ID,
+                Map.of("workItemId", ISSUE_ID, ChannelGroup.META_PUBLISHES, "true"));
+    }
+
+    @Test
+    void aPostsStatusChangeGoesToThePublishingChannelWhenOneIsConfigured() {
+        NotificationGroupConfig publishing = groupConfig(ChannelGroup.PUBLISHING, "https://discord.test/pub",
+                true, Set.of("WORK_ITEM_STATUS_CHANGED"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.PUBLISHING))
+                .thenReturn(Optional.of(publishing));
+        when(discordProvider.format(any())).thenReturn("{}");
+
+        deliveryService.deliver(publishingEventOf(EventType.WORK_ITEM_STATUS_CHANGED));
+
+        verify(discordProvider).send("https://discord.test/pub", "{}");
+        // Never both: a Post's status change is one message, in one channel.
+        verify(groupConfigRepository, never())
+                .findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES);
+    }
+
+    @Test
+    void aPostsStatusChangeFallsBackToTheIssuesChannelWhenPublishingIsNotConfigured() {
+        // The property that makes this group additive: a project that had notifications before still has
+        // them, in the channel it already chose, until it opts into a separate one.
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.PUBLISHING))
+                .thenReturn(Optional.empty());
+        NotificationGroupConfig issues = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, true,
+                Set.of("WORK_ITEM_STATUS_CHANGED"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(issues));
+        when(discordProvider.format(any())).thenReturn("{}");
+
+        deliveryService.deliver(publishingEventOf(EventType.WORK_ITEM_STATUS_CHANGED));
+
+        verify(discordProvider).send(WEBHOOK_URL, "{}");
+    }
+
+    @Test
+    void aPublishingChannelThatIsDisabledFallsThroughRatherThanSwallowingTheEvent() {
+        NotificationGroupConfig publishing = groupConfig(ChannelGroup.PUBLISHING, "https://discord.test/pub",
+                false, Set.of("WORK_ITEM_STATUS_CHANGED"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.PUBLISHING))
+                .thenReturn(Optional.of(publishing));
+        NotificationGroupConfig issues = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, true,
+                Set.of("WORK_ITEM_STATUS_CHANGED"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(issues));
+        when(discordProvider.format(any())).thenReturn("{}");
+
+        deliveryService.deliver(publishingEventOf(EventType.WORK_ITEM_STATUS_CHANGED));
+
+        verify(discordProvider).send(WEBHOOK_URL, "{}");
+    }
+
+    @Test
+    void anIssuesStatusChangeNeverReachesThePublishingChannel() {
+        NotificationGroupConfig issues = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, true,
+                Set.of("WORK_ITEM_STATUS_CHANGED"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(issues));
+        when(discordProvider.format(any())).thenReturn("{}");
+
+        deliveryService.deliver(eventOf(EventType.WORK_ITEM_STATUS_CHANGED));
+
+        verify(discordProvider).send(WEBHOOK_URL, "{}");
+        verify(groupConfigRepository, never())
+                .findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.PUBLISHING);
+    }
+
+    @Test
+    void aManualPublishAlertIsSilentUntilAPublishingChannelExists() {
+        // It belongs to no general group, so there is nothing to fall back to — and nothing sensible to
+        // say in an Issues channel about a lane that project has not set up.
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.PUBLISHING))
+                .thenReturn(Optional.empty());
+
+        deliveryService.deliver(publishingEventOf(EventType.POST_AWAITING_MANUAL));
+
+        verify(discordProvider, never()).send(anyString(), anyString());
+    }
+
     private NotificationMessage eventOf(EventType type) {
         return NotificationMessage.of(type, PROJECT_ID, Map.of("workItemId", ISSUE_ID));
     }

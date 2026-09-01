@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -52,27 +53,28 @@ public class NotificationDeliveryService {
      * dispatcher for their side effects only, never as a chat message.
      */
     public void deliver(NotificationMessage event) {
-        Optional<ChannelGroup> groupOpt = ChannelGroup.forEventType(event.getEventType());
-        if (groupOpt.isEmpty()) {
+        List<ChannelGroup> candidates = ChannelGroup.forEvent(event.getEventType(), event.getMetadata());
+        if (candidates.isEmpty()) {
             log.debug("No channel group defined for event type: {}", event.getEventType());
             return;
         }
 
-        ChannelGroup group = groupOpt.get();
-
-        Optional<NotificationGroupConfig> configOpt =
-                groupConfigRepository.findByProjectIdAndChannelGroup(event.getProjectId(), group);
-        if (configOpt.isEmpty()) {
-            return;
+        // Most specific first, falling through to the next when a group has no usable config. A Post's
+        // status change prefers the Publishing channel and lands in the Issues one when a project has not
+        // set Publishing up — so adding the group cannot take away notifications a project already gets.
+        NotificationGroupConfig config = null;
+        for (ChannelGroup candidate : candidates) {
+            NotificationGroupConfig found = groupConfigRepository
+                    .findByProjectIdAndChannelGroup(event.getProjectId(), candidate)
+                    .filter(NotificationGroupConfig::isEnabled)
+                    .filter(c -> c.getEnabledEventTypes().contains(event.getEventType().name()))
+                    .orElse(null);
+            if (found != null) {
+                config = found;
+                break;
+            }
         }
-
-        NotificationGroupConfig config = configOpt.get();
-
-        if (!config.isEnabled()) {
-            return;
-        }
-
-        if (!config.getEnabledEventTypes().contains(event.getEventType().name())) {
+        if (config == null) {
             return;
         }
 

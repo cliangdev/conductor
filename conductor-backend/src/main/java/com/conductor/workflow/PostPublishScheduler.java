@@ -1,5 +1,12 @@
 package com.conductor.workflow;
 
+import java.util.HashMap;
+import java.time.Instant;
+import com.conductor.signal.SignalTypes;
+import com.conductor.signal.SignalOrigin;
+import com.conductor.signal.SignalBus;
+import com.conductor.signal.Signal;
+import com.conductor.notification.ChannelGroup;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetState;
@@ -187,6 +194,7 @@ public class PostPublishScheduler {
     private final ActionInvocationService actionInvocationService;
     private final PublishOutcomeService publishOutcomeService;
     private final boolean enabled;
+    private final SignalBus signalBus;
 
     /**
      * The transaction-bound shared {@code EntityManager}, used only to issue the conditional claim
@@ -206,12 +214,14 @@ public class PostPublishScheduler {
                                 ActiveConnectionResolver connectionResolver,
                                 ActionInvocationService actionInvocationService,
                                 PublishOutcomeService publishOutcomeService,
-                                @Value("${conductor.post-publish.enabled:true}") boolean enabled) {
+                                @Value("${conductor.post-publish.enabled:true}") boolean enabled,
+                                SignalBus signalBus) {
         this.targetRepository = targetRepository;
         this.connectionResolver = connectionResolver;
         this.actionInvocationService = actionInvocationService;
         this.publishOutcomeService = publishOutcomeService;
         this.enabled = enabled;
+        this.signalBus = signalBus;
     }
 
     /**
@@ -262,18 +272,58 @@ public class PostPublishScheduler {
      */
     private void flagDueManualTargets(OffsetDateTime now) {
         try {
-            List<String> manualIds = targetRepository.findDueManualTargets(now).stream()
-                    .map(PostPublishTarget::getId)
+            List<PostPublishTarget> due = targetRepository.findDueManualTargets(now).stream()
                     .limit(batchSize)
                     .toList();
-            for (String targetId : manualIds) {
-                if (self.flagManualInNewTx(targetId) > 0) {
+            for (PostPublishTarget target : due) {
+                if (self.flagManualInNewTx(target.getId()) > 0) {
                     log.info("Target {} is due and is a manual destination; awaiting a human to publish it",
-                            targetId);
+                            target.getId());
+                    announceAwaitingManual(target);
                 }
             }
         } catch (Exception e) {
             log.error("Flagging due manual publish targets failed: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Says out loud that a post now needs a person.
+     *
+     * <p>Only fired for the tick that actually claimed the row, so a human is told once rather than every
+     * thirty seconds. This is the one publishing event that is not already a Work Item status change — the
+     * post's own status stays Scheduled while a destination waits on somebody — so without it the manual
+     * lane would depend entirely on someone happening to open the Post, which for a lane whose whole
+     * premise is "a person does this at a specific time" is no plan at all.
+     *
+     * <p>Best-effort and swallowed: the row is already claimed and correct, and a chat webhook being down
+     * must not undo that or stop the rest of the batch.
+     */
+    private void announceAwaitingManual(PostPublishTarget target) {
+        try {
+            WorkItem post = target.getWorkItem();
+            if (post == null || post.getProject() == null) {
+                return;
+            }
+            Map<String, Object> meta = new HashMap<>();
+            meta.put("workItemId", post.getId());
+            meta.put("workItemTitle", post.getTitle());
+            meta.put("platform", target.getPlatform());
+            if (target.getPlatformAccountLabel() != null) {
+                meta.put("accountLabel", target.getPlatformAccountLabel());
+            }
+            if (target.getFireTime() != null) {
+                meta.put("fireTime", target.getFireTime().toString());
+            }
+            // Always a publishing Workflow by construction — only one produces publish targets — so this
+            // routes to a project's Publishing channel, falling back to Issues when it has none.
+            meta.put(ChannelGroup.META_PUBLISHES, "true");
+            signalBus.publish(Signal.of(SignalTypes.CONDUCTOR_WORK_ITEM_AWAITING_MANUAL_PUBLISH,
+                    post.getProject().getId(), post.getId(), Instant.now(), meta,
+                    new SignalOrigin("post_publish_target", target.getId())));
+        } catch (Exception e) {
+            log.warn("Could not announce that target {} awaits a manual publish: {}",
+                    target.getId(), e.getMessage());
         }
     }
 

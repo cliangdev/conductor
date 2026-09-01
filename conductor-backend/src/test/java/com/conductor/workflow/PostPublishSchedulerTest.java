@@ -1,5 +1,9 @@
 package com.conductor.workflow;
 
+import com.conductor.signal.SignalTypes;
+import com.conductor.signal.Signal;
+import com.conductor.notification.ChannelGroup;
+import com.conductor.signal.SignalBus;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetState;
@@ -47,6 +51,7 @@ import static org.mockito.Mockito.when;
 class PostPublishSchedulerTest {
 
     private PostPublishTargetRepository targetRepository;
+    private SignalBus signalBus;
     private ActiveConnectionResolver connectionResolver;
     private ActionInvocationService actionInvocationService;
     private PublishOutcomeService publishOutcomeService;
@@ -61,6 +66,7 @@ class PostPublishSchedulerTest {
     @BeforeEach
     void setUp() {
         targetRepository = mock(PostPublishTargetRepository.class);
+        signalBus = mock(SignalBus.class);
         connectionResolver = mock(ActiveConnectionResolver.class);
         actionInvocationService = mock(ActionInvocationService.class);
         publishOutcomeService = mock(PublishOutcomeService.class);
@@ -89,7 +95,8 @@ class PostPublishSchedulerTest {
 
     private PostPublishScheduler newScheduler(boolean enabled) {
         PostPublishScheduler s = new PostPublishScheduler(
-                targetRepository, connectionResolver, actionInvocationService, publishOutcomeService, enabled);
+                targetRepository, connectionResolver, actionInvocationService, publishOutcomeService, enabled,
+                signalBus);
         s.entityManager = entityManager;
         s.self = s;
         return s;
@@ -546,6 +553,50 @@ class PostPublishSchedulerTest {
         scheduler.runTick(OffsetDateTime.now());
 
         verify(actionInvocationService).invoke(any(), anyString(), any(), anyString(), any());
+    }
+
+    @Test
+    void flaggingADueManualTargetAnnouncesThatSomebodyHasToPostIt() {
+        // The manual lane's whole premise is that a person acts at a specific time. Without this the only
+        // way to find out was to happen to open the Post.
+        when(targetRepository.findDueAppManagedTargets(any())).thenReturn(List.of());
+        when(targetRepository.findDueManualTargets(any())).thenReturn(List.of(manualTarget("manual-1")));
+
+        scheduler.runTick(OffsetDateTime.now());
+
+        ArgumentCaptor<Signal> signal = ArgumentCaptor.forClass(Signal.class);
+        verify(signalBus).publish(signal.capture());
+        assertThat(signal.getValue().type())
+                .isEqualTo(SignalTypes.CONDUCTOR_WORK_ITEM_AWAITING_MANUAL_PUBLISH);
+        assertThat(signal.getValue().payload())
+                .containsEntry("platform", "tiktok")
+                // Routes to a project's Publishing channel rather than its engineering one.
+                .containsEntry(ChannelGroup.META_PUBLISHES, "true");
+    }
+
+    @Test
+    void aTargetWhoseClaimWasLostAnnouncesNothing() {
+        // Two ticks racing the same row: only the one that actually moved it may tell anybody, or a human
+        // gets the same "post this now" message every thirty seconds.
+        when(targetRepository.findDueAppManagedTargets(any())).thenReturn(List.of());
+        when(targetRepository.findDueManualTargets(any())).thenReturn(List.of(manualTarget("manual-1")));
+        when(claimQuery.executeUpdate()).thenReturn(0);
+
+        scheduler.runTick(OffsetDateTime.now());
+
+        verifyNoInteractions(signalBus);
+    }
+
+    @Test
+    void aFailureAnnouncingItStillLeavesTheTargetFlagged() {
+        // The row is already claimed and correct; a chat webhook being down must not undo that.
+        when(targetRepository.findDueAppManagedTargets(any())).thenReturn(List.of());
+        when(targetRepository.findDueManualTargets(any())).thenReturn(List.of(manualTarget("manual-1")));
+        org.mockito.Mockito.doThrow(new IllegalStateException("bus down")).when(signalBus).publish(any());
+
+        scheduler.runTick(OffsetDateTime.now());
+
+        assertThat(issuedStatements()).anyMatch(q -> q.contains("AWAITING_MANUAL"));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.conductor.service;
 
+import com.conductor.notification.ChannelGroup;
 import com.conductor.entity.Asset;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
@@ -374,6 +375,23 @@ public class WorkItemService {
      * format it for any Workflow without hardcoded status names. Public so the {@code LifecycleTriggerDispatcher}
      * publishes an identically-enriched event per cascade hop rather than duplicating the enrichment.
      */
+    /**
+     * Whether this Workflow treats publishing as a concept, by the one rule the whole pipeline uses: it
+     * declares an asset type named for a publishable platform. Kept identical to
+     * {@code PostScheduleValidator.declaresPublishTargets} — the validators gate on it, and notification
+     * routing reads it, so the two must agree about what a publishing Workflow is.
+     */
+    private static boolean declaresPublishTargets(Statechart statechart) {
+        return statechart.assetTypes().stream()
+                .filter(java.util.Objects::nonNull)
+                .anyMatch(assetType -> {
+                    String normalized = assetType.trim().toLowerCase(java.util.Locale.ROOT);
+                    int separator = normalized.indexOf('_');
+                    String head = separator < 0 ? normalized : normalized.substring(0, separator);
+                    return PostScheduleValidator.PUBLISH_PLATFORMS.contains(head);
+                });
+    }
+
     public void publishStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,
                                      String prUrl) {
         Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
@@ -385,6 +403,9 @@ public class WorkItemService {
             meta.put("workflow", workItem.getWorkflow());
         }
         meta.put("noun", statechart.noun());
+        // Lets notification routing prefer a Publishing channel without knowing any Workflow's area name:
+        // the same asset_types rule the publishing validators use, decided here where the statechart is.
+        meta.put(ChannelGroup.META_PUBLISHES, String.valueOf(declaresPublishTargets(statechart)));
         meta.put("fromStatus", fromStatus);
         meta.put("toStatus", toStatus);
         statechart.status(toStatus).ifPresent(s -> {

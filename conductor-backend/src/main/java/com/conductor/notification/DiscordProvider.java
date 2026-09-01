@@ -130,6 +130,25 @@ public class DiscordProvider implements NotificationProvider {
                 description = memberName + " role changed to " + role;
                 link = frontendUrl + "/app/projects/" + projectId + "/members";
             }
+            case POST_AWAITING_MANUAL -> {
+                String noun = meta.getOrDefault("noun", "Post");
+                String platform = meta.getOrDefault("platform", "a platform");
+                String account = meta.getOrDefault("accountLabel", "");
+
+                title = noun + " is due to be published by hand";
+                StringBuilder desc = new StringBuilder();
+                desc.append("**").append(meta.getOrDefault("workItemTitle", noun)).append("**\n");
+                desc.append("Nothing is publishing this one — post it on ").append(platform);
+                if (!account.isBlank()) {
+                    desc.append(" (").append(account).append(")");
+                }
+                desc.append(", then record the link in Conductor.");
+                description = desc.toString();
+                // Yellow: the one notification that asks the reader to go and do something, rather than
+                // telling them something has already happened.
+                color = COLOR_YELLOW;
+            }
+
             case WORKFLOW_RUN_FAILED -> {
                 String workflowName = meta.getOrDefault("workflowName", "Workflow");
                 String stepId = meta.getOrDefault("stepId", meta.getOrDefault("jobId", ""));

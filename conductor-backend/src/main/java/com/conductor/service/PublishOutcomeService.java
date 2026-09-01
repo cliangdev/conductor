@@ -249,6 +249,15 @@ public class PublishOutcomeService {
     @Lazy
     PublishOutcomeService self;
 
+    /**
+     * Injected {@code @Lazy} because the dependency is a cycle: {@code WorkItemService} reaches this
+     * service through the publishing services it owns. Lazy resolution is the pattern already used for the
+     * scheduler self-reference below, and is why the roll-up can announce a status change at all.
+     */
+    @Autowired
+    @Lazy
+    private WorkItemService workItemService;
+
     public PublishOutcomeService(PostPublishTargetRepository targetRepository,
                                  AssetService assetService,
                                  ConnectionHealthService connectionHealthService,
@@ -655,6 +664,19 @@ public class PublishOutcomeService {
                 postId, fromStatus, toStatus.get(),
                 counted.stream().filter(t -> t.getState() == PostPublishTargetState.PUBLISHED).count(),
                 counted.size());
+
+        // The roll-up is a status change like any other, so it has to announce itself like any other.
+        // Without this the one outcome anybody actually waits for — did it go out, or did it fail? — was
+        // the only status change in the product that notified nobody, and the Discord channel went quiet
+        // at exactly the moment it mattered. Best-effort: a chat webhook being down must never roll back
+        // a status that reflects what a platform has already done.
+        try {
+            workItemService.publishStatusChanged(
+                    post.getProject().getId(), post, fromStatus, toStatus.get(), null);
+        } catch (Exception e) {
+            log.warn("Post {} rolled up to {} but the status-changed event could not be published: {}",
+                    postId, toStatus.get(), e.getMessage());
+        }
     }
 
     /**

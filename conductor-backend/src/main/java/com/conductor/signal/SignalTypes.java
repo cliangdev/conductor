@@ -23,6 +23,8 @@ public final class SignalTypes {
     public static final String CONDUCTOR_WORK_ITEM_COMMENT_ADDED = "conductor.work_item.comment_added";
     public static final String CONDUCTOR_WORK_ITEM_COMMENT_REPLIED = "conductor.work_item.comment_replied";
     public static final String CONDUCTOR_WORK_ITEM_ASSET_ADDED = "conductor.work_item.asset_added";
+    public static final String CONDUCTOR_WORK_ITEM_AWAITING_MANUAL_PUBLISH =
+            "conductor.work_item.awaiting_manual_publish";
 
     public static final String CONDUCTOR_WORKFLOW_AUTO_PAUSED = "conductor.workflow.auto_paused";
     public static final String CONDUCTOR_WORKFLOW_RUN_FAILED = "conductor.workflow.run_failed";

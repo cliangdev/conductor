@@ -103,6 +103,26 @@ Each success records a typed **link Asset** on the Post whose `ref` is the perma
 puts the live link on the calendar chip and the list row (`externalLinks` on the Work Item response) —
 deliberately generic, so an Issue's `github_pr` gets the same treatment.
 
+## Getting told about it
+
+Publishing rides the same notification system everything else does, with its own channel so a marketing
+Discord channel is not the engineering one.
+
+Configure it at **Settings → Notifications → Publishing**: a webhook URL and which events it carries.
+Two things arrive there:
+
+- **A Post's status changing** — the same Workflow-agnostic `WORK_ITEM_STATUS_CHANGED` an Issue fires,
+  including the Published/Failed roll-up once every destination has landed.
+- **A destination coming due that publishes by hand** (`POST_AWAITING_MANUAL`) — the one publishing event
+  that is not a status change, because the Post itself stays Scheduled while a destination waits on a
+  person. Without it the manual lane would depend on someone happening to open the Post.
+
+Routing is decided from the event, not from a channel name: an item on a Workflow that declares
+publishable `asset_types` prefers the Publishing channel and **falls back to the Issues channel when a
+project has not configured one**, so adding this took nothing away from a project that already had
+notifications. A manual-publish alert has no fallback — there is nothing sensible to say about it in an
+Issues channel — so it is simply silent until a Publishing channel exists.
+
 ## Where things live
 
 - `workflow/PostPublishScheduler` — the APP_MANAGED dispatch poller and the MANUAL flagging pass
