@@ -24,7 +24,9 @@ async function requestWithStatus<T>(
     throw new Error(`API error ${response.status}: ${text}`)
   }
 
-  if (method === 'DELETE') {
+  // 204 as well as DELETE: an endpoint that answers "done, nothing to say" (e.g. confirming an upload)
+  // has no body to parse, and calling .json() on it throws.
+  if (method === 'DELETE' || response.status === 204) {
     return { data: undefined as T, status: response.status }
   }
 
@@ -77,6 +79,32 @@ export async function apiPut<T>(urlPath: string, body: unknown, config: Config):
 
 export async function apiDelete(urlPath: string, config: Config): Promise<void> {
   await request<void>('DELETE', urlPath, undefined, config)
+}
+
+/**
+ * PUTs raw bytes to an absolute upload URL — a signed bucket URL, or the backend's local passthrough.
+ * Deliberately sends no Authorization header: the URL itself is the capability, and a bucket signature is
+ * computed over an exact header set, so an extra one invalidates it.
+ */
+export async function putBytes(
+  url: string,
+  contentType: string,
+  bytes: Uint8Array
+): Promise<void> {
+  // Copy into a plain ArrayBuffer: the incoming view may be a slice of a pooled Node Buffer.
+  const buffer = new ArrayBuffer(bytes.byteLength)
+  new Uint8Array(buffer).set(bytes)
+
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: buffer,
+  })
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '')
+    throw new Error(`Upload PUT failed ${response.status}: ${text}`)
+  }
 }
 
 /**

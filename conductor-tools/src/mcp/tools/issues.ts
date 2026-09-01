@@ -127,13 +127,23 @@ async function createWorkItemImpl(
 }
 
 async function updateWorkItemImpl(
-  params: { issueId: string; title?: string; description?: string },
+  params: {
+    issueId: string
+    title?: string
+    description?: string
+    scheduledFor?: string
+    scheduleTimezone?: string
+  },
   config: Config,
   endpoint: WorkItemEndpoint
 ): Promise<Record<string, unknown>> {
   const body: Record<string, string> = {}
   if (params.title !== undefined) body['title'] = params.title
   if (params.description !== undefined) body['description'] = params.description
+  // Omitted leaves the stored schedule alone — only a field the caller actually sent is on the wire, so
+  // editing a title can never silently unschedule a Post.
+  if (params.scheduledFor !== undefined) body['scheduledFor'] = params.scheduledFor
+  if (params.scheduleTimezone !== undefined) body['scheduleTimezone'] = params.scheduleTimezone
 
   const itemPath = endpoint.item(config.projectId, params.issueId)
 
@@ -267,7 +277,13 @@ export async function createWorkItem(
 }
 
 export async function updateWorkItem(
-  params: { issueId: string; title?: string; description?: string },
+  params: {
+    issueId: string
+    title?: string
+    description?: string
+    scheduledFor?: string
+    scheduleTimezone?: string
+  },
   config: Config
 ): Promise<Record<string, unknown>> {
   return updateWorkItemImpl(params, config, V2)

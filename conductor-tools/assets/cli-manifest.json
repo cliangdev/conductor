@@ -152,7 +152,7 @@
     },
     {
       "name": "update_work_item",
-      "description": "Update an existing Work Item's title or description.",
+      "description": "Update an existing Work Item's title, description, or schedule (scheduledFor + scheduleTimezone).",
       "category": "issues",
       "requiredParams": ["issueId"]
     },
@@ -453,6 +453,29 @@
       "description": "Delete a docs folder and its subfolders; documents inside are kept and resurface at the project root.",
       "category": "project-docs",
       "requiredParams": ["path"]
+    },
+    {
+      "name": "list_publish_targets",
+      "description": "List the project's connected publishing accounts, and optionally a Work Item's selected targets with their publish state, permalink and error.",
+      "category": "marketing"
+    },
+    {
+      "name": "set_publish_targets",
+      "description": "Replace which connected accounts a Work Item publishes to, with per-target publish options.",
+      "category": "marketing",
+      "requiredParams": ["issueId", "targets"]
+    },
+    {
+      "name": "upload_asset",
+      "description": "Attach a local file to a Work Item as a file Asset in one call (mint, upload, confirm).",
+      "category": "marketing",
+      "requiredParams": ["issueId", "filePath", "type"]
+    },
+    {
+      "name": "retry_failed_publish_targets",
+      "description": "Re-fire only the failed publish targets on a Work Item.",
+      "category": "marketing",
+      "requiredParams": ["issueId"]
     }
   ]
 }
