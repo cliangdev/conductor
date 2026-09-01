@@ -62,6 +62,7 @@ export const EVENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   MEMBER_ROLE_CHANGED: 'Member role changed',
   WORKFLOW_RUN_FAILED: 'Workflow run failed',
   WORKFLOW_AUTO_PAUSED: 'Workflow auto-paused after repeated failures',
+  POST_AWAITING_MANUAL: 'Post is due to be published by hand',
 }
 
 export const EVENT_TYPE_SUBTITLES: Record<string, string> = {

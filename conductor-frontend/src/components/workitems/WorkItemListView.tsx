@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, SearchX } from 'lucide-react'
+import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, ListIcon, Plus, SearchX } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiGet, apiPatch, apiErrorMessage } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
@@ -39,6 +39,7 @@ import {
 import { WorkItemBoardView } from '@/components/workitems/WorkItemBoardView'
 import { WorkItemCalendarView } from '@/components/workitems/WorkItemCalendarView'
 import { WorkItemListSkeleton } from '@/components/workitems/WorkItemListSkeleton'
+import { CreateWorkItemModal } from '@/components/workitems/CreateWorkItemModal'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
 import { BulkActionBar } from '@/components/workitems/BulkActionBar'
@@ -111,6 +112,7 @@ export function WorkItemListView({
   // Selection group. Computed here (not after the loading/error early returns) since it feeds the
   // useWorkItemListState hook call below, and hooks can't follow a conditional return.
   const canEdit = userRole !== 'REVIEWER'
+  const [creating, setCreating] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -320,7 +322,30 @@ export function WorkItemListView({
 
   return (
     <PageContainer>
-      <PageHeader title={title} breadcrumbs={crumbs} />
+      <PageHeader
+        title={title}
+        breadcrumbs={crumbs}
+        actions={
+          canEdit ? (
+            <Button size="sm" onClick={() => setCreating(true)}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              New {noun}
+            </Button>
+          ) : undefined
+        }
+      />
+
+      <CreateWorkItemModal
+        open={creating}
+        onOpenChange={setCreating}
+        projectId={projectId}
+        workflowSlug={slug}
+        workflowView={workflowView}
+        detailArea={detailArea}
+        noun={noun}
+        token={accessToken!}
+        onCreated={() => void loadIssues()}
+      />
 
       {/* View tabs + display mode toggle */}
       <div className="flex items-center border-b border-border mb-4 -mx-1 px-1">

@@ -77,19 +77,44 @@ public class NotificationDeliveryService {
         if (config == null) {
             return;
         }
+        send(config, event);
+    }
 
+    /**
+     * Delivers to one named group, skipping routing entirely.
+     *
+     * <p>For "test this channel", where re-deriving the destination would defeat the point: a specialised
+     * group is chosen from an event's metadata, and a synthetic test event has none, so a routed test of
+     * the Publishing channel would quietly go to the Issues one — reporting success about a channel it
+     * never touched. Testing a channel has to mean testing <em>that</em> channel.
+     *
+     * @return true when a message actually reached the provider, so a caller can tell a human what really
+     *         happened rather than that the attempt was made
+     */
+    public boolean deliverTo(ChannelGroup group, NotificationMessage event) {
+        NotificationGroupConfig config = groupConfigRepository
+                .findByProjectIdAndChannelGroup(event.getProjectId(), group)
+                .filter(NotificationGroupConfig::isEnabled)
+                .orElse(null);
+        return config != null && send(config, event);
+    }
+
+    /** @return true when the provider accepted the message. */
+    private boolean send(NotificationGroupConfig config, NotificationMessage event) {
         NotificationProvider provider = resolveProvider(config.getProvider());
         if (provider == null) {
             log.warn("No provider implementation for: {}", config.getProvider());
-            return;
+            return false;
         }
 
         try {
             String formatted = provider.format(event);
             provider.send(config.getWebhookUrl(), formatted);
+            return true;
         } catch (Exception e) {
             log.warn("Failed to dispatch {} notification for project {}: {}",
                     event.getEventType(), event.getProjectId(), e.getMessage());
+            return false;
         }
     }
 

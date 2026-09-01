@@ -403,6 +403,15 @@ public class WorkItemService {
             meta.put("workflow", workItem.getWorkflow());
         }
         meta.put("noun", statechart.noun());
+        // The Work Item detail route is workflow-scoped, so a notification link needs the area and the
+        // display id to be clickable at all — without them a card about a Post pointed at /issues/{uuid}.
+        if (statechart.area() != null) {
+            meta.put("area", statechart.area());
+        }
+        if (workItem.getProject() != null && workItem.getProject().getKey() != null
+                && workItem.getSequenceNumber() != null) {
+            meta.put("displayId", workItem.getProject().getKey() + "-" + workItem.getSequenceNumber());
+        }
         // Lets notification routing prefer a Publishing channel without knowing any Workflow's area name:
         // the same asset_types rule the publishing validators use, decided here where the statechart is.
         meta.put(ChannelGroup.META_PUBLISHES, String.valueOf(declaresPublishTargets(statechart)));
