@@ -28,6 +28,7 @@ import {
   setPublishTargets,
   uploadAsset,
   retryFailedPublishTargets,
+  completeManualPublish,
 } from '../mcp/tools/marketing.js'
 import { updateWorkItem } from '../mcp/tools/issues.js'
 
@@ -385,6 +386,91 @@ describe('update_work_item schedules a Post', () => {
       { title: 'New' },
       config
     )
+  })
+})
+
+describe('the MANUAL lane is reachable end to end from an agent', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('selects a manual destination by naming only its platform', async () => {
+    // No account exists for it, so there is no connectionId to send. This is what makes a project with
+    // no social integration able to pick a target at all — without one it cannot clear the approval gate.
+    mocked(apiPut).mockResolvedValue([{ id: 't1', platform: 'tiktok', lane: 'MANUAL' }])
+
+    await setPublishTargets({ issueId: 'w1', targets: [{ platform: 'tiktok' }] }, config)
+
+    expect(apiPut).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets',
+      { targets: [{ platform: 'tiktok' }] },
+      config
+    )
+  })
+
+  it('records a manual publish and returns the target as read back', async () => {
+    const published = { id: 't1', lane: 'MANUAL', state: 'PUBLISHED', permalink: 'https://tiktok.com/x' }
+    mocked(apiPost).mockResolvedValue(published)
+
+    const result = await completeManualPublish(
+      { issueId: 'w1', targetId: 't1', permalink: 'https://tiktok.com/x' },
+      config
+    )
+
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/work-items/w1/publish-targets/t1/manual-publish',
+      { permalink: 'https://tiktok.com/x', publishedAt: null },
+      config
+    )
+    // The action and its verification in one call: an agent never has to guess whether the write landed.
+    expect(result['target']).toEqual(published)
+  })
+
+  it('passes on when it actually went out, for a link recorded after the fact', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 't1' })
+
+    await completeManualPublish(
+      {
+        issueId: 'w1',
+        targetId: 't1',
+        permalink: 'https://tiktok.com/x',
+        publishedAt: '2026-09-01T09:00:00Z',
+      },
+      config
+    )
+
+    expect(mocked(apiPost).mock.calls[0][1]).toEqual({
+      permalink: 'https://tiktok.com/x',
+      publishedAt: '2026-09-01T09:00:00Z',
+    })
+  })
+
+  it('refuses to call the server with no link at all', async () => {
+    // With no platform to ask, the link is the only record the destination went out. Caught here rather
+    // than round-tripping, so the agent gets the reason and the tool that finds the target id.
+    await expect(
+      completeManualPublish({ issueId: 'w1', targetId: 't1', permalink: '   ' }, config)
+    ).rejects.toThrow(/permalink is required/)
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+
+  it('trims the link rather than storing the whitespace around a pasted URL', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 't1' })
+
+    await completeManualPublish(
+      { issueId: 'w1', targetId: 't1', permalink: '  https://tiktok.com/x\n' },
+      config
+    )
+
+    expect(mocked(apiPost).mock.calls[0][1]).toMatchObject({ permalink: 'https://tiktok.com/x' })
+  })
+
+  it('surfaces the server refusal for an automated target rather than swallowing it', async () => {
+    // The backend refuses any target that is not MANUAL: its poller will publish it and report the real
+    // outcome, and a human declaring it published would strand a post still queued to go out.
+    mocked(apiPost).mockRejectedValue(new Error('API error 422: This destination publishes automatically'))
+
+    await expect(
+      completeManualPublish({ issueId: 'w1', targetId: 't1', permalink: 'https://x.test/1' }, config)
+    ).rejects.toThrow(/publishes automatically/)
   })
 })
 

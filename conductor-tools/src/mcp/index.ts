@@ -50,6 +50,7 @@ import {
   uploadAsset,
   retryFailedPublishTargets,
   type PublishTargetSelection,
+  completeManualPublish,
 } from './tools/marketing.js'
 import {
   listProjectDocs,
@@ -817,7 +818,7 @@ const TOOLS = [
             type: 'object',
             properties: {
               platform: { type: 'string', description: 'Platform of the account, from list_publish_targets' },
-              connectionId: { type: 'string', description: 'The connected account to publish to, from list_publish_targets' },
+              connectionId: { type: 'string', description: 'The connected account to publish to, from list_publish_targets. Omit it to select this platform\'s manual destination — the one a human posts by hand — which is offered whether or not the project has connected that platform.' },
               publishOptions: {
                 type: 'object',
                 description: 'Per-platform options for this target. A TikTok target with no privacyLevel blocks approval.',
@@ -831,7 +832,7 @@ const TOOLS = [
                 },
               },
             },
-            required: ['platform', 'connectionId'],
+            required: ['platform'],
           },
         },
       },
@@ -853,6 +854,20 @@ const TOOLS = [
         durationSeconds: { type: 'number', description: 'Playback length in seconds (optional; required in practice for video)' },
       },
       required: ['issueId', 'filePath', 'type'],
+    },
+  },
+  {
+    name: 'complete_manual_publish',
+    description: 'Record that a manual publish target was published by hand, storing the live URL. Only for targets on the MANUAL lane (list_publish_targets shows lane and state; a manual one due to go out is AWAITING_MANUAL) — a target that publishes automatically is refused, because its poller will publish it and report the real outcome. This reports what a human already did outside Conductor; it publishes nothing. Records the same destination Asset an API publish does, so the link surfaces on the calendar and list like any other. Returns the target as read back after recording.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        targetId: { type: 'string', description: 'The publish target\'s id, from list_publish_targets' },
+        permalink: { type: 'string', description: 'Link to the post that actually went out. Required — with no platform to ask, it is the only record this destination was published.' },
+        publishedAt: { type: 'string', description: 'ISO-8601 instant it actually went out (optional; defaults to now)' },
+      },
+      required: ['issueId', 'targetId', 'permalink'],
     },
   },
   {
@@ -1517,6 +1532,19 @@ export async function runMcpServer(): Promise<void> {
                 width: params['width'] as number | undefined,
                 height: params['height'] as number | undefined,
                 durationSeconds: params['durationSeconds'] as number | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'complete_manual_publish': {
+          return successResponse(
+            await completeManualPublish(
+              {
+                issueId: params['issueId'] as string,
+                targetId: params['targetId'] as string,
+                permalink: params['permalink'] as string,
+                publishedAt: params['publishedAt'] as string | undefined,
               },
               config
             )

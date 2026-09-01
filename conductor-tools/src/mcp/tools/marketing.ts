@@ -13,6 +13,12 @@ import { apiGet, apiPost, apiPut, apiDelete, putBytes } from '../api.js'
  * step stays a human action in the Conductor UI and the backend enforces it at the approval gate — an
  * agent consenting on a human's behalf would defeat the whole point. And nothing here takes a
  * credential: an account is named by its connection id, and the backend resolves the token behind it.
+ *
+ * The MANUAL lane runs through the same tools rather than getting its own: a manual destination is
+ * selected with set_publish_targets like any other (with no connectionId), and completed with
+ * complete_manual_publish. Worth being clear about what that tool is not — an agent recording a link is
+ * reporting something a human already did outside Conductor, not publishing anything itself. It stays
+ * exempt from the TikTok consent rule for the same reason the lane is: nothing is sent to TikTok.
  */
 
 const V2_PROJECT = (config: Config): string => `/api/v2/projects/${config.projectId}`
@@ -59,7 +65,11 @@ interface AssetRow {
 
 export interface PublishTargetSelection {
   platform: string
-  connectionId: string
+  /**
+   * The connected account to publish through. Omitted or null selects that platform's MANUAL
+   * destination — the one a human posts by hand — of which there is exactly one per platform.
+   */
+  connectionId?: string | null
   publishOptions?: Record<string, unknown>
 }
 
@@ -223,4 +233,34 @@ export async function retryFailedPublishTargets(
     undefined,
     config
   )
+}
+
+/**
+ * Records that a manual destination was published by hand, and reads back what it now looks like.
+ *
+ * The one way a target reaches PUBLISHED without a platform reporting it, so it is narrow by design: the
+ * backend refuses any target that is not on the MANUAL lane, because an automated one has a poller that
+ * will publish it and report the real outcome, and declaring it published would strand a post still
+ * queued to go out. A caller wanting to abandon an automated target should drop it with
+ * set_publish_targets instead.
+ *
+ * The response is the target as the server now holds it — the action and its verification in one call,
+ * so an agent never has to guess whether the write landed.
+ */
+export async function completeManualPublish(
+  params: { issueId: string; targetId: string; permalink: string; publishedAt?: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  if (!params.permalink || !params.permalink.trim()) {
+    throw new Error(
+      'permalink is required — it is the only record that this destination went out, because there is' +
+        ' no platform to ask. Find the target id with list_publish_targets.'
+    )
+  }
+  const target = await apiPost<Record<string, unknown>>(
+    `${workItemBase(config, params.issueId)}/publish-targets/${params.targetId}/manual-publish`,
+    { permalink: params.permalink.trim(), publishedAt: params.publishedAt ?? null },
+    config
+  )
+  return { issueId: params.issueId, target }
 }
