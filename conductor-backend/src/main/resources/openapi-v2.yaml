@@ -2644,6 +2644,17 @@ components:
         submittedAt:
           type: string
           format: date-time
+        current:
+          type: boolean
+          description: >-
+            Whether this review still describes the Work Item as it stands, and so still counts toward the
+            review gate. False for one cast in an earlier review round, or — on an item with publish
+            targets — against a different publish bundle: changing the caption, the schedule, the targets
+            or the media withdraws an approval rather than letting it cover a post nobody has seen.
+
+
+            Computed exactly the way the server's own gate computes it, so a client can never show
+            "approved" for a review the gate is ignoring.
 
     AssetResponse:
       type: object

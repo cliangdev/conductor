@@ -198,12 +198,38 @@ public class ReviewService {
             throw new EntityNotFoundException("Project not found");
         }
 
-        return reviewRepository.findAllByWorkItemId(workItemId).stream()
-                .map(this::toReviewWithUser)
+        WorkItem workItem = workItemRepository.findById(workItemId)
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+        List<Review> reviews = reviewRepository.findAllByWorkItemId(workItemId);
+        // Hashed at most once for the whole listing, and only when some review is actually hash-bound —
+        // the same economy the gate itself applies.
+        String currentBundleHash = reviews.stream().anyMatch(r -> r.getBundleHash() != null)
+                ? publishBundleHasher.hash(workItem)
+                : null;
+        return reviews.stream()
+                .map(review -> toReviewWithUser(review, workItem.getCurrentReviewRound(), currentBundleHash))
                 .toList();
     }
 
-    private ReviewWithUser toReviewWithUser(Review review) {
+    /**
+     * Whether a review still stands, by the same two tests the review gate applies: it belongs to the open
+     * review round, and — where it was bound to one — it was cast against the bundle the item currently
+     * hashes to. A review predating V115 carries a null round and a null hash and skips both, exactly as it
+     * does at the gate.
+     *
+     * <p>Duplicating the rule here rather than exposing it from {@code WorkItemWorkflowService} would be the
+     * mistake it looks like, so if that rule ever changes, this must change with it. It is worth the risk
+     * only because the alternative was worse: the detail panel counted approvals with no idea whether any
+     * of them still applied, and would happily say "1 of 1 approved" beside a gate refusing to open.
+     */
+    private static boolean stillStands(Review review, int currentRound, String currentBundleHash) {
+        if (review.getReviewRound() != null && review.getReviewRound() != currentRound) {
+            return false;
+        }
+        return review.getBundleHash() == null || review.getBundleHash().equals(currentBundleHash);
+    }
+
+    private ReviewWithUser toReviewWithUser(Review review, int currentRound, String currentBundleHash) {
         User user = userRepository.findById(review.getReviewerId()).orElse(null);
         return new ReviewWithUser(
                 review.getReviewerId(),
@@ -211,6 +237,7 @@ public class ReviewService {
                 review.getSubmittedAt(),
                 review.getBody(),
                 user != null ? user.getName() : null,
-                user != null ? user.getAvatarUrl() : null);
+                user != null ? user.getAvatarUrl() : null,
+                stillStands(review, currentRound, currentBundleHash));
     }
 }

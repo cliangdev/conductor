@@ -62,7 +62,10 @@ public class WorkItemReviewsController implements WorkItemReviewsApi {
         return new ReviewWithUserResponse(review.reviewerId(), review.verdict(), review.submittedAt())
                 .name(review.name())
                 .avatarUrl(review.avatarUrl())
-                .body(review.body());
+                .body(review.body())
+                // Whether the gate still counts it — without this a client can only see that someone
+                // approved, never whether the approval still applies to the item as it stands.
+                .current(review.current());
     }
 
     private User currentUser() {

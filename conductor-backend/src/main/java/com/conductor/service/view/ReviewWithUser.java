@@ -12,5 +12,12 @@ public record ReviewWithUser(
         OffsetDateTime submittedAt,
         String body,
         String name,
-        String avatarUrl) {
+        String avatarUrl,
+        /**
+         * Whether this review still describes the Work Item as it stands, and so still counts toward the
+         * review gate. False for one cast in an earlier review round, or against a different publish
+         * bundle. Computed the same way {@code WorkItemWorkflowService.hasCurrentApprovedReview} computes
+         * it, so a client cannot render "approved" for a review the gate is ignoring.
+         */
+        boolean current) {
 }

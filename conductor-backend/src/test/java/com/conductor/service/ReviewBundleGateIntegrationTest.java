@@ -384,4 +384,66 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
                 workItemWorkflowService.availableTransitions(project.getId(), workItem.getId(), admin);
         return view.transitions().stream().map(AvailableTransitionsView.Transition::toStatus).toList();
     }
+
+    // [auto] listReviews reports whether a review still stands, by the same rule the gate applies
+
+    private com.conductor.service.view.ReviewWithUser listedReviewOf(User user) {
+        return reviewService.listReviews(project.getId(), post.getId(), admin).stream()
+                .filter(r -> r.reviewerId().equals(user.getId()))
+                .findFirst().orElseThrow();
+    }
+
+    @Test
+    void aFreshApprovalIsReportedAsStillStanding() {
+        addTarget("meta", "facebook", null);
+        moveTo(post, "IN_REVIEW");
+        assignReviewer(reviewerA);
+        reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewerA);
+
+        assertThat(listedReviewOf(reviewerA).current()).isTrue();
+    }
+
+    @Test
+    void anApprovalStopsBeingReportedAsStandingOnceTheBundleChanges() {
+        // The number a human reads to decide whether something can be approved has to agree with the gate.
+        // Before this, the detail panel could say "1 of 1 approved" beside a gate refusing to open.
+        addTarget("meta", "facebook", null);
+        moveTo(post, "IN_REVIEW");
+        assignReviewer(reviewerA);
+        reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewerA);
+        assertThat(listedReviewOf(reviewerA).current()).isTrue();
+
+        editCaption("A different caption entirely");
+
+        assertThat(listedReviewOf(reviewerA).current()).isFalse();
+        // ...and the gate agrees, which is the whole point of computing it the same way.
+        assertThat(targetStatuses(reload(post))).doesNotContain("APPROVED");
+    }
+
+    @Test
+    void anApprovalFromAClosedReviewRoundIsNotReportedAsStanding() {
+        addTarget("meta", "facebook", null);
+        moveTo(post, "IN_REVIEW");
+        assignReviewer(reviewerA);
+        assignReviewer(reviewerB);
+        reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewerA);
+
+        // B sends it back, closing the round A approved in.
+        reviewService.submitReview(project.getId(), post.getId(), "CHANGES_REQUESTED", "not yet", reviewerB);
+        moveTo(post, "IN_REVIEW");
+
+        assertThat(listedReviewOf(reviewerA).current()).isFalse();
+    }
+
+    @Test
+    void aReviewPredatingTheBundleHashIsStillReportedAsStanding() {
+        // Null round and null hash skip both tests at the gate, so they must skip both here too — an
+        // ENGINEERING review, or any written before V115, must not start reading as withdrawn.
+        moveTo(post, "IN_REVIEW");
+        assignReviewer(reviewerA);
+        recordLegacyReview(post, reviewerA);
+
+        assertThat(listedReviewOf(reviewerA).current()).isTrue();
+    }
+
 }

@@ -903,6 +903,15 @@ export function WorkItemDetailView({
               reviewers={reviewers}
               reviews={reviews}
               canManage={canManage}
+              scheduledFor={issue.scheduledFor}
+              scheduleTimezone={issue.scheduleTimezone}
+              onScheduleChanged={(scheduledFor, scheduleTimezone) => {
+                setIssue((prev) => (prev ? { ...prev, scheduledFor, scheduleTimezone } : prev))
+                // A schedule edit is a publish-bundle edit, so the server may have reverted the item out
+                // of Approved and revoked anything already handed to a platform. Re-read rather than
+                // assume, exactly as the target picker does.
+                void refreshIssueStatus()
+              }}
               assignableReviewers={assignableReviewers}
               onAssignReviewer={handleAssignReviewer}
               onUnassignReviewer={handleUnassignReviewer}

@@ -1,5 +1,6 @@
 'use client'
 
+import { WorkItemScheduleField } from '@/components/workitems/WorkItemScheduleField'
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink, Plus, XIcon } from 'lucide-react'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
@@ -108,6 +109,9 @@ export function WorkItemPropertiesPanel({
   onAssignReviewer,
   onUnassignReviewer,
   assets,
+  scheduledFor,
+  scheduleTimezone,
+  onScheduleChanged,
 }: {
   projectId: string
   issueId: string
@@ -133,8 +137,29 @@ export function WorkItemPropertiesPanel({
   onAssignReviewer: (userId: string) => void
   onUnassignReviewer: (userId: string) => void
   assets: WorkItemAsset[]
+  /** ISO instant this item is due, or null. A generic Work Item field — see WorkItemScheduleField. */
+  scheduledFor?: string | null
+  scheduleTimezone?: string | null
+  onScheduleChanged: (scheduledFor: string | null, scheduleTimezone: string | null) => void
 }) {
-  const approvedCount = reviewers.filter((r) => r.reviewVerdict === 'APPROVED').length
+  // Counted from `reviews`, not from `reviewers`. The reviewers endpoint returns assignment only —
+  // userId, email, name — and carries no verdict, so filtering it on reviewVerdict matched nothing and
+  // the panel read "0 of N approved" however many people had actually approved. Latest verdict per
+  // reviewer wins, which is how the server's own review gate reads it too.
+  // Counted from `reviews`, not from `reviewers`: the reviewers endpoint returns assignment only —
+  // userId, email, name — and carries no verdict, so filtering it on reviewVerdict matched nothing and
+  // this read "0 of N approved" however many people had actually approved.
+  //
+  // And only reviews the server still counts. An approval is bound to the item it was given for, so
+  // editing a Post's caption, schedule, targets or media withdraws it; showing "1 of 1 approved" beside
+  // a gate that is refusing to open is worse than showing nothing. `current` is computed by the same
+  // rule the gate applies, and an older server that omits it is treated as standing.
+  const latest = new Map<string, DetailReview>()
+  for (const review of reviews) latest.set(review.reviewerId, review)
+  const approvedCount = reviewers.filter((r) => {
+    const review = latest.get(r.userId)
+    return review?.verdict === 'APPROVED' && review.current !== false
+  }).length
   const links = assets.filter((a) => a.kind === 'link')
 
   return (
@@ -149,6 +174,18 @@ export function WorkItemPropertiesPanel({
           workflowSlug={workflowSlug}
           onStatusChanged={onStatusChanged}
           triggerRef={statusTriggerRef}
+        />
+      </PanelSection>
+
+      <PanelSection label="Schedule">
+        <WorkItemScheduleField
+          projectId={projectId}
+          issueId={issueId}
+          token={token}
+          scheduledFor={scheduledFor}
+          scheduleTimezone={scheduleTimezone}
+          canEdit={userRole !== 'REVIEWER'}
+          onChanged={onScheduleChanged}
         />
       </PanelSection>
 
