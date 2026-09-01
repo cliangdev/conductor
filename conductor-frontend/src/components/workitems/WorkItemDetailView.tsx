@@ -855,7 +855,9 @@ export function WorkItemDetailView({
                   targets={tiktokTargets}
                   assets={mediaAssets}
                   caption={issue.title}
-                  consented={tiktokConsented}
+                  projectId={projectId}
+                  workItemId={issueId}
+                  token={accessToken!}
                   onConsentChange={(given) => setConsentedTo(given ? consentSubject : null)}
                 />
               )}
