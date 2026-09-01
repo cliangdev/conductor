@@ -36,6 +36,8 @@ import com.conductor.service.RuntimeTargetService;
 import com.conductor.verification.Check;
 import com.conductor.verification.CheckStatus;
 import com.conductor.workflow.RunTokenService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.NullNode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,6 +50,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.OffsetDateTime;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -81,6 +84,8 @@ class ConnectorAppCredentialControllerTest {
 
     private static final String PROJECT_ID = "proj-1";
     private static final String BASE = "/api/v1/projects/" + PROJECT_ID + "/integrations/";
+    /** The hub endpoint the Integrations UI actually calls — no trailing slash. */
+    private static final String LIST = "/api/v1/projects/" + PROJECT_ID + "/integrations";
     private static final String ADMIN_TOKEN = "admin-token";
     private static final String CREATOR_TOKEN = "creator-token";
     private static final String PROJECT_SECRET = "brought-my-own-secret-4242";
@@ -211,6 +216,95 @@ class ConnectorAppCredentialControllerTest {
 
         verify(appCredentialRepository, times(1)).findByProjectId(PROJECT_ID);
         verify(appCredentialRepository, never()).findByProjectIdAndConnectorId(anyString(), anyString());
+    }
+
+    // ---- integrations-list readiness (the endpoint the Integrations UI calls) ----
+
+    @Test
+    void theIntegrationsListReportsNoneAndNamesTheMissingEnvironmentVariables() throws Exception {
+        mockMvc.perform(get(LIST).header("Authorization", "Bearer " + ADMIN_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[1].connectorId").value("tiktok"))
+                .andExpect(jsonPath("$[1].appCredential.credentialSource").value("NONE"))
+                .andExpect(jsonPath("$[1].appCredential.configured").value(false))
+                .andExpect(jsonPath("$[1].appCredential.missingProperties[0]").value("TIKTOK_CLIENT_KEY"))
+                .andExpect(jsonPath("$[1].appCredential.missingProperties[1]").value("TIKTOK_CLIENT_SECRET"));
+    }
+
+    @Test
+    void theIntegrationsListReportsDeploymentWhenTheEnvironmentVariablesAreSet() throws Exception {
+        mockMvc.perform(get(LIST).header("Authorization", "Bearer " + ADMIN_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].connectorId").value("meta"))
+                .andExpect(jsonPath("$[0].appCredential.credentialSource").value("DEPLOYMENT"))
+                .andExpect(jsonPath("$[0].appCredential.configured").value(true))
+                .andExpect(jsonPath("$[0].appCredential.clientId").value("env-meta-app-id"))
+                .andExpect(jsonPath("$[0].appCredential.clientSecretLast4").value("8888"))
+                .andExpect(jsonPath("$[0].appCredential.missingProperties").isEmpty());
+    }
+
+    @Test
+    void theIntegrationsListReportsProjectWhenTheWorkspaceBroughtItsOwnApp() throws Exception {
+        storeRow("meta", "workspace-app-id", PROJECT_SECRET);
+
+        mockMvc.perform(get(LIST).header("Authorization", "Bearer " + ADMIN_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].appCredential.credentialSource").value("PROJECT"))
+                .andExpect(jsonPath("$[0].appCredential.clientId").value("workspace-app-id"))
+                .andExpect(jsonPath("$[0].appCredential.clientSecretLast4").value("4242"))
+                .andExpect(jsonPath("$[0].appCredential.updatedBy").value("admin-user"));
+    }
+
+    @Test
+    void theIntegrationsListLeavesNonOAuth2ConnectorsUntouched() throws Exception {
+        mockMvc.perform(get(LIST).header("Authorization", "Bearer " + ADMIN_TOKEN))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[2].connectorId").value("posthog"))
+                .andExpect(jsonPath("$[2].appCredential").doesNotExist());
+    }
+
+    @Test
+    void theIntegrationsListUsesOneCredentialQueryRegardlessOfConnectorCount() throws Exception {
+        mockMvc.perform(get(LIST).header("Authorization", "Bearer " + ADMIN_TOKEN))
+                .andExpect(status().isOk());
+
+        verify(appCredentialRepository, times(1)).findByProjectId(PROJECT_ID);
+        verify(appCredentialRepository, never()).findByProjectIdAndConnectorId(anyString(), anyString());
+    }
+
+    /**
+     * The assertion nobody had. Both endpoints list every registered connector, and readiness that is
+     * only true on one of them is the bug this test exists to catch: the UI reads the hub endpoint,
+     * so a catalog-only readiness field is invisible where it matters. Compares the whole masked
+     * object per connector, not just one field, and covers all three sources at once (a PROJECT row,
+     * a DEPLOYMENT fallback, and a NONE with missing properties).
+     */
+    @Test
+    void theIntegrationsListAndTheCatalogAgreeOnEveryConnectorsReadiness() throws Exception {
+        storeRow("meta", "workspace-app-id", PROJECT_SECRET);
+
+        Map<String, JsonNode> fromList = readinessByConnector(LIST, "connectorId");
+        Map<String, JsonNode> fromCatalog = readinessByConnector(BASE + "catalog", "id");
+
+        assertThat(fromList).containsOnlyKeys("meta", "tiktok", "posthog");
+        assertThat(fromList).isEqualTo(fromCatalog);
+    }
+
+    /**
+     * connectorId -> the entry's appCredential, with an omitted field normalised to null so the two
+     * endpoints are compared on readiness rather than on Jackson's null-inclusion.
+     */
+    private Map<String, JsonNode> readinessByConnector(String url, String idField) throws Exception {
+        String body = mockMvc.perform(get(url).header("Authorization", "Bearer " + ADMIN_TOKEN))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        Map<String, JsonNode> byConnectorId = new LinkedHashMap<>();
+        for (JsonNode entry : new com.fasterxml.jackson.databind.ObjectMapper().readTree(body)) {
+            JsonNode credential = entry.get("appCredential");
+            byConnectorId.put(entry.get(idField).asText(),
+                    credential == null ? NullNode.getInstance() : credential);
+        }
+        return byConnectorId;
     }
 
     // ---- write endpoints ----
@@ -349,6 +443,9 @@ class ConnectorAppCredentialControllerTest {
         String catalog = mockMvc.perform(get(BASE + "catalog")
                         .header("Authorization", "Bearer " + ADMIN_TOKEN))
                 .andReturn().getResponse().getContentAsString();
+        String list = mockMvc.perform(get(LIST)
+                        .header("Authorization", "Bearer " + ADMIN_TOKEN))
+                .andReturn().getResponse().getContentAsString();
         String cleared = mockMvc.perform(delete(BASE + "meta/app-credentials")
                         .header("Authorization", "Bearer " + ADMIN_TOKEN))
                 .andReturn().getResponse().getContentAsString();
@@ -356,6 +453,7 @@ class ConnectorAppCredentialControllerTest {
         assertThat(put).doesNotContain(PROJECT_SECRET);
         assertThat(read).doesNotContain(PROJECT_SECRET);
         assertThat(catalog).doesNotContain(PROJECT_SECRET).doesNotContain("env-meta-secret-8888");
+        assertThat(list).doesNotContain(PROJECT_SECRET).doesNotContain("env-meta-secret-8888");
         assertThat(cleared).doesNotContain("env-meta-secret-8888");
     }
 

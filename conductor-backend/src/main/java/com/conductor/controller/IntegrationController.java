@@ -149,8 +149,13 @@ public class IntegrationController implements IntegrationsApi {
     @Override
     public ResponseEntity<List<IntegrationListItem>> listIntegrations(String projectId) {
         requireMember(projectId);
+        List<Connector> registered = connectorRegistry.getAll();
+        // The hub view the Integrations UI reads, so readiness has to be here and not only on the
+        // catalog: without it the browse grid offers "Authorize" for a connector whose consent flow
+        // cannot start, and the failure surfaces as an exception naming an environment variable.
+        Map<String, ConnectorAppCredentialStatusDto> appCredentials = appCredentialStatuses(projectId, registered);
         List<IntegrationListItem> items = new ArrayList<>();
-        for (Connector connector : connectorRegistry.getAll()) {
+        for (Connector connector : registered) {
             ConnectorMetadata meta = connector.getMetadata();
             ConnectorSpec spec = connector.getSpec();
             List<Connection> connections = connectionService.list(projectId, connector.getId());
@@ -167,7 +172,9 @@ public class IntegrationController implements IntegrationsApi {
                     .iconLabel(meta.iconLabel())
                     .connected(!connections.isEmpty())
                     .configFields(toConfigFieldDtos(spec))
-                    .connections(connections.stream().map(this::toConnectionSummary).toList());
+                    .connections(connections.stream().map(this::toConnectionSummary).toList())
+                    // Null for a non-OAuth2 connector -- it has no app credential to configure.
+                    .appCredential(appCredentials.get(connector.getId()));
             items.add(item);
         }
         return ResponseEntity.ok(items);
@@ -651,10 +658,13 @@ public class IntegrationController implements IntegrationsApi {
     }
 
     /**
-     * One credential query for the whole catalog: {@link ConnectorAppCredentialService#statuses} loads
-     * the project's rows in a single query and resolves the rest from the deployment env, so catalog
+     * One credential query for a whole connector list: {@link ConnectorAppCredentialService#statuses}
+     * loads the project's rows in a single query and resolves the rest from the deployment env, so the
      * cost stays flat as OAuth2 connectors are added. Calling {@code status()} per connector here
      * would reintroduce the N+1 that method exists to avoid.
+     *
+     * <p>Shared by {@link #listIntegrations} and {@link #listConnectorCatalog} deliberately: the two
+     * endpoints list the same connectors and must never disagree about whether one is ready.
      */
     private Map<String, ConnectorAppCredentialStatusDto> appCredentialStatuses(
             String projectId, List<Connector> connectors) {

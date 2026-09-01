@@ -5859,6 +5859,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ConnectionSummary'
+        appCredential:
+          allOf:
+            - $ref: '#/components/schemas/ConnectorAppCredentialStatusDto'
+          nullable: true
+          description: >-
+            Whether the OAuth *app* this connector would authenticate as is configured for this
+            project, so readiness is visible before anyone attempts consent. Null for connectors
+            that do not use OAuth2 — they have no app credential to configure. Identical to the
+            same connector's `appCredential` on GET .../integrations/catalog — this is the hub view
+            the Integrations UI reads, and the two must never disagree.
 
     ConnectorCatalogEntryDto:
       type: object
