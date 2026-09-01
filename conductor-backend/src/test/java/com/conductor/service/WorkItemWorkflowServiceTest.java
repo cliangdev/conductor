@@ -50,6 +50,7 @@ class WorkItemWorkflowServiceTest {
     private WorkflowDefinitionVersionRepository versionRepository;
     private PostScheduleValidator postScheduleValidator;
     private MediaTargetValidator mediaTargetValidator;
+    private PublishOptionsValidator publishOptionsValidator;
     private WorkItemWorkflowService service;
 
     @BeforeEach
@@ -70,9 +71,10 @@ class WorkItemWorkflowServiceTest {
         PublishBundleHasher publishBundleHasher = Mockito.mock(PublishBundleHasher.class);
         postScheduleValidator = Mockito.mock(PostScheduleValidator.class);
         mediaTargetValidator = Mockito.mock(MediaTargetValidator.class);
+        publishOptionsValidator = Mockito.mock(PublishOptionsValidator.class);
         service = new WorkItemWorkflowService(workItemRepository, projectSecurityService, projectMemberRepository,
                 reviewRepository, resolver, systemTriggerRegistry, publishBundleHasher, postScheduleValidator,
-                mediaTargetValidator);
+                mediaTargetValidator, publishOptionsValidator);
     }
 
     /**
@@ -90,6 +92,7 @@ class WorkItemWorkflowServiceTest {
 
         verify(postScheduleValidator).validateForTransition(eq(item), any(), eq("IN_REVIEW"));
         verify(mediaTargetValidator).validateForTransition(eq(item), any(), eq("IN_REVIEW"));
+        verify(publishOptionsValidator).validateForTransition(eq(item), any(), eq("IN_REVIEW"));
     }
 
     /** An illegal transition must fail before the publish-bundle validator is ever consulted. */
@@ -102,6 +105,7 @@ class WorkItemWorkflowServiceTest {
 
         verify(postScheduleValidator, never()).validateForTransition(any(), any(), any());
         verify(mediaTargetValidator, never()).validateForTransition(any(), any(), any());
+        verify(publishOptionsValidator, never()).validateForTransition(any(), any(), any());
     }
 
     private WorkflowDefinitionVersion engineeringSnapshot() {

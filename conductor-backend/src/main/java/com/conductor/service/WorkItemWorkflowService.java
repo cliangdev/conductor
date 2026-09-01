@@ -54,6 +54,7 @@ public class WorkItemWorkflowService {
     private final PublishBundleHasher publishBundleHasher;
     private final PostScheduleValidator postScheduleValidator;
     private final MediaTargetValidator mediaTargetValidator;
+    private final PublishOptionsValidator publishOptionsValidator;
 
     public WorkItemWorkflowService(WorkItemRepository workItemRepository,
                                    ProjectSecurityService projectSecurityService,
@@ -63,7 +64,8 @@ public class WorkItemWorkflowService {
                                    SystemTriggerRegistry systemTriggerRegistry,
                                    PublishBundleHasher publishBundleHasher,
                                    PostScheduleValidator postScheduleValidator,
-                                   MediaTargetValidator mediaTargetValidator) {
+                                   MediaTargetValidator mediaTargetValidator,
+                                   PublishOptionsValidator publishOptionsValidator) {
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
@@ -73,6 +75,7 @@ public class WorkItemWorkflowService {
         this.publishBundleHasher = publishBundleHasher;
         this.postScheduleValidator = postScheduleValidator;
         this.mediaTargetValidator = mediaTargetValidator;
+        this.publishOptionsValidator = publishOptionsValidator;
     }
 
     /** The Workflow's initial status id (e.g. {@code DRAFT}), used to stamp a freshly created Work Item. */
@@ -139,6 +142,10 @@ public class WorkItemWorkflowService {
         // apply to. The returned Result carries advisory-only warnings (e.g. "YouTube will treat this as a
         // Short"); the validator logs them itself, so discarding the value here never changes the outcome.
         mediaTargetValidator.validateForTransition(workItem, statechart, newStatus);
+        // Publishing workflows additionally require every per-target publish option to have been chosen and
+        // to be one the platform will accept — a TikTok target with no privacy level would publish visible
+        // only to its creator. Also a no-op for every transition it does not apply to.
+        publishOptionsValidator.validateForTransition(workItem, statechart, newStatus);
     }
 
     /**
