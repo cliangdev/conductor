@@ -199,11 +199,22 @@ class PublishBundleHasherTest {
     }
 
     private PostPublishTarget target(String connectorId, String connectionId, String captionOverride) {
+        return target(connectorId, connectionId, captionOverride, "facebook");
+    }
+
+    private PostPublishTarget target(String connectorId, String connectionId, String captionOverride,
+                                     String platform) {
         PostPublishTarget target = new PostPublishTarget();
         target.setConnectorId(connectorId);
         target.setConnectionId(connectionId);
         target.setCaptionOverride(captionOverride);
+        target.setPlatform(platform);
         return target;
+    }
+
+    /** A manual destination: no connector, no account — only its platform tells it from another. */
+    private PostPublishTarget manualTarget(String platform) {
+        return target(null, null, null, platform);
     }
 
     private Asset uploaded(String id, String gcsPath) {
@@ -230,4 +241,49 @@ class PublishBundleHasherTest {
         asset.setRef("https://example.com");
         return asset;
     }
+
+    // [auto] The platform is part of a target's identity in the bundle (MKT-2)
+
+    @Test
+    void swappingOnePlatformForAnotherOnTheSameConnectionChangesTheHash() {
+        // A Meta connection yields both a Facebook and an Instagram target, identical in every other field
+        // the tuple carries. Without the platform in it, swapping one for the other left the hash unchanged
+        // — and an approval standing over a post going somewhere it was never approved to go.
+        WorkItem post = post("Launch teaser");
+        givenAssets();
+
+        givenTargets(target("meta", "conn-a", null, "facebook"));
+        String facebook = hasher.hash(post);
+
+        givenTargets(target("meta", "conn-a", null, "instagram"));
+        String instagram = hasher.hash(post);
+
+        assertThat(facebook).isNotEqualTo(instagram);
+    }
+
+    @Test
+    void twoManualDestinationsOnDifferentPlatformsHashDifferently() {
+        // Manual targets are the plainest case: every one of them has a null connector and a null
+        // connection, so the platform is the *only* thing that distinguishes them.
+        WorkItem post = post("Launch teaser");
+        givenAssets();
+
+        givenTargets(manualTarget("tiktok"));
+        String tiktok = hasher.hash(post);
+
+        givenTargets(manualTarget("youtube"));
+        String youtube = hasher.hash(post);
+
+        assertThat(tiktok).isNotEqualTo(youtube);
+    }
+
+    @Test
+    void aManualTargetHashesConsistentlyDespiteItsNullFields() {
+        WorkItem post = post("Launch teaser");
+        givenAssets();
+        givenTargets(manualTarget("tiktok"));
+
+        assertThat(hasher.hash(post)).isEqualTo(hasher.hash(post));
+    }
+
 }

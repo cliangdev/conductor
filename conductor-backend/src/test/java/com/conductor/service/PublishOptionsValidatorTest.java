@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PublishLane;
 import com.conductor.entity.Project;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
@@ -433,4 +434,62 @@ class PublishOptionsValidatorTest {
             throw new IllegalStateException(e);
         }
     }
+
+    // --- [auto] The MANUAL lane is exempt, and only the MANUAL lane (MKT-2) ---------------------
+
+    /** A TikTok destination a human posts by hand: no account, no options, no API call. */
+    private PostPublishTarget manualTikTokTarget() {
+        PostPublishTarget target = new PostPublishTarget();
+        target.setId("target-tiktok-manual");
+        target.setPlatform("tiktok");
+        target.setPlatformAccountLabel("TikTok (manual)");
+        target.setLane(PublishLane.MANUAL);
+        return target;
+    }
+
+    @Test
+    void aManualTikTokDestinationNeedsNoPrivacyLevel() {
+        // Every TikTok rule here is about what we would send to the Content Posting API. On this lane we
+        // send nothing: the creator picks the privacy level in TikTok's own composer. Demanding one here
+        // would make a manual TikTok post impossible to approve for want of an answer nobody uses.
+        givenTargets(manualTikTokTarget());
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void aManualTikTokDestinationNeedsNoRecordedConsent() {
+        // The consent requirement exists because TikTok wants the creator to see a preview and the
+        // destination account before we post on their behalf. On this lane they are inside TikTok, seeing
+        // TikTok's own preview, posting as themselves — the outcome the rule exists to produce.
+        givenConsent(PublishConsentService.Verdict.NEVER_GIVEN);
+        givenTargets(manualTikTokTarget());
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void anApiTikTokTargetAlongsideAManualOneStillNeedsConsentAndAPrivacyLevel() {
+        // The exemption must not become a bypass. If a manual target could suppress the rules for the
+        // whole Post, adding one would be a way to publish through the API with neither.
+        givenConsent(PublishConsentService.Verdict.NEVER_GIVEN);
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(manualTikTokTarget(), tiktokTarget(null));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("privacy level")
+                .hasMessageContaining("consent");
+    }
+
+    @Test
+    void aManualTargetIsNotEvenLookedUpAgainstAConnection() {
+        // It has none. A lookup here would mean the exemption ran too late to matter.
+        givenTargets(manualTikTokTarget());
+
+        approve();
+
+        verifyNoInteractions(connectionRepository, publishConsentService);
+    }
+
 }

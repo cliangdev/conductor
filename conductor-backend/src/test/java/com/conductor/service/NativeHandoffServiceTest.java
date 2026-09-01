@@ -592,4 +592,63 @@ class NativeHandoffServiceTest {
         verify(actionInvocationService).invoke(any(), anyString(), any(),
                 eq("pub:post-1:facebook:connection-ok"), any());
     }
+
+    // --- [auto] Unscheduling stands manual targets down too (MKT-2) -----------------------------
+
+    private PostPublishTarget manual(PostPublishTargetState state) {
+        PostPublishTarget target = new PostPublishTarget();
+        target.setId("manual-1");
+        target.setWorkItem(post(NativeHandoffService.SCHEDULED_STATUS));
+        target.setPlatform("tiktok");
+        target.setLane(PublishLane.MANUAL);
+        target.setState(state);
+        target.setFireTime(OffsetDateTime.now());
+        target.setIdempotencyKey("pub:post-1:tiktok:manual");
+        return target;
+    }
+
+    private void givenAwaitingManual(PostPublishTarget target) {
+        when(targetRepository.findAllByWorkItemIdAndState("post-1", PostPublishTargetState.AWAITING_MANUAL))
+                .thenReturn(List.of(target));
+    }
+
+    @Test
+    void unschedulingStandsAWaitingManualTargetBackDownToPending() {
+        // AWAITING_MANUAL means "someone still has to post this". Once the Post is pulled back that is no
+        // longer true, and leaving the row flagged keeps asking a human to publish a post that has been
+        // withdrawn — the manual-lane equivalent of leaving a scheduled post live on a platform.
+        PostPublishTarget target = manual(PostPublishTargetState.AWAITING_MANUAL);
+        givenAwaitingManual(target);
+
+        service.unschedule(target.getWorkItem());
+
+        assertThat(target.getState()).isEqualTo(PostPublishTargetState.PENDING);
+        verify(targetRepository).save(target);
+    }
+
+    @Test
+    void unschedulingLeavesAManualTargetAHumanAlreadyPublishedAlone() {
+        // A manual target marked PUBLISHED describes a post that really is live and out of Conductor's
+        // reach. Nothing here can take it down, and reverting the row would erase the only record of it.
+        PostPublishTarget published = manual(PostPublishTargetState.PUBLISHED);
+        when(targetRepository.findAllByWorkItemIdAndState("post-1", PostPublishTargetState.AWAITING_MANUAL))
+                .thenReturn(List.of());
+
+        service.unschedule(published.getWorkItem());
+
+        assertThat(published.getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        verify(targetRepository, never()).save(published);
+    }
+
+    @Test
+    void standingDownAManualTargetCallsNoPlatform() {
+        // There is no platform to call. If this ever invoked an action it would mean a manual target had
+        // acquired a connector, which the DB CHECK constraint forbids.
+        givenAwaitingManual(manual(PostPublishTargetState.AWAITING_MANUAL));
+
+        service.unschedule(post(NativeHandoffService.SCHEDULED_STATUS));
+
+        verifyNoInteractions(actionInvocationService);
+    }
+
 }

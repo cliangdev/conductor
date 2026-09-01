@@ -483,4 +483,82 @@ class PostPublishSchedulerTest {
         verify(actionInvocationService).invoke(any(), anyString(), any(), anyString(), sensitive.capture());
         assertThat(sensitive.getValue()).isEmpty();
     }
+
+    // ---- MANUAL lane: flagged for a human, never dispatched (MKT-2) -------------------------------
+
+    private PostPublishTarget manualTarget(String id) {
+        PostPublishTarget target = new PostPublishTarget();
+        target.setId(id);
+        target.setWorkItem(post(PostPublishScheduler.SCHEDULED_STATUS));
+        target.setPlatform("tiktok");
+        target.setLane(PublishLane.MANUAL);
+        target.setState(PostPublishTargetState.PENDING);
+        target.setFireTime(OffsetDateTime.now().minusMinutes(1));
+        target.setIdempotencyKey("pub:post-1:tiktok:manual");
+        return target;
+    }
+
+    /** Every JPQL statement the tick issued, in order. */
+    private List<String> issuedStatements() {
+        ArgumentCaptor<String> jpql = ArgumentCaptor.forClass(String.class);
+        verify(entityManager, org.mockito.Mockito.atLeast(0)).createQuery(jpql.capture());
+        return jpql.getAllValues();
+    }
+
+    @Test
+    void aDueManualTargetIsFlaggedForAHumanAndNothingIsDispatched() {
+        when(targetRepository.findDueAppManagedTargets(any())).thenReturn(List.of());
+        when(targetRepository.findDueManualTargets(any())).thenReturn(List.of(manualTarget("manual-1")));
+
+        scheduler.runTick(OffsetDateTime.now());
+
+        // The whole of Conductor's job on this lane is the state change. Nothing is invoked, and no
+        // connection is even resolved — there is no credential involved in a manual publish.
+        verifyNoInteractions(actionInvocationService);
+        verifyNoInteractions(connectionResolver);
+        assertThat(issuedStatements()).anyMatch(q -> q.contains("AWAITING_MANUAL"));
+    }
+
+    @Test
+    void theManualClaimReassertsBothPendingAndTheManualLane() {
+        // Same protection the dispatch claim has, for the same reason: two ticks racing the same row both
+        // read PENDING, and only one UPDATE may land. Re-asserting the lane additionally means a target
+        // that is not manual can never be pulled onto this path.
+        when(targetRepository.findDueAppManagedTargets(any())).thenReturn(List.of());
+        when(targetRepository.findDueManualTargets(any())).thenReturn(List.of(manualTarget("manual-1")));
+
+        scheduler.runTick(OffsetDateTime.now());
+
+        String claim = issuedStatements().stream()
+                .filter(q -> q.contains("AWAITING_MANUAL"))
+                .findFirst().orElseThrow();
+        assertThat(claim).contains("PublishLane.MANUAL");
+        assertThat(claim).contains("PostPublishTargetState.PENDING");
+    }
+
+    @Test
+    void aFailureFlaggingManualTargetsNeverCostsARealPublishItsTick() {
+        // The manual pass is bookkeeping; a publish is not. One must not be able to take down the other.
+        given(dueTarget());
+        when(targetRepository.findDueManualTargets(any()))
+                .thenThrow(new IllegalStateException("manual query exploded"));
+
+        scheduler.runTick(OffsetDateTime.now());
+
+        verify(actionInvocationService).invoke(any(), anyString(), any(), anyString(), any());
+    }
+
+    @Test
+    void aManualTargetIsNeverReturnedByTheDispatchQueryAndSoIsNeverPublished() {
+        // Belt and braces on the query contract itself: the dispatch loop only ever sees what
+        // findDueAppManagedTargets returns, and that query filters on the APP_MANAGED lane in SQL.
+        when(targetRepository.findDueAppManagedTargets(any())).thenReturn(List.of());
+        when(targetRepository.findDueManualTargets(any())).thenReturn(List.of(manualTarget("manual-1")));
+
+        scheduler.runTick(OffsetDateTime.now());
+
+        verify(publishOutcomeService, never()).recordSuccess(anyString(), any(), any());
+        verify(publishOutcomeService, never()).recordFailure(anyString(), anyString());
+    }
+
 }

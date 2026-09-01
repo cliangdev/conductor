@@ -7,6 +7,10 @@
 -- a post that went out by hand. A MANUAL target is that missing row: same Work Item, same platform, same
 -- fire time, same review gate and media rules, but no account behind it and no API call at fire time.
 ALTER TABLE post_publish_target ALTER COLUMN connection_id DROP NOT NULL;
+-- connector_id goes with it. A manual target does not publish through meta, youtube or tiktok — it
+-- publishes through a person — and inventing a connector name for it would put a value in this column that
+-- resolves to no connector, which every lookup would then have to special-case.
+ALTER TABLE post_publish_target ALTER COLUMN connector_id DROP NOT NULL;
 
 COMMENT ON COLUMN post_publish_target.connection_id IS
     'The connected account this target publishes through. NULL only for the MANUAL lane, which reaches its '
@@ -23,4 +27,5 @@ CREATE UNIQUE INDEX uq_post_publish_target_item_platform_manual
 -- name one. Without this, a bug that dropped a connection id would silently downgrade an automated target
 -- into one nothing publishes -- the post would simply never go out, and the row would look scheduled.
 ALTER TABLE post_publish_target ADD CONSTRAINT ck_post_publish_target_manual_has_no_connection
-    CHECK ((lane = 'MANUAL') = (connection_id IS NULL));
+    CHECK ((lane = 'MANUAL') = (connection_id IS NULL)
+       AND (lane = 'MANUAL') = (connector_id IS NULL));

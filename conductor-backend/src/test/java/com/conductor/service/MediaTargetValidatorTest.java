@@ -3,6 +3,7 @@ package com.conductor.service;
 import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PublishLane;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
@@ -513,6 +514,66 @@ class MediaTargetValidatorTest {
      * [auto] Media metadata needed for validation is captured at upload confirm. Every rule above reads its
      * inputs off the Asset row; this is where those inputs get there.
      */
+
+    // --- [auto] The per-creator TikTok cap has no answer on the MANUAL lane (MKT-2) --------------
+
+    /** A TikTok destination a human posts by hand: no account, and so no cached creator info. */
+    private PostPublishTarget manualTikTokTarget() {
+        PostPublishTarget target = target("tiktok", null, "TikTok (manual)");
+        target.setLane(PublishLane.MANUAL);
+        return target;
+    }
+
+    @Test
+    void aManualTikTokDestinationIsNotBlockedByTheMissingPerCreatorDurationCap() {
+        // This validator's rule is that an unchecked rule blocks — "we don't know" must never become "it's
+        // fine". The manual lane is a different fact: the cap is read off a connected account's cached
+        // creator info and there is no account, so there is nothing to check against rather than a missing
+        // reading of something that exists. Blocking would make a manual TikTok post unapprovable, which is
+        // the one thing the lane has to allow. TikTok's own composer enforces the cap on the human anyway.
+        givenTargets(manualTikTokTarget());
+        givenAssets(video("teaser.mp4", 10_000L, 1080, 1920, "240"));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    @Test
+    void aManualTikTokDestinationStillHasToRespectTheFourGigabyteFileCeiling() {
+        // Only the per-creator cap is exempt. The 4 GB ceiling is TikTok's for everyone, knowable without
+        // an account, and a human uploading an oversized file will be refused by TikTok exactly as we are.
+        givenTargets(manualTikTokTarget());
+        givenAssets(video("huge.mp4", MediaTargetValidator.TIKTOK_MAX_VIDEO_BYTES + 1, 1080, 1920, "30"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("4 GB");
+    }
+
+    @Test
+    void aConnectedTikTokTargetIsStillBlockedWhenItsCreatorCapIsMissing() {
+        // The exemption is keyed on the lane, not on the absence of a cap. A connected account with no
+        // cached creator info is still the case this validator refuses to guess at.
+        givenTargets(target("tiktok", "conn-tt", "@acme"));
+        givenAssets(video("teaser.mp4", 10_000L, 1080, 1920, "240"));
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("maximum video duration");
+    }
+
+    @Test
+    void aManualInstagramDestinationStillHasToObeyInstagramsFormatRules() {
+        // Nothing about posting by hand makes Instagram accept a PNG. Every rule a platform enforces on a
+        // human is still worth catching at review time rather than at the moment they try to upload it.
+        PostPublishTarget manual = target("instagram", null, "Instagram (manual)");
+        manual.setLane(PublishLane.MANUAL);
+        givenTargets(manual);
+        givenAssets(image("teaser.png", "image/png", 1080, 1080));
+
+        assertThatThrownBy(this::approve).isInstanceOf(UnprocessableEntityException.class);
+    }
+
+
     @Nested
     class MetadataCaptureAtUploadConfirm {
 
@@ -714,4 +775,5 @@ class MediaTargetValidatorTest {
             return user;
         }
     }
+
 }

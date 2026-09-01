@@ -48,8 +48,12 @@ public class PostPublishTarget {
     @JoinColumn(name = "work_item_id", nullable = false)
     private WorkItem workItem;
 
-    /** Connector this target publishes through (e.g. {@code meta}, {@code youtube}, {@code tiktok}). */
-    @Column(name = "connector_id", length = 64, nullable = false)
+    /**
+     * Connector this target publishes through (e.g. {@code meta}, {@code youtube}, {@code tiktok});
+     * {@code null} on the {@link PublishLane#MANUAL} lane, which publishes through a person and so through
+     * no connector at all.
+     */
+    @Column(name = "connector_id", length = 64)
     private String connectorId;
 
     /**

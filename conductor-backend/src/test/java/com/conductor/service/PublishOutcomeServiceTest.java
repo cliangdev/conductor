@@ -40,6 +40,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.groups.Tuple.tuple;
 
@@ -767,4 +768,173 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(stored.getState()).isEqualTo(PostPublishTargetState.FAILED);
         assertThat(stored.getErrorMessage()).isNotBlank();
     }
+
+    // ---- MANUAL lane: the destination a human publishes by hand (MKT-2) ---------------------------
+
+    /**
+     * A manual target, in the state the scheduler leaves it in once its fire time has passed. Distinct from
+     * {@link #target} in the two ways that define the lane: MANUAL, and no connection behind it.
+     */
+    private PostPublishTarget manualTarget(PostPublishTargetState state) {
+        PostPublishTarget target = new PostPublishTarget();
+        target.setWorkItem(post());
+        target.setConnectorId(null);
+        target.setConnectionId(null);
+        target.setPlatform("tiktok");
+        target.setPlatformAccountLabel("TikTok (manual)");
+        target.setLane(PublishLane.MANUAL);
+        target.setState(state);
+        target.setFireTime(OffsetDateTime.now());
+        target.setIdempotencyKey("pub:" + UUID.randomUUID());
+        return targetRepository.saveAndFlush(target);
+    }
+
+    private boolean complete(PostPublishTarget target, String permalink, OffsetDateTime publishedAt) {
+        return service.completeManualTarget(project.getId(), target.getWorkItem().getId(), target.getId(),
+                permalink, publishedAt, creator);
+    }
+
+    @Test
+    void aHumanCanRecordAManualTargetAsPublishedAndItLandsLikeAnyOtherSuccess() {
+        PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);
+
+        assertThat(complete(target, "https://tiktok.com/@acme/video/1", null)).isTrue();
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(reload(target).getPermalink()).isEqualTo("https://tiktok.com/@acme/video/1");
+        // The point of the lane is that a manual publish is not a second class of result: it records the
+        // same typed destination Asset an API publish does, which is what puts it in the Asset library and
+        // makes the link findable outside the Post.
+        assertThat(assetsOn(target)).extracting(Asset::getRef)
+                .contains("https://tiktok.com/@acme/video/1");
+    }
+
+    @Test
+    void recordingAManualPublishRollsThePostUpToItsPublishedStatus() {
+        PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);
+
+        complete(target, "https://tiktok.com/@acme/video/1", null);
+
+        assertThat(workItemRepository.findById(target.getWorkItem().getId()).orElseThrow()
+                .getCurrentStatus()).isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void aPostWaitingOnAHumanDoesNotRollUpAsFailed() {
+        // AWAITING_MANUAL counts as in-flight. If it did not, a Post would be reported as having failed to
+        // publish the moment its manual target came due — before anyone had a chance to post it.
+        WorkItem owner = post();
+        PostPublishTarget automated = target(owner, "instagram", PostPublishTargetState.PUBLISHING, "@acme");
+        PostPublishTarget manual = new PostPublishTarget();
+        manual.setWorkItem(owner);
+        manual.setPlatform("tiktok");
+        manual.setLane(PublishLane.MANUAL);
+        manual.setState(PostPublishTargetState.AWAITING_MANUAL);
+        manual.setFireTime(OffsetDateTime.now());
+        manual.setIdempotencyKey("pub:" + UUID.randomUUID());
+        targetRepository.saveAndFlush(manual);
+
+        service.recordSuccess(automated.getId(), "ig-1", "https://instagram.com/p/1");
+
+        assertThat(workItemRepository.findById(owner.getId()).orElseThrow().getCurrentStatus())
+                .isEqualTo("SCHEDULED");
+
+        // ...and completing the manual one is what finally settles it.
+        complete(manual, "https://tiktok.com/@acme/video/1", null);
+        assertThat(workItemRepository.findById(owner.getId()).orElseThrow().getCurrentStatus())
+                .isEqualTo("PUBLISHED");
+    }
+
+    @Test
+    void anAutomatedTargetCannotBeDeclaredPublishedByHand() {
+        // The refusal that keeps the lane honest. An APP_MANAGED target has a poller that will publish it
+        // and report the real outcome; letting a human mark it published would strand a post still queued
+        // to go out, with nothing left watching it.
+        PostPublishTarget automated = target("instagram", PostPublishTargetState.PENDING, "@acme");
+
+        assertThatThrownBy(() -> complete(automated, "https://instagram.com/p/1", null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("publishes automatically");
+
+        assertThat(reload(automated).getState()).isEqualTo(PostPublishTargetState.PENDING);
+    }
+
+    @Test
+    void aManualPublishWithoutALinkIsRefused() {
+        // The permalink is the entire record that this destination went out — there is no platform to ask.
+        PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);
+
+        assertThatThrownBy(() -> complete(target, "   ", null))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> complete(target, null, null))
+                .isInstanceOf(BusinessException.class);
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.AWAITING_MANUAL);
+    }
+
+    @Test
+    void aRevokedManualTargetCannotBeMarkedPublished() {
+        PostPublishTarget target = manualTarget(PostPublishTargetState.REVOKED);
+
+        assertThatThrownBy(() -> complete(target, "https://tiktok.com/@acme/video/1", null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("taken back down");
+    }
+
+    @Test
+    void recordingTheSameManualPublishTwiceChangesNothingAndRecordsOneAsset() {
+        PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);
+        String link = "https://tiktok.com/@acme/video/1";
+
+        assertThat(complete(target, link, null)).isTrue();
+        assertThat(complete(target, link, null)).isFalse();
+
+        assertThat(assetsOn(target)).filteredOn(asset -> link.equals(asset.getRef())).hasSize(1);
+    }
+
+    @Test
+    void aSecondCallCannotRewriteWhenThePostWentOut() {
+        // Re-stamping on a duplicate would let a double-clicked button quietly move the recorded time.
+        PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);
+        OffsetDateTime actuallyPublished = OffsetDateTime.now().minusHours(3);
+
+        complete(target, "https://tiktok.com/@acme/video/1", actuallyPublished);
+        OffsetDateTime recorded = reload(target).getFireTime();
+
+        complete(target, "https://tiktok.com/@acme/video/1", OffsetDateTime.now());
+
+        assertThat(reload(target).getFireTime()).isEqualTo(recorded);
+    }
+
+    @Test
+    void theRecordedTimeIsWhenItActuallyWentOutNotWhenItWasScheduled() {
+        PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);
+        OffsetDateTime actuallyPublished = OffsetDateTime.now().minusHours(3);
+
+        complete(target, "https://tiktok.com/@acme/video/1", actuallyPublished);
+
+        assertThat(reload(target).getFireTime()).isCloseTo(actuallyPublished, within(Duration.ofSeconds(1)));
+    }
+
+    @Test
+    void aNonMemberCannotRecordAManualPublish() {
+        PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);
+
+        assertThatThrownBy(() -> service.completeManualTarget(project.getId(),
+                target.getWorkItem().getId(), target.getId(), "https://tiktok.com/@a/1", null, outsider))
+                .isInstanceOf(EntityNotFoundException.class);
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.AWAITING_MANUAL);
+    }
+
+    @Test
+    void aTargetBelongingToAnotherPostCannotBeCompletedThroughThisOne() {
+        PostPublishTarget target = manualTarget(PostPublishTargetState.AWAITING_MANUAL);
+        WorkItem otherPost = post();
+
+        assertThatThrownBy(() -> service.completeManualTarget(project.getId(), otherPost.getId(),
+                target.getId(), "https://tiktok.com/@a/1", null, creator))
+                .isInstanceOf(EntityNotFoundException.class);
+    }
+
 }
