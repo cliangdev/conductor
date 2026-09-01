@@ -102,6 +102,11 @@ public class PublishTargetService {
      * widening their visibility to reach across from {@code com.conductor.service} would make an
      * internal detail of every connector part of its public surface. They are covered by this service's
      * tests, which fail loudly if a connector ever renames one.
+     *
+     * <p>{@code privacyLevelOptions} is the exception and is <em>not</em> duplicated here: it is read from
+     * {@link PublishOptionsValidator#CONFIG_PRIVACY_LEVEL_OPTIONS}, the same package-local constant the
+     * validator checks a chosen level against. A third spelling of that key would silently hand the picker
+     * an empty list while the validator kept rejecting every level the picker could not offer.
      */
     private static final String CONFIG_PAGE_ID = "pageId";
     private static final String CONFIG_PAGE_NAME = "pageName";
@@ -120,6 +125,17 @@ public class PublishTargetService {
      * One place a Post could go: a platform plus the connected account that reaches it. Derived, so it
      * has no id of its own — {@code (platform, connectionId)} is its identity, and is what a selection
      * sends back.
+     *
+     * @param privacyLevelOptions the privacy levels this one creator may publish under, cached on the
+     *                            connection at connect time; null for every non-TikTok platform and for a
+     *                            TikTok connection made before they were cached. A picker cannot derive
+     *                            these — TikTok reports a different set per creator — so an absent list
+     *                            means "reconnect the account", never "assume the usual four" (TIK-3)
+     * @param creatorNickname     the handle the creator would recognise, for the consent step's "you are
+     *                            posting to @…". Null off TikTok. Deliberately not {@link #label}: the
+     *                            label falls back to a connection id or display label when the account
+     *                            has no name, and a consent notice that names the wrong thing is worse
+     *                            than one that names nothing
      */
     public record TargetOption(String platform,
                                String connectorId,
@@ -127,7 +143,9 @@ public class PublishTargetService {
                                String label,
                                PublishLane lane,
                                String healthStatus,
-                               String healthMessage) {
+                               String healthMessage,
+                               List<String> privacyLevelOptions,
+                               String creatorNickname) {
 
         String key() {
             return selectionKey(platform, connectionId);
@@ -416,15 +434,23 @@ public class PublishTargetService {
             Map<String, Object> config = parseConfig(connection.getConfigJson());
             String nickname = stringValue(config, CONFIG_CREATOR_NICKNAME);
             options.add(option(connection, PLATFORM_TIKTOK, PublishLane.APP_MANAGED,
-                    nickname != null ? nickname : stringValue(config, CONFIG_CREATOR_USERNAME)));
+                    nickname != null ? nickname : stringValue(config, CONFIG_CREATOR_USERNAME),
+                    stringListValue(config, PublishOptionsValidator.CONFIG_PRIVACY_LEVEL_OPTIONS),
+                    nickname));
         }
         return List.copyOf(options);
     }
 
     private static TargetOption option(Connection connection, String platform, PublishLane lane, String label) {
+        return option(connection, platform, lane, label, null, null);
+    }
+
+    private static TargetOption option(Connection connection, String platform, PublishLane lane, String label,
+                                       List<String> privacyLevelOptions, String creatorNickname) {
         return new TargetOption(platform, connection.getConnectorId(), connection.getId(),
                 label != null ? label : fallbackLabel(connection),
-                lane, connection.getHealthStatus(), connection.getHealthMessage());
+                lane, connection.getHealthStatus(), connection.getHealthMessage(),
+                privacyLevelOptions, creatorNickname);
     }
 
     /** Never leave a row unlabelled: an account with no name still has to be pickable. */
@@ -473,6 +499,24 @@ public class PublishTargetService {
         }
         String text = value.toString();
         return text.isBlank() ? null : text;
+    }
+
+    /**
+     * A cached list of strings off the connection config, or null when there is nothing usable there —
+     * absent, not a list, or empty once blanks are dropped. All three are the same fact for a caller
+     * ("this account's options were never cached"), and collapsing them keeps a client from telling an
+     * empty list apart from a missing one and offering an empty picker as if it were a real choice.
+     */
+    private static List<String> stringListValue(Map<String, Object> config, String key) {
+        if (!(config.get(key) instanceof List<?> values)) {
+            return null;
+        }
+        List<String> texts = values.stream()
+                .filter(Objects::nonNull)
+                .map(Object::toString)
+                .filter(text -> !text.isBlank())
+                .toList();
+        return texts.isEmpty() ? null : texts;
     }
 
     /** A non-member must not be able to tell a project apart from one that does not exist. */

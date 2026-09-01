@@ -189,6 +189,66 @@ class PublishTargetServiceTest {
                 .isInstanceOf(EntityNotFoundException.class);
     }
 
+    // ── per-creator options (TIK-3) ───────────────────────────────────────────────────────────
+
+    /**
+     * The two values a picker cannot invent. TikTok reports a different privacy set per creator, and the
+     * consent step has to name the account by the handle its creator would recognise — so both come off
+     * the connection or not at all.
+     */
+    @Test
+    void aTikTokTargetCarriesTheCreatorsOwnPrivacyLevelsAndNickname() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator",
+                "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY"));
+
+        assertThat(service.listAvailableTargets(PROJECT, caller)).singleElement().satisfies(option -> {
+            assertThat(option.privacyLevelOptions())
+                    .containsExactly("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY");
+            assertThat(option.creatorNickname()).isEqualTo("Acme Creator");
+        });
+    }
+
+    @Test
+    void everyNonTikTokTargetReportsNoCreatorOptions() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+        connections("youtube", youtubeConnection("conn-yt", "Acme Channel"));
+
+        List<PublishTargetService.TargetOption> options = service.listAvailableTargets(PROJECT, caller);
+
+        assertThat(options).extracting(PublishTargetService.TargetOption::platform)
+                .containsExactlyInAnyOrder("facebook", "instagram", "youtube");
+        assertThat(options).allSatisfy(option -> {
+            assertThat(option.privacyLevelOptions()).isNull();
+            assertThat(option.creatorNickname()).isNull();
+        });
+    }
+
+    /**
+     * An account connected before the creator info was cached is a reconnect prompt, not a 500: the
+     * listing still answers, with nothing to offer for that one target.
+     */
+    @Test
+    void aTikTokConnectionWithNoCachedCreatorInfoReportsNullRatherThanFailing() {
+        connections("tiktok", connection("conn-tt", "tiktok", "{\"creatorUsername\":\"acme\"}"));
+
+        assertThat(service.listAvailableTargets(PROJECT, caller)).singleElement().satisfies(option -> {
+            assertThat(option.privacyLevelOptions()).isNull();
+            assertThat(option.creatorNickname()).isNull();
+            assertThat(option.label()).isEqualTo("acme");
+        });
+    }
+
+    @Test
+    void aCachedPrivacyLevelListThatIsEmptyOrNotAListReportsNull() {
+        connections("tiktok",
+                connection("conn-a", "tiktok", "{\"creatorNickname\":\"Acme\",\"privacyLevelOptions\":[]}"),
+                connection("conn-b", "tiktok",
+                        "{\"creatorNickname\":\"Acme UK\",\"privacyLevelOptions\":\"PUBLIC_TO_EVERYONE\"}"));
+
+        assertThat(service.listAvailableTargets(PROJECT, caller)).hasSize(2)
+                .allSatisfy(option -> assertThat(option.privacyLevelOptions()).isNull());
+    }
+
     // ── selection ─────────────────────────────────────────────────────────────────────────────
 
     @Test
@@ -399,9 +459,15 @@ class PublishTargetServiceTest {
                 "{\"channelId\":\"chan-" + id + "\",\"channelTitle\":\"" + channelTitle + "\"}");
     }
 
-    private static Connection tiktokConnection(String id, String creatorNickname) {
-        return connection(id, "tiktok",
-                "{\"creatorNickname\":\"" + creatorNickname + "\",\"creatorUsername\":\"acme\"}");
+    /** A TikTok connection; with no levels it stands in for one connected before they were cached. */
+    private static Connection tiktokConnection(String id, String creatorNickname, String... privacyLevels) {
+        StringBuilder config = new StringBuilder("{\"creatorNickname\":\"" + creatorNickname
+                + "\",\"creatorUsername\":\"acme\"");
+        if (privacyLevels.length > 0) {
+            config.append(",\"privacyLevelOptions\":[\"").append(String.join("\",\"", privacyLevels))
+                    .append("\"]");
+        }
+        return connection(id, "tiktok", config.append('}').toString());
     }
 
     private PostPublishTarget existingRow(String platform, String connectorId, String connectionId,
@@ -654,6 +720,35 @@ class PublishTargetServiceTest {
         assertThat(savedRows()).extracting(PostPublishTarget::getPlatform)
                 .containsExactly("tiktok", "facebook");
         assertThat(tiktok.getPublishOptions()).isEqualTo("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}");
+    }
+
+    /** Options chosen on a save have to survive a reload, or the picker re-renders them as unchosen. */
+    @Test
+    void optionsChosenOnASaveAreWhatTheSelectedTargetsListingReportsBack() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator", "PUBLIC_TO_EVERYONE"));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
+                        Map.of("privacyLevel", "PUBLIC_TO_EVERYONE", "disableComment", true))), caller);
+        List<PostPublishTarget> persisted = savedRows();
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(persisted);
+
+        assertThat(service.listSelectedTargets(PROJECT, WORK_ITEM, caller)).singleElement()
+                .satisfies(row -> assertThat(row.getPublishOptions())
+                        .isEqualTo("{\"disableComment\":true,\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+    }
+
+    @Test
+    void aTargetSavedWithoutOptionsListsBackWithNone() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator", "PUBLIC_TO_EVERYONE"));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt")), caller);
+        List<PostPublishTarget> persisted = savedRows();
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(persisted);
+
+        assertThat(service.listSelectedTargets(PROJECT, WORK_ITEM, caller)).singleElement()
+                .satisfies(row -> assertThat(row.getPublishOptions()).isNull());
     }
 
 }

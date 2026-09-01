@@ -2913,6 +2913,27 @@ components:
           type: string
           nullable: true
           description: The platform's own explanation of an UNHEALTHY verdict; null while healthy.
+        privacyLevelOptions:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: >-
+            The privacy levels this one creator may publish under, cached on the connection when the
+            account was connected (e.g. PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS, FOLLOWER_OF_CREATOR,
+            SELF_ONLY). TikTok reports a different set per creator — a private account is offered fewer
+            than a public one — so this is the only source for a target's allowed `privacyLevel`, and it
+            is what `PublishOptionsValidator` checks the chosen level against at the approval gate.
+            Null for every non-TikTok platform, and null for a TikTok connection made before the levels
+            were cached: that account has to be reconnected, not guessed for. (TIK-3.)
+        creatorNickname:
+          type: string
+          nullable: true
+          description: >-
+            The handle the creator would recognise, for the consent step's "you are posting to @…".
+            TikTok's audit requirement is that the creator sees which account a post is going to, so
+            this is the account's own name rather than the connection's label. Null for every
+            non-TikTok platform, and null when the connection never cached it. (TIK-3.)
 
     PublishTargetResponse:
       type: object

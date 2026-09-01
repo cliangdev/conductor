@@ -88,7 +88,11 @@ public class PublishTargetController implements PublishTargetsApi {
                 option.label(),
                 PublishTargetOption.LaneEnum.fromValue(option.lane().name()))
                 .healthStatus(option.healthStatus())
-                .healthMessage(option.healthMessage());
+                .healthMessage(option.healthMessage())
+                // Null, not an empty list, when a TikTok connection never cached the creator's levels: the
+                // picker has to tell "reconnect this account" apart from a genuinely empty set of choices.
+                .privacyLevelOptions(option.privacyLevelOptions())
+                .creatorNickname(option.creatorNickname());
     }
 
     private static PublishTargetResponse toResponse(PostPublishTarget target) {
