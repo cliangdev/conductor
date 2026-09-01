@@ -351,6 +351,33 @@ public class NativeHandoffService {
         for (PostPublishTarget target : nativeTargets(post.getId(), PostPublishTargetState.HANDED_OFF)) {
             revoke(target);
         }
+        standDownManualTargets(post);
+    }
+
+    /**
+     * Puts every manual target that was waiting on a human back to {@code PENDING}.
+     *
+     * <p>{@code AWAITING_MANUAL} means "someone still has to post this". Once the Post leaves the scheduled
+     * status that is no longer true, and leaving the row flagged would keep asking a human to publish a post
+     * that has been pulled back — the manual-lane equivalent of leaving a scheduled post live on a platform,
+     * except the platform here is a person. {@code PENDING} is the correct resting state: it is where a
+     * not-yet-due target sits, and re-scheduling re-stamps and re-flags it in the ordinary way.
+     *
+     * <p>Only {@code AWAITING_MANUAL} rows are touched. A manual target already marked {@code PUBLISHED} by
+     * a human describes a post that really is live and out of Conductor's reach — nothing here can take it
+     * down, and quietly reverting the row would erase the only record that it exists.
+     */
+    private void standDownManualTargets(WorkItem post) {
+        for (PostPublishTarget target : targetRepository.findAllByWorkItemIdAndState(
+                post.getId(), PostPublishTargetState.AWAITING_MANUAL)) {
+            if (target.getLane() != PublishLane.MANUAL) {
+                continue;
+            }
+            target.setState(PostPublishTargetState.PENDING);
+            targetRepository.save(target);
+            log.info("Manual publish target {} stood down to PENDING; post {} is no longer scheduled",
+                    target.getId(), post.getId());
+        }
     }
 
     // ---- hand-off internals --------------------------------------------------------------------

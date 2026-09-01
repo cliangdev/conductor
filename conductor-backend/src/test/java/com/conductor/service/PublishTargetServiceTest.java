@@ -92,7 +92,7 @@ class PublishTargetServiceTest {
     void metaConnectionWithLinkedInstagramYieldsBothAFacebookAndAnInstagramTarget() {
         connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
 
-        List<PublishTargetService.TargetOption> options = service.listAvailableTargets(PROJECT, caller);
+        List<PublishTargetService.TargetOption> options = connectedOnly(service.listAvailableTargets(PROJECT, caller));
 
         assertThat(options).extracting(PublishTargetService.TargetOption::platform)
                 .containsExactly("facebook", "instagram");
@@ -108,7 +108,7 @@ class PublishTargetServiceTest {
     void metaConnectionWithNoLinkedInstagramYieldsFacebookOnly() {
         connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
 
-        List<PublishTargetService.TargetOption> options = service.listAvailableTargets(PROJECT, caller);
+        List<PublishTargetService.TargetOption> options = connectedOnly(service.listAvailableTargets(PROJECT, caller));
 
         assertThat(options).extracting(PublishTargetService.TargetOption::platform)
                 .containsExactly("facebook");
@@ -119,7 +119,7 @@ class PublishTargetServiceTest {
         connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
         connections("youtube", youtubeConnection("conn-yt", "Acme Channel"));
 
-        List<PublishTargetService.TargetOption> options = service.listAvailableTargets(PROJECT, caller);
+        List<PublishTargetService.TargetOption> options = connectedOnly(service.listAvailableTargets(PROJECT, caller));
 
         assertThat(options).extracting(PublishTargetService.TargetOption::platform)
                 .containsExactlyInAnyOrder("facebook", "instagram", "youtube")
@@ -131,7 +131,7 @@ class PublishTargetServiceTest {
         connections("youtube", youtubeConnection("conn-yt", "Acme Channel"));
         connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
 
-        List<PublishTargetService.TargetOption> options = service.listAvailableTargets(PROJECT, caller);
+        List<PublishTargetService.TargetOption> options = connectedOnly(service.listAvailableTargets(PROJECT, caller));
 
         assertThat(options).extracting(PublishTargetService.TargetOption::platform,
                         PublishTargetService.TargetOption::label, PublishTargetService.TargetOption::lane)
@@ -146,7 +146,7 @@ class PublishTargetServiceTest {
         disabled.setStatus("DISABLED");
         connections("meta", disabled);
 
-        assertThat(service.listAvailableTargets(PROJECT, caller)).isEmpty();
+        assertThat(connectedOnly(service.listAvailableTargets(PROJECT, caller))).isEmpty();
     }
 
     @Test
@@ -156,7 +156,7 @@ class PublishTargetServiceTest {
         unhealthy.setHealthMessage("Session expired, please reconnect");
         connections("meta", unhealthy);
 
-        List<PublishTargetService.TargetOption> options = service.listAvailableTargets(PROJECT, caller);
+        List<PublishTargetService.TargetOption> options = connectedOnly(service.listAvailableTargets(PROJECT, caller));
 
         assertThat(options).singleElement().satisfies(option -> {
             assertThat(option.healthStatus()).isEqualTo("UNHEALTHY");
@@ -170,7 +170,7 @@ class PublishTargetServiceTest {
                 metaConnection("conn-a", "Page A", "ig-a", "acme"),
                 metaConnection("conn-b", "Page B", "ig-b", "acme_uk"));
 
-        List<PublishTargetService.TargetOption> instagram = service.listAvailableTargets(PROJECT, caller).stream()
+        List<PublishTargetService.TargetOption> instagram = connectedOnly(service.listAvailableTargets(PROJECT, caller)).stream()
                 .filter(o -> "instagram".equals(o.platform()))
                 .toList();
 
@@ -201,7 +201,7 @@ class PublishTargetServiceTest {
         connections("tiktok", tiktokConnection("conn-tt", "Acme Creator",
                 "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY"));
 
-        assertThat(service.listAvailableTargets(PROJECT, caller)).singleElement().satisfies(option -> {
+        assertThat(connectedOnly(service.listAvailableTargets(PROJECT, caller))).singleElement().satisfies(option -> {
             assertThat(option.privacyLevelOptions())
                     .containsExactly("PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY");
             assertThat(option.creatorNickname()).isEqualTo("Acme Creator");
@@ -213,7 +213,7 @@ class PublishTargetServiceTest {
         connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
         connections("youtube", youtubeConnection("conn-yt", "Acme Channel"));
 
-        List<PublishTargetService.TargetOption> options = service.listAvailableTargets(PROJECT, caller);
+        List<PublishTargetService.TargetOption> options = connectedOnly(service.listAvailableTargets(PROJECT, caller));
 
         assertThat(options).extracting(PublishTargetService.TargetOption::platform)
                 .containsExactlyInAnyOrder("facebook", "instagram", "youtube");
@@ -231,7 +231,7 @@ class PublishTargetServiceTest {
     void aTikTokConnectionWithNoCachedCreatorInfoReportsNullRatherThanFailing() {
         connections("tiktok", connection("conn-tt", "tiktok", "{\"creatorUsername\":\"acme\"}"));
 
-        assertThat(service.listAvailableTargets(PROJECT, caller)).singleElement().satisfies(option -> {
+        assertThat(connectedOnly(service.listAvailableTargets(PROJECT, caller))).singleElement().satisfies(option -> {
             assertThat(option.privacyLevelOptions()).isNull();
             assertThat(option.creatorNickname()).isNull();
             assertThat(option.label()).isEqualTo("acme");
@@ -245,7 +245,7 @@ class PublishTargetServiceTest {
                 connection("conn-b", "tiktok",
                         "{\"creatorNickname\":\"Acme UK\",\"privacyLevelOptions\":\"PUBLIC_TO_EVERYONE\"}"));
 
-        assertThat(service.listAvailableTargets(PROJECT, caller)).hasSize(2)
+        assertThat(connectedOnly(service.listAvailableTargets(PROJECT, caller))).hasSize(2)
                 .allSatisfy(option -> assertThat(option.privacyLevelOptions()).isNull());
     }
 
@@ -749,6 +749,64 @@ class PublishTargetServiceTest {
 
         assertThat(service.listSelectedTargets(PROJECT, WORK_ITEM, caller)).singleElement()
                 .satisfies(row -> assertThat(row.getPublishOptions()).isNull());
+    }
+
+
+    /**
+     * The options a project's own connections produce, with the always-present manual destinations dropped.
+     *
+     * <p>Every test that uses it was written to pin down what connecting (or not connecting) an account
+     * yields, and a MANUAL option is by definition not derived from a connection — it is offered whether or
+     * not one exists. Filtering here keeps each of those assertions saying the thing it was written to say,
+     * rather than restating it as "the connected ones, plus the four that are always there".
+     */
+    private static List<PublishTargetService.TargetOption> connectedOnly(
+            List<PublishTargetService.TargetOption> options) {
+        return options.stream().filter(option -> option.lane() != PublishLane.MANUAL).toList();
+    }
+
+    @Test
+    void aProjectWithNoConnectionsAtAllStillHasSomewhereToPublish() {
+        // The case the manual lane exists for. Without it this returns nothing, PostScheduleValidator
+        // refuses the approval gate for want of a target, and a Post can never leave In Review.
+        List<PublishTargetService.TargetOption> options = service.listAvailableTargets(PROJECT, caller);
+
+        assertThat(options).isNotEmpty();
+        assertThat(options).allMatch(option -> option.lane() == PublishLane.MANUAL);
+        assertThat(options).extracting(PublishTargetService.TargetOption::platform)
+                .containsExactlyInAnyOrder("facebook", "instagram", "youtube", "tiktok");
+    }
+
+    @Test
+    void everyManualOptionCarriesNoAccountAndNoCredentialHealth() {
+        List<PublishTargetService.TargetOption> manual = service.listAvailableTargets(PROJECT, caller).stream()
+                .filter(option -> option.lane() == PublishLane.MANUAL)
+                .toList();
+
+        assertThat(manual).isNotEmpty();
+        // No account behind it: a null connection is what the DB CHECK constraint ties to the MANUAL lane,
+        // and what tells the picker there is no credential that could be healthy or unhealthy.
+        assertThat(manual).allSatisfy(option -> {
+            assertThat(option.connectionId()).isNull();
+            assertThat(option.connectorId()).isNull();
+            assertThat(option.healthStatus()).isNull();
+            assertThat(option.healthMessage()).isNull();
+            assertThat(option.label()).contains("manual");
+        });
+    }
+
+    @Test
+    void manualDestinationsAreOfferedAlongsideConnectedOnesRatherThanOnlyAsAFallback() {
+        // A connected project keeps its manual options: a Story, a personal account or any surface the API
+        // does not reach still belongs on the calendar under the same review gate.
+        connections("meta", metaConnection("conn-meta", "Acme Page", "ig-42", "acme"));
+
+        List<PublishTargetService.TargetOption> options = service.listAvailableTargets(PROJECT, caller);
+
+        assertThat(options).filteredOn(option -> option.lane() == PublishLane.MANUAL).hasSize(4);
+        assertThat(options).filteredOn(option -> option.lane() != PublishLane.MANUAL)
+                .extracting(PublishTargetService.TargetOption::platform)
+                .containsExactly("facebook", "instagram");
     }
 
 }

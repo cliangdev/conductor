@@ -38,4 +38,18 @@ public interface PostPublishTargetRepository extends JpaRepository<PostPublishTa
             + "AND t.fireTime <= :windowOpensBefore "
             + "ORDER BY t.fireTime ASC")
     List<PostPublishTarget> findNativeHandoffTargets(@Param("windowOpensBefore") OffsetDateTime windowOpensBefore);
+
+    /**
+     * Manual-lane targets whose fire time has arrived and that are still waiting to be surfaced to a human.
+     *
+     * <p>Deliberately shaped like the two dispatch queries but doing far less: there is no platform to call
+     * and no credential to resolve, so "due" here only means the row should stop looking scheduled and start
+     * looking like a task. Ordered by fire time so the oldest overdue post is the first one flagged.
+     */
+    @Query("SELECT t FROM PostPublishTarget t "
+            + "WHERE t.lane = com.conductor.entity.PublishLane.MANUAL "
+            + "AND t.state = com.conductor.entity.PostPublishTargetState.PENDING "
+            + "AND t.fireTime IS NOT NULL AND t.fireTime <= :now "
+            + "ORDER BY t.fireTime ASC")
+    List<PostPublishTarget> findDueManualTargets(@Param("now") OffsetDateTime now);
 }

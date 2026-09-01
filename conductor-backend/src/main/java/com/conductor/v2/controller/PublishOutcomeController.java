@@ -3,6 +3,7 @@ package com.conductor.v2.controller;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.PublishOutcomesApi;
+import com.conductor.generated.v2.model.CompleteManualPublishRequest;
 import com.conductor.generated.v2.model.PublishTargetResponse;
 import com.conductor.generated.v2.model.RetryPublishResponse;
 import com.conductor.service.PublishOutcomeService;
@@ -33,6 +34,26 @@ public class PublishOutcomeController implements PublishOutcomesApi {
         this.publishOutcomeService = publishOutcomeService;
     }
 
+    /**
+     * Records a manual target as published by hand. Mirrors the retry operation's shape exactly: every rule
+     * — the membership check, the MANUAL-lane refusal, the required permalink, the roll-up — lives in
+     * {@link PublishOutcomeService#completeManualTarget}, and this class only maps the result onto the wire.
+     *
+     * <p>Returns the target as it stands afterwards rather than a bare 204, so a client renders the new
+     * state (its PUBLISHED row, its stored permalink, its recorded time) without a second request.
+     */
+    @Override
+    public ResponseEntity<PublishTargetResponse> completeManualPublish(
+            String projectId, String workItemId, String targetId, CompleteManualPublishRequest request) {
+        publishOutcomeService.completeManualTarget(
+                projectId, workItemId, targetId,
+                request == null ? null : request.getPermalink(),
+                request == null ? null : request.getPublishedAt(),
+                currentUser());
+        return ResponseEntity.ok(toResponse(
+                publishOutcomeService.readTarget(projectId, workItemId, targetId, currentUser())));
+    }
+
     @Override
     public ResponseEntity<RetryPublishResponse> retryFailedPublishTargets(String projectId, String workItemId) {
         PublishOutcomeService.RetryResult result =
@@ -50,10 +71,11 @@ public class PublishOutcomeController implements PublishOutcomesApi {
                 target.getId(),
                 target.getWorkItem().getId(),
                 PublishTargetResponse.PlatformEnum.fromValue(target.getPlatform()),
-                target.getConnectorId(),
-                target.getConnectionId(),
                 PublishTargetResponse.LaneEnum.fromValue(target.getLane().name()),
                 target.getState().name())
+                // Both null on the MANUAL lane, which publishes through no connector and no account.
+                .connectorId(target.getConnectorId())
+                .connectionId(target.getConnectionId())
                 .label(target.getPlatformAccountLabel())
                 .platformPostId(target.getPlatformPostId())
                 .permalink(target.getPermalink())

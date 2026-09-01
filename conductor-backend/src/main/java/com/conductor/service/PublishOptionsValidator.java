@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PublishLane;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.ConnectionRepository;
@@ -132,14 +133,25 @@ public class PublishOptionsValidator {
         }
 
         List<String> problems = new ArrayList<>();
-        boolean anyTikTok = false;
+        boolean anyTikTokApiTarget = false;
         for (PostPublishTarget target : targets) {
+            // A MANUAL target is exempt from every rule below, because every rule below is about what
+            // Conductor would send to TikTok's Content Posting API — and on this lane Conductor sends
+            // nothing. The creator opens TikTok and posts it themselves, choosing the privacy level in
+            // TikTok's own composer and seeing TikTok's own preview of the destination account. That is
+            // the outcome the consent requirement exists to produce, arrived at directly rather than
+            // reproduced in our UI, so demanding a second in-app consent for a post we never touch would
+            // be ceremony. Note this is not a bypass: an APP_MANAGED TikTok target alongside a manual one
+            // still trips both rules, because it is still us doing the posting.
+            if (target.getLane() == PublishLane.MANUAL) {
+                continue;
+            }
             if (PLATFORM_TIKTOK.equals(normalized(target.getPlatform()))) {
-                anyTikTok = true;
+                anyTikTokApiTarget = true;
                 inspectTikTok(target, problems);
             }
         }
-        if (anyTikTok) {
+        if (anyTikTokApiTarget) {
             inspectConsent(workItem, problems);
         }
         if (!problems.isEmpty()) {

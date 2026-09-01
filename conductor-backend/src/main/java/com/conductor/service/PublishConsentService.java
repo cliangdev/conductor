@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.Asset;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PublishLane;
 import com.conductor.entity.PublishConsent;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
@@ -185,9 +186,20 @@ public class PublishConsentService {
                 ? Verdict.VALID : Verdict.SUPERSEDED;
     }
 
-    /** True when the Post publishes to at least one TikTok account, and so needs the creator's consent. */
+    /**
+     * True when the Post publishes to at least one TikTok account <em>through the API</em>, and so needs the
+     * creator's consent.
+     *
+     * <p>A {@link PublishLane#MANUAL} TikTok destination does not count. The consent exists because TikTok
+     * requires a creator to see a preview and the destination account before <em>we</em> post on their
+     * behalf; on the manual lane they are in TikTok's own composer, seeing TikTok's own preview, posting as
+     * themselves. Counting it would put a consent step in front of a human for a post Conductor never
+     * touches. Kept identical to {@code PublishOptionsValidator}'s own exemption on purpose — if these two
+     * ever disagreed, the UI would ask for a consent the gate does not want or hide one the gate demands.
+     */
     private boolean requiresConsent(String workItemId) {
         return targetRepository.findAllByWorkItemId(workItemId).stream()
+                .filter(target -> target.getLane() != PublishLane.MANUAL)
                 .anyMatch(target -> PLATFORM_TIKTOK.equals(normalized(target.getPlatform())));
     }
 

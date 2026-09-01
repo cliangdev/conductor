@@ -153,6 +153,21 @@ public class PostPublishScheduler {
             """;
 
     /**
+     * The manual claim, the exact counterpart of the dispatch claim above and for the same reason: the
+     * {@code WHERE} re-asserts both {@code PENDING} and the MANUAL lane, so two ticks racing the same row
+     * both read PENDING but only one update lands.
+     */
+    private static final String CLAIM_MANUAL = """
+            UPDATE PostPublishTarget t
+               SET t.state = com.conductor.entity.PostPublishTargetState.AWAITING_MANUAL,
+                   t.updatedAt = :now
+             WHERE t.id = :id
+               AND t.state = com.conductor.entity.PostPublishTargetState.PENDING
+               AND t.lane = com.conductor.entity.PublishLane.MANUAL
+            """;
+
+
+    /**
      * Bounds one tick. The repository's due finder is unbounded (it takes no {@code Pageable}), so the
      * cap is applied here; anything not reached is picked up 30 seconds later. Package-private (not
      * final) so a test can shrink it — same pattern as {@code ConnectorFeedScheduler#batchSize}.
@@ -228,6 +243,51 @@ public class PostPublishScheduler {
                 log.error("Post publish dispatch failed for target {}: {}", targetId, e.getMessage(), e);
             }
         }
+
+        flagDueManualTargets(now);
+    }
+
+    /**
+     * Moves due MANUAL targets from {@code PENDING} to {@code AWAITING_MANUAL} — the whole of Conductor's
+     * job on that lane.
+     *
+     * <p>It publishes nothing and calls nobody: the state change is what turns a scheduled row into a task
+     * a human can see is waiting, and until it happens a due manual post is indistinguishable from one that
+     * is not due yet. Runs after the dispatch loop and in its own try/catch so a failure here can never cost
+     * a real publish its tick.
+     *
+     * <p>Each row is claimed with the same conditional UPDATE the dispatch path uses, re-asserting both
+     * {@code PENDING} and the MANUAL lane, so two racing ticks cannot both flag the same row and an
+     * automated target can never be pulled onto this path by a concurrent lane change.
+     */
+    private void flagDueManualTargets(OffsetDateTime now) {
+        try {
+            List<String> manualIds = targetRepository.findDueManualTargets(now).stream()
+                    .map(PostPublishTarget::getId)
+                    .limit(batchSize)
+                    .toList();
+            for (String targetId : manualIds) {
+                if (self.flagManualInNewTx(targetId) > 0) {
+                    log.info("Target {} is due and is a manual destination; awaiting a human to publish it",
+                            targetId);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Flagging due manual publish targets failed: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * The manual claim: {@code PENDING -> AWAITING_MANUAL} in one statement whose {@code WHERE} re-asserts
+     * both the state and the lane, so a racing tick updates zero rows. Its own transaction, like the
+     * dispatch claim, so one flagged row commits independently of the rest of the batch.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int flagManualInNewTx(String targetId) {
+        return entityManager.createQuery(CLAIM_MANUAL)
+                .setParameter("id", targetId)
+                .setParameter("now", OffsetDateTime.now())
+                .executeUpdate();
     }
 
     private void claimAndDispatch(String targetId) {

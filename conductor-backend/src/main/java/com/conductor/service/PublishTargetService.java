@@ -119,6 +119,28 @@ public class PublishTargetService {
 
     private static final String ACTIVE = "ACTIVE";
 
+    /** Unambiguous field delimiter for {@link #selectionKey}; see that method for why not a space or NUL. */
+    private static final String KEY_DELIMITER = "\u001F";
+
+    /** Stands in for the absent connection id of a {@link PublishLane#MANUAL} target, in keys and labels. */
+    static final String MANUAL_KEY = "manual";
+
+    /**
+     * The platforms a manual destination is offered for: every platform the pipeline knows,
+     * unconditionally. Unlike the automated options these are derived from nothing and can never be
+     * absent, which is the entire point — the lane has to work where there is no connection to derive
+     * anything from.
+     */
+    private static final List<String> MANUAL_PLATFORMS =
+            List.of(PLATFORM_FACEBOOK, PLATFORM_INSTAGRAM, PLATFORM_YOUTUBE, PLATFORM_TIKTOK);
+
+    /** How a manual destination names itself in a picker. */
+    private static final Map<String, String> MANUAL_LABELS = Map.of(
+            PLATFORM_FACEBOOK, "Facebook (manual)",
+            PLATFORM_INSTAGRAM, "Instagram (manual)",
+            PLATFORM_YOUTUBE, "YouTube (manual)",
+            PLATFORM_TIKTOK, "TikTok (manual)");
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /**
@@ -403,7 +425,8 @@ public class PublishTargetService {
      * instead of posting.
      */
     private static String idempotencyKey(String workItemId, TargetOption option) {
-        return "pub:" + workItemId + ":" + option.platform() + ":" + option.connectionId()
+        return "pub:" + workItemId + ":" + option.platform() + ":"
+                + (option.connectionId() == null ? MANUAL_KEY : option.connectionId())
                 + ":" + UUID.randomUUID();
     }
 
@@ -438,6 +461,14 @@ public class PublishTargetService {
                     stringListValue(config, PublishOptionsValidator.CONFIG_PRIVACY_LEVEL_OPTIONS),
                     nickname));
         }
+        // Manual destinations last, and always. Offering them even to a fully connected project is
+        // deliberate rather than a fallback: a post that has to go out through a personal account, a
+        // Story, or any surface a platform API does not reach still belongs on the calendar, under the
+        // same review gate, with everything else.
+        for (String platform : MANUAL_PLATFORMS) {
+            options.add(new TargetOption(platform, null, null, MANUAL_LABELS.get(platform),
+                    PublishLane.MANUAL, null, null, null, null));
+        }
         return List.copyOf(options);
     }
 
@@ -470,15 +501,33 @@ public class PublishTargetService {
                 .toList();
     }
 
+    /**
+     * A stable order for a set the DB returns unordered. {@code nullsFirst} is load-bearing rather than
+     * defensive: a MANUAL target's connection id is null, and the natural comparator throws on null, so
+     * without it every read of a Post carrying a manual destination would fail.
+     */
     private static List<PostPublishTarget> sorted(List<PostPublishTarget> targets) {
         return targets.stream()
                 .sorted(Comparator.comparing(PostPublishTarget::getPlatform)
-                        .thenComparing(PostPublishTarget::getConnectionId))
+                        .thenComparing(PostPublishTarget::getConnectionId,
+                                Comparator.nullsFirst(Comparator.naturalOrder())))
                 .toList();
     }
 
+    /**
+     * A target's identity for diffing: the platform plus the account behind it.
+     *
+     * <p>The delimiter is a control character, not a space, so the two fields cannot be confused for one
+     * another — no platform ending in a space can collide with a connection id starting with one. It is
+     * {@code \u001F} (ASCII unit separator) rather than a literal NUL: a NUL byte in the source makes the
+     * entire file binary to grep and ripgrep, which silently drop it from every search result.
+     *
+     * <p>A MANUAL target has no account, so it keys on the {@link #MANUAL_KEY} sentinel rather than on the
+     * string "null" — one manual destination per platform, which is what the partial unique index
+     * enforces in the DB.
+     */
     private static String selectionKey(String platform, String connectionId) {
-        return platform + " " + connectionId;
+        return platform + KEY_DELIMITER + (connectionId == null ? MANUAL_KEY : connectionId);
     }
 
     private static Map<String, Object> parseConfig(String json) {

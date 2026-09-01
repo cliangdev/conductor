@@ -3,6 +3,7 @@ package com.conductor.service;
 import com.conductor.entity.Asset;
 import com.conductor.entity.Connection;
 import com.conductor.entity.PostPublishTarget;
+import com.conductor.entity.PublishLane;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.AssetRepository;
@@ -267,6 +268,15 @@ public class MediaTargetValidator {
                     + " — TikTok video must be at most 4 GB");
         }
 
+        // The per-creator duration cap is the one rule with no answer on the MANUAL lane: it is read from a
+        // connected account's cached creator info, and a manual target has no account. That is a different
+        // fact from the usual "we could not check it" this class refuses to wave through — there is nothing
+        // to check against, not a missing reading of something that exists — and blocking on it would make a
+        // manual TikTok destination impossible to approve, which is the one thing the lane has to allow.
+        // TikTok's own composer enforces the cap on the human at post time regardless.
+        if (target.getLane() == PublishLane.MANUAL) {
+            return;
+        }
         Optional<Integer> maxDuration = cachedMaxVideoDurationSec(target);
         if (maxDuration.isEmpty()) {
             problems.add(describe(target, asset)

@@ -1819,6 +1819,75 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/work-items/{workItemId}/publish-targets/{targetId}/manual-publish:
+    post:
+      tags:
+        - publish-outcomes
+      summary: Record that a human published a manual target by hand
+      description: >-
+        Marks one MANUAL publish target as published, storing the live URL the person pasted back. This is
+        the only way a target reaches PUBLISHED without a platform reporting it, and it is refused for any
+        target that is not on the MANUAL lane: an automated target has a poller that will publish it and
+        report the real outcome, so letting a human declare it published would strand a post that is still
+        queued to go out.
+
+
+        Everything downstream is the ordinary success path — the target moves to PUBLISHED, a typed
+        destination Asset is recorded on the Post, and the Post rolls up to its published status once every
+        target has landed. Idempotent: a second call on an already-published target changes nothing.
+      operationId: completeManualPublish
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: targetId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteManualPublishRequest"
+      responses:
+        "200":
+          description: The target as it stands after being recorded as published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishTargetResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project, Work Item or target not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The target is not on the MANUAL lane, was revoked, or no permalink was supplied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/work-items/{workItemId}/publish-targets:
     get:
       tags:
@@ -2977,8 +3046,6 @@ components:
         (COND-23 T3.6.)
       required:
         - platform
-        - connectorId
-        - connectionId
         - label
         - lane
       properties:
@@ -2992,12 +3059,17 @@ components:
             - tiktok
         connectorId:
           type: string
-          description: Connector the target publishes through (meta, youtube, tiktok).
+          nullable: true
+          description: >-
+            Connector the target publishes through (meta, youtube, tiktok). Null on the MANUAL lane, which
+            publishes through no connector.
         connectionId:
           type: string
+          nullable: true
           description: >-
             The specific connected account. Two accounts on one platform differ only here, so it is
-            what a selection must carry.
+            what a selection must carry. Null on the MANUAL lane, where there is no account — a manual
+            destination is identified by its platform alone, and there is exactly one per platform.
         label:
           type: string
           description: Human-readable account name (Page name, @handle, channel title, creator nickname).
@@ -3005,10 +3077,14 @@ components:
           type: string
           description: >-
             NATIVE hands the post and its schedule to the platform's own scheduler; APP_MANAGED keeps
-            it here until its fire time and Conductor publishes it.
+            it here until its fire time and Conductor publishes it; MANUAL publishes nothing at all — at
+            fire time the target waits for a human to post it and record the live URL. A MANUAL option is
+            offered for every platform whether or not the project has connected one, and is the only
+            destination available to a project with no social integration.
           enum:
             - NATIVE
             - APP_MANAGED
+            - MANUAL
         healthStatus:
           type: string
           nullable: true
@@ -3048,8 +3124,6 @@ components:
         - id
         - workItemId
         - platform
-        - connectorId
-        - connectionId
         - lane
         - state
       properties:
@@ -3066,20 +3140,34 @@ components:
             - tiktok
         connectorId:
           type: string
+          nullable: true
+          description: Null on the MANUAL lane, which publishes through no connector.
         connectionId:
           type: string
+          nullable: true
+          description: >-
+            The connected account this target publishes through. Null on the MANUAL lane, which reaches its
+            platform through a human rather than a credential.
         label:
           type: string
           nullable: true
           description: Account label captured at selection time (post_publish_target.platform_account_label).
         lane:
           type: string
+          description: >-
+            How this target reaches its platform. NATIVE hands the post to the platform's own scheduler;
+            APP_MANAGED means Conductor publishes it at fire time; MANUAL means nobody automates it — a
+            human posts it and records the result, and no credential is used.
           enum:
             - NATIVE
             - APP_MANAGED
+            - MANUAL
         state:
           type: string
-          description: One of PENDING, HANDED_OFF, PUBLISHING, PUBLISHED, FAILED, REVOKED.
+          description: >-
+            One of PENDING, HANDED_OFF, PUBLISHING, AWAITING_MANUAL, PUBLISHED, FAILED, REVOKED.
+            AWAITING_MANUAL is a MANUAL target whose fire time has passed and which is waiting on a person
+            to publish it by hand.
         platformPostId:
           type: string
           nullable: true
@@ -3138,7 +3226,6 @@ components:
       type: object
       required:
         - platform
-        - connectionId
       properties:
         platform:
           type: string
@@ -3149,6 +3236,11 @@ components:
             - tiktok
         connectionId:
           type: string
+          nullable: true
+          description: >-
+            The connected account to publish through. Omit it (or send null) to select this platform's
+            MANUAL destination instead — the one a human publishes by hand. There is exactly one manual
+            destination per platform, so the platform alone identifies it.
         publishOptions:
           $ref: "#/components/schemas/PublishOptions"
 
@@ -3229,6 +3321,25 @@ components:
           description: >-
             True to consent to this Post going out to its current accounts under their current publish
             options, with its current media. False to withdraw consent.
+
+    CompleteManualPublishRequest:
+      type: object
+      required:
+        - permalink
+      properties:
+        permalink:
+          type: string
+          description: >-
+            Link to the post that actually went out. Required, and the reason this endpoint exists: it is
+            the only record that a manual destination was ever published, so a blank one is refused rather
+            than stored.
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When it actually went out. Defaults to now. Recorded as the target's fireTime so the calendar
+            and the outcome panel show when the post really happened rather than when it was scheduled to.
 
     ReplacePublishTargetsRequest:
       type: object

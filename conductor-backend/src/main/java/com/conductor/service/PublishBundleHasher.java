@@ -95,8 +95,19 @@ public class PublishBundleHasher {
                 .toList());
     }
 
+    /**
+     * What makes one destination distinguishable from another inside the bundle.
+     *
+     * <p>{@code platform} is load-bearing and was originally missing. Without it a Meta connection's
+     * Facebook and Instagram targets hash identically — same connector, same connection, same caption
+     * override — so swapping one for the other left the bundle hash unchanged and an approval standing over
+     * a post going somewhere else. The MANUAL lane makes that reachable in the plainest way possible: every
+     * manual target has a null connector and a null connection, so without {@code platform} all four of
+     * them are the same tuple.
+     */
     private static Map<String, Object> targetTuple(PostPublishTarget target) {
         Map<String, Object> tuple = new TreeMap<>();
+        tuple.put("platform", target.getPlatform());
         tuple.put("connectorId", target.getConnectorId());
         tuple.put("connectionId", target.getConnectionId());
         tuple.put("captionOverride", target.getCaptionOverride());

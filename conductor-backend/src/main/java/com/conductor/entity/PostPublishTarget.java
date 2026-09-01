@@ -52,7 +52,13 @@ public class PostPublishTarget {
     @Column(name = "connector_id", length = 64, nullable = false)
     private String connectorId;
 
-    @Column(name = "connection_id", length = 36, nullable = false)
+    /**
+     * The connected account this target publishes through; {@code null} only on the
+     * {@link PublishLane#MANUAL} lane, which reaches its platform through a human rather than a credential.
+     * A DB CHECK constraint keeps the two facts in lockstep, so "no connection" and "manual" can never
+     * disagree.
+     */
+    @Column(name = "connection_id", length = 36)
     private String connectionId;
 
     /** {@code facebook} | {@code instagram} | {@code youtube} | {@code tiktok}. */

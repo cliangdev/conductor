@@ -115,10 +115,12 @@ public class PublishTargetController implements PublishTargetsApi {
     private static PublishTargetOption toOption(PublishTargetService.TargetOption option) {
         return new PublishTargetOption(
                 PublishTargetOption.PlatformEnum.fromValue(option.platform()),
-                option.connectorId(),
-                option.connectionId(),
                 option.label(),
                 PublishTargetOption.LaneEnum.fromValue(option.lane().name()))
+                // Both null on a MANUAL option: it is identified by its platform alone, because there is
+                // no account behind it and exactly one of it per platform.
+                .connectorId(option.connectorId())
+                .connectionId(option.connectionId())
                 .healthStatus(option.healthStatus())
                 .healthMessage(option.healthMessage())
                 // Null, not an empty list, when a TikTok connection never cached the creator's levels: the
@@ -132,10 +134,11 @@ public class PublishTargetController implements PublishTargetsApi {
                 target.getId(),
                 target.getWorkItem().getId(),
                 PublishTargetResponse.PlatformEnum.fromValue(target.getPlatform()),
-                target.getConnectorId(),
-                target.getConnectionId(),
                 PublishTargetResponse.LaneEnum.fromValue(target.getLane().name()),
                 target.getState().name())
+                // Both null on the MANUAL lane, which publishes through no connector and no account.
+                .connectorId(target.getConnectorId())
+                .connectionId(target.getConnectionId())
                 .label(target.getPlatformAccountLabel())
                 .platformPostId(target.getPlatformPostId())
                 .permalink(target.getPermalink())

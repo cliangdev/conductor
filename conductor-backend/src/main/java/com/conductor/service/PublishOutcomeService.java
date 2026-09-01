@@ -155,11 +155,22 @@ public class PublishOutcomeService {
                     + "|authentication[ _-]?fail",
             Pattern.CASE_INSENSITIVE);
 
-    /** States a target can still leave on its own; while any remain, the Post has not finished publishing. */
+    /**
+     * States that mean the Post has not finished publishing yet; while any target sits in one, the roll-up
+     * holds off.
+     *
+     * <p>{@link PostPublishTargetState#AWAITING_MANUAL} belongs here even though nothing automated will ever
+     * move it. The roll-up's rule is "every non-revoked target published, or the Post failed", so treating a
+     * manual target as settled the moment it came due would roll the Post straight to its failed status
+     * — reporting as a publishing failure a post whose human simply has not got to it yet. It is the one
+     * in-flight state with no timeout, which is why the stranded sweep (which only ever queries
+     * {@code PUBLISHING}) must never be widened to cover it.
+     */
     private static final Set<PostPublishTargetState> IN_FLIGHT = Set.of(
             PostPublishTargetState.PENDING,
             PostPublishTargetState.HANDED_OFF,
-            PostPublishTargetState.PUBLISHING);
+            PostPublishTargetState.PUBLISHING,
+            PostPublishTargetState.AWAITING_MANUAL);
 
     /**
      * What a stranded row records. Every word is load-bearing: the dispatch reached the platform, so the
@@ -319,6 +330,85 @@ public class PublishOutcomeService {
     public boolean recordFailure(String targetId, String errorMessage, boolean permanentAuthFailure) {
         PostPublishTarget target = find(targetId);
         return target != null && applyFailure(target, errorMessage, permanentAuthFailure);
+    }
+
+    /**
+     * Records that a human published a {@link PublishLane#MANUAL} target by hand.
+     *
+     * <p>This is the only way a target reaches {@code PUBLISHED} without a platform having told us so, which
+     * is exactly why it is narrow. It refuses any target that is not on the MANUAL lane: an automated target
+     * has a poller that will publish it and report the real outcome, and letting a human declare it published
+     * would strand a post that is still queued to go out — or, worse, mark as published one that later fails,
+     * with nothing left watching. A caller wanting to abandon an automated target should deselect it.
+     *
+     * <p>Everything downstream is the ordinary success path: {@link #applySuccess} moves the row, stores the
+     * permalink, records the typed destination Asset and rolls the Post up. A manual publish therefore lands
+     * on the calendar, in the outcome panel and in the Asset library identically to an API one — the lane is
+     * a detail of who did the posting, not a second class of result.
+     *
+     * <p>Idempotent in the way that matters: a second call on an already-published target changes nothing and
+     * returns false, so a double-clicked button or a retried MCP call cannot produce two destination Assets.
+     *
+     * @param publishedAt when the human says it actually went out; null means now. Recorded as the row's fire
+     *                    time so the calendar shows when the post really happened rather than when it was
+     *                    scheduled to
+     * @return true when this call is what moved the row
+     * @throws BusinessException when the target is not manual, or is in a state a human cannot complete
+     */
+    @Transactional
+    public boolean completeManualTarget(String projectId, String workItemId, String targetId,
+                                        String permalink, OffsetDateTime publishedAt, User caller) {
+        if (caller == null || !projectSecurityService.isProjectMember(projectId, caller.getId())) {
+            // A non-member must not be able to tell a project apart from one that does not exist.
+            throw new EntityNotFoundException("Project not found");
+        }
+        WorkItem post = workItemRepository.findById(workItemId)
+                .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+
+        PostPublishTarget target = targetRepository.findById(targetId)
+                .filter(t -> t.getWorkItem() != null && post.getId().equals(t.getWorkItem().getId()))
+                .orElseThrow(() -> new EntityNotFoundException("Publish target not found"));
+
+        if (target.getLane() != PublishLane.MANUAL) {
+            throw new BusinessException("This destination publishes automatically, so it cannot be marked"
+                    + " published by hand — its outcome is recorded when the platform reports it.");
+        }
+        if (target.getState() == PostPublishTargetState.REVOKED) {
+            throw new BusinessException("This destination was taken back down, so it cannot be marked"
+                    + " published. Re-select it and schedule the post again.");
+        }
+        if (permalink == null || permalink.isBlank()) {
+            throw new BusinessException("A link to the published post is required — it is the only record"
+                    + " that this destination actually went out.");
+        }
+
+        // The fire time becomes when it really went out, so the calendar and the outcome panel agree with
+        // reality rather than with the plan. Only on the call that actually publishes: re-stamping on a
+        // duplicate would let a second click quietly rewrite the recorded time.
+        if (target.getState() != PostPublishTargetState.PUBLISHED) {
+            target.setFireTime(publishedAt == null ? OffsetDateTime.now() : publishedAt);
+        }
+        return applySuccess(target, null, permalink.trim());
+    }
+
+    /**
+     * One publish target, membership-checked and scoped to its Post. Exists so a caller that has just
+     * changed a target can read back what it now looks like without widening any repository's exposure —
+     * the mutating call and its read-back share the same scoping rules, so neither can reach a row the
+     * other could not.
+     */
+    @Transactional(readOnly = true)
+    public PostPublishTarget readTarget(String projectId, String workItemId, String targetId, User caller) {
+        if (caller == null || !projectSecurityService.isProjectMember(projectId, caller.getId())) {
+            throw new EntityNotFoundException("Project not found");
+        }
+        WorkItem post = workItemRepository.findById(workItemId)
+                .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
+                .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+        return targetRepository.findById(targetId)
+                .filter(t -> t.getWorkItem() != null && post.getId().equals(t.getWorkItem().getId()))
+                .orElseThrow(() -> new EntityNotFoundException("Publish target not found"));
     }
 
     /**
