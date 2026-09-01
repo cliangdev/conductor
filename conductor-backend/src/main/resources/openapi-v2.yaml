@@ -1923,6 +1923,112 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/work-items/{workItemId}/publish-consent:
+    get:
+      tags:
+        - publish-targets
+      summary: Read the creator's posting consent on a Post
+      description: >-
+        Whether the creator's TikTok posting consent stands for this Post **as it is now**. `required`
+        is true when the Post carries at least one `tiktok` target; every other Post needs no consent
+        and reports `valid: false, required: false`, which blocks nothing.
+
+
+        `valid` is not a stored flag — consent is recorded against the exact target set (accounts and
+        their `publishOptions`) and uploaded media it was given for, so swapping a destination account,
+        changing a privacy level or replacing the video silently withdraws it. Read `consentedAt`
+        alongside `valid` to tell the two apart: null means nobody ever consented, and a timestamp with
+        `valid: false` means someone did and the Post has changed since. (MKT-1.)
+      operationId: getPublishConsent
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Post's consent as it currently stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishConsentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags:
+        - publish-targets
+      summary: Record or withdraw the creator's posting consent on a Post
+      description: >-
+        Records that the creator has reviewed the preview and the destination accounts and consents to
+        this Post going out, or withdraws that consent (`consented: false`). TikTok's Content Sharing
+        Guidelines require the consent before anything is uploaded, and a Post with a `tiktok` target
+        cannot enter a review-gated status without it.
+
+
+        What is consented to is computed server-side from the Post's current targets and media — a
+        client never supplies it, because a client-supplied subject would let a caller consent to
+        something the Post is not. Idempotent: re-recording rewrites the same single consent with the
+        current subject, and withdrawing returns the Post to "never consented". (MKT-1.)
+      operationId: recordPublishConsent
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordPublishConsentRequest"
+      responses:
+        "200":
+          description: The Post's consent after the change
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishConsentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/work-items/{workItemId}/publish-targets/retry:
     post:
       tags:
@@ -3064,6 +3170,65 @@ components:
         privacyLevel: PUBLIC_TO_EVERYONE
         disableComment: false
         brandContentToggle: true
+
+    PublishConsentResponse:
+      type: object
+      description: >-
+        The creator's posting consent on a Post, and whether it still describes the Post. (MKT-1.)
+      required:
+        - workItemId
+        - required
+        - valid
+        - verdict
+      properties:
+        workItemId:
+          type: string
+        required:
+          type: boolean
+          description: >-
+            True when the Post publishes to at least one `tiktok` account. A Facebook-only or
+            YouTube-only Post is never gated on consent.
+        valid:
+          type: boolean
+          description: >-
+            True only when consent was given and still covers the Post's current accounts, publish
+            options and uploaded media. False on a Post that needs no consent at all.
+        verdict:
+          type: string
+          description: >-
+            The same fact in one word, for a client that needs to say what is wrong.
+            `NOT_REQUIRED` — no TikTok target. `VALID` — consent stands. `NEVER_GIVEN` — nobody has
+            consented (or it was withdrawn). `SUPERSEDED` — consent was given, then the accounts,
+            options or media changed under it and it has to be given again.
+          enum:
+            - NOT_REQUIRED
+            - VALID
+            - NEVER_GIVEN
+            - SUPERSEDED
+        consentedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When consent was last given; null when it never was, or was withdrawn.
+        consentedByUserId:
+          type: string
+          nullable: true
+          description: The member who consented; null when consent has never been given.
+        consentedByName:
+          type: string
+          nullable: true
+          description: That member's display name, so the record reads as a name rather than an id.
+
+    RecordPublishConsentRequest:
+      type: object
+      required:
+        - consented
+      properties:
+        consented:
+          type: boolean
+          description: >-
+            True to consent to this Post going out to its current accounts under their current publish
+            options, with its current media. False to withdraw consent.
 
     ReplacePublishTargetsRequest:
       type: object

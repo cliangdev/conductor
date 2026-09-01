@@ -53,6 +53,12 @@ import java.util.Optional;
  *       {@code PUBLIC_TO_EVERYONE} — so this cannot be a static list.</li>
  *   <li><b>Branded content cannot be private.</b> TikTok refuses {@code brand_content_toggle} combined
  *       with {@code SELF_ONLY}, and refuses it <em>after</em> the video has uploaded.</li>
+ *   <li><b>The creator must have consented (MKT-1).</b> A Post with any TikTok target needs a standing
+ *       {@code publish_consent} row covering the Post as it is now. This is the rule that made consent a
+ *       control rather than a checkbox: TIK-2's consent step held its answer in React state, so it
+ *       neither survived a reload nor existed at all for the MCP server, the CLI or an agent driving the
+ *       pipeline. Checked once for the whole Post, not per target — the creator consents to the post
+ *       going out, and {@link PublishConsentService} decides whether that consent still describes it.</li>
  * </ul>
  *
  * <p>Every problem across every target is collected and reported in one message, so one pass through the
@@ -92,13 +98,16 @@ public class PublishOptionsValidator {
 
     private final PostPublishTargetRepository postPublishTargetRepository;
     private final ConnectionRepository connectionRepository;
+    private final PublishConsentService publishConsentService;
     private final ObjectMapper objectMapper;
 
     public PublishOptionsValidator(PostPublishTargetRepository postPublishTargetRepository,
                                    ConnectionRepository connectionRepository,
+                                   PublishConsentService publishConsentService,
                                    ObjectMapper objectMapper) {
         this.postPublishTargetRepository = postPublishTargetRepository;
         this.connectionRepository = connectionRepository;
+        this.publishConsentService = publishConsentService;
         this.objectMapper = objectMapper;
     }
 
@@ -123,10 +132,15 @@ public class PublishOptionsValidator {
         }
 
         List<String> problems = new ArrayList<>();
+        boolean anyTikTok = false;
         for (PostPublishTarget target : targets) {
             if (PLATFORM_TIKTOK.equals(normalized(target.getPlatform()))) {
+                anyTikTok = true;
                 inspectTikTok(target, problems);
             }
+        }
+        if (anyTikTok) {
+            inspectConsent(workItem, problems);
         }
         if (!problems.isEmpty()) {
             throw new UnprocessableEntityException(
@@ -186,6 +200,25 @@ public class PublishOptionsValidator {
             problems.add(describe(target) + " is marked as branded content (paid partnership) with privacy"
                     + " level " + PRIVACY_SELF_ONLY + " — TikTok rejects that combination; either choose a"
                     + " visible privacy level or turn the paid-partnership disclosure off");
+        }
+    }
+
+    /**
+     * The posting consent TikTok's Content Sharing Guidelines require (MKT-1). Reported in the same list
+     * as every options problem so one pass through the Post fixes all of them, and the two failure modes
+     * are named apart: never having consented and having consented to a Post that has since changed need
+     * different things from a human, and "consent required" alone would send someone to a checkbox that
+     * is already ticked.
+     */
+    private void inspectConsent(WorkItem workItem, List<String> problems) {
+        switch (publishConsentService.verdict(workItem)) {
+            case NEVER_GIVEN -> problems.add("this Post publishes to TikTok, and TikTok requires the"
+                    + " creator's consent first — review the preview and the destination account, then"
+                    + " consent to publishing this post to TikTok");
+            case SUPERSEDED -> problems.add("the TikTok posting consent on this Post was given for a"
+                    + " different version of it — the destination accounts, their publish options or the"
+                    + " media have changed since, so review the preview and consent again");
+            default -> { }
         }
     }
 

@@ -43,6 +43,7 @@ class PublishOptionsValidatorTest {
 
     private PostPublishTargetRepository postPublishTargetRepository;
     private ConnectionRepository connectionRepository;
+    private PublishConsentService publishConsentService;
     private PublishOptionsValidator validator;
 
     private Statechart marketing;
@@ -52,8 +53,12 @@ class PublishOptionsValidatorTest {
     void setUp() {
         postPublishTargetRepository = Mockito.mock(PostPublishTargetRepository.class);
         connectionRepository = Mockito.mock(ConnectionRepository.class);
+        publishConsentService = Mockito.mock(PublishConsentService.class);
+        // The consent rule (MKT-1) is its own block of tests below; every options test runs with consent
+        // standing so that a rejection there can only be about the options.
+        when(publishConsentService.verdict(any())).thenReturn(PublishConsentService.Verdict.VALID);
         validator = new PublishOptionsValidator(postPublishTargetRepository, connectionRepository,
-                new ObjectMapper());
+                publishConsentService, new ObjectMapper());
         marketing = statechart("/schema/examples/marketing.workflow.json");
         engineering = statechart("/schema/examples/engineering.workflow.json");
     }
@@ -179,6 +184,81 @@ class PublishOptionsValidatorTest {
         assertThatCode(this::approve).doesNotThrowAnyException();
     }
 
+    // --- [auto] MKT-1: a TikTok Post cannot enter a review-gated status without valid consent ---
+
+    @Test
+    void blocksATikTokPostTheCreatorHasNeverConsentedTo() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(tiktokTarget("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+        givenConsent(PublishConsentService.Verdict.NEVER_GIVEN);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("TikTok")
+                .hasMessageContaining("creator's consent")
+                .hasMessageContaining("review the preview and the destination account");
+    }
+
+    /**
+     * The two failure modes need different things from a human: one has never ticked the box, the other is
+     * looking at a ticked box that no longer covers the post in front of them.
+     */
+    @Test
+    void blocksATikTokPostWhoseConsentWasWithdrawnByAnEditAndSaysSo() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(tiktokTarget("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+        givenConsent(PublishConsentService.Verdict.SUPERSEDED);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("given for a different version")
+                .hasMessageContaining("consent again");
+    }
+
+    @Test
+    void allowsATikTokPostOnceConsentHasBeenRecorded() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(tiktokTarget("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+        givenConsent(PublishConsentService.Verdict.VALID);
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+    }
+
+    /** Consent is to the post going out, not to each account, so it is one question per Post. */
+    @Test
+    void asksAboutConsentOncePerPostHoweverManyTikTokAccountsItPostsTo() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenConnection("conn-tiktok-2", "{\"privacyLevelOptions\":[\"PUBLIC_TO_EVERYONE\"]}");
+        PostPublishTarget second = tiktokTarget("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}");
+        second.setConnectionId("conn-tiktok-2");
+        givenTargets(tiktokTarget("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"), second);
+        givenConsent(PublishConsentService.Verdict.NEVER_GIVEN);
+
+        assertThatThrownBy(this::approve).isInstanceOf(UnprocessableEntityException.class);
+        verify(publishConsentService, Mockito.times(1)).verdict(any());
+    }
+
+    @Test
+    void neverAsksAboutConsentForAPostWithNoTikTokTarget() {
+        givenTargets(target("facebook", "conn-meta", "Acme Page", null),
+                target("youtube", "conn-yt", "Acme Channel", null));
+
+        assertThatCode(this::approve).doesNotThrowAnyException();
+        verifyNoInteractions(publishConsentService);
+    }
+
+    @Test
+    void reportsAMissingConsentAlongsideAnOptionsProblemInOneMessage() {
+        givenCreatorPrivacyLevels("PUBLIC_TO_EVERYONE");
+        givenTargets(tiktokTarget(null));
+        givenConsent(PublishConsentService.Verdict.NEVER_GIVEN);
+
+        assertThatThrownBy(this::approve)
+                .isInstanceOf(UnprocessableEntityException.class)
+                .hasMessageContaining("no privacy level chosen")
+                .hasMessageContaining("creator's consent");
+    }
+
     // --- every problem in one message ---
 
     @Test
@@ -230,7 +310,7 @@ class PublishOptionsValidatorTest {
                 target("youtube", "conn-yt", "Acme Channel", "{\"privacyLevel\":\"nonsense\"}"));
 
         assertThatCode(this::approve).doesNotThrowAnyException();
-        verifyNoInteractions(connectionRepository);
+        verifyNoInteractions(connectionRepository, publishConsentService);
     }
 
     @Test
@@ -251,7 +331,7 @@ class PublishOptionsValidatorTest {
         givenTargets();
 
         assertThatCode(this::approve).doesNotThrowAnyException();
-        verifyNoInteractions(connectionRepository);
+        verifyNoInteractions(connectionRepository, publishConsentService);
     }
 
     // --- [auto] An ENGINEERING work item is untouched — the validator does not even query ---
@@ -262,7 +342,7 @@ class PublishOptionsValidatorTest {
 
         assertThatCode(() -> validator.validateForTransition(issue, engineering, "DONE"))
                 .doesNotThrowAnyException();
-        verifyNoInteractions(postPublishTargetRepository, connectionRepository);
+        verifyNoInteractions(postPublishTargetRepository, connectionRepository, publishConsentService);
     }
 
     @Test
@@ -271,14 +351,14 @@ class PublishOptionsValidatorTest {
                 workItem("MARKETING", "DRAFT"), marketing, "IN_REVIEW")).doesNotThrowAnyException();
         assertThatCode(() -> validator.validateForTransition(
                 workItem("MARKETING", "APPROVED"), marketing, "SCHEDULED")).doesNotThrowAnyException();
-        verifyNoInteractions(postPublishTargetRepository, connectionRepository);
+        verifyNoInteractions(postPublishTargetRepository, connectionRepository, publishConsentService);
     }
 
     @Test
     void letsAnUnscheduledPostReturnToApprovedWithoutRevalidatingItsOptions() {
         assertThatCode(() -> validator.validateForTransition(
                 workItem("MARKETING", "SCHEDULED"), marketing, "APPROVED")).doesNotThrowAnyException();
-        verifyNoInteractions(postPublishTargetRepository, connectionRepository);
+        verifyNoInteractions(postPublishTargetRepository, connectionRepository, publishConsentService);
     }
 
     @Test
@@ -327,6 +407,10 @@ class PublishOptionsValidatorTest {
         target.setPlatformAccountLabel(accountLabel);
         target.setPublishOptions(publishOptions);
         return target;
+    }
+
+    private void givenConsent(PublishConsentService.Verdict verdict) {
+        when(publishConsentService.verdict(any())).thenReturn(verdict);
     }
 
     private void givenCreatorPrivacyLevels(String... levels) {

@@ -3,10 +3,13 @@ package com.conductor.v2.controller;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.PublishTargetsApi;
+import com.conductor.generated.v2.model.PublishConsentResponse;
 import com.conductor.generated.v2.model.PublishTargetOption;
 import com.conductor.generated.v2.model.PublishTargetResponse;
 import com.conductor.generated.v2.model.PublishTargetSelection;
+import com.conductor.generated.v2.model.RecordPublishConsentRequest;
 import com.conductor.generated.v2.model.ReplacePublishTargetsRequest;
+import com.conductor.service.PublishConsentService;
 import com.conductor.service.PublishTargetService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,9 +44,12 @@ public class PublishTargetController implements PublishTargetsApi {
     private static final ObjectMapper OPTIONS_MAPPER = new ObjectMapper();
 
     private final PublishTargetService publishTargetService;
+    private final PublishConsentService publishConsentService;
 
-    public PublishTargetController(PublishTargetService publishTargetService) {
+    public PublishTargetController(PublishTargetService publishTargetService,
+                                   PublishConsentService publishConsentService) {
         this.publishTargetService = publishTargetService;
+        this.publishConsentService = publishConsentService;
     }
 
     @Override
@@ -74,6 +80,32 @@ public class PublishTargetController implements PublishTargetsApi {
                         .toList();
         return ResponseEntity.ok(toResponses(
                 publishTargetService.replaceSelection(projectId, workItemId, selections, currentUser())));
+    }
+
+    @Override
+    public ResponseEntity<PublishConsentResponse> getPublishConsent(String projectId, String workItemId) {
+        return ResponseEntity.ok(toResponse(workItemId,
+                publishConsentService.readConsent(projectId, workItemId, currentUser())));
+    }
+
+    @Override
+    public ResponseEntity<PublishConsentResponse> recordPublishConsent(
+            String projectId, String workItemId, RecordPublishConsentRequest request) {
+        boolean consented = request != null && Boolean.TRUE.equals(request.getConsented());
+        return ResponseEntity.ok(toResponse(workItemId,
+                publishConsentService.recordConsent(projectId, workItemId, consented, currentUser())));
+    }
+
+    private static PublishConsentResponse toResponse(String workItemId,
+                                                     PublishConsentService.ConsentState state) {
+        return new PublishConsentResponse(
+                workItemId,
+                state.required(),
+                state.valid(),
+                PublishConsentResponse.VerdictEnum.fromValue(state.verdict().name()))
+                .consentedAt(state.consentedAt())
+                .consentedByUserId(state.consentedByUserId())
+                .consentedByName(state.consentedByName());
     }
 
     private static List<PublishTargetResponse> toResponses(List<PostPublishTarget> targets) {
