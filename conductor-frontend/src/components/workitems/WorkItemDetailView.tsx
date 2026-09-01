@@ -18,6 +18,7 @@ import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSkeleton'
 import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemPropertiesPanel'
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
+import { WorkItemDescriptionCard } from '@/components/workitems/WorkItemDescriptionCard'
 import { PostTargetPicker, workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
 import { PublishOutcomePanel } from '@/components/marketing/PublishOutcomePanel'
 import {
@@ -174,6 +175,15 @@ function tabCommentCount(count: number, active: boolean) {
     </span>
   )
 }
+
+/**
+ * The stand-in tab for a Work Item with no documents yet.
+ *
+ * Not a document and not a real panel of its own — it selects the same main panel the document viewer
+ * uses, which is where the caption, media and accounts live. It exists so the tab bar is never a
+ * one-way trip into Activity.
+ */
+const CONTENT_TAB = 'content'
 
 // ARIA tabs pattern ids — the same tab id (a document id, 'activity', or 'details') derives both the
 // tab button's id and the panel it controls, so the two stay in sync without a second id map.
@@ -706,7 +716,17 @@ export function WorkItemDetailView({
   // All tab ids in DOM order (roving tabindex + Arrow key navigation walk this array). 'details' is
   // a mobile-only alias that reveals the properties panel rather than changing the main content, so
   // the main content panel's aria-labelledby tracks the last content-bearing tab instead of it.
-  const tabIds = [...documents.map((d) => d.id), 'activity', 'details']
+  // With no documents there are no document tabs, so Activity used to be the only one on the bar —
+  // and clicking it was a dead end: the media, caption and accounts all hide on Activity, and there was
+  // nothing left to click to bring them back. A content tab stands in for the documents that are not
+  // there yet, so the bar always offers a way back.
+  const showContentTab = documents.length === 0
+  const tabIds = [
+    ...(showContentTab ? [CONTENT_TAB] : []),
+    ...documents.map((d) => d.id),
+    'activity',
+    'details',
+  ]
   const itemLevelCommentCount = unresolvedItemLevelCount(comments)
   const contentTabId = activeTab === 'details' || activeTab === '' ? (selectedDocId ?? 'activity') : activeTab
 
@@ -741,6 +761,24 @@ export function WorkItemDetailView({
           aria-label="Work item content"
           className="flex items-center gap-1 border-b border-border mb-4 overflow-x-auto overflow-y-hidden"
         >
+          {showContentTab && (
+            <button
+              id={tabButtonId(CONTENT_TAB)}
+              ref={(el) => {
+                if (el) tabButtonRefs.current.set(CONTENT_TAB, el)
+                else tabButtonRefs.current.delete(CONTENT_TAB)
+              }}
+              role="tab"
+              aria-selected={activeTab !== 'activity'}
+              aria-controls="wi-tabpanel-main"
+              tabIndex={activeTab !== 'activity' ? 0 : -1}
+              onClick={() => setActiveTab(CONTENT_TAB)}
+              onKeyDown={(e) => handleTabKeyDown(e, tabIds, CONTENT_TAB)}
+              className={cn(TAB_CLASSES, activeTab !== 'activity' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
+            >
+              {workflowView?.noun ?? 'Content'}
+            </button>
+          )}
           {documents.map((doc) => {
             const binary = !isMarkdown(doc) && !isHtml(doc)
             const active = activeTab === doc.id
@@ -819,6 +857,27 @@ export function WorkItemDetailView({
           >
             <div className="max-w-[45rem] mx-auto space-y-6">
               {mainContent}
+              {/* The description, which on a publishing Workflow is the caption that actually goes out.
+                  Above the media for the same reason the media sits above the accounts: it is the thing
+                  being reviewed, in the order someone writes it. */}
+              {activeTab !== 'activity' && (
+                <WorkItemDescriptionCard
+                  projectId={projectId}
+                  workItemId={issueId}
+                  token={accessToken!}
+                  description={issue.description}
+                  status={issue.status}
+                  workflowView={workflowView}
+                  isCaption={workflowDeclaresPublishTargets(workflowView)}
+                  canEdit={userRole !== 'REVIEWER'}
+                  onSaved={(description) => {
+                    setIssue((prev) => (prev ? { ...prev, description } : prev))
+                    // A caption edit is a bundle edit, so the server may have reverted the item and
+                    // revoked a hand-off. Re-read rather than assume, as the picker and schedule do.
+                    void refreshIssueStatus()
+                  }}
+                />
+              )}
               {/* File assets live with the copy they ship alongside, not in the properties rail — a
                   Post's creative is content, not metadata. Offered only where the bound Workflow
                   declares asset types, since the mint validates `type` against exactly that list. */}
