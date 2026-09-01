@@ -152,7 +152,12 @@ async function updateWorkItemImpl(
 
   try {
     await apiPatch<IssueResponse>(itemPath, body, config)
-  } catch {
+  } catch (err) {
+    // A 4xx (validation, permission, unknown id) is permanent — surface it rather than queuing a replay
+    // that can never succeed. Publishing validators reject this way by design.
+    if (isClientError(err)) {
+      return { error: `Work Item not updated: ${err instanceof Error ? err.message : String(err)}` }
+    }
     const size = queueChange({
       method: 'PATCH',
       path: itemPath,
@@ -192,7 +197,12 @@ async function setWorkItemStatusImpl(
 
   try {
     await apiPatch<IssueResponse>(itemPath, { status: params.status }, config)
-  } catch {
+  } catch (err) {
+    // A 4xx (an invalid transition, an unsatisfied review gate) is permanent — surface it rather than
+    // queuing a replay that can never succeed.
+    if (isClientError(err)) {
+      return { error: `Status not changed: ${err instanceof Error ? err.message : String(err)}` }
+    }
     const size = queueChange({
       method: 'PATCH',
       path: itemPath,
