@@ -620,9 +620,9 @@ public class IntegrationController implements IntegrationsApi {
         ConnectorFeed feed = connectorFeedRepository.findById(feedId)
                 .orElseThrow(() -> new EntityNotFoundException("Feed not found: " + feedId));
         if (!feed.getProjectId().equals(projectId) || !feed.getConnectorId().equals(connectorId)) {
-            // EntityNotFoundException, not ResponseStatusException: GlobalExceptionHandler has a
-            // dedicated handler for the former that renders a real 404; a ResponseStatusException falls
-            // through to the catch-all Exception handler and renders 500 regardless of its own status.
+            // EntityNotFoundException for consistency with the rest of this controller's not-found paths.
+            // (A ResponseStatusException would also render correctly now that GlobalExceptionHandler
+            // handles ErrorResponseException — it used to fall through to the catch-all and render 500.)
             throw new EntityNotFoundException("Feed not found in project/connector: " + feedId);
         }
         return feed;
