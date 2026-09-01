@@ -422,14 +422,15 @@ describe('MediaUploadPanel', () => {
     expect(onUploaded).not.toHaveBeenCalled()
   })
 
-  it('uploads under the asset type the user picks', async () => {
+  it('files the upload under the Workflow first declared asset type, without asking', async () => {
+    // The type is still required by the API, but it is no longer a question: nothing routes or filters
+    // on a file's type, so a picker for it only ever asked something whose answer changed nothing.
     renderPanel()
 
-    fireEvent.change(screen.getByLabelText(/Label this file as/i), { target: { value: 'youtube_video' } })
     selectFile(videoFile())
 
     await waitFor(() => expect(mintBodies).toHaveLength(1))
-    expect(mintBodies[0]).toMatchObject({ type: 'youtube_video' })
+    expect(mintBodies[0]).toMatchObject({ type: 'instagram_post' })
   })
 
   it('accepts a dropped file', async () => {
@@ -463,26 +464,17 @@ describe('isApprovedOrLater', () => {
     expect(isApprovedOrLater(undefined, 'APPROVED')).toBe(false)
   })
 
-  describe('the asset-type field says what it actually does', () => {
-    it('does not call itself a channel, because it routes nothing', async () => {
-      // Every publish action selects media by content type; the whole bundle goes to every selected
-      // account whatever this says. A label promising routing turns correct behaviour into a mystery —
-      // tagging a PNG "facebook_post" does not exempt it from Instagram's JPEG rule at the gate.
+  describe('the asset-type picker is gone', () => {
+    it('asks nothing about which platform a file is for', async () => {
+      // It used to, labelled "Channel", and it decided nothing: every publish action selects media by
+      // content type and the whole bundle goes to every selected account. Asking made correct behaviour
+      // look broken — a PNG filed as a Facebook post is still refused by Instagram's JPEG rule.
       renderPanel()
+      await screen.findByText(/Drop an image or video here/i)
 
-      expect(await screen.findByLabelText(/Label this file as/i)).toBeInTheDocument()
       expect(screen.queryByLabelText(/^Channel$/i)).not.toBeInTheDocument()
-      expect(
-        screen.getByText(/goes out to every account/i)
-      ).toBeInTheDocument()
-    })
-
-    it('shows the asset types readably rather than as raw slugs', async () => {
-      renderPanel()
-
-      const select = await screen.findByLabelText(/Label this file as/i)
-      expect(within(select).getByText('Instagram Post')).toBeInTheDocument()
-      expect(within(select).queryByText('instagram_post')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText(/Label this file as/i)).not.toBeInTheDocument()
+      expect(document.querySelector('#media-asset-type')).toBeNull()
     })
   })
 

@@ -16,7 +16,6 @@
 // blocks approval on any rule it cannot evaluate, so a video that skipped this step could never
 // reach Approved.
 
-import { humanizeId } from '@/lib/workflows'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Film, ImageIcon, UploadCloud } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
@@ -212,7 +211,22 @@ export function MediaUploadPanel({
   className,
 }: MediaUploadPanelProps) {
   const assetTypes = useMemo(() => workflowView?.assetTypes ?? [], [workflowView])
-  const [assetType, setAssetType] = useState<string>('')
+  /**
+   * The asset type the upload is filed under.
+   *
+   * Not a choice any more, and deliberately so. It used to be a four-way picker labelled "Channel",
+   * which read as "which platform is this for" and decided nothing: every publish action selects media
+   * by content type, and the whole bundle goes out to every selected account regardless. Nothing filters
+   * on it either — the asset library filters by media type, workflow and status. So the control asked a
+   * question whose answer changed nothing visible, and made correct behaviour look broken (a PNG filed
+   * as a Facebook post is still refused by Instagram's JPEG rule at the approval gate).
+   *
+   * The field itself stays because the API requires one and it still carries meaning for *link* assets,
+   * where the type really is the kind of thing being recorded (a github_pr, a published instagram_post).
+   * If per-asset targeting ever arrives — this image to that account and not this one — that is a real
+   * feature with a real control, not this one renamed back.
+   */
+  const assetType = assetTypes[0] ?? ''
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState<string | null>(null)
@@ -220,7 +234,7 @@ export function MediaUploadPanel({
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const locked = isApprovedOrLater(workflowView, status)
-  const selectedType = assetType || assetTypes[0] || ''
+  const selectedType = assetType
   const mediaAssets = assets.filter((a) => a.kind === 'file')
 
   const upload = useCallback(
@@ -330,32 +344,7 @@ export function MediaUploadPanel({
           </Alert>
         ) : (
           <>
-            {assetTypes.length > 1 && (
-              <div>
-                {/* Called "Channel" until it was pointed out that the name promises routing this does
-                    not do: every publish action selects media by content type, and the whole media
-                    bundle goes out to every selected account whatever this says. Tagging a PNG as a
-                    Facebook post does not exempt it from Instagram's JPEG rule — it will still block
-                    approval — so a label implying otherwise turns correct behaviour into a mystery. */}
-                <Label htmlFor="media-asset-type">Label this file as</Label>
-                <Select
-                  id="media-asset-type"
-                  value={selectedType}
-                  disabled={uploading}
-                  onChange={(e) => setAssetType(e.target.value)}
-                >
-                  {assetTypes.map((type) => (
-                    <option key={type} value={type}>
-                      {humanizeId(type)}
-                    </option>
-                  ))}
-                </Select>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  For organising the asset library. Every file attached here goes out to every account
-                  this {workflowView?.noun?.toLowerCase() ?? 'item'} publishes to, whichever label you pick.
-                </p>
-              </div>
-            )}
+
 
             <div
               onDragOver={(e) => {
