@@ -23,6 +23,8 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.TreeMap;
 import java.util.UUID;
 
 /**
@@ -56,6 +58,18 @@ import java.util.UUID;
  * any revocation. So an unchanged target keeps its row, its state, its platform id and its idempotency
  * key, and re-saving an identical selection writes nothing at all.
  *
+ * <h2>Per-target publish options (TIK-1)</h2>
+ * A selection also carries <em>how</em> the post goes out on that platform: an opaque per-platform bag of
+ * option keys, stored on the row as JSON and read against the row's own {@code platform}. For TikTok it is
+ * the difference between a launch video the world can see and one visible only to the creator — nothing
+ * used to supply a privacy level at all, so every TikTok publish fell through to {@code SELF_ONLY} and
+ * succeeded silently. {@code PublishOptionsValidator} enforces the TikTok rules at the approval gate;
+ * this service only persists what was chosen.
+ *
+ * <p>Options are canonicalised before they are compared or stored — null and blank values dropped, keys
+ * sorted — so "is this actually different from what is already there?" is a string comparison and
+ * re-sending the same options in a different key order is not a change.
+ *
  * <h2>The approval invariant</h2>
  * A change to the selection is a change to the publish bundle, so {@link PublishBundleGuard} runs
  * <b>first</b>, inside this transaction: it revokes any native-lane hand-off and reverts an
@@ -64,6 +78,11 @@ import java.util.UUID;
  * on a platform (AC-P0-1.5). The guard is invoked only when the selection actually differs, mirroring
  * {@link PublishBundleGuard#revertForCaptionOrScheduleEdit}: a client re-sending the current selection
  * unchanged must never knock a Post out of Approved.
+ *
+ * <p>Changing a target's options is a bundle change on exactly the same terms — what would go out is no
+ * longer what was approved — so it takes the same path through the guard as adding or dropping a target.
+ * An options edit is the one bundle change that keeps the row: the target still publishes to the same
+ * account through the same idempotency key, so it is updated in place rather than deleted and re-created.
  */
 @Service
 public class PublishTargetService {
@@ -115,8 +134,20 @@ public class PublishTargetService {
         }
     }
 
-    /** One chosen destination, as a client expresses it. */
-    public record TargetSelection(String platform, String connectionId) {}
+    /**
+     * One chosen destination, as a client expresses it: where the post goes, and how it goes out there.
+     *
+     * @param publishOptions per-platform option keys for this target, or null/empty when nothing was chosen.
+     *                       Uninterpreted here — the keys are the platform's, and only the platform's
+     *                       validator and publisher read them
+     */
+    public record TargetSelection(String platform, String connectionId, Map<String, Object> publishOptions) {
+
+        /** A selection that chooses only a destination, leaving every publish option unset. */
+        public TargetSelection(String platform, String connectionId) {
+            this(platform, connectionId, null);
+        }
+    }
 
     private final ConnectionRepository connectionRepository;
     private final PostPublishTargetRepository targetRepository;
@@ -191,9 +222,13 @@ public class PublishTargetService {
         return sorted(targetRepository.findAllByWorkItemId(workItem.getId()));
     }
 
+    /** One desired destination resolved against what the project can actually publish to. */
+    private record DesiredTarget(TargetOption option, String optionsJson) {}
+
     /**
      * Replaces the Work Item's selection with exactly {@code selections}: creates the rows that are new,
-     * deletes the rows that are gone, and leaves an unchanged row completely alone.
+     * deletes the rows that are gone, re-writes the publish options of a row whose options changed, and
+     * leaves a wholly unchanged row completely alone.
      *
      * @throws BusinessException when a selection names a target this project cannot publish to — an
      *                           unknown connection, one owned by another project, a non-ACTIVE one, or a
@@ -212,14 +247,14 @@ public class PublishTargetService {
             available.put(option.key(), option);
         }
 
-        Map<String, TargetOption> desired = new LinkedHashMap<>();
+        Map<String, DesiredTarget> desired = new LinkedHashMap<>();
         for (TargetSelection selection : selections == null ? List.<TargetSelection>of() : selections) {
             String key = selectionKey(selection.platform(), selection.connectionId());
             TargetOption option = available.get(key);
             if (option == null) {
                 throw new BusinessException("Not a publishable target for this project");
             }
-            desired.put(key, option);
+            desired.put(key, new DesiredTarget(option, canonicalOptions(selection.publishOptions())));
         }
 
         List<PostPublishTarget> existing = targetRepository.findAllByWorkItemId(workItem.getId());
@@ -232,12 +267,21 @@ public class PublishTargetService {
                 .filter(entry -> !desired.containsKey(entry.getKey()))
                 .map(Map.Entry::getValue)
                 .toList();
-        List<TargetOption> added = desired.entrySet().stream()
+        List<DesiredTarget> added = desired.entrySet().stream()
                 .filter(entry -> !existingByKey.containsKey(entry.getKey()))
                 .map(Map.Entry::getValue)
                 .toList();
+        // A kept row whose options changed: still the same account and the same idempotency key, but no
+        // longer the same post, so it is a bundle change like any other — and an in-place update, because
+        // deleting the row would strand a platform post the row is the only handle on.
+        List<PostPublishTarget> reoptioned = existingByKey.entrySet().stream()
+                .filter(entry -> desired.containsKey(entry.getKey()))
+                .filter(entry -> !Objects.equals(canonicalOptions(entry.getValue().getPublishOptions()),
+                        desired.get(entry.getKey()).optionsJson()))
+                .map(Map.Entry::getValue)
+                .toList();
 
-        if (removed.isEmpty() && added.isEmpty()) {
+        if (removed.isEmpty() && added.isEmpty() && reoptioned.isEmpty()) {
             return sorted(existing);
         }
 
@@ -249,11 +293,73 @@ public class PublishTargetService {
         }
         List<PostPublishTarget> kept = new ArrayList<>(existing);
         kept.removeAll(removed);
-        if (!added.isEmpty()) {
-            List<PostPublishTarget> rows = added.stream().map(option -> newRow(workItem, option)).toList();
-            kept.addAll(targetRepository.saveAll(rows));
+
+        // Updates first, then inserts, in one saveAll: the tail of the returned list is the persisted new
+        // rows, which are what the response must carry.
+        List<PostPublishTarget> toSave = new ArrayList<>();
+        for (PostPublishTarget target : reoptioned) {
+            target.setPublishOptions(
+                    desired.get(selectionKey(target.getPlatform(), target.getConnectionId())).optionsJson());
+            toSave.add(target);
+        }
+        toSave.addAll(added.stream().map(target -> newRow(workItem, target)).toList());
+        if (!toSave.isEmpty()) {
+            List<PostPublishTarget> saved = targetRepository.saveAll(toSave);
+            kept.addAll(saved.subList(reoptioned.size(), saved.size()));
         }
         return sorted(kept);
+    }
+
+    /**
+     * The stable form of an options bag: null and blank values dropped, keys sorted, and an empty bag
+     * reduced to {@code null}. Without it "did the options change?" would answer yes to a client that
+     * re-sent the same choices with the keys in a different order — and knock the Post out of Approved for
+     * nothing.
+     */
+    static String canonicalOptions(Map<String, Object> options) {
+        if (options == null || options.isEmpty()) {
+            return null;
+        }
+        Map<String, Object> normalized = new TreeMap<>();
+        options.forEach((key, value) -> {
+            if (key == null || key.isBlank() || value == null) {
+                return;
+            }
+            if (value instanceof String text && text.isBlank()) {
+                return;
+            }
+            normalized.put(key.trim(), value);
+        });
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        try {
+            return MAPPER.writeValueAsString(normalized);
+        } catch (Exception e) {
+            throw new BusinessException("Publish options could not be stored: " + e.getMessage());
+        }
+    }
+
+    /**
+     * The same canonical form for what is already on the row. An unreadable stored value is returned
+     * verbatim so it compares unequal to anything this service would write, and is therefore rewritten
+     * into a readable one on the next save rather than left to rot.
+     */
+    private static String canonicalOptions(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return canonicalOptions(MAPPER.readValue(json, new TypeReference<Map<String, Object>>() { }));
+        } catch (Exception e) {
+            return json;
+        }
+    }
+
+    private PostPublishTarget newRow(WorkItem workItem, DesiredTarget desired) {
+        PostPublishTarget target = newRow(workItem, desired.option());
+        target.setPublishOptions(desired.optionsJson());
+        return target;
     }
 
     private PostPublishTarget newRow(WorkItem workItem, TargetOption option) {

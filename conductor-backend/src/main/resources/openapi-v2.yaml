@@ -1868,10 +1868,12 @@ paths:
         Idempotent set-replace. Newly selected targets are created, deselected ones are deleted, and
         a target that was already selected is left untouched — its row keeps its state, its
         `platformPostId` and its idempotency key, so re-saving an unchanged selection never
-        re-creates a row that has already been handed to a platform. Editing the selection on an
-        Approved-or-later Post revokes any native-lane hand-off and reverts the Post to its review
-        status first; if that revocation fails the whole request fails and the selection is
-        unchanged. (COND-23 AC-P0-1.5.)
+        re-creates a row that has already been handed to a platform. Each target may carry its own
+        `publishOptions`; changing them on an already-selected target updates that row in place rather
+        than re-creating it. Editing the selection — adding a target, dropping one, or changing one's
+        `publishOptions` — on an Approved-or-later Post revokes any native-lane hand-off and reverts the
+        Post to its review status first; if that revocation fails the whole request fails and the
+        selection is unchanged. (COND-23 AC-P0-1.5, TIK-1.)
       operationId: replaceWorkItemPublishTargets
       security:
         - bearerAuth: []
@@ -2974,6 +2976,8 @@ components:
           description: >-
             When this target publishes. Copied from the Work Item's scheduledFor and re-stamped whenever the
             Post re-enters its scheduled status, so it is the authoritative time for this target.
+        publishOptions:
+          $ref: "#/components/schemas/PublishOptions"
 
     RetryPublishResponse:
       type: object
@@ -3018,6 +3022,27 @@ components:
             - tiktok
         connectionId:
           type: string
+        publishOptions:
+          $ref: "#/components/schemas/PublishOptions"
+
+    PublishOptions:
+      type: object
+      additionalProperties: true
+      description: >-
+        How the post goes out on this one platform — a per-platform bag of option keys, read against the
+        target's own `platform` and nothing else. Omitted or null means nothing has been chosen, which is
+        not the same as "the defaults are fine": a TikTok target with no `privacyLevel` blocks approval
+        rather than publishing to the creator alone. (TIK-1.)
+
+
+        TikTok keys: `privacyLevel` (string — one of the connection's cached privacyLevelOptions, e.g.
+        PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS, FOLLOWER_OF_CREATOR, SELF_ONLY), `disableComment`,
+        `disableDuet`, `disableStitch` (booleans), `brandContentToggle` (boolean — paid partnership; TikTok
+        refuses it combined with SELF_ONLY) and `brandOrganicToggle` (boolean — the creator's own brand).
+      example:
+        privacyLevel: PUBLIC_TO_EVERYONE
+        disableComment: false
+        brandContentToggle: true
 
     ReplacePublishTargetsRequest:
       type: object

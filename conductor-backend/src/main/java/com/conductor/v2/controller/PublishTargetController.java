@@ -8,11 +8,16 @@ import com.conductor.generated.v2.model.PublishTargetResponse;
 import com.conductor.generated.v2.model.PublishTargetSelection;
 import com.conductor.generated.v2.model.ReplacePublishTargetsRequest;
 import com.conductor.service.PublishTargetService;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * COND-23 T3.6 — the publish-target surface: what a project can post to, and what one Post is posting to.
@@ -30,6 +35,10 @@ import java.util.List;
  */
 @RestController
 public class PublishTargetController implements PublishTargetsApi {
+
+    private static final Logger log = LoggerFactory.getLogger(PublishTargetController.class);
+
+    private static final ObjectMapper OPTIONS_MAPPER = new ObjectMapper();
 
     private final PublishTargetService publishTargetService;
 
@@ -60,7 +69,8 @@ public class PublishTargetController implements PublishTargetsApi {
                         : request.getTargets()).stream()
                         .map(selection -> new PublishTargetService.TargetSelection(
                                 selection.getPlatform() == null ? null : selection.getPlatform().getValue(),
-                                selection.getConnectionId()))
+                                selection.getConnectionId(),
+                                selection.getPublishOptions()))
                         .toList();
         return ResponseEntity.ok(toResponses(
                 publishTargetService.replaceSelection(projectId, workItemId, selections, currentUser())));
@@ -94,7 +104,25 @@ public class PublishTargetController implements PublishTargetsApi {
                 .platformPostId(target.getPlatformPostId())
                 .permalink(target.getPermalink())
                 .errorMessage(target.getErrorMessage())
-                .fireTime(target.getFireTime());
+                .fireTime(target.getFireTime())
+                .publishOptions(readOptions(target.getPublishOptions()));
+    }
+
+    /**
+     * The stored options bag, back on the wire as the object the client sent. Unreadable JSON reads back as
+     * null rather than failing the whole listing: one corrupt row must not make a Post's targets
+     * unviewable, and the row's own validator blocks approval on it anyway.
+     */
+    private static Map<String, Object> readOptions(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            return OPTIONS_MAPPER.readValue(json, new TypeReference<Map<String, Object>>() { });
+        } catch (Exception e) {
+            log.warn("Unreadable publish options on a target; returning none: {}", e.toString());
+            return null;
+        }
     }
 
     private User currentUser() {

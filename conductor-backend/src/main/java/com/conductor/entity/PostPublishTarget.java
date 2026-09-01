@@ -93,6 +93,22 @@ public class PostPublishTarget {
     private String captionOverride;
 
     /**
+     * How this post goes out on this platform, as a JSON object of per-platform option keys (TIK-1). A
+     * generic bag rather than typed columns: the row already names its {@code platform}, so the keys inside
+     * are read against that and nothing else, and Instagram's and YouTube's own knobs land here later
+     * without another migration.
+     *
+     * <p>For {@code tiktok} the keys are {@code privacyLevel}, {@code disableComment}, {@code disableDuet},
+     * {@code disableStitch}, {@code brandContentToggle} and {@code brandOrganicToggle}.
+     *
+     * <p>{@code null} means <em>nothing was chosen</em>, which is not the same as "the defaults are fine":
+     * {@code PublishOptionsValidator} refuses to approve a TikTok target with no privacy level rather than
+     * let {@code TikTokPublishAction}'s SELF_ONLY fallback quietly decide who can see the post.
+     */
+    @Column(name = "publish_options", columnDefinition = "TEXT")
+    private String publishOptions;
+
+    /**
      * Opaque JSON resume state for a chunked media upload (resumable session URI, byte offset, chunk
      * index). Only the media-upload code parses it; everything else passes it through untouched.
      */
@@ -164,6 +180,9 @@ public class PostPublishTarget {
 
     public String getCaptionOverride() { return captionOverride; }
     public void setCaptionOverride(String captionOverride) { this.captionOverride = captionOverride; }
+
+    public String getPublishOptions() { return publishOptions; }
+    public void setPublishOptions(String publishOptions) { this.publishOptions = publishOptions; }
 
     public String getResumeCheckpoint() { return resumeCheckpoint; }
     public void setResumeCheckpoint(String resumeCheckpoint) { this.resumeCheckpoint = resumeCheckpoint; }

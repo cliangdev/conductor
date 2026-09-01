@@ -10,6 +10,8 @@ import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.ActionInvocationService;
 import com.conductor.service.ActiveConnectionResolver;
 import com.conductor.service.PublishOutcomeService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.slf4j.Logger;
@@ -23,6 +25,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -105,6 +108,35 @@ public class PostPublishScheduler {
             "instagram", new PublishAction("publish_instagram_media", "caption"),
             "youtube", new PublishAction("publish_video", "description"),
             "tiktok", new PublishAction("publish_video", "title"));
+
+    /**
+     * How a target's stored {@code publish_options} bag becomes action input, per platform: the row's own
+     * option key on the left, the parameter the connector's shipped tool spec declares on the right (TIK-1).
+     *
+     * <p>The bag is stored in the API's camelCase vocabulary and the actions take snake_case, so the
+     * translation has to live somewhere; here is the only place that knows both. It is a whitelist rather
+     * than a blind copy: an unrecognised key is dropped, so a client cannot smuggle an arbitrary parameter
+     * into a connector call by putting it in the options bag.
+     *
+     * <p>Only TikTok has options today. Instagram's and YouTube's go in the same shape, and nothing else in
+     * this class changes when they do.
+     */
+    static final Map<String, Map<String, String>> PUBLISH_OPTION_PARAMS = Map.of(
+            "tiktok", tiktokOptionParams());
+
+    private static Map<String, String> tiktokOptionParams() {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("privacyLevel", "privacy_level");
+        params.put("disableComment", "disable_comment");
+        params.put("disableDuet", "disable_duet");
+        params.put("disableStitch", "disable_stitch");
+        params.put("brandContentToggle", "brand_content_toggle");
+        params.put("brandOrganicToggle", "brand_organic_toggle");
+        return Collections.unmodifiableMap(params);
+    }
+
+    /** Reads the options bag off the row. Static, so the constructor's signature is untouched. */
+    private static final ObjectMapper OPTIONS_MAPPER = new ObjectMapper();
 
     /**
      * Claims one row for this tick. The {@code state = PENDING} predicate is the whole point: it is
@@ -301,10 +333,10 @@ public class PostPublishScheduler {
     }
 
     /**
-     * The publish payload: the copy that goes out, plus the two handles the platform executor resolves
-     * this post's media from. Media parameters themselves ({@code image_url}, {@code asset_ref},
-     * {@code asset_id}) are the per-platform publisher's to fill in — this poller's job ends at
-     * dispatching the right action, on the right connection, exactly once.
+     * The publish payload: the copy that goes out, this target's own publish options, and the two handles
+     * the platform executor resolves this post's media from. Media parameters themselves
+     * ({@code image_url}, {@code asset_ref}, {@code asset_id}) are the per-platform publisher's to fill in —
+     * this poller's job ends at dispatching the right action, on the right connection, exactly once.
      */
     private Map<String, Object> buildInput(PostPublishTarget target, WorkItem post, PublishAction action) {
         Map<String, Object> input = new LinkedHashMap<>();
@@ -317,8 +349,55 @@ public class PostPublishScheduler {
         if (post.getTitle() != null && !"title".equals(action.captionParam())) {
             input.put("title", post.getTitle());
         }
+        input.putAll(publishOptions(target));
         input.put("work_item_id", post.getId());
         input.put("target_id", target.getId());
+        return input;
+    }
+
+    /**
+     * This target's chosen publish options, under the parameter names its connector's tool spec declares.
+     *
+     * <p>Nothing is invented here: an option the human did not choose is simply absent, and the connector's
+     * own default applies. That is deliberate even for TikTok's {@code privacy_level}, whose absence is the
+     * bug this feature closes — {@code PublishOptionsValidator} refuses to approve a TikTok target without
+     * one, so by the time a row is due it has been chosen. Manufacturing a value here would put the guess
+     * back, one layer down.
+     */
+    private Map<String, Object> publishOptions(PostPublishTarget target) {
+        Map<String, String> params = PUBLISH_OPTION_PARAMS.get(
+                target.getPlatform() == null ? "" : target.getPlatform().trim().toLowerCase(Locale.ROOT));
+        String json = target.getPublishOptions();
+        if (params == null || json == null || json.isBlank()) {
+            return Map.of();
+        }
+        JsonNode options;
+        try {
+            options = OPTIONS_MAPPER.readTree(json);
+        } catch (Exception e) {
+            // Do not fail the publish over an unreadable bag: the platform's own defaults still apply, and
+            // the row is visible to a human. Loud, because it means a stored choice is being ignored.
+            log.error("Unreadable publish options on target {}; publishing without them: {}",
+                    target.getId(), e.toString());
+            return Map.of();
+        }
+        if (!options.isObject()) {
+            return Map.of();
+        }
+        Map<String, Object> input = new LinkedHashMap<>();
+        params.forEach((optionKey, param) -> {
+            JsonNode value = options.get(optionKey);
+            if (value == null || value.isNull()) {
+                return;
+            }
+            if (value.isBoolean()) {
+                input.put(param, value.booleanValue());
+            } else if (value.isNumber()) {
+                input.put(param, value.numberValue());
+            } else if (value.isTextual() && !value.asText().isBlank()) {
+                input.put(param, value.asText());
+            }
+        });
         return input;
     }
 }

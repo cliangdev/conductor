@@ -18,7 +18,9 @@ import org.mockito.ArgumentCaptor;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -402,6 +404,13 @@ class PublishTargetServiceTest {
                 "{\"creatorNickname\":\"" + creatorNickname + "\",\"creatorUsername\":\"acme\"}");
     }
 
+    private PostPublishTarget existingRow(String platform, String connectorId, String connectionId,
+                                          String publishOptions) {
+        PostPublishTarget target = existingRow(platform, connectorId, connectionId);
+        target.setPublishOptions(publishOptions);
+        return target;
+    }
+
     private PostPublishTarget existingRow(String platform, String connectorId, String connectionId) {
         PostPublishTarget target = new PostPublishTarget();
         target.setId("target-" + platform + "-" + connectionId);
@@ -490,6 +499,161 @@ class PublishTargetServiceTest {
 
         assertThat(service.restampFireTimes(post)).isZero();
         verify(targetRepository, never()).save(any());
+    }
+
+
+    // ── publish options ───────────────────────────────────────────────────────────────────────
+
+    /**
+     * The whole point of TIK-1: before this, a TikTok target carried nowhere to say who could see the post,
+     * so every one of them published SELF_ONLY and succeeded.
+     */
+    @Test
+    void aTargetsPublishOptionsArePersistedOnItsRow() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
+                        new LinkedHashMap<>(Map.of("privacyLevel", "PUBLIC_TO_EVERYONE",
+                                "disableComment", true, "brandContentToggle", false)))),
+                caller);
+
+        assertThat(savedRows()).singleElement().satisfies(row ->
+                assertThat(row.getPublishOptions())
+                        .isEqualTo("{\"brandContentToggle\":false,\"disableComment\":true,"
+                                + "\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}"));
+    }
+
+    @Test
+    void aTargetChosenWithNoPublishOptionsStoresNone() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt")), caller);
+
+        assertThat(savedRows()).singleElement()
+                .satisfies(row -> assertThat(row.getPublishOptions()).isNull());
+    }
+
+    @Test
+    void anEmptyOptionsBagStoresNoneRatherThanEmptyJson() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt", Map.of())), caller);
+
+        assertThat(savedRows()).singleElement()
+                .satisfies(row -> assertThat(row.getPublishOptions()).isNull());
+    }
+
+    /**
+     * An options edit keeps the row: the target still publishes to the same account under the same
+     * idempotency key, and deleting it would strand any platform post the row is the only handle on.
+     */
+    @Test
+    void changingATargetsOptionsUpdatesItsRowInPlaceInsteadOfRecreatingIt() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+        PostPublishTarget existing = existingRow("tiktok", "tiktok", "conn-tt",
+                "{\"privacyLevel\":\"SELF_ONLY\"}");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+
+        List<PostPublishTarget> result = service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
+                        Map.of("privacyLevel", "PUBLIC_TO_EVERYONE"))), caller);
+
+        verify(targetRepository, never()).deleteAll(any());
+        assertThat(result).containsExactly(existing);
+        assertThat(existing.getPublishOptions()).isEqualTo("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}");
+        assertThat(savedRows()).containsExactly(existing);
+    }
+
+    @Test
+    void clearingATargetsOptionsIsAChangeAndIsPersisted() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+        PostPublishTarget existing = existingRow("tiktok", "tiktok", "conn-tt",
+                "{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt")), caller);
+
+        assertThat(existing.getPublishOptions()).isNull();
+        assertThat(savedRows()).containsExactly(existing);
+    }
+
+    /** [auto] Changing a target's options reverts an Approved Post, like any other bundle change. */
+    @Test
+    void changingATargetsOptionsRevertsAnApprovedPostThroughThePublishBundleGuard() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+        post.setCurrentStatus("APPROVED");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM))
+                .thenReturn(List.of(existingRow("tiktok", "tiktok", "conn-tt",
+                        "{\"privacyLevel\":\"SELF_ONLY\"}")));
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
+                        Map.of("privacyLevel", "PUBLIC_TO_EVERYONE"))), caller);
+
+        verify(publishBundleGuard).revertForBundleEdit(PROJECT, post);
+    }
+
+    @Test
+    void theRevertRunsBeforeAnyOptionsAreWritten() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+        PostPublishTarget existing = existingRow("tiktok", "tiktok", "conn-tt",
+                "{\"privacyLevel\":\"SELF_ONLY\"}");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+        when(publishBundleGuard.revertForBundleEdit(eq(PROJECT), any()))
+                .thenThrow(new BusinessException("Could not revoke the scheduled post"));
+
+        assertThatThrownBy(() -> service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
+                        Map.of("privacyLevel", "PUBLIC_TO_EVERYONE"))), caller))
+                .isInstanceOf(BusinessException.class);
+
+        assertThat(existing.getPublishOptions()).isEqualTo("{\"privacyLevel\":\"SELF_ONLY\"}");
+        verify(targetRepository, never()).saveAll(any());
+    }
+
+    /** Re-sending the same choices in a different key order must not knock a Post out of Approved. */
+    @Test
+    void reSendingTheSameOptionsInADifferentOrderIsNotAChange() {
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+        PostPublishTarget existing = existingRow("tiktok", "tiktok", "conn-tt",
+                "{\"disableComment\":true,\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(existing));
+
+        Map<String, Object> reordered = new LinkedHashMap<>();
+        reordered.put("privacyLevel", "PUBLIC_TO_EVERYONE");
+        reordered.put("disableComment", true);
+
+        service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt", reordered)), caller);
+
+        verify(publishBundleGuard, never()).revertForBundleEdit(anyString(), any());
+        verify(targetRepository, never()).saveAll(any());
+        verify(targetRepository, never()).deleteAll(any());
+    }
+
+    @Test
+    void aNewTargetAndAReOptionedOneAreBothWrittenInOnePass() {
+        connections("meta", metaConnection("conn-meta", "Acme Page", null, null));
+        connections("tiktok", tiktokConnection("conn-tt", "Acme Creator"));
+        PostPublishTarget tiktok = existingRow("tiktok", "tiktok", "conn-tt",
+                "{\"privacyLevel\":\"SELF_ONLY\"}");
+        when(targetRepository.findAllByWorkItemId(WORK_ITEM)).thenReturn(List.of(tiktok));
+
+        List<PostPublishTarget> result = service.replaceSelection(PROJECT, WORK_ITEM,
+                List.of(new PublishTargetService.TargetSelection("tiktok", "conn-tt",
+                                Map.of("privacyLevel", "PUBLIC_TO_EVERYONE")),
+                        new PublishTargetService.TargetSelection("facebook", "conn-meta")),
+                caller);
+
+        assertThat(result).extracting(PostPublishTarget::getPlatform)
+                .containsExactly("facebook", "tiktok");
+        assertThat(savedRows()).extracting(PostPublishTarget::getPlatform)
+                .containsExactly("tiktok", "facebook");
+        assertThat(tiktok.getPublishOptions()).isEqualTo("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\"}");
     }
 
 }

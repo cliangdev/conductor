@@ -222,6 +222,95 @@ class PostPublishSchedulerTest {
         assertThat(input.getValue()).containsEntry(captionParam, "Doors open at nine.");
     }
 
+    // --- [auto] A TikTok target's publish options reach the publish action input (TIK-1) ---
+
+    /**
+     * The names on the right are the ones {@code connectors/tool-specs/tiktok.json} declares. Nothing ever
+     * put a {@code privacy_level} in this map before, so every TikTok post published SELF_ONLY by default
+     * and nobody could see it.
+     */
+    @Test
+    void aTiktokTargetsPublishOptionsTravelUnderTheParameterNamesTiktokJsonDeclares() {
+        PostPublishTarget target = target(post(PostPublishScheduler.SCHEDULED_STATUS), "tiktok",
+                PublishLane.APP_MANAGED, PostPublishTargetState.PENDING);
+        target.setPublishOptions("{\"privacyLevel\":\"PUBLIC_TO_EVERYONE\",\"disableComment\":true,"
+                + "\"disableDuet\":false,\"disableStitch\":true,\"brandContentToggle\":true,"
+                + "\"brandOrganicToggle\":false}");
+        given(target);
+
+        scheduler.poll();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> input = ArgumentCaptor.forClass(Map.class);
+        verify(actionInvocationService).invoke(any(), eq("publish_video"), input.capture(), anyString(), any());
+        assertThat(input.getValue())
+                .containsEntry("privacy_level", "PUBLIC_TO_EVERYONE")
+                .containsEntry("disable_comment", true)
+                .containsEntry("disable_duet", false)
+                .containsEntry("disable_stitch", true)
+                .containsEntry("brand_content_toggle", true)
+                .containsEntry("brand_organic_toggle", false);
+    }
+
+    @Test
+    void anOptionTheHumanDidNotChooseIsAbsentRatherThanGuessedAt() {
+        PostPublishTarget target = target(post(PostPublishScheduler.SCHEDULED_STATUS), "tiktok",
+                PublishLane.APP_MANAGED, PostPublishTargetState.PENDING);
+        target.setPublishOptions("{\"privacyLevel\":\"FOLLOWER_OF_CREATOR\"}");
+        given(target);
+
+        scheduler.poll();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> input = ArgumentCaptor.forClass(Map.class);
+        verify(actionInvocationService).invoke(any(), anyString(), input.capture(), anyString(), any());
+        assertThat(input.getValue())
+                .containsEntry("privacy_level", "FOLLOWER_OF_CREATOR")
+                .doesNotContainKeys("disable_comment", "disable_duet", "disable_stitch",
+                        "brand_content_toggle", "brand_organic_toggle");
+    }
+
+    @Test
+    void aTargetWithNoStoredOptionsDispatchesNoOptionParameters() {
+        given(target(post(PostPublishScheduler.SCHEDULED_STATUS), "tiktok",
+                PublishLane.APP_MANAGED, PostPublishTargetState.PENDING));
+
+        scheduler.poll();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> input = ArgumentCaptor.forClass(Map.class);
+        verify(actionInvocationService).invoke(any(), anyString(), input.capture(), anyString(), any());
+        assertThat(input.getValue()).doesNotContainKey("privacy_level");
+    }
+
+    /** The bag is a whitelist: a key no platform declares must never become a connector parameter. */
+    @Test
+    void anUnrecognisedOptionKeyIsDropped() {
+        PostPublishTarget target = target(post(PostPublishScheduler.SCHEDULED_STATUS), "tiktok",
+                PublishLane.APP_MANAGED, PostPublishTargetState.PENDING);
+        target.setPublishOptions("{\"privacyLevel\":\"SELF_ONLY\",\"asset_id\":\"someone-elses-video\"}");
+        given(target);
+
+        scheduler.poll();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> input = ArgumentCaptor.forClass(Map.class);
+        verify(actionInvocationService).invoke(any(), anyString(), input.capture(), anyString(), any());
+        assertThat(input.getValue()).doesNotContainKey("asset_id");
+    }
+
+    @Test
+    void anUnreadableOptionsBagStillPublishesRatherThanFailingTheDispatch() {
+        PostPublishTarget target = target(post(PostPublishScheduler.SCHEDULED_STATUS), "tiktok",
+                PublishLane.APP_MANAGED, PostPublishTargetState.PENDING);
+        target.setPublishOptions("not json at all");
+        given(target);
+
+        scheduler.poll();
+
+        verify(actionInvocationService).invoke(any(), anyString(), any(), anyString(), any());
+    }
+
     // --- [auto] A repeated tick or a restart never publishes the same (post, target) twice ---
 
     @ParameterizedTest
