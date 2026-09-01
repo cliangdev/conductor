@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -162,10 +164,7 @@ describe('WorkItemScheduleField', () => {
   it('carries no vocabulary from any one Workflow', () => {
     // Same rule the calendar holds itself to: scheduledFor is a plain Work Item field and any Workflow
     // may put an item on a clock, so nothing here may mention posts, publishing or platforms.
-    const source = require('fs').readFileSync(
-      require('path').join(__dirname, 'WorkItemScheduleField.tsx'),
-      'utf8'
-    )
+    const source = readFileSync(resolve(__dirname, 'WorkItemScheduleField.tsx'), 'utf8')
     for (const banned of [/\bplatform/i, /\bcaption/i, /\bmarketing\b/i, /\binstagram\b/i, /\btiktok\b/i]) {
       expect(source, `source must not mention ${banned}`).not.toMatch(banned)
     }

@@ -13,7 +13,7 @@
 // re-render from the freshly fetched rows.
 
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { FilmIcon, ImageIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -62,6 +62,9 @@ export interface AreaAssetQuery {
 }
 
 export const ASSET_PAGE_SIZE = 24
+
+/** A store that never emits: whether we have mounted changes exactly once, and React handles that. */
+const NEVER_CHANGES = () => () => {}
 
 /** `GET /api/v2/projects/{id}/areas/{area}/assets` — a bare array, page/size params (the repo's one
  *  pagination convention). A full page implies there may be another. */
@@ -217,6 +220,22 @@ export interface AssetLibraryGridProps {
 
 export function AssetLibraryGrid({ projectId, area }: AssetLibraryGridProps) {
   const { accessToken } = useAuth()
+  // Both filter selects below are populated from client-fetched, client-cached data (the sidebar work
+  // nav and the Workflow views). The server has neither cache, so it renders the bare "All …" option
+  // while the client's first render can already have the full list — a hydration mismatch that React
+  // reports and then recovers from by throwing the tree away and re-rendering it. Not cosmetic: the
+  // discarded tree takes the select's own DOM with it.
+  //
+  // useSyncExternalStore rather than a setState-in-an-effect flag, because this is the one thing it
+  // exists for: React reads getServerSnapshot for the server render *and* the hydration render, then
+  // switches to the client one. That makes the first client render match the server's by construction
+  // rather than by a second render, so there is no cascading re-render and nothing to clean up.
+  const mounted = useSyncExternalStore(
+    NEVER_CHANGES,
+    () => true,
+    () => false
+  )
+
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
   const [page, setPage] = useState(0)
   const [assets, setAssets] = useState<AreaAsset[] | null>(null)
@@ -304,7 +323,7 @@ export function AssetLibraryGrid({ projectId, area }: AssetLibraryGridProps) {
             onChange={(e) => setFilter('workflow', e.target.value)}
           >
             <option value="">All workflows</option>
-            {areaEntries.map((entry) => (
+            {(mounted ? areaEntries : []).map((entry) => (
               <option key={entry.slug} value={entry.slug}>
                 {entry.label}
               </option>
@@ -319,7 +338,7 @@ export function AssetLibraryGrid({ projectId, area }: AssetLibraryGridProps) {
             onChange={(e) => setFilter('status', e.target.value)}
           >
             <option value="">All statuses</option>
-            {statusOptions.map(([id, label]) => (
+            {(mounted ? statusOptions : []).map(([id, label]) => (
               <option key={id} value={id}>
                 {label}
               </option>

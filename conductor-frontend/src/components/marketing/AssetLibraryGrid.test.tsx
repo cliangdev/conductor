@@ -219,6 +219,20 @@ describe('AssetLibraryGrid', () => {
     })
   })
 
+  it('still offers the workflow filter options after mount', async () => {
+    // Those options come from client-fetched, client-cached data the server does not have, so they are
+    // held back until after mount to keep the first client render matching the server HTML — otherwise
+    // React finds a mismatch and throws the whole tree away. The gate must not become a permanent
+    // hiding place: the options still have to arrive. (The status filter's own test covers the other
+    // select the same gate applies to.)
+    stubApi(() => IMAGE_ASSETS)
+    renderGrid()
+
+    const workflowFilter = await screen.findByLabelText('Workflow')
+    // Labelled by the Workflow's noun, valued by its slug.
+    await waitFor(() => expect(within(workflowFilter).getByText('Posts')).toBeInTheDocument())
+  })
+
   it('renders a skeleton while the first page is loading', () => {
     ;(apiGet as Mock).mockImplementation((path: string) => {
       if (path.includes('/areas/')) return new Promise(() => {})
