@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.0</version>
+        <version>4.1.1</version>
         <relativePath/>
     </parent>
 
@@ -32,7 +32,7 @@
         <springdoc.version>3.1.0</springdoc.version>
         <jjwt.version>0.13.0</jjwt.version>
         <firebase.version>9.10.0</firebase.version>
-        <openapi-generator.version>7.24.0</openapi-generator.version>
+        <openapi-generator.version>7.25.0</openapi-generator.version>
     </properties>
 
 
@@ -55,7 +55,7 @@
             <dependency>
                 <groupId>com.google.cloud</groupId>
                 <artifactId>libraries-bom</artifactId>
-                <version>26.83.0</version>
+                <version>26.87.0</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -118,7 +118,7 @@
         <dependency>
             <groupId>com.resend</groupId>
             <artifactId>resend-java</artifactId>
-            <version>4.13.0</version>
+            <version>4.22.0</version>
         </dependency>
 
         <!-- Flyway -->
@@ -160,7 +160,7 @@
         <dependency>
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-run</artifactId>
-            <version>0.95.0</version>
+            <version>0.96.0</version>
         </dependency>
 
         <!-- GCP Cloud Tasks — pushes workflow job dispatch as HTTP requests instead of relying on an
@@ -169,14 +169,14 @@
         <dependency>
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-tasks</artifactId>
-            <version>2.93.0</version>
+            <version>2.96.0</version>
         </dependency>
 
         <!-- Anthropic Java SDK — backs the Claude model provider in the agent module -->
         <dependency>
             <groupId>com.anthropic</groupId>
             <artifactId>anthropic-java</artifactId>
-            <version>2.53.0</version>
+            <version>2.59.0</version>
         </dependency>
 
         <!-- Test -->
@@ -239,7 +239,7 @@
         <dependency>
             <groupId>com.networknt</groupId>
             <artifactId>json-schema-validator</artifactId>
-            <version>3.0.6</version>
+            <version>3.0.7</version>
         </dependency>
     </dependencies>
 
