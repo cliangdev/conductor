@@ -36,6 +36,32 @@
     </properties>
 
 
+    <!--
+        Google client libraries are version-aligned by Google's own BOM rather than pinned one by one.
+
+        Pinning them individually is what broke the first deploy of the marketing pipeline: storage, kms
+        and bigquery each named their own version, Maven resolved google-http-client by nearest-wins to
+        2.1.0, and gax-httpjson 2.83.0 called NetHttpTransport$Builder.setSecurityProvider — a method that
+        does not exist until 2.2.0. Nothing caught it, because google-cloud-kms sat in this pom unused
+        until COND-23 encrypted credentials with it, and because every integration test runs under the
+        `local` profile where GcpKmsCredentialService does not exist. The container simply failed to
+        start.
+
+        The BOM makes that class of mismatch unrepresentable: one version line governs gax,
+        google-http-client and every google-cloud-* artifact together.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.google.cloud</groupId>
+                <artifactId>libraries-bom</artifactId>
+                <version>26.83.0</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <!-- Spring Boot Starters -->
         <dependency>
@@ -116,21 +142,18 @@
         <dependency>
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-storage</artifactId>
-            <version>2.71.0</version>
         </dependency>
 
         <!-- GCP Cloud KMS -->
         <dependency>
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-kms</artifactId>
-            <version>2.98.0</version>
         </dependency>
 
         <!-- GCP BigQuery -->
         <dependency>
             <groupId>com.google.cloud</groupId>
             <artifactId>google-cloud-bigquery</artifactId>
-            <version>2.69.0</version>
         </dependency>
 
         <!-- GCP Cloud Run Jobs v2 — launches claude-code workflow steps -->
