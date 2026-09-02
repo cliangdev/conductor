@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { clearAllSidebarCaches } from '@/lib/workflows'
 
 const mockPush = vi.fn()
@@ -229,6 +229,58 @@ describe('Sidebar', () => {
     expect(deals).toHaveAttribute('href', '/app/projects/proj-1/sales_ops/deals')
     // Area slug is humanized into a section label.
     expect(screen.getByText('Sales Ops')).toBeInTheDocument()
+  })
+
+  // ── COND-23 T7.2: Asset Library as a sibling entry inside the Marketing area group ──
+
+  it('renders Asset Library as a sibling of the Posts entry inside the Marketing group', async () => {
+    (apiGet as Mock).mockResolvedValue([
+      workflow({ id: 'wf-mkt', name: 'MARKETING', area: 'MARKETING', slug: 'MARKETING', noun: 'Post' }),
+    ])
+    render(<Sidebar />)
+
+    const posts = await screen.findByRole('link', { name: /posts/i })
+    expect(posts).toHaveAttribute('href', '/app/projects/proj-1/marketing/posts')
+
+    const library = screen.getByRole('link', { name: /asset library/i })
+    expect(library).toHaveAttribute('href', '/app/projects/proj-1/marketing/assets')
+    // Same group, same entry list — a sibling row, not a tab inside Posts.
+    expect(posts.parentElement).toBe(library.parentElement)
+    expect(screen.getByText('Marketing')).toBeInTheDocument()
+  })
+
+  it('keeps a second Marketing workflow in the same group alongside Asset Library', async () => {
+    (apiGet as Mock).mockResolvedValue([
+      workflow({ id: 'wf-mkt', name: 'MARKETING', area: 'MARKETING', slug: 'MARKETING', noun: 'Post' }),
+      workflow({
+        id: 'wf-camp',
+        name: 'CAMPAIGNS',
+        area: 'MARKETING',
+        slug: 'CAMPAIGNS',
+        noun: 'Campaign',
+        createdAt: '2026-03-01T00:00:00Z',
+      }),
+    ])
+    render(<Sidebar />)
+
+    await screen.findByRole('link', { name: /campaigns/i })
+    // One Marketing section, holding both Workflow entries plus the library — in nav order.
+    expect(screen.getAllByText('Marketing')).toHaveLength(1)
+    const group = screen.getByText('Marketing').nextElementSibling as HTMLElement
+    const hrefs = within(group).getAllByRole('link').map((l) => l.getAttribute('href'))
+    expect(hrefs).toEqual([
+      '/app/projects/proj-1/marketing/posts',
+      '/app/projects/proj-1/marketing/campaigns',
+      '/app/projects/proj-1/marketing/assets',
+    ])
+  })
+
+  it('does not render Asset Library when no Marketing workflow is in the nav', async () => {
+    (apiGet as Mock).mockResolvedValue([workflow({})])
+    render(<Sidebar />)
+
+    await screen.findByRole('link', { name: /issues/i })
+    expect(screen.queryByRole('link', { name: /asset library/i })).not.toBeInTheDocument()
   })
 
   // ── COND-290 acceptance: compact rail + no admin-only entries for a REVIEWER ──────────

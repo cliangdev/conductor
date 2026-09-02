@@ -27,7 +27,7 @@ public class ConversationMessage {
      *  is still generating it; USER turns are always inserted already COMPLETED. */
     public enum Status { PENDING, COMPLETED, FAILED }
 
-    /** Column cap on {@code error_reason} (V110). Lives here, on the entity that owns the column, rather
+    /** Column cap on {@code error_reason} (V124). Lives here, on the entity that owns the column, rather
      *  than beside each writer -- both writers ({@link AgentConversationRunner} recording a run's own
      *  failure, {@link ConversationService#abandonReservedTurn} abandoning a turn that never ran) clip
      *  through {@link #truncateErrorReason}, so neither can overflow it. */

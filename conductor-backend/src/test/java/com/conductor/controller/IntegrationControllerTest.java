@@ -91,6 +91,8 @@ class IntegrationControllerTest {
     @MockitoBean private ConnectorFeedRepository connectorFeedRepository;
     @MockitoBean private GcpBillingConnector gcpBillingConnector;
     @MockitoBean private RuntimeTargetService runtimeTargetService;
+    @MockitoBean private com.conductor.service.ConnectorAppCredentialService appCredentialService;
+    @MockitoBean private com.conductor.service.ConnectorAppCredentialVerificationService appCredentialVerificationService;
     @MockitoBean private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     // Security filter chain collaborators
@@ -192,12 +194,13 @@ class IntegrationControllerTest {
         when(connectionService.findSingle(PROJECT_ID, GCP_CONNECTOR_ID)).thenReturn(Optional.empty());
 
         // Missing OAuth credentials raises a CONFLICT ResponseStatusException; the application's
-        // catch-all @ExceptionHandler(Exception.class) renders it as 5xx (preserved from the former
-        // GcpBillingController behavior). The contract under test: the request is rejected and the
-        // connector is never invoked.
+        // Missing OAuth credentials raise a CONFLICT ResponseStatusException, which now surfaces as its
+        // own 409 — GlobalExceptionHandler handles ErrorResponseException rather than letting the
+        // catch-all render every deliberate 4xx as a 500. The contract under test is unchanged: the
+        // request is rejected and the connector is never invoked.
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/gcp-projects")
                         .header("Authorization", "Bearer member-token"))
-                .andExpect(status().is5xxServerError());
+                .andExpect(status().isConflict());
         org.mockito.Mockito.verifyNoInteractions(gcpBillingConnector);
     }
 
@@ -243,12 +246,12 @@ class IntegrationControllerTest {
     void listBqDatasets_invalidProjectId_isRejected_andDoesNotCallConnector() throws Exception {
         when(projectMemberRepository.existsByProjectIdAndUserId(PROJECT_ID, "member-user-id")).thenReturn(true);
 
-        // Invalid gcpProjectId raises a BAD_REQUEST ResponseStatusException, rendered as 5xx by the
-        // catch-all handler (preserved behavior). Contract: rejected, and the connector is not called.
+        // Invalid gcpProjectId raises a BAD_REQUEST ResponseStatusException, which now surfaces as its
+        // own 400. Contract: rejected, and the connector is not called.
         mockMvc.perform(get("/api/v1/projects/" + PROJECT_ID + "/integrations/gcp-billing/bq-datasets")
                         .param("gcpProjectId", "bad id!")
                         .header("Authorization", "Bearer member-token"))
-                .andExpect(status().is5xxServerError());
+                .andExpect(status().isBadRequest());
         org.mockito.Mockito.verifyNoInteractions(gcpBillingConnector);
     }
 

@@ -49,7 +49,7 @@ function updateFrontmatterField(content: string, field: string, value: string): 
 }
 
 async function createWorkItemImpl(
-  params: { type: string; title: string; description?: string; workflow?: string },
+  params: { type: string; title: string; description?: string; workflow?: string; tags?: string[] },
   config: Config,
   endpoint: WorkItemEndpoint
 ): Promise<Record<string, unknown>> {
@@ -63,6 +63,7 @@ async function createWorkItemImpl(
     title: params.title,
     description: params.description,
     workflow: params.workflow,
+    tags: params.tags,
   }
 
   const collectionPath = endpoint.collection(config.projectId)
@@ -127,13 +128,27 @@ async function createWorkItemImpl(
 }
 
 async function updateWorkItemImpl(
-  params: { issueId: string; title?: string; description?: string },
+  params: {
+    issueId: string
+    title?: string
+    description?: string
+    scheduledFor?: string
+    scheduleTimezone?: string
+    tags?: string[]
+  },
   config: Config,
   endpoint: WorkItemEndpoint
 ): Promise<Record<string, unknown>> {
-  const body: Record<string, string> = {}
+  const body: Record<string, unknown> = {}
   if (params.title !== undefined) body['title'] = params.title
   if (params.description !== undefined) body['description'] = params.description
+  // Omitted leaves the stored schedule alone — only a field the caller actually sent is on the wire, so
+  // editing a title can never silently unschedule a Post.
+  if (params.scheduledFor !== undefined) body['scheduledFor'] = params.scheduledFor
+  if (params.scheduleTimezone !== undefined) body['scheduleTimezone'] = params.scheduleTimezone
+  // Sent whole: the stored set becomes exactly this list. Omitted leaves existing tags alone, an empty
+  // array clears them — same rule as every other field here, so editing a title never drops a tag.
+  if (params.tags !== undefined) body['tags'] = params.tags
 
   const itemPath = endpoint.item(config.projectId, params.issueId)
 
@@ -142,7 +157,12 @@ async function updateWorkItemImpl(
 
   try {
     await apiPatch<IssueResponse>(itemPath, body, config)
-  } catch {
+  } catch (err) {
+    // A 4xx (validation, permission, unknown id) is permanent — surface it rather than queuing a replay
+    // that can never succeed. Publishing validators reject this way by design.
+    if (isClientError(err)) {
+      return { error: `Work Item not updated: ${err instanceof Error ? err.message : String(err)}` }
+    }
     const size = queueChange({
       method: 'PATCH',
       path: itemPath,
@@ -182,7 +202,12 @@ async function setWorkItemStatusImpl(
 
   try {
     await apiPatch<IssueResponse>(itemPath, { status: params.status }, config)
-  } catch {
+  } catch (err) {
+    // A 4xx (an invalid transition, an unsatisfied review gate) is permanent — surface it rather than
+    // queuing a replay that can never succeed.
+    if (isClientError(err)) {
+      return { error: `Status not changed: ${err instanceof Error ? err.message : String(err)}` }
+    }
     const size = queueChange({
       method: 'PATCH',
       path: itemPath,
@@ -211,7 +236,7 @@ async function setWorkItemStatusImpl(
 }
 
 async function listWorkItemsImpl(
-  params: { type?: string; status?: string; workflow?: string },
+  params: { type?: string; status?: string; workflow?: string; tag?: string },
   config: Config,
   endpoint: WorkItemEndpoint
 ): Promise<unknown[]> {
@@ -219,6 +244,7 @@ async function listWorkItemsImpl(
   if (params.type) query.set('type', params.type)
   if (params.status) query.set('status', params.status)
   if (params.workflow) query.set('workflow', params.workflow)
+  if (params.tag) query.set('tag', params.tag)
 
   const qs = query.toString()
   const listPath = `${endpoint.collection(config.projectId)}${qs ? `?${qs}` : ''}`
@@ -260,14 +286,21 @@ async function getWorkItemImpl(
 // --- Canonical v2 `work_item` handlers (hit /api/v2/.../work-items) ---
 
 export async function createWorkItem(
-  params: { type: string; title: string; description?: string; workflow: string },
+  params: { type: string; title: string; description?: string; workflow: string; tags?: string[] },
   config: Config
 ): Promise<Record<string, unknown>> {
   return createWorkItemImpl(params, config, V2)
 }
 
 export async function updateWorkItem(
-  params: { issueId: string; title?: string; description?: string },
+  params: {
+    issueId: string
+    title?: string
+    description?: string
+    scheduledFor?: string
+    scheduleTimezone?: string
+    tags?: string[]
+  },
   config: Config
 ): Promise<Record<string, unknown>> {
   return updateWorkItemImpl(params, config, V2)
@@ -281,7 +314,7 @@ export async function setWorkItemStatus(
 }
 
 export async function listWorkItems(
-  params: { type?: string; status?: string; workflow?: string },
+  params: { type?: string; status?: string; workflow?: string; tag?: string },
   config: Config
 ): Promise<unknown[]> {
   return listWorkItemsImpl(params, config, V2)

@@ -1,0 +1,39 @@
+{
+  "description": "Publish videos to a connected YouTube channel",
+  "actions": [
+    {
+      "id": "publish_video",
+      "description": "Upload the post's video to the connected YouTube channel. The bytes are streamed from storage through a resumable upload session (YouTube cannot pull from a URL), so a failed attempt resumes rather than restarting. A publish_at schedules the video: it is uploaded private and YouTube makes it public at that instant.",
+      "params": {
+        "work_item_id": "Id of the Post whose uploaded video asset should be published (required unless asset_id is given)",
+        "asset_id": "Id of a specific recorded video asset on that Post (optional; the Post's video is resolved automatically when omitted)",
+        "asset_ref": "Storage reference of the video asset, as an alternative to asset_id (optional)",
+        "title": "Video title, max 100 characters (required)",
+        "description": "Video description, max 5000 characters (optional)",
+        "privacy_status": "public, unlisted or private (optional; defaults to private, and is forced to private whenever publish_at is set)",
+        "publish_at": "ISO-8601 instant to make the video public at (optional; requires privacy_status=private, and is silently ignored while the API project is unaudited)",
+        "target_id": "Id of the post_publish_target this upload belongs to, used to resume an interrupted upload (optional)",
+        "idempotency_key": "Key the upload's resume checkpoint is stored under, when the caller owns one of its own (optional)"
+      },
+      "outputKeys": ["video_id", "permalink", "privacy_status", "publish_at"]
+    },
+    {
+      "id": "unpublish_video",
+      "description": "Take back a scheduled upload: re-privatize the video and clear its scheduled publish time. The video is stranded, not deleted, so a human can still recover it. A null publish_at clears the schedule; omitting it entirely would leave the scheduled publish standing.",
+      "params": {
+        "video_id": "Id of the video to re-privatize (required)",
+        "privacy_status": "Privacy to park the video at (optional; defaults to private)",
+        "publish_at": "ISO-8601 instant to reschedule the publish for, or null to clear the schedule (optional)"
+      },
+      "outputKeys": ["video_id", "privacy_status", "is_public", "permalink", "publish_at"]
+    },
+    {
+      "id": "get_video_status",
+      "description": "Read back a video's current privacy on YouTube — whether a scheduled publish has actually made it public yet, and the watch permalink it is reachable at.",
+      "params": {
+        "video_id": "Id of the video to read back (required)"
+      },
+      "outputKeys": ["video_id", "privacy_status", "is_public", "permalink", "publish_at", "title"]
+    }
+  ]
+}

@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
+import com.conductor.entity.Review;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.UnprocessableEntityException;
@@ -50,19 +51,31 @@ public class WorkItemWorkflowService {
     private final ReviewRepository reviewRepository;
     private final WorkflowDefinitionResolver resolver;
     private final SystemTriggerRegistry systemTriggerRegistry;
+    private final PublishBundleHasher publishBundleHasher;
+    private final PostScheduleValidator postScheduleValidator;
+    private final MediaTargetValidator mediaTargetValidator;
+    private final PublishOptionsValidator publishOptionsValidator;
 
     public WorkItemWorkflowService(WorkItemRepository workItemRepository,
                                    ProjectSecurityService projectSecurityService,
                                    ProjectMemberRepository projectMemberRepository,
                                    ReviewRepository reviewRepository,
                                    WorkflowDefinitionResolver resolver,
-                                   SystemTriggerRegistry systemTriggerRegistry) {
+                                   SystemTriggerRegistry systemTriggerRegistry,
+                                   PublishBundleHasher publishBundleHasher,
+                                   PostScheduleValidator postScheduleValidator,
+                                   MediaTargetValidator mediaTargetValidator,
+                                   PublishOptionsValidator publishOptionsValidator) {
         this.workItemRepository = workItemRepository;
         this.projectSecurityService = projectSecurityService;
         this.projectMemberRepository = projectMemberRepository;
         this.reviewRepository = reviewRepository;
         this.resolver = resolver;
         this.systemTriggerRegistry = systemTriggerRegistry;
+        this.publishBundleHasher = publishBundleHasher;
+        this.postScheduleValidator = postScheduleValidator;
+        this.mediaTargetValidator = mediaTargetValidator;
+        this.publishOptionsValidator = publishOptionsValidator;
     }
 
     /** The Workflow's initial status id (e.g. {@code DRAFT}), used to stamp a freshly created Work Item. */
@@ -119,6 +132,20 @@ public class WorkItemWorkflowService {
             throw new UnprocessableEntityException(
                     "Transition to " + newStatus + " requires an approved review");
         }
+        // Publishing workflows additionally require a complete, schedulable publish bundle before approval
+        // (fire time + timezone, at least one target, at least one uploaded asset, 10-minute floor). The
+        // validator is a no-op for every transition it does not apply to, so calling it unconditionally is
+        // safe — see PostScheduleValidator for the definition-driven rule that decides when it applies.
+        postScheduleValidator.validateForTransition(workItem, statechart, newStatus);
+        // Publishing workflows additionally reject media any selected target would refuse, so a per-platform
+        // format failure surfaces here and never at fire time. Also a no-op for every transition it does not
+        // apply to. The returned Result carries advisory-only warnings (e.g. "YouTube will treat this as a
+        // Short"); the validator logs them itself, so discarding the value here never changes the outcome.
+        mediaTargetValidator.validateForTransition(workItem, statechart, newStatus);
+        // Publishing workflows additionally require every per-target publish option to have been chosen and
+        // to be one the platform will accept — a TikTok target with no privacy level would publish visible
+        // only to its creator. Also a no-op for every transition it does not apply to.
+        publishOptionsValidator.validateForTransition(workItem, statechart, newStatus);
     }
 
     /**
@@ -195,8 +222,85 @@ public class WorkItemWorkflowService {
      * holding the transition's {@code reviewerRole} (or an ADMIN, who outranks any review role). When the
      * transition declares no {@code reviewerRole} — or an unrecognized one — any APPROVED review satisfies the
      * gate.
+     *
+     * <p>On top of that, an approval must still be <em>current</em> (COND-23): it has to belong to the item's
+     * open review round and, when the item carries a publish bundle, to cover the bundle as it stands now.
+     * That second pass runs only when one of those bindings is actually in play — an item still on round 0
+     * with no publish targets (every ENGINEERING item, and every review written before V115) takes the
+     * original path and nothing else, so its gating is byte-for-byte what it was.
      */
     private boolean isReviewSatisfied(String projectId, WorkItem workItem, StatechartTransition transition) {
+        if (!hasApprovedReview(projectId, workItem, transition)) {
+            return false;
+        }
+        if (!isApprovalBound(workItem)) {
+            return true;
+        }
+        return hasCurrentApprovedReview(projectId, workItem, transition);
+    }
+
+    /** Whether anything binds approvals on this item beyond the plain "an APPROVED review exists" check. */
+    private boolean isApprovalBound(WorkItem workItem) {
+        return workItem.getCurrentReviewRound() > 0 || publishBundleHasher.appliesTo(workItem);
+    }
+
+    /**
+     * The bound check: at least one APPROVED review from a qualifying reviewer that belongs to the open review
+     * round and was cast against the bundle the item currently hashes to. A review predating V115 carries a
+     * null round and a null hash and skips both tests, so it satisfies the gate exactly as it always did.
+     */
+    private boolean hasCurrentApprovedReview(String projectId, WorkItem workItem, StatechartTransition transition) {
+        int currentRound = workItem.getCurrentReviewRound();
+        String currentBundleHash = null;
+        for (Review review : reviewRepository.findAllByWorkItemId(workItem.getId())) {
+            if (!APPROVED_VERDICT.equals(review.getVerdict())) {
+                continue;
+            }
+            if (review.getReviewRound() != null && review.getReviewRound() != currentRound) {
+                continue;
+            }
+            if (review.getBundleHash() != null) {
+                // Computed at most once per gate check, and only when some approval is actually hash-bound.
+                if (currentBundleHash == null) {
+                    currentBundleHash = publishBundleHasher.hash(workItem);
+                }
+                if (!review.getBundleHash().equals(currentBundleHash)) {
+                    continue;
+                }
+            } else if (review.getReviewRound() != null) {
+                // A null hash on a review that predates V115 is the legacy case, and is honoured — that is
+                // what the round being null identifies. A null hash on a *modern* review means something
+                // else entirely: it was given while the item carried no publish targets, so there was no
+                // bundle to bind to. Treating that as "skip the check" let an approval of an empty Post
+                // survive being given targets, media and a completely rewritten caption, and still open
+                // the gate. An approval given for no bundle cannot vouch for one.
+                continue;
+            }
+            if (satisfiesReviewerRole(projectId, review.getReviewerId(), transition)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The per-review form of the role rule the {@code existsApprovedByReviewerRole} query applies in SQL. */
+    private boolean satisfiesReviewerRole(String projectId, String reviewerId, StatechartTransition transition) {
+        String role = transition.reviewerRole();
+        if (role == null || role.isBlank()) {
+            return true;
+        }
+        MemberRole reviewerRole;
+        try {
+            reviewerRole = MemberRole.valueOf(role);
+        } catch (IllegalArgumentException e) {
+            return true;
+        }
+        return projectMemberRepository.findByProjectIdAndUserId(projectId, reviewerId)
+                .map(m -> m.getRole() == reviewerRole || m.getRole() == MemberRole.ADMIN)
+                .orElse(false);
+    }
+
+    private boolean hasApprovedReview(String projectId, WorkItem workItem, StatechartTransition transition) {
         String role = transition.reviewerRole();
         if (role == null || role.isBlank()) {
             return reviewRepository.existsByWorkItemIdAndVerdict(workItem.getId(), APPROVED_VERDICT);

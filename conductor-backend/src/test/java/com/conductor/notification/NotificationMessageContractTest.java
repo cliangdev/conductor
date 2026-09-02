@@ -84,11 +84,15 @@ class NotificationMessageContractTest {
     }
 
     /**
-     * These eleven strings are persisted, not just in-process constants: they live in the
+     * These strings are persisted, not just in-process constants: they live in the
      * {@code notification_channel_config.event_type} and {@code notification_group_config_event.event_type}
      * columns, and are hardcoded in {@code conductor-frontend/src/hooks/useNotifications.ts}. Renaming or
      * removing one is therefore a DB migration (precedent: {@code V81__rename_issue_event_vocabulary.sql}),
      * not a safe in-place refactor -- this test exists to make that cost visible before it's paid by accident.
+     *
+     * <p>Adding one is the safe direction and needs no migration: a new name simply appears in no existing
+     * config row, so a project that has never opted into it receives nothing. It still has to be added
+     * here, and to the frontend's list, deliberately -- which is what this assertion forces.
      */
     @Test
     void eventTypeNamesAreFrozen() {
@@ -103,6 +107,7 @@ class NotificationMessageContractTest {
                 "ASSET_ADDED",
                 "WORKFLOW_AUTO_PAUSED",
                 "WORKFLOW_RUN_FAILED",
+                "POST_AWAITING_MANUAL",
                 "GITHUB_PULL_REQUEST"
         );
     }

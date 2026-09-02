@@ -12,6 +12,7 @@ const ALL_CAPABILITIES: Capability[] = [
   'doc.edit',
   'issue.edit',
   'issue.assignReviewers',
+  'integration.appCredential.manage',
 ]
 
 describe('can', () => {
@@ -33,6 +34,7 @@ describe('can', () => {
     expect(can('CREATOR', 'workspace.manage')).toBe(false)
     expect(can('CREATOR', 'members.manage')).toBe(false)
     expect(can('CREATOR', 'notifications.manage')).toBe(false)
+    expect(can('CREATOR', 'integration.appCredential.manage')).toBe(false)
   })
 
   it('grants REVIEWER no mutating capability', () => {

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="TikTok">
+  <!-- Simplified brand mark drawn for this UI, not an official asset. Replace with the official
+       logo from TikTok's brand guidelines before any public release. -->
+  <rect width="32" height="32" rx="7" fill="#000000"/>
+  <defs>
+    <g id="note" fill="none" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M16.6 20.2V9.2c1.1 2.6 3.1 4 5.6 4.1"/>
+      <circle cx="12.7" cy="20.2" r="3.9"/>
+    </g>
+  </defs>
+  <use href="#note" x="-1.1" y="-1.1" stroke="#25F4EE"/>
+  <use href="#note" x="1.1" y="1.1" stroke="#FE2C55"/>
+  <use href="#note" stroke="#ffffff"/>
+</svg>

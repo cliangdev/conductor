@@ -8,6 +8,7 @@ import { SORT_OPTIONS, type ActiveFilter, type SortKey } from '@/components/work
 export function ListToolbar({
   typeOptions,
   statusOptions,
+  tagOptions,
   activeFilters,
   onAddFilter,
   onRemoveFilter,
@@ -17,6 +18,7 @@ export function ListToolbar({
 }: {
   typeOptions: string[]
   statusOptions: { id: string; label: string }[]
+  tagOptions?: string[]
   activeFilters: ActiveFilter[]
   onAddFilter: (filter: ActiveFilter) => void
   onRemoveFilter: (kind: ActiveFilter['kind'], value: string) => void
@@ -30,6 +32,7 @@ export function ListToolbar({
       <FilterPills
         typeOptions={typeOptions}
         statusOptions={statusOptions}
+        tagOptions={tagOptions}
         activeFilters={activeFilters}
         onAdd={onAddFilter}
         onRemove={onRemoveFilter}

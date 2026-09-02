@@ -76,4 +76,38 @@ class LocalStorageServiceTest {
         assertThat(url).contains("/api/v1/local-files/");
         assertThat(url).startsWith("http://localhost:8080");
     }
+    /**
+     * Regression: the default {@code local.storage.path} is the RELATIVE {@code ./local-uploads}, whose
+     * absolute form keeps a literal "." segment. {@code resolveWithinStorageRoot} compares a *normalized*
+     * target against the root, so an un-normalized root made every legitimate path fail the
+     * {@code startsWith} check — the default configuration could not store a single file, and every caller
+     * (assets, documents, workflow artifacts) got a 500 from a path-traversal guard firing on a path that
+     * traverses nothing.
+     */
+    @Test
+    void storesAFileWhenTheConfiguredRootIsRelative(@TempDir Path tmp) throws Exception {
+        Path base = tmp.resolve("uploads");
+        Files.createDirectories(base);
+        // The shape that broke it: a root reached through a "." segment, exactly like "./local-uploads".
+        String rootWithDotSegment = tmp + java.io.File.separator + "." + java.io.File.separator + "uploads";
+        LocalStorageService service = new LocalStorageService(rootWithDotSegment, "http://localhost:8080");
+
+        service.upload("marketing-assets/proj/item/asset-teaser.png", new byte[] {1, 2, 3}, "image/png");
+
+        assertThat(base.resolve("marketing-assets/proj/item/asset-teaser.png")).exists();
+        assertThat(service.download("marketing-assets/proj/item/asset-teaser.png")).containsExactly(1, 2, 3);
+    }
+
+    /** The guard still has to bite on a path that genuinely escapes. */
+    @Test
+    void stillRefusesAPathThatEscapesTheRoot(@TempDir Path tmp) {
+        LocalStorageService service =
+                new LocalStorageService(tmp.resolve("uploads").toString(), "http://localhost:8080");
+
+        assertThatThrownBy(() -> service.upload("../escaped.txt", new byte[] {1}, "text/plain"))
+                .isInstanceOf(SecurityException.class);
+        assertThatThrownBy(() -> service.upload("a/../../escaped.txt", new byte[] {1}, "text/plain"))
+                .isInstanceOf(SecurityException.class);
+    }
+
 }

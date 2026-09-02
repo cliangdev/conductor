@@ -227,7 +227,7 @@ class DiscordAppConnectorTest {
     }
 
     /**
-     * Blocker fix: {@code conversations.title} is VARCHAR(200) (V110) -- an untruncated long question
+     * Blocker fix: {@code conversations.title} is VARCHAR(200) (V124) -- an untruncated long question
      * used to fail this exact insert, deep inside the (now-async) flow with nothing left to reply from.
      * The full, UNtruncated question must still be what's stored as the actual message content and
      * handed to the agent -- only the title (and, separately, the thread name) are ever shortened.

@@ -15,6 +15,12 @@ import { ExternalLink } from 'lucide-react';
 import { Alert } from '@/components/ui/alert';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { ConnectorHeader } from './ConnectorHeader';
+import { useConnectorCatalogItem } from './ConnectorCatalogContext';
+import {
+  ConnectorAppCredentialPanel,
+  appCredentialOf,
+  type ConnectorAppCredentialStatus,
+} from './ConnectorAppCredentialPanel';
 import { toastError } from '@/components/ui/toast';
 
 interface ServiceCost {
@@ -36,6 +42,7 @@ interface GcpBillingData {
 
 export default function GcpBillingConnectorPage({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth();
+  const { item } = useConnectorCatalogItem();
   const [response, setResponse] = useState<ConnectionDataResponse | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [connectionId, setConnectionId] = useState<string | null>(null);
@@ -49,6 +56,23 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingDatasets, setLoadingDatasets] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Same shape as GenericConnectorPage: the catalog entry carries readiness on the first paint and
+  // the panel's own responses take over once an admin edits the credential. Derived during render
+  // so the authorize button below is never gated on a stale value for a frame.
+  const [credentialOverride, setCredentialOverride] = useState<ConnectorAppCredentialStatus | null>(null);
+  const appCredential = credentialOverride ?? appCredentialOf(item);
+  // Without a platform app there is nothing to consent to — starting the flow anyway only produces
+  // a server error naming an environment variable.
+  const credentialBlocked = appCredential?.credentialSource === 'NONE';
+  const credentialPanel = appCredential ? (
+    <ConnectorAppCredentialPanel
+      projectId={projectId}
+      connectorId="gcp-billing"
+      connectorName="GCP Billing"
+      status={appCredential}
+      onChange={setCredentialOverride}
+    />
+  ) : null;
 
   const loadData = useCallback(async (isRefresh = false) => {
     if (!accessToken) return;
@@ -171,6 +195,8 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
           }
         />
 
+        {credentialPanel}
+
         {!oauthConnected ? (
           /* Step 1: OAuth */
           <div className="bg-card rounded-lg border border-border p-8 max-w-lg space-y-6">
@@ -198,14 +224,19 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
                 <span className="flex-shrink-0 h-5 w-5 rounded-full bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">2</span>
                 <p className="text-sm font-medium text-foreground">Connect your Google account</p>
               </div>
-              <div className="ml-7">
+              <div className="ml-7 space-y-2">
                 <button
                   onClick={handleAuthorize}
-                  disabled={authorizing}
-                  className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  disabled={authorizing || credentialBlocked}
+                  className="w-full rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {authorizing ? 'Redirecting to Google…' : 'Connect with Google'}
                 </button>
+                {credentialBlocked && (
+                  <p className="text-xs text-muted-foreground">
+                    Available once the platform app credentials above are configured.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -295,6 +326,8 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
         onRefresh={() => loadData(true)}
         refreshing={refreshing}
       />
+
+      {credentialPanel}
 
       {errorBanner && (
         <Alert variant="warning" className="mb-4 text-xs">

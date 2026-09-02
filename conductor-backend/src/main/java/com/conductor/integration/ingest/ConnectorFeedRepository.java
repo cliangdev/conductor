@@ -25,7 +25,7 @@ public interface ConnectorFeedRepository extends JpaRepository<ConnectorFeed, St
      * concurrent scheduler instances can never claim the same feed -- {@code FOR UPDATE SKIP LOCKED}
      * isn't expressible in JPQL, so this is native, mirroring
      * {@code KnowledgeSourceRepository#findDuePendingForProjectAndDomain} and
-     * {@code WorkflowJobQueueRepository#claimNextJob}. Caller must advance {@code next_run_at} (or
+     * {@code WorkflowJobQueueRepository#claimUnclaimedByRunIdAndJobId}. Caller must advance {@code next_run_at} (or
      * flip {@code status}) in the same transaction that ran this query, before the row locks release.
      */
     @Query(value = "SELECT * FROM connector_feed WHERE status = 'ACTIVE' AND enabled = true "

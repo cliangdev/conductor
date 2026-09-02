@@ -1,6 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.Connection;
+import com.conductor.entity.EnvelopeEncrypted;
 import com.conductor.integration.DecryptedCredentials;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,7 +21,11 @@ import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.*;
 
-/** Local-profile crypto: a single static AES-256 key encrypts all secrets; kms_key_reference = "local". */
+/**
+ * Local-profile crypto: a single static AES-256 key encrypts all secrets and {@code kms_key_reference}
+ * is set to {@code "local"}, so development needs no KMS. Same seam as {@link GcpKmsCredentialService},
+ * including the generic {@link EnvelopeEncrypted} methods, so every caller works on both profiles.
+ */
 @Service
 @Profile("local")
 public class LocalCredentialService implements CredentialService {
@@ -68,6 +73,17 @@ public class LocalCredentialService implements CredentialService {
     @Override
     public String decryptWebhookSecret(Connection c) {
         return decrypt(c.getEncryptedWebhookSecret());
+    }
+
+    @Override
+    public String encryptSecret(EnvelopeEncrypted owner, String plaintext) {
+        owner.setKmsKeyReference("local");
+        return encrypt(plaintext);
+    }
+
+    @Override
+    public String decryptSecret(EnvelopeEncrypted owner, String ciphertext) {
+        return decrypt(ciphertext);
     }
 
     private String encrypt(String plaintext) {

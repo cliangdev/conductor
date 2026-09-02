@@ -14,7 +14,7 @@ import java.util.UUID;
  * {@link com.conductor.agent.Agent} -- the container {@link AgentConversationRunner} drives turns into,
  * and {@link ConversationMessage} rows log. {@code channel}/{@code channelKey} identify where the
  * conversation lives ({@code api} has no key; {@code discord} packs {@code '<guild_id>:<thread_id>'}) --
- * the V110 migration's partial unique index on (project_id, channel, channel_key) is the real
+ * the V124 migration's partial unique index on (project_id, channel, channel_key) is the real
  * at-most-one-conversation-per-channel-key guard, not this entity.
  *
  * <p>Mirrors {@link com.conductor.agent.Agent}/{@link com.conductor.agent.run.AgentRun}'s style: UUID
@@ -49,7 +49,7 @@ public class Conversation {
     private String title;
 
     /** Null for a machine actor -- {@link #createdByLabel} carries its identity instead. Attribution
-     *  follows {@code project_docs}' user-or-label pattern; the V110 CHECK constraint is the actual
+     *  follows {@code project_docs}' user-or-label pattern; the V124 CHECK constraint is the actual
      *  guarantee that a byline is always present one way or the other. */
     @Column(name = "created_by_user_id", length = 36)
     private String createdByUserId;

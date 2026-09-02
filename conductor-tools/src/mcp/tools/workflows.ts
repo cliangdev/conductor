@@ -1,5 +1,5 @@
 import { Config } from '../config.js'
-import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from '../api.js'
+import { apiGet, apiPost, apiPatch, apiPut, apiDelete, isClientError } from '../api.js'
 import { queueChange } from '../queue.js'
 
 /**
@@ -65,6 +65,11 @@ export async function transitionWorkItem(
   try {
     return await apiPatch<Record<string, unknown>>(path, body, config)
   } catch (err) {
+    // A 4xx (validation, permission, unknown id) is permanent — surface it rather than
+    // queuing a replay that can never succeed. Publishing validators reject this way by design.
+    if (isClientError(err)) {
+      return { error: `Transition refused: ${err instanceof Error ? err.message : String(err)}` }
+    }
     const size = queueChange({ method: 'PATCH', path, body, timestamp: new Date().toISOString() })
     return {
       issueId: params.issueId,
@@ -90,6 +95,11 @@ export async function recordAsset(
   try {
     return await apiPost<Record<string, unknown>>(path, body, config)
   } catch (err) {
+    // A 4xx (validation, permission, unknown id) is permanent — surface it rather than
+    // queuing a replay that can never succeed. Publishing validators reject this way by design.
+    if (isClientError(err)) {
+      return { error: `Asset not recorded: ${err instanceof Error ? err.message : String(err)}` }
+    }
     const size = queueChange({ method: 'POST', path, body, timestamp: new Date().toISOString() })
     return {
       warning: `Sync failed — change queued: ${err instanceof Error ? err.message : String(err)}`,
@@ -282,6 +292,11 @@ export async function reportStepRun(
   try {
     return await apiPost<Record<string, unknown>>(path, rest, config)
   } catch (err) {
+    // A 4xx (validation, permission, unknown id) is permanent — surface it rather than
+    // queuing a replay that can never succeed. Publishing validators reject this way by design.
+    if (isClientError(err)) {
+      return { error: `Step run not reported: ${err instanceof Error ? err.message : String(err)}` }
+    }
     const size = queueChange({ method: 'POST', path, body: rest, timestamp: new Date().toISOString() })
     return {
       warning: `Sync failed — change queued: ${err instanceof Error ? err.message : String(err)}`,

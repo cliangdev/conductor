@@ -25,7 +25,11 @@ public class LocalStorageService implements StorageService {
     public LocalStorageService(
             @Value("${local.storage.path:./local-uploads}") String storagePath,
             @Value("${server.base-url:http://localhost:8080}") String serverBaseUrl) {
-        this.storagePath = Paths.get(storagePath).toAbsolutePath();
+        // normalize(), not just toAbsolutePath(): the default value is the RELATIVE "./local-uploads",
+        // whose absolute form keeps a literal "." segment. resolveWithinStorageRoot compares a normalized
+        // target against this root, so without normalizing here every legitimate path "escapes" the root
+        // and no file can ever be stored.
+        this.storagePath = Paths.get(storagePath).toAbsolutePath().normalize();
         this.serverBaseUrl = serverBaseUrl;
     }
 

@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * Covers the V112 ranked-FTS upgrade of {@code searchByProjectIdAndQuery} -- title-weighted-A vs
+ * Covers the V126 ranked-FTS upgrade of {@code searchByProjectIdAndQuery} -- title-weighted-A vs
  * content-weighted-C ranking, the {@code limit} clause, and blank-query safety (an empty {@code
  * tsquery} matches nothing rather than erroring -- see the repository method's javadoc for why that's
  * an accepted behavior change from the old LIKE query's "matches everything").

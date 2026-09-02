@@ -17,8 +17,8 @@ import static org.mockito.Mockito.*;
  * processJob's safety net: an executor that lets an exception escape uncaught (rather than returning a
  * normal StepResult.failed(...)) must not strand the job in RUNNING forever — it's terminalized via the
  * same completeRemoteJob path the daemon-pickup-timeout sweep already uses. Also covers
- * recoverStuckJobsOnStartup wiring recoverStuckJobs() up as an actual startup hook (previously dead code
- * with no caller anywhere in the codebase).
+ * recoverStuckJobsOnStartup wiring recoverStuckJobs() up as an actual startup hook, and
+ * recoverOrphanedClaims — the crash-recovery paths that stay independent of the dispatch mechanism.
  */
 @ExtendWith(MockitoExtension.class)
 class WorkflowExecutionEngineFailureRecoveryTest {
@@ -31,6 +31,7 @@ class WorkflowExecutionEngineFailureRecoveryTest {
     @Mock WorkflowJobOrchestrator orchestrator;
     @Mock WorkflowFailureCircuitBreaker circuitBreaker;
     @Mock WorkflowRunFailureNotifier runFailureNotifier;
+    @Mock WorkflowJobDispatcher cloudTasksJobDispatcher;
 
     WorkflowExecutionEngine engine;
 
@@ -39,7 +40,18 @@ class WorkflowExecutionEngineFailureRecoveryTest {
         engine = new WorkflowExecutionEngine(
                 queueRepository, runRepository, jobRunRepository,
                 stepRunRepository, workflowRepository, orchestrator, new com.conductor.workflow.model.WorkflowYamlParser(),
-                circuitBreaker, runFailureNotifier, 4);
+                circuitBreaker, runFailureNotifier, cloudTasksJobDispatcher);
+    }
+
+    private WorkflowJobQueue makeQueueEntry(String runId, String jobId) {
+        WorkflowRun run = new WorkflowRun();
+        run.setId(runId);
+
+        WorkflowJobQueue entry = new WorkflowJobQueue();
+        entry.setId(java.util.UUID.randomUUID().toString());
+        entry.setRun(run);
+        entry.setJobId(jobId);
+        return entry;
     }
 
     @Test
@@ -66,8 +78,9 @@ class WorkflowExecutionEngineFailureRecoveryTest {
     @Test
     void processJob_completeRemoteJobItselfThrows_propagatesToOuterSafetyNet() {
         // processJob only wraps executeJob(), not the completeRemoteJob(...) recovery call itself — if
-        // the recovery write also fails, it legitimately propagates out to pollQueueOnce's outer
-        // log-only catch (defense in depth), rather than being silently swallowed here too.
+        // the recovery write also fails, it legitimately propagates out to the dispatch endpoint's
+        // caller (Cloud Tasks), whose non-2xx-triggered retry is the actual recovery path here now
+        // (defense in depth), rather than being silently swallowed here too.
         doThrow(new RuntimeException("boom")).when(orchestrator).executeJob("run-1", "detect_changes");
         doThrow(new RuntimeException("db unavailable"))
                 .when(orchestrator).completeRemoteJob(any(), any(), any(), any());
@@ -95,5 +108,35 @@ class WorkflowExecutionEngineFailureRecoveryTest {
         engine.recoverStuckJobsOnStartup();
 
         verify(jobRunRepository).findByStatus(WorkflowJobStatus.RUNNING);
+    }
+
+    @Test
+    void recoverOrphanedClaims_reopensClaimedRowsThatNeverProducedAJobRun() {
+        // The instance died between claimQueuedJob and creating its workflow_job_runs row. Nothing else
+        // in the system can see such a row again, so startup must clear the claim.
+        WorkflowJobQueue orphaned = makeQueueEntry("run-1", "job-a");
+        orphaned.setClaimedAt(java.time.OffsetDateTime.now());
+        when(queueRepository.findClaimedWithoutJobRun()).thenReturn(List.of(orphaned));
+
+        engine.recoverOrphanedClaims();
+
+        org.mockito.ArgumentCaptor<WorkflowJobQueue> saved = org.mockito.ArgumentCaptor.forClass(WorkflowJobQueue.class);
+        verify(queueRepository).save(saved.capture());
+        org.assertj.core.api.Assertions.assertThat(saved.getValue().getClaimedAt())
+                .as("cleared claim is what makes the row claimable again by a redelivered Cloud Task")
+                .isNull();
+    }
+
+    @Test
+    void recoverOrphanedClaims_doesNotEnqueueASecondQueueRow() {
+        // Re-opening the existing row is deliberate: inserting a fresh one alongside it would let the
+        // same job run twice.
+        WorkflowJobQueue orphaned = makeQueueEntry("run-1", "job-a");
+        orphaned.setClaimedAt(java.time.OffsetDateTime.now());
+        when(queueRepository.findClaimedWithoutJobRun()).thenReturn(List.of(orphaned));
+
+        engine.recoverOrphanedClaims();
+
+        verify(queueRepository, never()).findByRunIdAndJobIdAndClaimedAtIsNull(anyString(), anyString());
     }
 }

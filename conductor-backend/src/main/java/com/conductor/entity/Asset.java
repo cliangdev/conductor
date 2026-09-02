@@ -10,6 +10,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -45,6 +46,42 @@ public class Asset {
 
     @Column(name = "done", nullable = false)
     private boolean done = false;
+
+    /**
+     * Upload lifecycle of a {@code file} asset: {@code PENDING} while the signed URL is outstanding,
+     * {@code UPLOADED} once the object is confirmed in the bucket. Null for {@code link} assets.
+     */
+    @Column(name = "upload_status", length = 16)
+    private String uploadStatus;
+
+    @Column(name = "content_type", length = 128)
+    private String contentType;
+
+    @Column(name = "size_bytes")
+    private Long sizeBytes;
+
+    /** Object path in the storage bucket; always set once {@code uploadStatus} is {@code UPLOADED}. */
+    @Column(name = "gcs_path", columnDefinition = "TEXT")
+    private String gcsPath;
+
+    /**
+     * Pixel width of the media, or null when unknown. Derived server-side at upload confirm for images
+     * the JDK can read; declared by the uploading client for video. Null means "not measured", never
+     * "acceptable" — see {@code MediaTargetValidator}.
+     */
+    @Column(name = "width")
+    private Integer width;
+
+    /** Pixel height of the media, or null when unknown. See {@link #width}. */
+    @Column(name = "height")
+    private Integer height;
+
+    /**
+     * Running time of a video in seconds, or null when unknown. Fractional because platform length caps are
+     * whole seconds but real media is not, and rounding down could pass a cap the platform would then reject.
+     */
+    @Column(name = "duration_seconds", precision = 12, scale = 3)
+    private BigDecimal durationSeconds;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -86,6 +123,27 @@ public class Asset {
 
     public boolean isDone() { return done; }
     public void setDone(boolean done) { this.done = done; }
+
+    public String getUploadStatus() { return uploadStatus; }
+    public void setUploadStatus(String uploadStatus) { this.uploadStatus = uploadStatus; }
+
+    public String getContentType() { return contentType; }
+    public void setContentType(String contentType) { this.contentType = contentType; }
+
+    public Long getSizeBytes() { return sizeBytes; }
+    public void setSizeBytes(Long sizeBytes) { this.sizeBytes = sizeBytes; }
+
+    public String getGcsPath() { return gcsPath; }
+    public void setGcsPath(String gcsPath) { this.gcsPath = gcsPath; }
+
+    public Integer getWidth() { return width; }
+    public void setWidth(Integer width) { this.width = width; }
+
+    public Integer getHeight() { return height; }
+    public void setHeight(Integer height) { this.height = height; }
+
+    public BigDecimal getDurationSeconds() { return durationSeconds; }
+    public void setDurationSeconds(BigDecimal durationSeconds) { this.durationSeconds = durationSeconds; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

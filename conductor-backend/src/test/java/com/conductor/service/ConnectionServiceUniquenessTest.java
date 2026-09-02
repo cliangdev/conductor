@@ -46,10 +46,19 @@ class ConnectionServiceUniquenessTest extends AbstractNoneWebIntegrationTest {
 
     private String projectId;
     private String otherProjectId;
+    /**
+     * Per-run installation id. This test used to wipe the whole {@code connection} table in {@code setUp} so
+     * its one global query below could assert an exact size — but that is a landmine on the shared Postgres
+     * container: any test that leaves a {@code post_publish_target} row referencing a connection makes the
+     * global delete fail on the FK (which intentionally does not cascade, so deleting a connection with live
+     * scheduled posts fails loudly). Isolating on a unique installation id gives the same guarantee without
+     * touching other tests' data.
+     */
+    private String installationId;
 
     @BeforeEach
     void setUp() {
-        connectionRepository.deleteAll();
+        installationId = "inst-" + UUID.randomUUID();
         projectId = newProject("Proj A");
         otherProjectId = newProject("Proj B");
     }
@@ -123,18 +132,18 @@ class ConnectionServiceUniquenessTest extends AbstractNoneWebIntegrationTest {
 
     @Test
     void sameInstallationCannotBeConnectedTwiceInOneProject() {
-        connectWithInstallation(projectId, "12345");
-        assertThatThrownBy(() -> connectWithInstallation(projectId, "12345"))
+        connectWithInstallation(projectId, installationId);
+        assertThatThrownBy(() -> connectWithInstallation(projectId, installationId))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test
     void sameInstallationCanBeConnectedAcrossDifferentProjects() {
-        connectWithInstallation(projectId, "12345");
-        connectWithInstallation(otherProjectId, "12345");
+        connectWithInstallation(projectId, installationId);
+        connectWithInstallation(otherProjectId, installationId);
 
         List<Connection> routed = connectionRepository.findByConnectorIdAndConfigValue(
-                "github", "installationId", "12345");
+                "github", "installationId", installationId);
         assertThat(routed).hasSize(2);
         assertThat(routed).extracting(Connection::getProjectId)
                 .containsExactlyInAnyOrder(projectId, otherProjectId);

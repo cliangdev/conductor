@@ -115,7 +115,7 @@ public class WorkflowJobOrchestrator {
             return null;
         }
 
-        // Closes the race where pollQueueOnce claims a queue row concurrently with the cancellation
+        // Closes the race where claimQueuedJob claims a queue row concurrently with the cancellation
         // service purging that same queue. Deliberately checks the two cancellation statuses rather
         // than isTerminal(): the legacy PATCH shim marks a run SUCCESS *before* propagating to
         // dependents, and those dependents must still dispatch.

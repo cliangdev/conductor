@@ -23,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -73,6 +74,15 @@ class WorkItemServiceTest {
     @Mock
     private AssetService assetService;
 
+    @Mock
+    private NativeHandoffService nativeHandoffService;
+
+    @Mock
+    private PublishBundleGuard publishBundleGuard;
+
+    @Mock
+    private PublishTargetService publishTargetService;
+
     @InjectMocks
     private WorkItemService workItemService;
 
@@ -121,6 +131,67 @@ class WorkItemServiceTest {
         }
     }
 
+    // --- native-lane handoff wiring (T4.5) ---
+
+    /**
+     * Entering the scheduled status must hand off native-lane targets, so a Facebook/YouTube post whose fire
+     * time is inside the platform window is actually given to the platform.
+     */
+    @Test
+    void enteringScheduledHandsOffNativeTargets() {
+        testIssue.setCurrentStatus("APPROVED");
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
+                .thenReturn(Optional.of(memberAs(MemberRole.ADMIN)));
+
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, "SCHEDULED", null, null, null, caller);
+
+        verify(publishTargetService).restampFireTimes(testIssue);
+        verify(nativeHandoffService).handoffForPost(testIssue);
+        verify(nativeHandoffService, never()).unschedule(any());
+    }
+
+    /**
+     * Leaving the scheduled status must revoke first. A handed-off post already exists on the platform, so an
+     * unschedule/edit-revert that skipped revocation would still go live.
+     */
+    @Test
+    void leavingScheduledRevokesBeforeTheStatusChange() {
+        testIssue.setCurrentStatus("SCHEDULED");
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
+                .thenReturn(Optional.of(memberAs(MemberRole.ADMIN)));
+
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, "APPROVED", null, null, null, caller);
+
+        InOrder inOrder = Mockito.inOrder(nativeHandoffService, workItemRepository);
+        inOrder.verify(nativeHandoffService).unschedule(testIssue);
+        inOrder.verify(workItemRepository).save(testIssue);
+        verify(nativeHandoffService, never()).handoffForPost(any());
+    }
+
+    /** Deleting a scheduled Post must not leave a live post behind on the platform. */
+    @Test
+    void deletingAWorkItemRevokesAnyNativeHandoff() {
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+
+        workItemService.deleteWorkItem("proj-1", "issue-1");
+
+        InOrder inOrder = Mockito.inOrder(nativeHandoffService, workItemRepository);
+        inOrder.verify(nativeHandoffService).unschedule(testIssue);
+        inOrder.verify(workItemRepository).delete(testIssue);
+    }
+
+    private ProjectMember memberAs(MemberRole role) {
+        ProjectMember member = new ProjectMember();
+        member.setProject(project);
+        member.setUser(caller);
+        member.setRole(role);
+        return member;
+    }
+
     @Test
     void createIssueSetsInitialStatusFromWorkflow() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
@@ -159,7 +230,7 @@ class WorkItemServiceTest {
                 .isInstanceOf(ForbiddenException.class);
     }
 
-    // --- ProjectActor overload (V111: machine-attributed Work Items, e.g. coordinator:create_work_item) ---
+    // --- ProjectActor overload (V125: machine-attributed Work Items, e.g. coordinator:create_work_item) ---
 
     @Test
     void createWorkItemWithMachineActorSkipsMembershipCheckAndPersistsLabelAttribution() {
@@ -205,7 +276,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByType() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", null, null))
+        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", null, null, null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", "PRD", null, null, caller);
@@ -218,7 +289,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByStatus() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", null, "DRAFT", null))
+        when(workItemRepository.findByProjectFiltered("proj-1", null, "DRAFT", null, null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", null, "DRAFT", null, caller);
@@ -231,7 +302,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByTypeAndStatus() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null))
+        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null, null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", "PRD", "DRAFT", null, caller);
@@ -243,7 +314,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByWorkflow() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING"))
+        when(workItemRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING", null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", null, null, "ENGINEERING", caller);
@@ -259,7 +330,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_REVIEW");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("IN_REVIEW");
         verify(workItemWorkflowService).validateTransition("proj-1", testIssue, "IN_REVIEW");
@@ -274,7 +345,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("READY_FOR_DEVELOPMENT");
 
-        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid status transition from DRAFT to READY_FOR_DEVELOPMENT");
     }
@@ -289,7 +360,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("DRAFT");
 
-        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Invalid status transition from READY_FOR_DEVELOPMENT to DRAFT");
     }
@@ -303,7 +374,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("READY_FOR_DEVELOPMENT");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("READY_FOR_DEVELOPMENT");
     }
@@ -321,7 +392,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_REVIEW");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         assertThat(testIssue.getCurrentStatus()).isEqualTo("IN_REVIEW");
     }
@@ -335,7 +406,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("CODE_REVIEW");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signalCaptor.capture());
@@ -358,7 +429,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("CODE_REVIEW");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signalCaptor.capture());
@@ -378,7 +449,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_REVIEW");
 
-        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller))
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining("REVIEWER role cannot change Work Item status");
     }
@@ -399,7 +470,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_PROGRESS");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signalCaptor.capture());
@@ -425,7 +496,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_PROGRESS");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signalCaptor.capture());
@@ -444,7 +515,7 @@ class WorkItemServiceTest {
 
         String requestStatus = ("IN_PROGRESS");
 
-        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, caller);
+        workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller);
 
         ArgumentCaptor<Signal> signalCaptor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(signalCaptor.capture());

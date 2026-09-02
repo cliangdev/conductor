@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Pure unit test (no Spring) for {@link WorkItemController#toResponse}: the null-{@code
- * createdBy}/{@code createdByLabel} fallback for a machine-authored Work Item (V111 --
+ * createdBy}/{@code createdByLabel} fallback for a machine-authored Work Item (V125 --
  * {@code coordinator:create_work_item} creates rows this way via {@code
  * WorkItemService#createWorkItem(..., ProjectActor)}).
  */

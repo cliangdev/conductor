@@ -19,11 +19,12 @@ import java.util.UUID;
  * partial unique index {@code uq_connection_single_instance}.
  *
  * <p>One per-connection DEK (wrapped in {@code kmsKeyReference}) encrypts all secrets on the row:
- * access token, refresh token, and webhook signing secret.
+ * access token, refresh token, and webhook signing secret. That envelope is
+ * {@code CredentialService}'s, reached through {@link EnvelopeEncrypted}.
  */
 @Entity
 @Table(name = "connection")
-public class Connection {
+public class Connection implements EnvelopeEncrypted {
 
     @Id
     @Column(name = "id", length = 36, nullable = false, updatable = false)
@@ -70,6 +71,23 @@ public class Connection {
 
     @Column(name = "token_expires_at")
     private OffsetDateTime tokenExpiresAt;
+
+    /**
+     * System-owned verdict on whether the platform still accepts this connection's credentials:
+     * {@code HEALTHY}, {@code UNHEALTHY}, or null when it has never been checked. Deliberately
+     * separate from {@link #status}, which is the user-owned lifecycle — a connection whose token
+     * was revoked is still {@code ACTIVE} and merely {@code UNHEALTHY}. Written only through
+     * {@code ConnectionHealthService}.
+     */
+    @Column(name = "health_status", length = 16)
+    private String healthStatus;
+
+    @Column(name = "health_checked_at")
+    private OffsetDateTime healthCheckedAt;
+
+    /** The platform's own explanation of an unhealthy verdict; null while healthy. */
+    @Column(name = "health_message", columnDefinition = "TEXT")
+    private String healthMessage;
 
     @Column(name = "config_json", columnDefinition = "JSONB", nullable = false)
     @ColumnTransformer(write = "?::jsonb")
@@ -151,6 +169,15 @@ public class Connection {
 
     public OffsetDateTime getTokenExpiresAt() { return tokenExpiresAt; }
     public void setTokenExpiresAt(OffsetDateTime tokenExpiresAt) { this.tokenExpiresAt = tokenExpiresAt; }
+
+    public String getHealthStatus() { return healthStatus; }
+    public void setHealthStatus(String healthStatus) { this.healthStatus = healthStatus; }
+
+    public OffsetDateTime getHealthCheckedAt() { return healthCheckedAt; }
+    public void setHealthCheckedAt(OffsetDateTime healthCheckedAt) { this.healthCheckedAt = healthCheckedAt; }
+
+    public String getHealthMessage() { return healthMessage; }
+    public void setHealthMessage(String healthMessage) { this.healthMessage = healthMessage; }
 
     public String getConfigJson() { return configJson; }
     public void setConfigJson(String configJson) { this.configJson = configJson; }

@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
+import { ExternalLinkCell } from '@/components/workitems/ExternalLinkCell'
 import { CommentCount } from '@/components/ui/comment-count'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import { AssigneeCell } from '@/components/workitems/AssigneeCell'
@@ -110,7 +111,27 @@ export function WorkItemRow({
         {issue.type}
       </Badge>
 
+      {/* Tags read at a glance next to the type, which is the other thing that says what this is. */}
+      {(issue.tags?.length ?? 0) > 0 && (
+        <span className="hidden shrink-0 items-center gap-1 md:inline-flex">
+          {issue.tags!.slice(0, 3).map((tag) => (
+            <span key={tag} className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+              {tag}
+            </span>
+          ))}
+          {issue.tags!.length > 3 && (
+            <span className="text-[11px] text-foreground-subtle" title={issue.tags!.join(', ')}>
+              +{issue.tags!.length - 3}
+            </span>
+          )}
+        </span>
+      )}
+
       <div className="flex items-center gap-3 ml-auto shrink-0">
+        {/* Where it ended up outside Conductor. Sits outside the row anchor so a click opens the live
+            post rather than the Work Item — the whole reason for putting it here is to save that trip. */}
+        <ExternalLinkCell links={issue.externalLinks} />
+
         <CommentCount count={issue.unresolvedCommentCount} className="text-muted-foreground" />
 
         {accessToken && (

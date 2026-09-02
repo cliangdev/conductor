@@ -1,5 +1,7 @@
 package com.conductor.service;
 
+import com.conductor.notification.ChannelGroup;
+import com.conductor.entity.Asset;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
@@ -7,6 +9,7 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.conductor.repository.AssetRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
@@ -24,7 +27,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.Locale;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +51,7 @@ public class WorkItemService {
     // WorkItemWorkflowService against the resolved Statechart.
 
     private final WorkItemRepository workItemRepository;
+    private final AssetRepository assetRepository;
     private final ProjectRepository projectRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
@@ -48,6 +60,9 @@ public class WorkItemService {
     private final UserRepository userRepository;
     private final WorkItemWorkflowService workItemWorkflowService;
     private final AssetService assetService;
+    private final NativeHandoffService nativeHandoffService;
+    private final PublishBundleGuard publishBundleGuard;
+    private final PublishTargetService publishTargetService;
 
     public WorkItemService(
             WorkItemRepository workItemRepository,
@@ -58,7 +73,12 @@ public class WorkItemService {
             CommentRepository commentRepository,
             UserRepository userRepository,
             WorkItemWorkflowService workItemWorkflowService,
-            AssetService assetService) {
+            AssetService assetService,
+            NativeHandoffService nativeHandoffService,
+            PublishBundleGuard publishBundleGuard,
+            PublishTargetService publishTargetService,
+                           AssetRepository assetRepository) {
+        this.assetRepository = assetRepository;
         this.workItemRepository = workItemRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
@@ -68,6 +88,9 @@ public class WorkItemService {
         this.userRepository = userRepository;
         this.workItemWorkflowService = workItemWorkflowService;
         this.assetService = assetService;
+        this.nativeHandoffService = nativeHandoffService;
+        this.publishBundleGuard = publishBundleGuard;
+        this.publishTargetService = publishTargetService;
     }
 
     /**
@@ -77,6 +100,7 @@ public class WorkItemService {
      * callers (human REST, machine tool) never diverge.
      */
     @Transactional
+    /** Pre-tags arity, kept so every existing caller reads as it did. Creates with no tags. */
     public WorkItem createWorkItem(String projectId, String type, String title, String description,
                                    String workflowSlug, User caller) {
         return createWorkItem(projectId, type, title, description, workflowSlug, ProjectActor.of(caller));
@@ -84,16 +108,34 @@ public class WorkItemService {
 
     /**
      * Canonical create-Work-Item business logic for any {@link ProjectActor} -- a human user or a
-     * machine actor (e.g. an addressable agent via {@code coordinator:create_work_item}). Membership is
-     * a {@code project_members} row check, which only has meaning for a human: {@link
+     * machine actor (e.g. an addressable agent via {@code coordinator:create_work_item}). Creates with no
+     * tags; delegates to the tagged overload below.
+     */
+    @Transactional
+    public WorkItem createWorkItem(String projectId, String type, String title, String description,
+                                   String workflowSlug, ProjectActor actor) {
+        return createWorkItem(projectId, type, title, description, workflowSlug, null, actor);
+    }
+
+    /** Pre-actor arity, kept so every existing caller reads as it did. Attributes to a human caller. */
+    @Transactional
+    public WorkItem createWorkItem(String projectId, String type, String title, String description,
+                                   String workflowSlug, Collection<String> tags, User caller) {
+        return createWorkItem(projectId, type, title, description, workflowSlug, tags, ProjectActor.of(caller));
+    }
+
+    /**
+     * Canonical create-Work-Item business logic, returning the persisted entity. The v2 controller maps the
+     * entity to its response DTO. Takes plain fields so the service stays decoupled from any generated DTO.
+     * Membership is a {@code project_members} row check, which only has meaning for a human: {@link
      * ProjectActor#isMachine()} skips {@link #verifyMembership} entirely for a machine actor rather than
-     * failing it against a caller that could never be a project member. Attribution follows the V111
+     * failing it against a caller that could never be a project member. Attribution follows the V125
      * user-or-label pattern: {@code createdBy}/{@code createdByLabel} mirror {@code actor.user()}/{@code
      * actor.label()} exactly, mutually exclusive by construction (see {@link ProjectActor}).
      */
     @Transactional
     public WorkItem createWorkItem(String projectId, String type, String title, String description,
-                                   String workflowSlug, ProjectActor actor) {
+                                   String workflowSlug, Collection<String> tags, ProjectActor actor) {
         if (!actor.isMachine()) {
             verifyMembership(projectId, actor.user().getId());
         }
@@ -117,6 +159,7 @@ public class WorkItemService {
         workItem.setWorkflow(workflow);
         workItem.setWorkflowVersion(workItemWorkflowService.boundVersion(projectId, workflow));
         workItem.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
+        workItem.setTags(normalizeTags(tags));
 
         Integer nextSeq = workItemRepository.findMaxSequenceNumberByProjectId(projectId) + 1;
         workItem.setSequenceNumber(nextSeq);
@@ -130,12 +173,58 @@ public class WorkItemService {
      * entity to its response DTO. Each nullable field follows PATCH semantics: {@code null} means "field
      * absent — leave unchanged"; for {@code assigneeId} a blank string unassigns. Takes plain fields so the
      * service stays decoupled from any generated DTO version.
+     *
+     * <p>{@code scheduledFor} and {@code scheduleTimezone} are the generic per-item scheduling fields (V111)
+     * and follow the same PATCH semantics; a blank {@code scheduleTimezone} clears the stored zone (mirroring
+     * how a blank {@code assigneeId} unassigns). {@code scheduleTimezone} must be a zone {@link ZoneId#of}
+     * can resolve — an unknown zone is a {@link BusinessException} (400), raised before anything is written
+     * so a rejected patch persists none of its other fields either.
      */
     @Transactional
+    /** Pre-tags arity, kept so every existing caller reads as it did. Leaves tags alone. */
     public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
-                                  String status, String assigneeId, User caller) {
+                                  String status, String assigneeId, OffsetDateTime scheduledFor,
+                                  String scheduleTimezone, User caller) {
+        return patchWorkItem(projectId, workItemId, title, description, status, assigneeId, scheduledFor,
+                scheduleTimezone, null, caller);
+    }
+
+    @Transactional
+    public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
+                                  String status, String assigneeId, OffsetDateTime scheduledFor,
+                                  String scheduleTimezone, Collection<String> tags, User caller) {
         verifyMembership(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+
+        String validatedTimezone = validateTimezone(scheduleTimezone);
+
+        // COND-23 AC-P0-1.5: editing the publish bundle of an Approved-or-later Post revokes any native-lane
+        // hand-off, reverts the Post to its review status and voids the standing approval — all BEFORE the
+        // edit is applied, in this transaction. A failed revocation throws here, so the patch never commits.
+        // Placement matters: `previousStatus` is read below, AFTER this, so on a revert it already reads
+        // IN_REVIEW and the exit-from-scheduled unschedule further down does not fire a second time.
+        // Frozen while somebody is reading it. An author who could still rewrite the caption, move the
+        // schedule or swap the media out from under a reviewer would be handing them an approval for
+        // something else — so the reviewer decides when the pen comes back, by sending it back.
+        publishBundleGuard.refuseEditWhileFrozen(projectId, workItem, description, scheduledFor,
+                validatedTimezone, tags);
+
+        Optional<PublishBundleGuard.Revert> bundleRevert = publishBundleGuard.revertForCaptionOrScheduleEdit(
+                projectId, workItem, description, scheduledFor, validatedTimezone);
+
+        if (scheduledFor != null) {
+            workItem.setScheduledFor(scheduledFor);
+        }
+        if (scheduleTimezone != null) {
+            workItem.setScheduleTimezone(validatedTimezone);
+        }
+
+        // Sent whole: the stored set becomes exactly what was sent, so omitting the field leaves tags
+        // alone and an empty array clears them. A partial add/remove protocol would need its own verbs and
+        // buy nothing — the set is small and a client always knows the whole of it.
+        if (tags != null) {
+            workItem.setTags(normalizeTags(tags));
+        }
 
         if (title != null) {
             workItem.setTitle(title);
@@ -160,11 +249,35 @@ public class WorkItemService {
         if (status != null) {
             verifyCallerCanChangeStatus(projectId, caller.getId());
             workItemWorkflowService.validateTransition(projectId, workItem, status);
+            // Leaving the scheduled status revokes any native-lane handoff FIRST, inside this transaction:
+            // a Facebook/YouTube post already handed to the platform would otherwise still go live after an
+            // unschedule, edit-revert or delete. A failed revocation throws, so the status change never
+            // commits and we never strand a live scheduled post.
+            if (NativeHandoffService.SCHEDULED_STATUS.equals(previousStatus)
+                    && !NativeHandoffService.SCHEDULED_STATUS.equals(status)) {
+                nativeHandoffService.unschedule(workItem);
+            }
             workItem.setCurrentStatus(status);
             statusChanged = true;
         }
 
         workItemRepository.save(workItem);
+
+        bundleRevert.ifPresent(revert ->
+                publishStatusChanged(projectId, workItem, revert.fromStatus(), revert.toStatus(), null));
+
+        // A target's fireTime is copied from the Post when the target is selected, so a Post rescheduled
+        // after its targets were chosen would otherwise fire at the old time — the schedulers read fireTime
+        // off the row, never off the Work Item. Re-stamp before any handoff reads it.
+        if (statusChanged && NativeHandoffService.SCHEDULED_STATUS.equals(workItem.getCurrentStatus())) {
+            publishTargetService.restampFireTimes(workItem);
+        }
+
+        // Entering the scheduled status hands off native-lane targets whose fire time is inside the
+        // platform window; far-future ones stay PENDING for NativeHandoffService's deferred sweep.
+        if (statusChanged && NativeHandoffService.SCHEDULED_STATUS.equals(workItem.getCurrentStatus())) {
+            nativeHandoffService.handoffForPost(workItem);
+        }
 
         if (statusChanged) {
             // PR link (if any) lives in github_pr Assets now, not on the Work Item; surfaced on the merge event.
@@ -190,13 +303,52 @@ public class WorkItemService {
      * Used by the v2 controller.
      */
     @Transactional(readOnly = true)
+    /** Pre-tags arity, kept so every existing caller reads as it did. No tag filter. */
     public List<WorkItem> listWorkItemEntities(String projectId, String type, String status, String workflow,
                                                User caller) {
+        return listWorkItemEntities(projectId, type, status, workflow, null, caller);
+    }
+
+    @Transactional(readOnly = true)
+    public List<WorkItem> listWorkItemEntities(String projectId, String type, String status, String workflow,
+                                               String tag, User caller) {
         verifyReadAccess(projectId, caller.getId());
         String typeFilter = (type != null && !type.isBlank()) ? type : null;
         String statusFilter = (status != null && !status.isBlank()) ? status : null;
         String workflowFilter = (workflow != null && !workflow.isBlank()) ? workflow : null;
-        return workItemRepository.findByProjectFiltered(projectId, typeFilter, statusFilter, workflowFilter);
+        // Normalised the same way it is on write, or filtering by a tag someone typed with a capital
+        // would silently match nothing.
+        String tagFilter = normalizeTag(tag);
+        return workItemRepository.findByProjectFiltered(
+                projectId, typeFilter, statusFilter, workflowFilter, tagFilter);
+    }
+
+    /**
+     * A tag as it is stored: trimmed, lower-cased, blank treated as absent.
+     *
+     * <p>Lower-casing is what stops "Autumn" and "autumn" becoming two tags that look identical in a
+     * filter list and match different items. Applied on both write and filter so the two cannot disagree.
+     */
+    static String normalizeTag(String tag) {
+        if (tag == null) {
+            return null;
+        }
+        String trimmed = tag.trim().toLowerCase(Locale.ROOT);
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /** The stored form of a whole set, preserving the order they were given in. */
+    static Set<String> normalizeTags(Collection<String> tags) {
+        Set<String> normalized = new LinkedHashSet<>();
+        if (tags != null) {
+            for (String tag : tags) {
+                String value = normalizeTag(tag);
+                if (value != null) {
+                    normalized.add(value);
+                }
+            }
+        }
+        return normalized;
     }
 
     /**
@@ -294,6 +446,33 @@ public class WorkItemService {
     }
 
     /**
+     * Where these Work Items ended up outside Conductor, keyed by Work Item id — their link Assets, oldest
+     * first.
+     *
+     * <p>Deliberately says nothing about publishing. It is the item's own recorded links, whatever they
+     * are: a Post's live posts, an Issue's pull request. That keeps the Work Item list and calendar free of
+     * any one area's vocabulary while still answering the question a human actually has in front of them —
+     * "it says published; where *is* it?" — without opening the item.
+     *
+     * <p>One query for the whole batch. The alternative walks each item's assets in turn, which on a list
+     * surface is an N+1 that grows with the backlog.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, List<Asset>> externalLinks(List<String> workItemIds) {
+        if (workItemIds == null || workItemIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, List<Asset>> byItem = new HashMap<>();
+        for (Asset asset : assetRepository.findLinkAssetsByWorkItemIds(workItemIds)) {
+            if (asset.getWorkItem() == null) {
+                continue;
+            }
+            byItem.computeIfAbsent(asset.getWorkItem().getId(), id -> new ArrayList<>()).add(asset);
+        }
+        return byItem;
+    }
+
+    /**
      * System-initiated transition when a Work Item's linked pull request merges (GitHub webhook automation).
      * There is intentionally NO {@code User caller} and NO caller-role / Review-gate check: this is an
      * automated system action and the merge is the authority.
@@ -348,6 +527,23 @@ public class WorkItemService {
      * format it for any Workflow without hardcoded status names. Public so the {@code LifecycleTriggerDispatcher}
      * publishes an identically-enriched event per cascade hop rather than duplicating the enrichment.
      */
+    /**
+     * Whether this Workflow treats publishing as a concept, by the one rule the whole pipeline uses: it
+     * declares an asset type named for a publishable platform. Kept identical to
+     * {@code PostScheduleValidator.declaresPublishTargets} — the validators gate on it, and notification
+     * routing reads it, so the two must agree about what a publishing Workflow is.
+     */
+    private static boolean declaresPublishTargets(Statechart statechart) {
+        return statechart.assetTypes().stream()
+                .filter(java.util.Objects::nonNull)
+                .anyMatch(assetType -> {
+                    String normalized = assetType.trim().toLowerCase(java.util.Locale.ROOT);
+                    int separator = normalized.indexOf('_');
+                    String head = separator < 0 ? normalized : normalized.substring(0, separator);
+                    return PostScheduleValidator.PUBLISH_PLATFORMS.contains(head);
+                });
+    }
+
     public void publishStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,
                                      String prUrl) {
         Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
@@ -359,6 +555,18 @@ public class WorkItemService {
             meta.put("workflow", workItem.getWorkflow());
         }
         meta.put("noun", statechart.noun());
+        // The Work Item detail route is workflow-scoped, so a notification link needs the area and the
+        // display id to be clickable at all — without them a card about a Post pointed at /issues/{uuid}.
+        if (statechart.area() != null) {
+            meta.put("area", statechart.area());
+        }
+        if (workItem.getProject() != null && workItem.getProject().getKey() != null
+                && workItem.getSequenceNumber() != null) {
+            meta.put("displayId", workItem.getProject().getKey() + "-" + workItem.getSequenceNumber());
+        }
+        // Lets notification routing prefer a Publishing channel without knowing any Workflow's area name:
+        // the same asset_types rule the publishing validators use, decided here where the statechart is.
+        meta.put(ChannelGroup.META_PUBLISHES, String.valueOf(declaresPublishTargets(statechart)));
         meta.put("fromStatus", fromStatus);
         meta.put("toStatus", toStatus);
         statechart.status(toStatus).ifPresent(s -> {
@@ -402,6 +610,25 @@ public class WorkItemService {
         return tasks;
     }
 
+    /**
+     * Resolve a caller-supplied schedule timezone to the value to store: {@code null} for absent or blank
+     * (blank clears), otherwise the zone id itself once {@link ZoneId#of} confirms it resolves. Unknown
+     * zones surface as a {@link BusinessException} so {@code GlobalExceptionHandler} renders an RFC 7807
+     * 400 rather than letting a bad zone reach the column.
+     */
+    private static String validateTimezone(String scheduleTimezone) {
+        if (scheduleTimezone == null || scheduleTimezone.isBlank()) {
+            return null;
+        }
+        try {
+            ZoneId.of(scheduleTimezone);
+        } catch (DateTimeException e) {
+            throw new BusinessException("Unknown time zone: '" + scheduleTimezone
+                    + "'. Expected an IANA zone id such as America/New_York.");
+        }
+        return scheduleTimezone;
+    }
+
     private void verifyMembership(String projectId, String userId) {
         if (!projectSecurityService.isProjectMember(projectId, userId)) {
             throw new ForbiddenException("You must be a project member to perform this action");
@@ -428,6 +655,8 @@ public class WorkItemService {
     @Transactional
     public void deleteWorkItem(String projectId, String workItemId) {
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        // Deleting a scheduled Post must not leave a live post behind on the platform.
+        nativeHandoffService.unschedule(workItem);
         workItemRepository.delete(workItem);
     }
 

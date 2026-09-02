@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -31,9 +32,13 @@ class ActiveConnectionResolverTest {
     }
 
     private Connection connection(String id, String authType, String status) {
+        return connection(id, authType, status, PROJECT_ID);
+    }
+
+    private Connection connection(String id, String authType, String status, String projectId) {
         Connection c = new Connection();
         c.setId(id);
-        c.setProjectId(PROJECT_ID);
+        c.setProjectId(projectId);
         c.setConnectorId(CONNECTOR_ID);
         c.setAuthType(authType);
         c.setStatus(status);
@@ -84,5 +89,46 @@ class ActiveConnectionResolverTest {
                 .thenReturn(List.of());
 
         assertThat(resolver.resolve(PROJECT_ID, CONNECTOR_ID)).isEmpty();
+    }
+
+    @Test
+    void resolveById_returnsNamedActiveConnection_withinProject() {
+        Connection named = connection("conn-b", AuthType.PAT.name(), "ACTIVE");
+        when(connectionRepository.findById("conn-b")).thenReturn(Optional.of(named));
+
+        Optional<Connection> resolved = resolver.resolveById(PROJECT_ID, "conn-b");
+
+        assertThat(resolved).isPresent();
+        assertThat(resolved.get().getId()).isEqualTo("conn-b");
+    }
+
+    @Test
+    void resolveById_returnsEmpty_forConnectionOwnedByAnotherProject() {
+        Connection foreign = connection("conn-foreign", AuthType.PAT.name(), "ACTIVE", "proj-2");
+        when(connectionRepository.findById("conn-foreign")).thenReturn(Optional.of(foreign));
+
+        assertThat(resolver.resolveById(PROJECT_ID, "conn-foreign")).isEmpty();
+    }
+
+    @Test
+    void resolveById_returnsEmpty_forNonActiveConnection() {
+        Connection revoked = connection("conn-revoked", AuthType.PAT.name(), "REVOKED");
+        when(connectionRepository.findById("conn-revoked")).thenReturn(Optional.of(revoked));
+
+        assertThat(resolver.resolveById(PROJECT_ID, "conn-revoked")).isEmpty();
+    }
+
+    @Test
+    void resolveById_returnsEmpty_forUnknownConnectionId() {
+        when(connectionRepository.findById("conn-missing")).thenReturn(Optional.empty());
+
+        assertThat(resolver.resolveById(PROJECT_ID, "conn-missing")).isEmpty();
+    }
+
+    @Test
+    void resolveById_returnsEmpty_forBlankConnectionId_withoutQueryingRepository() {
+        assertThat(resolver.resolveById(PROJECT_ID, "  ")).isEmpty();
+        assertThat(resolver.resolveById(PROJECT_ID, null)).isEmpty();
+        verifyNoInteractions(connectionRepository);
     }
 }

@@ -28,6 +28,12 @@ tags:
     description: Outcome Metric series on a Work Item
   - name: work-item-step-runs
     description: Step-run records on a Work Item
+  - name: area-assets
+    description: Area-scoped asset library across every Workflow in an Area
+  - name: publish-targets
+    description: Publishable social accounts a project can select on a Post
+  - name: publish-outcomes
+    description: Per-target publish outcomes on a Post, and retrying the ones that failed
 
 paths:
   /projects/{projectId}/work-items:
@@ -107,6 +113,14 @@ paths:
           in: query
           required: false
           description: Filter by bound Workflow slug (e.g. ENGINEERING) — for per-Workflow view pages.
+          schema:
+            type: string
+        - name: tag
+          in: query
+          required: false
+          description: >-
+            Filter to Work Items carrying this tag. Matched case-insensitively against the stored
+            (lower-cased) form, so a tag typed with a capital still matches.
           schema:
             type: string
       responses:
@@ -1270,6 +1284,67 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/work-items/{workItemId}/assets/uploads:
+    post:
+      tags:
+        - work-item-assets
+      summary: Mint an upload URL for a file Asset
+      description: >-
+        Creates a PENDING file Asset row and returns the URL the client PUTs the raw bytes to
+        directly, so payloads never traverse the backend. On GCS this is a signed PUT URL bound to
+        the declared contentType; on the local profile (no signed-upload mechanism) it is the
+        internal passthrough `PUT /internal/v1/work-items/{workItemId}/assets/{assetId}/content`.
+        Content type, size and filename are validated before any row or URL is produced, so a
+        disallowed request yields neither. Finish with
+        `POST .../assets/{assetId}/confirm`. (COND-23.)
+      operationId: createWorkItemAssetUpload
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAssetUploadRequest"
+      responses:
+        "201":
+          description: PENDING Asset created and upload URL minted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateAssetUploadResponse"
+        "400":
+          description: >-
+            Validation error — content type off the allowlist, size missing/over the ceiling,
+            unusable filename, asset type not allowed by the Workflow, or the Work Item is past its
+            review gate (assets locked).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found (also returned to a non-member of the project)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /projects/{projectId}/work-items/{workItemId}/assets/{assetId}:
     patch:
       tags:
@@ -1353,6 +1428,65 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Asset or Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/assets/{assetId}/confirm:
+    post:
+      tags:
+        - work-item-assets
+      summary: Confirm a file Asset upload finished
+      description: >-
+        Flips a PENDING file Asset to UPLOADED after the client's PUT landed. The content type is not
+        a parameter — the only type trusted is the one persisted at mint, which is what the signed URL
+        was bound to; it is re-checked against the allowlist here as defence in depth. `sizeBytes` is
+        the byte count actually written and is re-validated against the upload ceiling. (COND-23.)
+      operationId: confirmWorkItemAssetUpload
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmAssetUploadRequest"
+      responses:
+        "204":
+          description: Upload confirmed; the Asset is now UPLOADED
+        "400":
+          description: >-
+            Not a file asset, stored content type off the allowlist, observed size over the ceiling,
+            or the Work Item is past its review gate (assets locked).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Asset or Work Item not found (also returned to a non-member of the project)
           content:
             application/json:
               schema:
@@ -1542,6 +1676,496 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/areas/{area}/assets:
+    get:
+      tags:
+        - area-assets
+      summary: The Area's asset library — every uploaded file Asset produced under it
+      description: >-
+        Lists UPLOADED, `kind=file` Assets across every Work Item whose bound Workflow belongs to the
+        given Area, newest first. The query keys on the Area, never on a Workflow slug or noun, so a
+        Workflow added to the Area later contributes its media here with no server change (COND-23
+        T7.1). PENDING uploads and `kind=link` Assets are never listed. Every row carries a
+        short-lived signed `previewUrl` minted per response — never persist or cache one.
+      operationId: listAreaAssets
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: area
+          in: path
+          required: true
+          description: Area slug, matched case-insensitively against the Workflow's `area` (e.g. `MARKETING`).
+          schema:
+            type: string
+        - name: mediaType
+          in: query
+          required: false
+          description: >-
+            Narrow to one media family, derived from the stored `contentType` prefix (`image/`,
+            `video/`). Omit for both.
+          schema:
+            type: string
+            enum:
+              - image
+              - video
+        - name: workflow
+          in: query
+          required: false
+          description: >-
+            Narrow to one owning Workflow slug (e.g. `MARKETING`). A slug outside the Area matches
+            nothing rather than escaping the Area scope.
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          description: Narrow to Assets whose owning Work Item is in this Workflow-defined status.
+          schema:
+            type: string
+        - name: uploadedAfter
+          in: query
+          required: false
+          description: Only Assets uploaded at or after this instant.
+          schema:
+            type: string
+            format: date-time
+        - name: uploadedBefore
+          in: query
+          required: false
+          description: Only Assets uploaded at or before this instant.
+          schema:
+            type: string
+            format: date-time
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: The Area's uploaded file Assets, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AreaAssetResponse"
+        "400":
+          description: Unrecognized mediaType, or a negative page/size
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/publish-targets:
+    get:
+      tags:
+        - publish-targets
+      summary: List the publishable targets a project can select
+      description: >-
+        Derived at request time from the project's ACTIVE social connections — nothing is stored.
+        One target per (platform, connection): a Meta connection yields a `facebook` target and,
+        only when the Page has a linked Instagram Business account, an `instagram` one; a YouTube
+        connection yields `youtube`; a TikTok connection yields `tiktok`. A platform the project has
+        no connection for simply does not appear, and two accounts on the same platform appear as
+        two targets with different `connectionId`s. `healthStatus`/`healthMessage` carry the last
+        credential verdict so a picker can disable an unhealthy account and explain why. (COND-23.)
+      operationId: listProjectPublishTargets
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The project's selectable publish targets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PublishTargetOption"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/publish-targets/{targetId}/manual-publish:
+    post:
+      tags:
+        - publish-outcomes
+      summary: Record that a human published a manual target by hand
+      description: >-
+        Marks one MANUAL publish target as published, storing the live URL the person pasted back. This is
+        the only way a target reaches PUBLISHED without a platform reporting it, and it is refused for any
+        target that is not on the MANUAL lane: an automated target has a poller that will publish it and
+        report the real outcome, so letting a human declare it published would strand a post that is still
+        queued to go out.
+
+
+        Everything downstream is the ordinary success path — the target moves to PUBLISHED, a typed
+        destination Asset is recorded on the Post, and the Post rolls up to its published status once every
+        target has landed. Idempotent: a second call on an already-published target changes nothing.
+      operationId: completeManualPublish
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: targetId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteManualPublishRequest"
+      responses:
+        "200":
+          description: The target as it stands after being recorded as published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishTargetResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project, Work Item or target not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            The target is not on the MANUAL lane, was revoked, or no permalink was supplied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/publish-targets:
+    get:
+      tags:
+        - publish-targets
+      summary: List the publish targets selected on a Work Item
+      operationId: listWorkItemPublishTargets
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Work Item's selected publish targets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PublishTargetResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags:
+        - publish-targets
+      summary: Replace the publish targets selected on a Work Item
+      description: >-
+        Idempotent set-replace. Newly selected targets are created, deselected ones are deleted, and
+        a target that was already selected is left untouched — its row keeps its state, its
+        `platformPostId` and its idempotency key, so re-saving an unchanged selection never
+        re-creates a row that has already been handed to a platform. Each target may carry its own
+        `publishOptions`; changing them on an already-selected target updates that row in place rather
+        than re-creating it. Editing the selection — adding a target, dropping one, or changing one's
+        `publishOptions` — on an Approved-or-later Post revokes any native-lane hand-off and reverts the
+        Post to its review status first; if that revocation fails the whole request fails and the
+        selection is unchanged. (COND-23 AC-P0-1.5, TIK-1.)
+      operationId: replaceWorkItemPublishTargets
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReplacePublishTargetsRequest"
+      responses:
+        "200":
+          description: The Work Item's publish targets after the replace
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PublishTargetResponse"
+        "400":
+          description: A selected target is not one of the project's selectable targets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/publish-consent:
+    get:
+      tags:
+        - publish-targets
+      summary: Read the creator's posting consent on a Post
+      description: >-
+        Whether the creator's TikTok posting consent stands for this Post **as it is now**. `required`
+        is true when the Post carries at least one `tiktok` target; every other Post needs no consent
+        and reports `valid: false, required: false`, which blocks nothing.
+
+
+        `valid` is not a stored flag — consent is recorded against the exact target set (accounts and
+        their `publishOptions`) and uploaded media it was given for, so swapping a destination account,
+        changing a privacy level or replacing the video silently withdraws it. Read `consentedAt`
+        alongside `valid` to tell the two apart: null means nobody ever consented, and a timestamp with
+        `valid: false` means someone did and the Post has changed since. (MKT-1.)
+      operationId: getPublishConsent
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Post's consent as it currently stands
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishConsentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags:
+        - publish-targets
+      summary: Record or withdraw the creator's posting consent on a Post
+      description: >-
+        Records that the creator has reviewed the preview and the destination accounts and consents to
+        this Post going out, or withdraws that consent (`consented: false`). TikTok's Content Sharing
+        Guidelines require the consent before anything is uploaded, and a Post with a `tiktok` target
+        cannot enter a review-gated status without it.
+
+
+        What is consented to is computed server-side from the Post's current targets and media — a
+        client never supplies it, because a client-supplied subject would let a caller consent to
+        something the Post is not. Idempotent: re-recording rewrites the same single consent with the
+        current subject, and withdrawing returns the Post to "never consented". (MKT-1.)
+      operationId: recordPublishConsent
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordPublishConsentRequest"
+      responses:
+        "200":
+          description: The Post's consent after the change
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublishConsentResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/publish-targets/retry:
+    post:
+      tags:
+        - publish-outcomes
+      summary: Re-fire the publish targets that failed on a Post
+      description: >-
+        Re-attempts **only** the targets in state `FAILED`. Each one is reset to `PENDING`, its stored
+        error is cleared and it is stamped with a **fresh** idempotency key — a reused key would make
+        the action-invocation layer's claim-or-return replay the previous attempt's result instead of
+        posting. Targets in any other state are left completely untouched: a `PUBLISHED` target is
+        never re-published, and its permalink Asset stays exactly where it is.
+
+
+        The Post itself is moved back to its scheduled status while the retry is in flight, so the
+        due poller picks the reset rows up. Calling this on a Post with no failed targets is a
+        no-op that returns the current state, which makes a double-click harmless. (COND-23 T6.2.)
+      operationId: retryFailedPublishTargets
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Post's status and publish targets after the retry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetryPublishResponse"
+        "400":
+          description: >-
+            The Post is not in a status a retry can fire from — only a Post sitting at its failed or
+            its scheduled status may be retried, so a Post sent back for review never re-publishes
+            under an approval that no longer describes it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1609,6 +2233,61 @@ components:
           type: integer
         assignee:
           $ref: "#/components/schemas/WorkItemAssignee"
+        scheduledFor:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this Work Item is due, as an ISO-8601 date-time. Workflow-agnostic — any Workflow may put
+            an item on a clock. Null when the item is not scheduled.
+        scheduleTimezone:
+          type: string
+          nullable: true
+          description: >-
+            IANA zone id the schedule was authored in (e.g. America/New_York), retained alongside the
+            absolute instant so a local-wall-clock reading survives DST. Null when unscheduled.
+        tags:
+          type: array
+          description: >-
+            Freeform labels on this Work Item, for grouping work across type, status and Workflow.
+            Stored lower-cased, so "Autumn" and "autumn" are one tag rather than two that look identical
+            in a filter list. Empty until something is tagged.
+          items:
+            type: string
+        externalLinks:
+          type: array
+          description: >-
+            Where this Work Item ended up outside Conductor: every link Asset recorded on it, oldest first.
+            Workflow-agnostic by construction — it is whatever the item's own `asset_types` allow, so a
+            Post carries the live posts it published to and an Issue carries its pull request. Empty until
+            something is recorded.
+
+
+            It is on the list response, not only the detail one, because a link nobody can reach without
+            opening the item is a link nobody finds: the calendar and list surfaces are where a human looks
+            to ask "did that go out, and where is it?".
+          items:
+            $ref: "#/components/schemas/WorkItemExternalLink"
+
+    WorkItemExternalLink:
+      type: object
+      required:
+        - url
+        - type
+      properties:
+        url:
+          type: string
+          description: The Asset's ref — the address of the thing itself.
+        type:
+          type: string
+          description: >-
+            The Asset type, one of the bound Workflow's declared `asset_types` (e.g. `instagram_post`,
+            `github_pr`). A client uses it to choose an icon or a label; it is not an enum here because the
+            set is Workflow-defined.
+        label:
+          type: string
+          nullable: true
+          description: Human-readable name captured when the link was recorded (e.g. the account it went to).
 
     WorkItemAssignee:
       type: object
@@ -1648,6 +2327,14 @@ components:
           maxLength: 255
         description:
           type: string
+        tags:
+          type: array
+          description: >-
+            Freeform labels for this Work Item. Sent whole — the stored set becomes exactly this list, so
+            omit the field to leave existing tags alone and send an empty array to clear them. Values are
+            trimmed, lower-cased and de-duplicated.
+          items:
+            type: string
 
     PatchWorkItemRequest:
       type: object
@@ -1666,6 +2353,27 @@ components:
           type: string
           nullable: true
           description: User ID to assign to this Work Item, or null to unassign
+        scheduledFor:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this Work Item is due, as an ISO-8601 date-time. Omit to leave the existing schedule
+            unchanged.
+        scheduleTimezone:
+          type: string
+          nullable: true
+          description: >-
+            IANA zone id the schedule is authored in (e.g. America/New_York). Omit to leave unchanged, or
+            send an empty string to clear it. An unrecognized zone is rejected with a 400.
+        tags:
+          type: array
+          description: >-
+            Freeform labels for this Work Item. Sent whole — the stored set becomes exactly this list, so
+            omit the field to leave existing tags alone and send an empty array to clear them. Values are
+            trimmed, lower-cased and de-duplicated.
+          items:
+            type: string
 
     AvailableTransition:
       type: object
@@ -1975,6 +2683,17 @@ components:
         submittedAt:
           type: string
           format: date-time
+        current:
+          type: boolean
+          description: >-
+            Whether this review still describes the Work Item as it stands, and so still counts toward the
+            review gate. False for one cast in an earlier review round, or — on an item with publish
+            targets — against a different publish bundle: changing the caption, the schedule, the targets
+            or the media withdraws an approval rather than letting it cover a post nobody has seen.
+
+
+            Computed exactly the way the server's own gate computes it, so a client can never show
+            "approved" for a review the gate is ignoring.
 
     AssetResponse:
       type: object
@@ -2007,12 +2726,184 @@ components:
           description: A URL (kind=link) or a stored-file reference (kind=file).
         done:
           type: boolean
+        uploadStatus:
+          type: string
+          nullable: true
+          description: >-
+            Upload lifecycle of a kind=file Asset: PENDING once the upload URL is minted, UPLOADED
+            once the client confirms. Null for kind=link Assets and for file rows recorded without
+            the upload flow. One of PENDING, UPLOADED. (COND-23.)
+        contentType:
+          type: string
+          nullable: true
+          description: Media type of the stored object (kind=file only).
+        sizeBytes:
+          type: integer
+          format: int64
+          nullable: true
+          description: Size of the stored object in bytes (kind=file only).
+        width:
+          type: integer
+          format: int32
+          nullable: true
+          description: >-
+            Pixel width of the media, or null when unknown. Derived from the bytes at confirm for
+            images; for video it is only ever what the client measured at upload. (COND-23.)
+        height:
+          type: integer
+          format: int32
+          nullable: true
+          description: Pixel height of the media, or null when unknown. Same provenance as width.
+        durationSeconds:
+          type: number
+          nullable: true
+          description: >-
+            Playback length in seconds for a video Asset, or null when unknown. The browser is the
+            only source — no container parser ships with the JDK.
+        previewUrl:
+          type: string
+          nullable: true
+          description: >-
+            Short-lived (15 minute) signed read URL for the stored object. Populated only for a
+            kind=file Asset whose uploadStatus is UPLOADED; null otherwise. Never persisted — it is
+            minted per response, so don't cache it.
         createdAt:
           type: string
           format: date-time
         updatedAt:
           type: string
           format: date-time
+
+    AreaAssetResponse:
+      type: object
+      description: One uploaded file Asset in an Area's library, with the Work Item that produced it.
+      required:
+        - assetId
+        - previewUrl
+        - uploadedAt
+        - workItem
+      properties:
+        assetId:
+          type: string
+        previewUrl:
+          type: string
+          description: >-
+            Short-lived (15 minute) signed read URL for the stored object, minted per response and
+            never persisted — don't cache it.
+        contentType:
+          type: string
+          nullable: true
+        sizeBytes:
+          type: integer
+          format: int64
+          nullable: true
+        uploadedAt:
+          type: string
+          format: date-time
+          description: When the upload was initiated (the Asset row's creation instant).
+        workItem:
+          $ref: "#/components/schemas/AreaAssetWorkItemRef"
+
+    AreaAssetWorkItemRef:
+      type: object
+      description: The Work Item that owns an Area-library Asset, enough to label and link the row.
+      required:
+        - id
+        - displayId
+        - title
+        - status
+        - workflow
+      properties:
+        id:
+          type: string
+        displayId:
+          type: string
+          description: Human-facing key, `{projectKey}-{sequenceNumber}` (e.g. MK-12).
+        title:
+          type: string
+        status:
+          type: string
+          description: The Work Item's current Workflow-defined status.
+        workflow:
+          type: string
+          description: Slug of the Workflow the Work Item is bound to.
+
+    CreateAssetUploadRequest:
+      type: object
+      required:
+        - type
+        - filename
+        - contentType
+        - sizeBytes
+      properties:
+        type:
+          type: string
+          description: Asset type, validated against the Workflow's asset_types (e.g. instagram_post).
+        label:
+          type: string
+          description: Human label; defaults to the sanitized filename.
+        filename:
+          type: string
+          description: >-
+            Client-supplied file name. Sanitized to a single safe path segment before it is appended
+            to the storage path.
+        contentType:
+          type: string
+          description: >-
+            Media type of the bytes about to be uploaded. Must be on the server's allowlist
+            (image/png, image/jpeg, image/gif, image/webp, video/mp4, video/quicktime).
+        sizeBytes:
+          type: integer
+          format: int64
+          description: Size of the bytes about to be uploaded. Must be positive and within the server ceiling.
+        width:
+          type: integer
+          format: int32
+          description: >-
+            Client-measured pixel width of the media. Optional. An image's real width is re-derived
+            from the bytes at confirm, so this only matters for video.
+        height:
+          type: integer
+          format: int32
+          description: Client-measured pixel height of the media. Same provenance as width.
+        durationSeconds:
+          type: number
+          description: >-
+            Client-measured playback length in seconds. Video only, and the browser is the only
+            source — no container parser ships with the JDK, so a video that omits it can never
+            satisfy a per-target duration rule at approval.
+
+    CreateAssetUploadResponse:
+      type: object
+      required:
+        - assetId
+        - uploadUrl
+        - gcsPath
+        - expiresAt
+      properties:
+        assetId:
+          type: string
+          description: Id of the PENDING Asset row; use it to confirm the upload.
+        uploadUrl:
+          type: string
+          description: URL to PUT the raw bytes to (signed PUT on GCS, internal passthrough locally).
+        gcsPath:
+          type: string
+          description: Object path the bytes are stored at.
+        expiresAt:
+          type: string
+          format: date-time
+          description: When uploadUrl stops being usable.
+
+    ConfirmAssetUploadRequest:
+      type: object
+      properties:
+        sizeBytes:
+          type: integer
+          format: int64
+          description: >-
+            Bytes actually written. Re-validated against the upload ceiling and persisted when
+            present; the size declared at mint is kept when omitted.
 
     CreateAssetRequest:
       type: object
@@ -2231,6 +3122,319 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    PublishTargetOption:
+      type: object
+      description: >-
+        One selectable publishing destination, derived from an ACTIVE connection rather than stored.
+        (COND-23 T3.6.)
+      required:
+        - platform
+        - label
+        - lane
+      properties:
+        platform:
+          type: string
+          description: The surface a post goes out on.
+          enum:
+            - facebook
+            - instagram
+            - youtube
+            - tiktok
+        connectorId:
+          type: string
+          nullable: true
+          description: >-
+            Connector the target publishes through (meta, youtube, tiktok). Null on the MANUAL lane, which
+            publishes through no connector.
+        connectionId:
+          type: string
+          nullable: true
+          description: >-
+            The specific connected account. Two accounts on one platform differ only here, so it is
+            what a selection must carry. Null on the MANUAL lane, where there is no account — a manual
+            destination is identified by its platform alone, and there is exactly one per platform.
+        label:
+          type: string
+          description: Human-readable account name (Page name, @handle, channel title, creator nickname).
+        lane:
+          type: string
+          description: >-
+            NATIVE hands the post and its schedule to the platform's own scheduler; APP_MANAGED keeps
+            it here until its fire time and Conductor publishes it; MANUAL publishes nothing at all — at
+            fire time the target waits for a human to post it and record the live URL. A MANUAL option is
+            offered for every platform whether or not the project has connected one, and is the only
+            destination available to a project with no social integration.
+          enum:
+            - NATIVE
+            - APP_MANAGED
+            - MANUAL
+        healthStatus:
+          type: string
+          nullable: true
+          description: >-
+            Last credential verdict on the underlying connection — HEALTHY or UNHEALTHY, or null when
+            it has never been checked. An UNHEALTHY target should be offered disabled, not hidden.
+        healthMessage:
+          type: string
+          nullable: true
+          description: The platform's own explanation of an UNHEALTHY verdict; null while healthy.
+        privacyLevelOptions:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: >-
+            The privacy levels this one creator may publish under, cached on the connection when the
+            account was connected (e.g. PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS, FOLLOWER_OF_CREATOR,
+            SELF_ONLY). TikTok reports a different set per creator — a private account is offered fewer
+            than a public one — so this is the only source for a target's allowed `privacyLevel`, and it
+            is what `PublishOptionsValidator` checks the chosen level against at the approval gate.
+            Null for every non-TikTok platform, and null for a TikTok connection made before the levels
+            were cached: that account has to be reconnected, not guessed for. (TIK-3.)
+        creatorNickname:
+          type: string
+          nullable: true
+          description: >-
+            The handle the creator would recognise, for the consent step's "you are posting to @…".
+            TikTok's audit requirement is that the creator sees which account a post is going to, so
+            this is the account's own name rather than the connection's label. Null for every
+            non-TikTok platform, and null when the connection never cached it. (TIK-3.)
+
+    PublishTargetResponse:
+      type: object
+      description: One publish target selected on a Work Item (a persisted post_publish_target row).
+      required:
+        - id
+        - workItemId
+        - platform
+        - lane
+        - state
+      properties:
+        id:
+          type: string
+        workItemId:
+          type: string
+        platform:
+          type: string
+          enum:
+            - facebook
+            - instagram
+            - youtube
+            - tiktok
+        connectorId:
+          type: string
+          nullable: true
+          description: Null on the MANUAL lane, which publishes through no connector.
+        connectionId:
+          type: string
+          nullable: true
+          description: >-
+            The connected account this target publishes through. Null on the MANUAL lane, which reaches its
+            platform through a human rather than a credential.
+        label:
+          type: string
+          nullable: true
+          description: Account label captured at selection time (post_publish_target.platform_account_label).
+        lane:
+          type: string
+          description: >-
+            How this target reaches its platform. NATIVE hands the post to the platform's own scheduler;
+            APP_MANAGED means Conductor publishes it at fire time; MANUAL means nobody automates it — a
+            human posts it and records the result, and no credential is used.
+          enum:
+            - NATIVE
+            - APP_MANAGED
+            - MANUAL
+        state:
+          type: string
+          description: >-
+            One of PENDING, HANDED_OFF, PUBLISHING, AWAITING_MANUAL, PUBLISHED, FAILED, REVOKED.
+            AWAITING_MANUAL is a MANUAL target whose fire time has passed and which is waiting on a person
+            to publish it by hand.
+        platformPostId:
+          type: string
+          nullable: true
+          description: The platform's id for the created post, once it exists.
+        permalink:
+          type: string
+          nullable: true
+          description: >-
+            Link to the live post on the platform, captured when the target reaches PUBLISHED. This is the
+            per-target evidence the Post detail renders; null until the publish is confirmed.
+        errorMessage:
+          type: string
+          nullable: true
+          description: >-
+            The platform's own failure text, preserved verbatim for a human to read. Null unless the target
+            is FAILED.
+        fireTime:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When this target publishes. Copied from the Work Item's scheduledFor and re-stamped whenever the
+            Post re-enters its scheduled status, so it is the authoritative time for this target.
+        publishOptions:
+          $ref: "#/components/schemas/PublishOptions"
+
+    RetryPublishResponse:
+      type: object
+      description: >-
+        The result of re-firing a Post's failed publish targets: the Post's status afterwards and
+        every one of its targets, so a client can render the new state without a second request.
+      required:
+        - workItemId
+        - status
+        - retriedCount
+        - targets
+      properties:
+        workItemId:
+          type: string
+        status:
+          type: string
+          description: >-
+            The Post's Workflow-defined status after the retry — its scheduled status when anything
+            was re-fired, otherwise whatever it already was.
+        retriedCount:
+          type: integer
+          format: int32
+          description: How many targets were reset to PENDING. Zero when nothing had failed.
+        targets:
+          type: array
+          description: Every publish target on the Post after the retry, failed or not.
+          items:
+            $ref: "#/components/schemas/PublishTargetResponse"
+
+    PublishTargetSelection:
+      type: object
+      required:
+        - platform
+      properties:
+        platform:
+          type: string
+          enum:
+            - facebook
+            - instagram
+            - youtube
+            - tiktok
+        connectionId:
+          type: string
+          nullable: true
+          description: >-
+            The connected account to publish through. Omit it (or send null) to select this platform's
+            MANUAL destination instead — the one a human publishes by hand. There is exactly one manual
+            destination per platform, so the platform alone identifies it.
+        publishOptions:
+          $ref: "#/components/schemas/PublishOptions"
+
+    PublishOptions:
+      type: object
+      additionalProperties: true
+      description: >-
+        How the post goes out on this one platform — a per-platform bag of option keys, read against the
+        target's own `platform` and nothing else. Omitted or null means nothing has been chosen, which is
+        not the same as "the defaults are fine": a TikTok target with no `privacyLevel` blocks approval
+        rather than publishing to the creator alone. (TIK-1.)
+
+
+        TikTok keys: `privacyLevel` (string — one of the connection's cached privacyLevelOptions, e.g.
+        PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS, FOLLOWER_OF_CREATOR, SELF_ONLY), `disableComment`,
+        `disableDuet`, `disableStitch` (booleans), `brandContentToggle` (boolean — paid partnership; TikTok
+        refuses it combined with SELF_ONLY) and `brandOrganicToggle` (boolean — the creator's own brand).
+      example:
+        privacyLevel: PUBLIC_TO_EVERYONE
+        disableComment: false
+        brandContentToggle: true
+
+    PublishConsentResponse:
+      type: object
+      description: >-
+        The creator's posting consent on a Post, and whether it still describes the Post. (MKT-1.)
+      required:
+        - workItemId
+        - required
+        - valid
+        - verdict
+      properties:
+        workItemId:
+          type: string
+        required:
+          type: boolean
+          description: >-
+            True when the Post publishes to at least one `tiktok` account. A Facebook-only or
+            YouTube-only Post is never gated on consent.
+        valid:
+          type: boolean
+          description: >-
+            True only when consent was given and still covers the Post's current accounts, publish
+            options and uploaded media. False on a Post that needs no consent at all.
+        verdict:
+          type: string
+          description: >-
+            The same fact in one word, for a client that needs to say what is wrong.
+            `NOT_REQUIRED` — no TikTok target. `VALID` — consent stands. `NEVER_GIVEN` — nobody has
+            consented (or it was withdrawn). `SUPERSEDED` — consent was given, then the accounts,
+            options or media changed under it and it has to be given again.
+          enum:
+            - NOT_REQUIRED
+            - VALID
+            - NEVER_GIVEN
+            - SUPERSEDED
+        consentedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When consent was last given; null when it never was, or was withdrawn.
+        consentedByUserId:
+          type: string
+          nullable: true
+          description: The member who consented; null when consent has never been given.
+        consentedByName:
+          type: string
+          nullable: true
+          description: That member's display name, so the record reads as a name rather than an id.
+
+    RecordPublishConsentRequest:
+      type: object
+      required:
+        - consented
+      properties:
+        consented:
+          type: boolean
+          description: >-
+            True to consent to this Post going out to its current accounts under their current publish
+            options, with its current media. False to withdraw consent.
+
+    CompleteManualPublishRequest:
+      type: object
+      required:
+        - permalink
+      properties:
+        permalink:
+          type: string
+          description: >-
+            Link to the post that actually went out. Required, and the reason this endpoint exists: it is
+            the only record that a manual destination was ever published, so a blank one is refused rather
+            than stored.
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            When it actually went out. Defaults to now. Recorded as the target's fireTime so the calendar
+            and the outcome panel show when the post really happened rather than when it was scheduled to.
+
+    ReplacePublishTargetsRequest:
+      type: object
+      required:
+        - targets
+      properties:
+        targets:
+          type: array
+          description: The complete selection. An empty array clears every target on the Work Item.
+          items:
+            $ref: "#/components/schemas/PublishTargetSelection"
 
     ErrorResponse:
       type: object

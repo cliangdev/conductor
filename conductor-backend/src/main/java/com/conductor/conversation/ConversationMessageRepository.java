@@ -39,7 +39,7 @@ public interface ConversationMessageRepository extends JpaRepository<Conversatio
      *  fetches only as many COMPLETED turns as its window-building could possibly need (a small bounded
      *  multiple of {@code MAX_WINDOW_MESSAGES}, see that constant's javadoc) rather than the conversation's
      *  entire history, then reverses the result back into chronological order before windowing. The
-     *  existing {@code idx_conversation_messages_conversation (conversation_id, created_at)} index (V110)
+     *  existing {@code idx_conversation_messages_conversation (conversation_id, created_at)} index (V124)
      *  still serves this: Postgres reads a btree backwards for {@code DESC} order on the same
      *  {@code (conversation_id, created_at)} prefix, and the added {@code status} filter is just applied
      *  per-row during that same backward index scan -- it doesn't need its own index entry.

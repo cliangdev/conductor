@@ -1,17 +1,22 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { createConnection, deleteConnection, apiPost, apiErrorMessage } from '@/lib/api';
 import { buildConnectionPayload } from '@/lib/connectorConnectForm';
 import { parseServiceAccountKey } from '@/lib/serviceAccountKey';
 import { useConnectorCatalogItem } from './ConnectorCatalogContext';
+import {
+  ConnectorAppCredentialPanel,
+  appCredentialOf,
+  type ConnectorAppCredentialStatus,
+} from './ConnectorAppCredentialPanel';
 import { ConnectorConfigFields } from './ConnectorConfigFields';
-import { ConnectorIcon } from './ConnectorIcon';
+import { ConnectionRow } from './ConnectionRow';
+import { OAuthAccountPicker } from './OAuthAccountPicker';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/button';
 import { useCan } from '@/contexts/PermissionsContext';
-import { CheckCircleIcon } from 'lucide-react';
 
 /**
  * Fallback overview page for any connector without a bespoke dashboard (e.g. action-only connectors
@@ -36,6 +41,34 @@ export default function GenericConnectorPage({
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [pendingAccountConnectionId, setPendingAccountConnectionId] = useState<string | null>(null);
+  // The catalog entry carries readiness, so it's on screen with the first paint; the panel's own
+  // responses then take over. Derived during render rather than mirrored into state, so the Connect
+  // affordance below is never gated on a stale value for a frame. Keyed by connector because the
+  // App Router reuses this component across sibling connector routes — otherwise one connector's
+  // edited credential would carry over to the next.
+  const [credentialOverride, setCredentialOverride] = useState<
+    { connectorId: string; status: ConnectorAppCredentialStatus } | null
+  >(null);
+  const appCredential =
+    credentialOverride?.connectorId === connectorId
+      ? credentialOverride.status
+      : appCredentialOf(item);
+
+  // The OAuth callback parks a connection here (`?selectAccount=<connectionId>`) when the grant
+  // covers several publishable accounts and an admin still has to pick one. Read after mount rather
+  // than during render, so the server-rendered pass doesn't touch `window`.
+  useEffect(() => {
+    const connectionId = new URLSearchParams(window.location.search).get('selectAccount');
+    if (connectionId) setPendingAccountConnectionId(connectionId);
+  }, []);
+
+  // Drop the marker from the URL too, so a reload (or a back-navigation) doesn't reopen a picker
+  // for a choice that has already been made.
+  const clearPendingAccount = useCallback(() => {
+    setPendingAccountConnectionId(null);
+    window.history.replaceState(null, '', window.location.pathname);
+  }, []);
 
   const applyJsonField = (key: string, value: string) => {
     setFormValues((prev) => ({ ...prev, [key]: value }));
@@ -127,42 +160,43 @@ export default function GenericConnectorPage({
 
       {connectError && <p className="text-sm text-destructive mb-4">{connectError}</p>}
 
+      {pendingAccountConnectionId && canMutate && (
+        <OAuthAccountPicker
+          projectId={projectId}
+          connectorId={item.connectorId}
+          connectionId={pendingAccountConnectionId}
+          connectorName={item.name}
+          onSelected={async () => {
+            await refetch();
+            clearPendingAccount();
+          }}
+          onDismiss={clearPendingAccount}
+        />
+      )}
+
+      {appCredential && (
+        <ConnectorAppCredentialPanel
+          projectId={projectId}
+          connectorId={item.connectorId}
+          connectorName={item.name}
+          status={appCredential}
+          onChange={(status) => setCredentialOverride({ connectorId, status })}
+        />
+      )}
+
       {item.connections.length > 0 && (
         <div className="space-y-3 mb-6">
           {item.connections.map((conn) => (
-            <div
+            <ConnectionRow
               key={conn.id}
-              className="bg-card rounded-lg border border-border p-4 flex items-center gap-4"
-            >
-              <ConnectorIcon connectorId={item.connectorId} iconLabel={item.iconLabel} className="h-8 w-8" />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-foreground truncate">
-                  {conn.label || item.name}
-                </div>
-                <div className="text-xs text-muted-foreground flex items-center gap-1">
-                  {conn.status === 'ACTIVE' ? (
-                    <>
-                      <CheckCircleIcon className="h-3.5 w-3.5 text-status-done" />
-                      Connected
-                    </>
-                  ) : (
-                    conn.status
-                  )}
-                </div>
-              </div>
-              {canMutate && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => handleDisconnect(conn.id)}
-                  disabled={disconnecting === conn.id}
-                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                >
-                  {disconnecting === conn.id ? 'Disconnecting…' : 'Disconnect'}
-                </Button>
-              )}
-            </div>
+              connection={conn}
+              connectorId={item.connectorId}
+              connectorName={item.name}
+              iconLabel={item.iconLabel}
+              canMutate={canMutate}
+              disconnecting={disconnecting === conn.id}
+              onDisconnect={handleDisconnect}
+            />
           ))}
         </div>
       )}
@@ -173,7 +207,22 @@ export default function GenericConnectorPage({
             {item.connections.length > 0 ? 'Add another connection' : `Connect ${item.name}`}
           </h2>
           {item.authType === 'OAUTH2' ? (
-            <Button type="button" onClick={handleOAuth}>Authorize</Button>
+            <>
+              {/* Without a platform app there is nothing to consent to — starting the flow anyway
+                  only produces a server error naming an environment variable. */}
+              <Button
+                type="button"
+                onClick={handleOAuth}
+                disabled={appCredential?.credentialSource === 'NONE'}
+              >
+                Authorize
+              </Button>
+              {appCredential?.credentialSource === 'NONE' && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Available once the platform app credentials above are configured.
+                </p>
+              )}
+            </>
           ) : (
             <form onSubmit={handleConnect} className="space-y-4">
               <ConnectorConfigFields

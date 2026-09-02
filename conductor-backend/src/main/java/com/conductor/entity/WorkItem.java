@@ -1,5 +1,9 @@
 package com.conductor.entity;
 
+import java.util.Set;
+import java.util.LinkedHashSet;
+import jakarta.persistence.CollectionTable;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
@@ -105,6 +109,45 @@ public class WorkItem {
     @ColumnTransformer(write = "?::jsonb")
     private JsonNode outcomeMetric;
 
+    // --- Generic per-item scheduling (V111). Workflow-agnostic: any Workflow can put an item on a clock. ---
+
+    /** When this Work Item is due, as an absolute instant. Null when the item is not scheduled. */
+    @Column(name = "scheduled_for")
+    private OffsetDateTime scheduledFor;
+
+    /**
+     * IANA zone id the schedule was authored in (e.g. {@code America/New_York}), kept alongside the
+     * absolute instant so a local-wall-clock reading of the schedule survives DST. Null when unscheduled
+     * or when the author expressed no zone.
+     */
+    @Column(name = "schedule_timezone", length = 64)
+    private String scheduleTimezone;
+
+    /**
+     * Freeform labels, for grouping work across type, status and Workflow.
+     *
+     * <p>An {@code @ElementCollection} rather than an entity: a tag has no identity beyond its own text,
+     * and nothing hangs off it. Eagerly fetched because every surface that lists a Work Item shows them —
+     * a lazy set here is an N+1 on the list page, which is the one place tags earn their keep.
+     *
+     * <p>Normalised to lower case on write (see {@code WorkItemService}), so "Autumn" and "autumn" are one
+     * tag rather than two that look identical in a filter list.
+     */
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "work_item_tag", joinColumns = @JoinColumn(name = "work_item_id"))
+    @Column(name = "tag", length = 64, nullable = false)
+    private Set<String> tags = new LinkedHashSet<>();
+
+    /**
+     * The review round currently open on this item (COND-23, V115). Starts at 0 and is bumped whenever a
+     * CHANGES_REQUESTED verdict routes the item out of a review status: an APPROVED {@code Review} stamped
+     * with an earlier round no longer satisfies the gate, so an approval cast before a rejection cannot let
+     * the item through on resubmission. Workflows with no changes-requested lane (ENGINEERING) never leave
+     * round 0, which is why their gating is untouched.
+     */
+    @Column(name = "current_review_round", nullable = false)
+    private int currentReviewRound = 0;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -172,6 +215,19 @@ public class WorkItem {
     public JsonNode getOutcomeMetric() { return outcomeMetric; }
     public void setOutcomeMetric(JsonNode outcomeMetric) { this.outcomeMetric = outcomeMetric; }
 
+    public OffsetDateTime getScheduledFor() { return scheduledFor; }
+    public void setScheduledFor(OffsetDateTime scheduledFor) { this.scheduledFor = scheduledFor; }
+
+    public String getScheduleTimezone() { return scheduleTimezone; }
+    public void setScheduleTimezone(String scheduleTimezone) { this.scheduleTimezone = scheduleTimezone; }
+
+    public int getCurrentReviewRound() { return currentReviewRound; }
+    public void setCurrentReviewRound(int currentReviewRound) { this.currentReviewRound = currentReviewRound; }
+
     public JsonNode getWorkItemTasks() { return workItemTasks; }
     public void setWorkItemTasks(JsonNode workItemTasks) { this.workItemTasks = workItemTasks; }
+    public Set<String> getTags() { return tags; }
+
+    public void setTags(Set<String> tags) { this.tags = tags == null ? new LinkedHashSet<>() : tags; }
+
 }

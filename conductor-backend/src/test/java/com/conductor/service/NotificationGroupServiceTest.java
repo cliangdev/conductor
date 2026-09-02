@@ -27,6 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -164,10 +166,47 @@ class NotificationGroupServiceTest {
         when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.ISSUES))
                 .thenReturn(Optional.of(config));
 
+        when(notificationDeliveryService.deliverTo(eq(ChannelGroup.ISSUES), any())).thenReturn(true);
+
         var response = service.testGroup("proj-1", "ISSUES", adminUser);
 
         assertThat(response.getSuccess()).isTrue();
-        verify(notificationDeliveryService).deliver(any());
+        // deliverTo, not deliver: testing a channel has to mean testing *that* channel.
+        verify(notificationDeliveryService).deliverTo(eq(ChannelGroup.ISSUES), any());
+    }
+
+    @Test
+    void testingASpecialisedChannelTargetsThatChannelRatherThanRoutingTheEvent() {
+        // The bug this pins was found by clicking Test in the browser: routing re-derives the destination
+        // from the event's metadata, a synthetic test event carries none, so a test of the Publishing
+        // channel silently went to the Issues one and reported success about a channel it never touched.
+        NotificationGroupConfig config = buildConfig(ChannelGroup.PUBLISHING);
+        config.setEnabledEventTypes(Set.of("WORK_ITEM_STATUS_CHANGED"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.PUBLISHING))
+                .thenReturn(Optional.of(config));
+        when(notificationDeliveryService.deliverTo(eq(ChannelGroup.PUBLISHING), any())).thenReturn(true);
+
+        var response = service.testGroup("proj-1", "PUBLISHING", adminUser);
+
+        assertThat(response.getSuccess()).isTrue();
+        verify(notificationDeliveryService).deliverTo(eq(ChannelGroup.PUBLISHING), any());
+        verify(notificationDeliveryService, never()).deliver(any());
+    }
+
+    @Test
+    void testReportsFailureWhenNothingWasActuallySent() {
+        // "Test notification sent" while nothing left the building is the one answer a Test button must
+        // never give — it is the whole reason someone pressed it.
+        NotificationGroupConfig config = buildConfig(ChannelGroup.PUBLISHING);
+        config.setEnabledEventTypes(Set.of("WORK_ITEM_STATUS_CHANGED"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.PUBLISHING))
+                .thenReturn(Optional.of(config));
+        when(notificationDeliveryService.deliverTo(eq(ChannelGroup.PUBLISHING), any())).thenReturn(false);
+
+        var response = service.testGroup("proj-1", "PUBLISHING", adminUser);
+
+        assertThat(response.getSuccess()).isFalse();
+        assertThat(response.getMessage()).contains("Nothing was sent");
     }
 
     /**
@@ -189,10 +228,12 @@ class NotificationGroupServiceTest {
         when(groupConfigRepository.findByProjectIdAndChannelGroup("proj-1", ChannelGroup.ISSUES))
                 .thenReturn(Optional.of(config));
 
+        when(notificationDeliveryService.deliverTo(eq(ChannelGroup.ISSUES), any())).thenReturn(true);
+
         service.testGroup("proj-1", "ISSUES", adminUser);
 
         ArgumentCaptor<NotificationMessage> captor = ArgumentCaptor.forClass(NotificationMessage.class);
-        verify(notificationDeliveryService).deliver(captor.capture());
+        verify(notificationDeliveryService).deliverTo(eq(ChannelGroup.ISSUES), captor.capture());
         assertThat(captor.getValue().getMetadata()).containsEntry("test", "true").doesNotContainKey("workItemId");
         verifyNoMoreInteractions(notificationDeliveryService);
     }

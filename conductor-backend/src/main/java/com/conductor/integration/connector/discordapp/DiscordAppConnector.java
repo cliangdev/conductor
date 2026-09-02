@@ -83,7 +83,7 @@ public class DiscordAppConnector implements WebhookConnector {
     private static final int CHANNEL_TYPE_PRIVATE_THREAD = 12;
     private static final int MAX_REPLY_CHARS = 2000;
     private static final int MAX_THREAD_NAME_CHARS = 90;
-    /** Matches the {@code conversations.title} column (VARCHAR(200), V110) -- a question longer than
+    /** Matches the {@code conversations.title} column (VARCHAR(200), V124) -- a question longer than
      *  this would otherwise fail the insert with a DB error deep inside the async flow, after Discord
      *  has already been told "thinking…", with nothing left to send an error reply from. */
     private static final int MAX_TITLE_CHARS = 200;

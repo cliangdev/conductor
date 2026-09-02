@@ -96,4 +96,46 @@ describe('canonical work_item MCP tools target v2', () => {
     await listWorkItemComments({ issueId: 'w1' }, config)
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/w1/comments', config)
   })
+
+describe('tags reach the API from MCP', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('creates a Work Item with tags', async () => {
+    (apiPost as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'w1', displayId: 'CLT-1', status: 'DRAFT' })
+
+    await createWorkItem(
+      { workflow: 'MARKETING', type: 'POST', title: 'Autumn', tags: ['autumn-campaign', 'paid'] },
+      config
+    )
+
+    expect((apiPost as ReturnType<typeof vi.fn>).mock.calls[0][1]).toMatchObject({
+      tags: ['autumn-campaign', 'paid'],
+    })
+  })
+
+  it('sends tags whole on update, so editing a title never drops one', async () => {
+    (apiPatch as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'w1' })
+
+    await updateWorkItem({ issueId: 'w1', tags: ['evergreen'] }, config)
+
+    expect((apiPatch as ReturnType<typeof vi.fn>).mock.calls[0][1]).toEqual({ tags: ['evergreen'] })
+  })
+
+  it('leaves tags alone when the field is omitted', async () => {
+    (apiPatch as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'w1' })
+
+    await updateWorkItem({ issueId: 'w1', title: 'New title' }, config)
+
+    expect((apiPatch as ReturnType<typeof vi.fn>).mock.calls[0][1]).toEqual({ title: 'New title' })
+  })
+
+  it('filters the list by tag', async () => {
+    (apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([])
+
+    await listWorkItems({ workflow: 'MARKETING', tag: 'autumn-campaign' }, config)
+
+    expect((apiGet as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain('tag=autumn-campaign')
+  })
+})
+
 })

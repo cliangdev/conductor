@@ -1,0 +1,48 @@
+{
+  "description": "Publish to a Facebook Page and its linked Instagram Business account",
+  "actions": [
+    {
+      "id": "publish_facebook_post",
+      "description": "Publish a post to the connected Facebook Page. Media is resolved from the Work Item's uploaded assets when no explicit media URL is supplied.",
+      "params": {
+        "message": "Post text (required unless link, media params or work_item_id media is supplied)",
+        "link": "URL to attach to the post (optional)",
+        "image_url": "Publicly reachable image URL to attach as a photo post (optional; resolved from the Work Item's assets when omitted)",
+        "video_url": "Publicly reachable video URL (optional; a Work Item video asset is uploaded resumably instead)",
+        "scheduled_publish_time": "ISO-8601 instant to schedule the post for (optional; immediate when omitted)",
+        "work_item_id": "Work Item whose uploaded media assets this post publishes (optional)",
+        "target_id": "Post publish target this invocation fulfils (optional; carried for correlation only)"
+      },
+      "outputKeys": ["post_id", "permalink", "scheduled", "scheduled_publish_time"]
+    },
+    {
+      "id": "delete_facebook_post",
+      "description": "Delete a post from the connected Facebook Page, including one that is still scheduled and has not gone live",
+      "params": {
+        "post_id": "Platform id of the post to delete (required)"
+      },
+      "outputKeys": ["post_id", "deleted"]
+    },
+    {
+      "id": "get_facebook_post",
+      "description": "Read a Facebook Page post's publish state — whether a scheduled post has gone live yet — plus its permalink",
+      "params": {
+        "post_id": "Platform id of the post to read (required)"
+      },
+      "outputKeys": ["post_id", "is_published", "permalink", "scheduled_publish_time"]
+    },
+    {
+      "id": "publish_instagram_media",
+      "description": "Publish an image or video to the Instagram Business account linked to the connected Page. Creates the media container and publishes it in the same invocation, at fire time.",
+      "params": {
+        "media_type": "IMAGE, VIDEO or REELS (optional; inferred from the resolved media when omitted)",
+        "image_url": "Publicly reachable image URL (optional; resolved from the Work Item's assets when omitted)",
+        "video_url": "Publicly reachable video URL (optional; resolved from the Work Item's assets when omitted)",
+        "caption": "Caption text, including any hashtags (optional)",
+        "work_item_id": "Work Item whose uploaded media assets this post publishes (optional)",
+        "target_id": "Post publish target this invocation fulfils (optional; carried for correlation only)"
+      },
+      "outputKeys": ["media_id", "permalink", "creation_id"]
+    }
+  ]
+}

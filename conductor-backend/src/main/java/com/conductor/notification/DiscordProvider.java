@@ -12,6 +12,7 @@ import org.springframework.web.client.RestTemplate;
 
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.Map;
 
 @Component
@@ -53,6 +54,45 @@ public class DiscordProvider implements NotificationProvider {
         this.frontendUrl = frontendUrl;
     }
 
+    /**
+     * Where the card should send a reader.
+     *
+     * <p>The Work Item detail route is workflow-scoped — {@code /{area}/{nouns}/{displayId}} — so the old
+     * {@code /issues/{uuid}} shape only ever resolved for engineering, and a card about a Post pointed at
+     * a page that does not exist. Anything reaching a chat channel has to be clickable, or the
+     * notification is just a nudge to go and find the thing yourself.
+     *
+     * <p>Falls back to the legacy shape when an event does not carry the routing metadata, so an emitter
+     * that has not been enriched still produces a link rather than a broken half of one.
+     */
+    private String workItemLink(String projectId, Map<String, String> meta, String workItemId) {
+        String area = meta.get("area");
+        String noun = meta.get("noun");
+        String displayId = meta.get("displayId");
+        if (area == null || area.isBlank() || noun == null || noun.isBlank()
+                || displayId == null || displayId.isBlank()) {
+            return frontendUrl + "/app/projects/" + projectId + "/issues/" + workItemId;
+        }
+        return frontendUrl + "/app/projects/" + projectId + "/"
+                + area.toLowerCase(Locale.ROOT) + "/" + pluralize(noun).toLowerCase(Locale.ROOT)
+                + "/" + displayId;
+    }
+
+    /**
+     * The same naive plural the frontend's route builder uses, so the two agree on the URL. Deliberately
+     * not a general pluralizer: it only has to match {@code pluralizeNoun} in {@code lib/workflows.ts}.
+     */
+    private static String pluralize(String noun) {
+        if (noun.endsWith("y") && noun.length() > 1 && "aeiou".indexOf(noun.charAt(noun.length() - 2)) < 0) {
+            return noun.substring(0, noun.length() - 1) + "ies";
+        }
+        if (noun.endsWith("s") || noun.endsWith("x") || noun.endsWith("z")
+                || noun.endsWith("ch") || noun.endsWith("sh")) {
+            return noun + "es";
+        }
+        return noun + "s";
+    }
+
     @Override
     public String format(NotificationMessage event) {
         Map<String, String> meta = event.getMetadata();
@@ -62,7 +102,7 @@ public class DiscordProvider implements NotificationProvider {
 
         String title;
         String description;
-        String link = frontendUrl + "/app/projects/" + projectId + "/issues/" + workItemId;
+        String link = workItemLink(projectId, meta, workItemId);
         int color = COLOR_DEFAULT;
 
         switch (event.getEventType()) {
@@ -130,6 +170,25 @@ public class DiscordProvider implements NotificationProvider {
                 description = memberName + " role changed to " + role;
                 link = frontendUrl + "/app/projects/" + projectId + "/members";
             }
+            case POST_AWAITING_MANUAL -> {
+                String noun = meta.getOrDefault("noun", "Post");
+                String platform = meta.getOrDefault("platform", "a platform");
+                String account = meta.getOrDefault("accountLabel", "");
+
+                title = noun + " is due to be published by hand";
+                StringBuilder desc = new StringBuilder();
+                desc.append("**").append(meta.getOrDefault("workItemTitle", noun)).append("**\n");
+                desc.append("Nothing is publishing this one — post it on ").append(platform);
+                if (!account.isBlank()) {
+                    desc.append(" (").append(account).append(")");
+                }
+                desc.append(", then record the link in Conductor.");
+                description = desc.toString();
+                // Yellow: the one notification that asks the reader to go and do something, rather than
+                // telling them something has already happened.
+                color = COLOR_YELLOW;
+            }
+
             case WORKFLOW_RUN_FAILED -> {
                 String workflowName = meta.getOrDefault("workflowName", "Workflow");
                 String stepId = meta.getOrDefault("stepId", meta.getOrDefault("jobId", ""));

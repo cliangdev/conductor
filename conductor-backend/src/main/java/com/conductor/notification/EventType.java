@@ -86,6 +86,20 @@ public enum EventType {
     WORKFLOW_RUN_FAILED("Workflow run failed"),
 
     /**
+     * A publish destination on a Post has come due and publishes by hand — nothing automated will move it,
+     * and it stays waiting until a person posts it and records the link.
+     *
+     * <p>The one publishing event that is not already a Work Item status change. A Post going to Approved
+     * or Scheduled moves the item's own status and so rides {@link #WORK_ITEM_STATUS_CHANGED} like anything
+     * else; a manual destination coming due changes only the <em>target's</em> state, so without this event
+     * nothing would ever say so and the post would sit unpublished until somebody happened to open it.
+     *
+     * <p>Required metadata keys: {@code workItemId}, {@code workItemTitle}, {@code platform}
+     * <p>Optional metadata keys: {@code noun}, {@code accountLabel}, {@code fireTime}
+     */
+    POST_AWAITING_MANUAL("A post is due to be published by hand"),
+
+    /**
      * A GitHub pull request was opened, labeled, synchronized (new commits pushed), or reopened.
      * Explicitly excludes a merge (handled separately by the issue-completion path in {@code
      * GitHubConnector.handleEvent}) and a closed-without-merge PR (an abandoned PR shouldn't trigger

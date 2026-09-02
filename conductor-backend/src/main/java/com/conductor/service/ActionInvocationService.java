@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -56,10 +57,27 @@ public class ActionInvocationService {
     private static final long INLINE_BACKOFF_MILLIS = 500L;
 
     /**
-     * Package-private (not final) so unit tests can force a fast, deterministic timeout instead of
-     * waiting out the real production duration — same pattern as {@code GcpStorageService.retryDelays}.
+     * Default invocation deadline, applied to every connector that declares none of its own via
+     * {@link ActionConnector#getInvocationTimeout()}. Package-private (not final) so unit tests can
+     * force a fast, deterministic timeout instead of waiting out the real production duration — same
+     * pattern as {@code GcpStorageService.retryDelays}.
      */
     long invokeTimeoutSeconds = INVOKE_TIMEOUT_SECONDS;
+
+    /**
+     * The deadline this invocation actually runs under: the connector's own if it declares one (a
+     * chunked media upload can't finish inside the webhook-shaped default), otherwise
+     * {@link #invokeTimeoutSeconds}. A declared non-positive duration is ignored rather than
+     * collapsing the call to an instant timeout.
+     */
+    long resolveTimeoutSeconds(ActionConnector connector) {
+        Optional<Duration> declared = connector != null ? connector.getInvocationTimeout() : Optional.empty();
+        if (declared == null || declared.isEmpty()) {
+            return invokeTimeoutSeconds;
+        }
+        long seconds = declared.get().toSeconds();
+        return seconds > 0 ? seconds : invokeTimeoutSeconds;
+    }
 
     private final ActionInvocationRepository repository;
     private final ConnectorRegistry connectorRegistry;
@@ -158,6 +176,7 @@ public class ActionInvocationService {
         }
         ActionConnector connector = connectorOpt.get();
         ConnectionContext ctx = connectionService.toContext(conn);
+        long timeoutSeconds = resolveTimeoutSeconds(connector);
 
         String lastError = null;
         for (int attempt = 1; attempt <= MAX_INLINE_ATTEMPTS; attempt++) {
@@ -166,7 +185,7 @@ public class ActionInvocationService {
             ActionResult result;
             Future<ActionResult> future = actionExecutor.submit(() -> connector.invoke(actionId, input, ctx));
             try {
-                result = future.get(invokeTimeoutSeconds, TimeUnit.SECONDS);
+                result = future.get(timeoutSeconds, TimeUnit.SECONDS);
             } catch (TimeoutException e) {
                 // A client-side timeout doesn't tell us whether the connector's request landed
                 // server-side (e.g. a webhook POST can time out on the client while still being
@@ -175,7 +194,7 @@ public class ActionInvocationService {
                 // and dead-letter immediately rather than retrying, which could duplicate a side
                 // effect that actually succeeded.
                 future.cancel(true);
-                String msg = "Action timed out after " + invokeTimeoutSeconds
+                String msg = "Action timed out after " + timeoutSeconds
                         + "s; outcome unknown — not retried to avoid duplicate side effects";
                 log.warn("Action invocation {} timed out on attempt {} — cancelling and dead-lettering "
                         + "(ambiguous outcome, not retried)", invocation.getId(), attempt);
@@ -226,6 +245,8 @@ public class ActionInvocationService {
             invocation.setStatus(ActionInvocationStatus.SUCCEEDED);
             invocation.setOutputJson(toJson(result.output()));
             invocation.setErrorMessage(null);
+            // The transfer completed — its resume state (session URI, byte offset) is now stale.
+            invocation.setResumeCheckpoint(null);
             repository.save(invocation);
         });
         return result;
@@ -249,6 +270,39 @@ public class ActionInvocationService {
             invocation.setErrorMessage(errorMessage);
             repository.save(invocation);
         });
+    }
+
+    // ---- resumable checkpoints (long-running uploads) ----
+
+    /**
+     * Records opaque resume state (a resumable session URI, byte offset, chunk index — the connector's
+     * own JSON, uninterpreted here) for the invocation under {@code idempotencyKey}, so a later attempt
+     * for the same logical invocation can pick up where this one stopped instead of restarting from
+     * byte zero. Only meaningful for connectors doing long-running chunked transfers; a no-op if no
+     * invocation exists under the key.
+     *
+     * <p>Keyed by idempotency key, not invocation id, because that key is precisely what identifies
+     * "the same logical invocation" across attempts — and it's what a retry (inline, sweep, or a fresh
+     * caller re-issuing the same key) already has in hand.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void saveCheckpoint(String idempotencyKey, String checkpointJson) {
+        repository.findByIdempotencyKey(idempotencyKey).ifPresent(invocation -> {
+            invocation.setResumeCheckpoint(checkpointJson);
+            repository.save(invocation);
+        });
+    }
+
+    /**
+     * Resume state left by a previous attempt at the invocation under {@code idempotencyKey}, if any.
+     * Scoped to that one key by construction: a checkpoint is never visible to an invocation carrying a
+     * different idempotency key, so one upload can't resume into another's session.
+     */
+    @Transactional(readOnly = true)
+    public Optional<String> readCheckpoint(String idempotencyKey) {
+        return repository.findByIdempotencyKey(idempotencyKey)
+                .map(ActionInvocation::getResumeCheckpoint)
+                .filter(checkpoint -> !checkpoint.isBlank());
     }
 
     // ---- background retry sweep (ad-hoc invocations only — see ActionInvocationRepository#findRetryable) ----
@@ -281,17 +335,18 @@ public class ActionInvocationService {
         self.recordAttemptInNewTx(invocation.getId());
         ConnectionContext ctx = connectionService.toContext(conn.get());
         Map<String, Object> input = parseInput(invocation.getInputJson());
+        long timeoutSeconds = resolveTimeoutSeconds(connector.get());
         try {
             Future<ActionResult> future = actionExecutor.submit(
                     () -> connector.get().invoke(invocation.getActionId(), input, ctx));
-            ActionResult result = future.get(INVOKE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            ActionResult result = future.get(timeoutSeconds, TimeUnit.SECONDS);
             if (result.success()) {
                 self.persistSuccessInNewTx(invocation.getId(), result);
             } else {
                 self.persistDeadInNewTx(invocation.getId(), result.message());
             }
         } catch (TimeoutException e) {
-            self.persistFailureInNewTx(invocation.getId(), "Action timed out after " + INVOKE_TIMEOUT_SECONDS + "s");
+            self.persistFailureInNewTx(invocation.getId(), "Action timed out after " + timeoutSeconds + "s");
         } catch (Exception e) {
             self.persistFailureInNewTx(invocation.getId(), sanitizeErrorMessage(rootMessage(e), ctx));
         }

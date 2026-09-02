@@ -33,6 +33,10 @@ export interface DetailReviewer {
   name: string
   email: string
   avatarUrl?: string
+  /**
+   * Not returned by the reviewers endpoint, which carries assignment only. Read the verdict off
+   * `DetailReview` instead — anything counting approvals from here counts zero.
+   */
   reviewVerdict?: Verdict
 }
 
@@ -43,4 +47,12 @@ export interface DetailReview {
   verdict: Verdict
   body?: string
   submittedAt: string
+  /**
+   * Whether this review still describes the item as it stands, and so still counts toward the review
+   * gate. False for one cast in an earlier review round, or against a different publish bundle —
+   * changing a Post's caption, schedule, targets or media withdraws an approval. Absent from an older
+   * server, where it is treated as standing so the count degrades to the pre-existing behaviour rather
+   * than reading zero.
+   */
+  current?: boolean
 }

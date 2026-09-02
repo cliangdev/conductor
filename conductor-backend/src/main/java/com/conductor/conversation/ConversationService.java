@@ -17,7 +17,7 @@ import java.util.function.Function;
 /**
  * CRUD + lifecycle for {@link Conversation}s and their {@link ConversationMessage} log. Actor
  * attribution follows {@code project_docs}' user-or-label pattern (see {@link ProjectActor}, and the
- * V110 migration's CHECK constraint, which is the actual guarantee) -- this layer just passes both
+ * V124 migration's CHECK constraint, which is the actual guarantee) -- this layer just passes both
  * through.
  */
 @Service
@@ -69,7 +69,7 @@ public class ConversationService {
      * should call {@link #create} directly instead, since there's nothing to find-or-create against:
      * every {@code api} conversation is distinct.
      *
-     * <p>Concurrent callers racing to create the same key: the V110 partial unique index on
+     * <p>Concurrent callers racing to create the same key: the V124 partial unique index on
      * (project_id, channel, channel_key) is the real guard. This just catches the losing insert's
      * {@link DataIntegrityViolationException} and re-reads the winner's row rather than erroring --
      * same race-loses-then-re-reads shape as {@code KnowledgeIngestionService#submit}'s dedup-key path.
