@@ -31,6 +31,10 @@ import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -94,8 +98,15 @@ public class WorkItemService {
      * entity to its response DTO. Takes plain fields so the service stays decoupled from any generated DTO.
      */
     @Transactional
+    /** Pre-tags arity, kept so every existing caller reads as it did. Creates with no tags. */
     public WorkItem createWorkItem(String projectId, String type, String title, String description,
                                    String workflowSlug, User caller) {
+        return createWorkItem(projectId, type, title, description, workflowSlug, null, caller);
+    }
+
+    @Transactional
+    public WorkItem createWorkItem(String projectId, String type, String title, String description,
+                                   String workflowSlug, Collection<String> tags, User caller) {
         verifyMembership(projectId, caller.getId());
 
         Project project = projectRepository.findById(projectId)
@@ -116,6 +127,7 @@ public class WorkItemService {
         workItem.setWorkflow(workflow);
         workItem.setWorkflowVersion(workItemWorkflowService.boundVersion(projectId, workflow));
         workItem.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
+        workItem.setTags(normalizeTags(tags));
 
         Integer nextSeq = workItemRepository.findMaxSequenceNumberByProjectId(projectId) + 1;
         workItem.setSequenceNumber(nextSeq);
@@ -137,9 +149,18 @@ public class WorkItemService {
      * so a rejected patch persists none of its other fields either.
      */
     @Transactional
+    /** Pre-tags arity, kept so every existing caller reads as it did. Leaves tags alone. */
     public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
                                   String status, String assigneeId, OffsetDateTime scheduledFor,
                                   String scheduleTimezone, User caller) {
+        return patchWorkItem(projectId, workItemId, title, description, status, assigneeId, scheduledFor,
+                scheduleTimezone, null, caller);
+    }
+
+    @Transactional
+    public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
+                                  String status, String assigneeId, OffsetDateTime scheduledFor,
+                                  String scheduleTimezone, Collection<String> tags, User caller) {
         verifyMembership(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
@@ -158,6 +179,13 @@ public class WorkItemService {
         }
         if (scheduleTimezone != null) {
             workItem.setScheduleTimezone(validatedTimezone);
+        }
+
+        // Sent whole: the stored set becomes exactly what was sent, so omitting the field leaves tags
+        // alone and an empty array clears them. A partial add/remove protocol would need its own verbs and
+        // buy nothing — the set is small and a client always knows the whole of it.
+        if (tags != null) {
+            workItem.setTags(normalizeTags(tags));
         }
 
         if (title != null) {
@@ -237,13 +265,52 @@ public class WorkItemService {
      * Used by the v2 controller.
      */
     @Transactional(readOnly = true)
+    /** Pre-tags arity, kept so every existing caller reads as it did. No tag filter. */
     public List<WorkItem> listWorkItemEntities(String projectId, String type, String status, String workflow,
                                                User caller) {
+        return listWorkItemEntities(projectId, type, status, workflow, null, caller);
+    }
+
+    @Transactional(readOnly = true)
+    public List<WorkItem> listWorkItemEntities(String projectId, String type, String status, String workflow,
+                                               String tag, User caller) {
         verifyReadAccess(projectId, caller.getId());
         String typeFilter = (type != null && !type.isBlank()) ? type : null;
         String statusFilter = (status != null && !status.isBlank()) ? status : null;
         String workflowFilter = (workflow != null && !workflow.isBlank()) ? workflow : null;
-        return workItemRepository.findByProjectFiltered(projectId, typeFilter, statusFilter, workflowFilter);
+        // Normalised the same way it is on write, or filtering by a tag someone typed with a capital
+        // would silently match nothing.
+        String tagFilter = normalizeTag(tag);
+        return workItemRepository.findByProjectFiltered(
+                projectId, typeFilter, statusFilter, workflowFilter, tagFilter);
+    }
+
+    /**
+     * A tag as it is stored: trimmed, lower-cased, blank treated as absent.
+     *
+     * <p>Lower-casing is what stops "Autumn" and "autumn" becoming two tags that look identical in a
+     * filter list and match different items. Applied on both write and filter so the two cannot disagree.
+     */
+    static String normalizeTag(String tag) {
+        if (tag == null) {
+            return null;
+        }
+        String trimmed = tag.trim().toLowerCase(Locale.ROOT);
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /** The stored form of a whole set, preserving the order they were given in. */
+    static Set<String> normalizeTags(Collection<String> tags) {
+        Set<String> normalized = new LinkedHashSet<>();
+        if (tags != null) {
+            for (String tag : tags) {
+                String value = normalizeTag(tag);
+                if (value != null) {
+                    normalized.add(value);
+                }
+            }
+        }
+        return normalized;
     }
 
     /**

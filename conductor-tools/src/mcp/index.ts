@@ -81,13 +81,14 @@ const TOOLS = [
         type: { type: 'string', description: 'Work Item type, validated against the chosen Workflow\'s allowed types (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
         title: { type: 'string', description: 'Work Item title' },
         description: { type: 'string', description: 'Work Item description (optional)' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
       },
       required: ['workflow', 'type', 'title'],
     },
   },
   {
     name: 'update_work_item',
-    description: 'Update an existing Work Item\'s title, description, or schedule. Canonical tool (targets the v2 work-items API). A field you omit is left unchanged. Verify with get_work_item.',
+    description: 'Update an existing Work Item\'s title, description, tags, or schedule. On a publishing Workflow the description is the caption that goes out to the platform, not a note. Canonical tool (targets the v2 work-items API). A field you omit is left unchanged. Verify with get_work_item.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -96,6 +97,7 @@ const TOOLS = [
         description: { type: 'string', description: 'New description (optional)' },
         scheduledFor: { type: 'string', description: 'ISO-8601 date-time this Work Item is due to fire (optional). On a Post this is when its publish targets go out.' },
         scheduleTimezone: { type: 'string', description: 'IANA zone id the schedule is authored in, e.g. Europe/Berlin (optional). Empty string clears it; an unknown zone is rejected.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
       },
       required: ['issueId'],
     },
@@ -121,6 +123,7 @@ const TOOLS = [
         type: { type: 'string', description: 'Filter by type (optional)' },
         status: { type: 'string', description: 'Filter by status (optional)' },
         workflow: { type: 'string', description: 'Filter by bound Workflow slug (optional, e.g. ENGINEERING)' },
+        tag: { type: 'string', description: 'Filter to Work Items carrying this tag (optional). Matched case-insensitively.' },
       },
     },
   },
@@ -969,6 +972,7 @@ export async function runMcpServer(): Promise<void> {
               type: params['type'] as string,
               title: params['title'] as string,
               description: params['description'] as string | undefined,
+              tags: params['tags'] as string[] | undefined,
             },
             config
           )
@@ -1253,6 +1257,7 @@ export async function runMcpServer(): Promise<void> {
               description: params['description'] as string | undefined,
               scheduledFor: params['scheduledFor'] as string | undefined,
               scheduleTimezone: params['scheduleTimezone'] as string | undefined,
+              tags: params['tags'] as string[] | undefined,
             },
             config
           )
@@ -1274,6 +1279,7 @@ export async function runMcpServer(): Promise<void> {
               type: params['type'] as string | undefined,
               status: params['status'] as string | undefined,
               workflow: params['workflow'] as string | undefined,
+              tag: params['tag'] as string | undefined,
             },
             config
           )

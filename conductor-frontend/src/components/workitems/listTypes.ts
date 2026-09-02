@@ -47,6 +47,8 @@ export interface Issue {
   scheduleTimezone?: string | null
   /** Oldest first. Empty until something is recorded. */
   externalLinks?: WorkItemExternalLink[]
+  /** Freeform labels, stored lower-cased. Empty until something is tagged. */
+  tags?: string[]
 }
 
 export interface IssueWithReviewers extends Issue {
@@ -80,7 +82,7 @@ export interface WorkItemGroupData {
 
 /** One removable filter pill (type or status), rendered by FilterPills. */
 export interface ActiveFilter {
-  kind: 'type' | 'status'
+  kind: 'type' | 'status' | 'tag'
   value: string
   label: string
 }

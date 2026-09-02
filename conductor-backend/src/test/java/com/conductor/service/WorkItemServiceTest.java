@@ -234,7 +234,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByType() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", null, null))
+        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", null, null, null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", "PRD", null, null, caller);
@@ -247,7 +247,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByStatus() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", null, "DRAFT", null))
+        when(workItemRepository.findByProjectFiltered("proj-1", null, "DRAFT", null, null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", null, "DRAFT", null, caller);
@@ -260,7 +260,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByTypeAndStatus() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null))
+        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null, null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", "PRD", "DRAFT", null, caller);
@@ -272,7 +272,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByWorkflow() {
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING"))
+        when(workItemRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING", null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", null, null, "ENGINEERING", caller);

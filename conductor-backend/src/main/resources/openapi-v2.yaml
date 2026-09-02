@@ -115,6 +115,14 @@ paths:
           description: Filter by bound Workflow slug (e.g. ENGINEERING) — for per-Workflow view pages.
           schema:
             type: string
+        - name: tag
+          in: query
+          required: false
+          description: >-
+            Filter to Work Items carrying this tag. Matched case-insensitively against the stored
+            (lower-cased) form, so a tag typed with a capital still matches.
+          schema:
+            type: string
       responses:
         "200":
           description: List of Work Items
@@ -2231,6 +2239,14 @@ components:
           description: >-
             IANA zone id the schedule was authored in (e.g. America/New_York), retained alongside the
             absolute instant so a local-wall-clock reading survives DST. Null when unscheduled.
+        tags:
+          type: array
+          description: >-
+            Freeform labels on this Work Item, for grouping work across type, status and Workflow.
+            Stored lower-cased, so "Autumn" and "autumn" are one tag rather than two that look identical
+            in a filter list. Empty until something is tagged.
+          items:
+            type: string
         externalLinks:
           type: array
           description: >-
@@ -2304,6 +2320,14 @@ components:
           maxLength: 255
         description:
           type: string
+        tags:
+          type: array
+          description: >-
+            Freeform labels for this Work Item. Sent whole — the stored set becomes exactly this list, so
+            omit the field to leave existing tags alone and send an empty array to clear them. Values are
+            trimmed, lower-cased and de-duplicated.
+          items:
+            type: string
 
     PatchWorkItemRequest:
       type: object
@@ -2335,6 +2359,14 @@ components:
           description: >-
             IANA zone id the schedule is authored in (e.g. America/New_York). Omit to leave unchanged, or
             send an empty string to clear it. An unrecognized zone is rejected with a 400.
+        tags:
+          type: array
+          description: >-
+            Freeform labels for this Work Item. Sent whole — the stored set becomes exactly this list, so
+            omit the field to leave existing tags alone and send an empty array to clear them. Values are
+            trimmed, lower-cased and de-duplicated.
+          items:
+            type: string
 
     AvailableTransition:
       type: object

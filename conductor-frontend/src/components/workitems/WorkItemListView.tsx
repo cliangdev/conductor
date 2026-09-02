@@ -218,6 +218,9 @@ export function WorkItemListView({
   for (const t of workflowView?.types ?? []) typeSet.add(t)
   if (typeSet.size === 0) for (const i of issues) typeSet.add(i.type)
   const typeOptions = [...typeSet]
+  // Tags are whatever people typed, so the options are exactly the ones in use on the loaded items —
+  // there is no registry to read, and offering a tag nothing carries would filter to an empty list.
+  const tagOptions = [...new Set(issues.flatMap((i) => i.tags ?? []))].sort()
 
   // Status filter options: the Workflow's statuses whose category belongs to the active tab, labelled
   // via the Workflow view.
@@ -395,6 +398,7 @@ export function WorkItemListView({
       <ListToolbar
         typeOptions={typeOptions}
         statusOptions={statusOptions}
+        tagOptions={tagOptions}
         activeFilters={listState.activeFilters}
         onAddFilter={listState.addFilter}
         onRemoveFilter={listState.removeFilter}

@@ -110,20 +110,25 @@ export function useWorkItemListState({
 
   const typeValues = activeFilters.filter((f) => f.kind === 'type').map((f) => f.value)
   const statusValues = activeFilters.filter((f) => f.kind === 'status').map((f) => f.value)
+  const tagValues = activeFilters.filter((f) => f.kind === 'tag').map((f) => f.value)
   const typeValuesKey = typeValues.join(',')
   const statusValuesKey = statusValues.join(',')
+  const tagValuesKey = tagValues.join(',')
 
   const filteredIssues = useMemo(
     () =>
       issuesInView.filter((issue) => {
         if (typeValues.length > 0 && !typeValues.includes(issue.type)) return false
         if (statusValues.length > 0 && !statusValues.includes(issue.status)) return false
+        // Every selected tag must be present: picking two narrows to items carrying both, which is
+        // what makes tags useful for finding one campaign's paid posts rather than either set.
+        if (tagValues.length > 0 && !tagValues.every((t) => issue.tags?.includes(t))) return false
         return true
       }),
     // typeValues/statusValues are recomputed every render from activeFilters — their joined keys
     // are the stable identity to depend on instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [issuesInView, typeValuesKey, statusValuesKey]
+    [issuesInView, typeValuesKey, statusValuesKey, tagValuesKey]
   )
 
   // Group by workflow status, in workflow-defined order, within the current tab's categories.

@@ -217,6 +217,9 @@ export function WorkItemDetailView({
   // reads. It is deliberately not persisted: it is this person, agreeing to this content, now.
   const [tiktokTargets, setTikTokTargets] = useState<TikTokConsentTarget[]>([])
   const [consentedTo, setConsentedTo] = useState<string | null>(null)
+  // Tags already in use in this project, for the editor's suggestions. Read from the Work Item list —
+  // there is no separate tag registry, and a project's tags are exactly the ones on its items.
+  const [knownTags, setKnownTags] = useState<string[]>([])
   const [reviewers, setReviewers] = useState<DetailReviewer[]>([])
   const [reviews, setReviews] = useState<DetailReview[]>([])
   const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
@@ -272,6 +275,21 @@ export function WorkItemDetailView({
       // Non-fatal
     }
   }, [accessToken, projectId, issueId])
+
+  // Suggestions come from what the project already uses, so tagging converges on a vocabulary rather
+  // than accumulating near-duplicates nobody can filter by. Non-fatal: no suggestions is a fine state.
+  const fetchKnownTags = useCallback(async () => {
+    if (!accessToken) return
+    try {
+      const items = await apiGet<{ tags?: string[] }[]>(
+        `/api/v2/projects/${projectId}/work-items`,
+        accessToken
+      )
+      setKnownTags([...new Set(items.flatMap((i) => i.tags ?? []))].sort())
+    } catch {
+      // Non-fatal — the field still accepts anything typed.
+    }
+  }, [accessToken, projectId])
 
   const fetchReviewers = useCallback(async () => {
     if (!accessToken) return
@@ -339,7 +357,7 @@ export function WorkItemDetailView({
         setIssue(issueData)
         setReviewers(reviewerData)
 
-        await Promise.all([fetchDocuments(), fetchComments(), fetchReviews(), fetchAssets()])
+        await Promise.all([fetchDocuments(), fetchComments(), fetchReviews(), fetchAssets(), fetchKnownTags()])
 
         try {
           const members = await apiGet<Member[]>(
@@ -962,6 +980,9 @@ export function WorkItemDetailView({
               reviewers={reviewers}
               reviews={reviews}
               canManage={canManage}
+              tags={issue.tags ?? []}
+              knownTags={knownTags}
+              onTagsChanged={(tags) => setIssue((prev) => (prev ? { ...prev, tags } : prev))}
               scheduledFor={issue.scheduledFor}
               scheduleTimezone={issue.scheduleTimezone}
               onScheduleChanged={(scheduledFor, scheduleTimezone) => {

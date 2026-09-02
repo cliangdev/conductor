@@ -66,16 +66,17 @@ public class WorkItemController implements WorkItemsApi {
         }
         WorkItem created = workItemService.createWorkItem(
                 projectId, request.getType(), request.getTitle(), request.getDescription(),
-                request.getWorkflow(), caller);
+                request.getWorkflow(), request.getTags(), caller);
         return ResponseEntity.status(201).body(toResponse(created, 0L));
     }
 
     @Override
     @Transactional(readOnly = true)
     public ResponseEntity<List<WorkItemResponse>> listWorkItems(String projectId, String type, String status,
-                                                                String workflow) {
+                                                                String workflow, String tag) {
         User caller = currentUser();
-        List<WorkItem> items = workItemService.listWorkItemEntities(projectId, type, status, workflow, caller);
+        List<WorkItem> items =
+                workItemService.listWorkItemEntities(projectId, type, status, workflow, tag, caller);
         List<String> ids = items.stream().map(WorkItem::getId).toList();
         Map<String, Long> counts = workItemService.unresolvedCommentCounts(ids);
         // One query for the whole page, like the comment counts beside it — the list is exactly where an
@@ -114,7 +115,7 @@ public class WorkItemController implements WorkItemsApi {
         WorkItem item = workItemService.patchWorkItem(
                 projectId, workItemId, request.getTitle(), request.getDescription(),
                 request.getStatus(), request.getAssigneeId(), request.getScheduledFor(),
-                request.getScheduleTimezone(), caller);
+                request.getScheduleTimezone(), request.getTags(), caller);
         // Resolved here too: a client that refreshes its row from a patch response would otherwise see an
         // item's links vanish on an unrelated edit.
         return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
@@ -173,6 +174,7 @@ public class WorkItemController implements WorkItemsApi {
                 .assignee(assignee)
                 .scheduledFor(item.getScheduledFor())
                 .scheduleTimezone(item.getScheduleTimezone())
+                .tags(List.copyOf(item.getTags()))
                 .externalLinks(externalLinks.stream()
                         .map(asset -> new WorkItemExternalLink(asset.getRef(), asset.getType())
                                 .label(asset.getLabel()))

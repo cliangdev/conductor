@@ -1,6 +1,7 @@
 'use client'
 
 import { WorkItemScheduleField } from '@/components/workitems/WorkItemScheduleField'
+import { WorkItemTagsField } from '@/components/workitems/WorkItemTagsField'
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink, Plus, XIcon } from 'lucide-react'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
@@ -112,6 +113,9 @@ export function WorkItemPropertiesPanel({
   scheduledFor,
   scheduleTimezone,
   onScheduleChanged,
+  tags,
+  knownTags,
+  onTagsChanged,
 }: {
   projectId: string
   issueId: string
@@ -141,6 +145,11 @@ export function WorkItemPropertiesPanel({
   scheduledFor?: string | null
   scheduleTimezone?: string | null
   onScheduleChanged: (scheduledFor: string | null, scheduleTimezone: string | null) => void
+  /** Freeform labels on this item. */
+  tags: string[]
+  /** Tags already in use in this project, offered as suggestions so a vocabulary converges. */
+  knownTags: string[]
+  onTagsChanged: (tags: string[]) => void
 }) {
   // Counted from `reviews`, not from `reviewers`. The reviewers endpoint returns assignment only —
   // userId, email, name — and carries no verdict, so filtering it on reviewVerdict matched nothing and
@@ -174,6 +183,18 @@ export function WorkItemPropertiesPanel({
           workflowSlug={workflowSlug}
           onStatusChanged={onStatusChanged}
           triggerRef={statusTriggerRef}
+        />
+      </PanelSection>
+
+      <PanelSection label="Tags">
+        <WorkItemTagsField
+          projectId={projectId}
+          workItemId={issueId}
+          token={token}
+          tags={tags}
+          known={knownTags}
+          canEdit={userRole !== 'REVIEWER'}
+          onChanged={onTagsChanged}
         />
       </PanelSection>
 
