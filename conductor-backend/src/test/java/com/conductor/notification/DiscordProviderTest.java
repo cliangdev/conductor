@@ -523,4 +523,41 @@ class DiscordProviderTest {
 
         assertThat(result).contains("\"color\":5814783"); // 0x58B9FF default blue
     }
+
+    // ── The card has to be clickable ───────────────────────────────────────────────────────────
+
+    @Test
+    void aCardLinksToTheWorkflowScopedDetailRoute() {
+        // The detail route is /{area}/{nouns}/{displayId}. The old /issues/{uuid} shape only ever resolved
+        // for engineering, so a card about a Post pointed at a page that does not exist.
+        String json = discordProvider.format(NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, "proj-1",
+                Map.of("workItemId", "wi-1", "workItemTitle", "Launch teaser", "toStatus", "PUBLISHED",
+                        "noun", "Post", "area", "MARKETING", "displayId", "CLT-1")));
+
+        assertThat(json).contains("/app/projects/proj-1/marketing/posts/CLT-1");
+        assertThat(json).doesNotContain("/issues/wi-1");
+    }
+
+    @Test
+    void aCardFallsBackToTheLegacyLinkWhenTheEventCarriesNoRouting() {
+        // An emitter that has not been enriched still produces a link rather than a broken half of one.
+        String json = discordProvider.format(NotificationMessage.of(EventType.WORK_ITEM_STATUS_CHANGED, "proj-1",
+                Map.of("workItemId", "wi-1", "workItemTitle", "An issue", "toStatus", "DONE")));
+
+        assertThat(json).contains("/app/projects/proj-1/issues/wi-1");
+    }
+
+    @Test
+    void aManualPublishAlertSaysWhatToDoAndWhere() {
+        String json = discordProvider.format(NotificationMessage.of(EventType.POST_AWAITING_MANUAL, "proj-1",
+                Map.of("workItemId", "wi-1", "workItemTitle", "Launch teaser", "platform", "tiktok",
+                        "accountLabel", "TikTok (manual)", "noun", "Post",
+                        "area", "MARKETING", "displayId", "CLT-1")));
+
+        assertThat(json).contains("due to be published by hand");
+        assertThat(json).contains("Launch teaser");
+        assertThat(json).contains("tiktok");
+        assertThat(json).contains("/app/projects/proj-1/marketing/posts/CLT-1");
+    }
+
 }

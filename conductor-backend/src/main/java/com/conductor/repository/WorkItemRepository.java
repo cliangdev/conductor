@@ -14,9 +14,10 @@ import java.util.Optional;
 public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
 
     /**
-     * List a project's Work Items with optional, independent filters on type, current status, and bound
-     * Workflow slug. A null filter is ignored, so all 8 combinations are served by one query (avoids a
-     * combinatorial set of derived finders). Workflow filtering backs per-Workflow view pages.
+     * List a project's Work Items with optional, independent filters on type, current status, bound
+     * Workflow slug, and tag. A null filter is ignored, so every combination is served by one query
+     * (avoids a combinatorial set of derived finders). Workflow filtering backs per-Workflow view pages;
+     * tag filtering is what makes a freeform label worth applying rather than decoration.
      */
     @Query("""
             SELECT i FROM WorkItem i
@@ -24,11 +25,13 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
               AND (:type IS NULL OR i.type = :type)
               AND (:status IS NULL OR i.currentStatus = :status)
               AND (:workflow IS NULL OR i.workflow = :workflow)
+              AND (:tag IS NULL OR :tag MEMBER OF i.tags)
             """)
     List<WorkItem> findByProjectFiltered(@Param("projectId") String projectId,
                                       @Param("type") String type,
                                       @Param("status") String status,
-                                      @Param("workflow") String workflow);
+                                      @Param("workflow") String workflow,
+                                      @Param("tag") String tag);
 
     @Query("SELECT COALESCE(MAX(i.sequenceNumber), 0) FROM WorkItem i WHERE i.project.id = :projectId")
     Integer findMaxSequenceNumberByProjectId(@Param("projectId") String projectId);

@@ -136,11 +136,16 @@ public class NotificationGroupService {
                     projectId,
                     Map.of("test", "true", "description", "Test notification from Conductor")
             );
-            notificationDeliveryService.deliver(event);
+            // deliverTo, not deliver: a routed test would re-derive the destination from the event's
+            // metadata, and a synthetic test event carries none — so testing the Publishing channel would
+            // quietly send to the Issues one and report success about a channel it never touched.
+            boolean sent = notificationDeliveryService.deliverTo(channelGroup, event);
 
             NotificationTestResponse response = new NotificationTestResponse();
-            response.setSuccess(true);
-            response.setMessage("Test notification sent");
+            response.setSuccess(sent);
+            response.setMessage(sent
+                    ? "Test notification sent"
+                    : "Nothing was sent — check the channel is enabled and its webhook URL is reachable.");
             return response;
         } catch (Exception e) {
             log.warn("Test notification failed for project {} group {}: {}", projectId, channelGroupName, e.getMessage());

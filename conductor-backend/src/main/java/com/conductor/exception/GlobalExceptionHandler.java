@@ -7,9 +7,11 @@ import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.ErrorResponseException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -250,6 +252,35 @@ public class GlobalExceptionHandler {
                 + (rejected != null ? " '" + rejected + "'" : "")
                 + (field.isEmpty() ? "" : " for field '" + field + "'")
                 + " — must be one of: " + accepted;
+    }
+
+    /**
+     * Exceptions that carry the status their thrower intended — {@code ResponseStatusException} and every
+     * other {@link ErrorResponseException}. Without this they fall through to the catch-all below, which
+     * logs a stack trace as an "Unexpected error" and answers 500, discarding both the status and the
+     * reason (a 404 for a cross-project connection was being served as a 500). Handling the parent
+     * {@code ErrorResponseException} covers {@code ResponseStatusException} and its siblings in one place;
+     * the exceptions named by the handlers above still match those, since Spring picks the closest
+     * handler. Other {@code ErrorResponse} implementors that are not {@code ErrorResponseException}
+     * subclasses (e.g. {@code NoResourceFoundException}, {@code HttpRequestMethodNotSupportedException})
+     * already have dedicated handlers above.
+     *
+     * <p>A deliberate 4xx is a client error, not a server fault, so it logs at WARN without a stack trace;
+     * a 5xx still gets the full trace.
+     */
+    @ExceptionHandler(ErrorResponseException.class)
+    public ProblemDetail handleErrorResponseException(ErrorResponseException e) {
+        HttpStatusCode status = e.getStatusCode();
+        String detail = e.getBody().getDetail();
+        if (status.is5xxServerError()) {
+            log.error("ErrorResponseException: {} {}", status.value(), detail, e);
+        } else {
+            log.warn("ErrorResponseException: {} {}", status.value(), detail);
+        }
+        ProblemDetail problem = ProblemDetail.forStatus(status);
+        problem.setType(URI.create("about:blank"));
+        problem.setDetail(detail);
+        return problem;
     }
 
     @ExceptionHandler(Exception.class)

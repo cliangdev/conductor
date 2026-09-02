@@ -68,6 +68,15 @@ public class ActionInvocation {
     @ColumnTransformer(write = "?::jsonb")
     private String outputJson;
 
+    /**
+     * Opaque JSON resume state for a long-running chunked transfer (resumable session URI, byte
+     * offset, chunk index) left by a failed attempt, so the next attempt under the same
+     * {@code idempotency_key} resumes instead of restarting from byte zero. TEXT, not JSONB: nothing
+     * in SQL interprets it — only the connector that wrote it parses it.
+     */
+    @Column(name = "resume_checkpoint", columnDefinition = "TEXT")
+    private String resumeCheckpoint;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -122,6 +131,9 @@ public class ActionInvocation {
 
     public String getOutputJson() { return outputJson; }
     public void setOutputJson(String outputJson) { this.outputJson = outputJson; }
+
+    public String getResumeCheckpoint() { return resumeCheckpoint; }
+    public void setResumeCheckpoint(String resumeCheckpoint) { this.resumeCheckpoint = resumeCheckpoint; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

@@ -48,6 +48,9 @@ class WorkItemWorkflowServiceTest {
     private ProjectMemberRepository projectMemberRepository;
     private ReviewRepository reviewRepository;
     private WorkflowDefinitionVersionRepository versionRepository;
+    private PostScheduleValidator postScheduleValidator;
+    private MediaTargetValidator mediaTargetValidator;
+    private PublishOptionsValidator publishOptionsValidator;
     private WorkItemWorkflowService service;
 
     @BeforeEach
@@ -65,8 +68,44 @@ class WorkItemWorkflowServiceTest {
                 .thenReturn(Optional.of(snapshot));
         WorkflowDefinitionResolver resolver = new WorkflowDefinitionResolver(versionRepository);
         SystemTriggerRegistry systemTriggerRegistry = new SystemTriggerRegistry(new ObjectMapper());
+        PublishBundleHasher publishBundleHasher = Mockito.mock(PublishBundleHasher.class);
+        postScheduleValidator = Mockito.mock(PostScheduleValidator.class);
+        mediaTargetValidator = Mockito.mock(MediaTargetValidator.class);
+        publishOptionsValidator = Mockito.mock(PublishOptionsValidator.class);
         service = new WorkItemWorkflowService(workItemRepository, projectSecurityService, projectMemberRepository,
-                reviewRepository, resolver, systemTriggerRegistry);
+                reviewRepository, resolver, systemTriggerRegistry, publishBundleHasher, postScheduleValidator,
+                mediaTargetValidator, publishOptionsValidator);
+    }
+
+    /**
+     * Pins the T4.3 wiring: {@code validateTransition} must hand every legal transition to
+     * {@link PostScheduleValidator}, which decides for itself whether the publish-bundle rules apply. The
+     * validator's own behavior is covered exhaustively by {@code PostScheduleValidatorTest}; what is asserted
+     * here is only that the seam is actually called, since a silently-unwired validator would let an
+     * incomplete Post reach APPROVED.
+     */
+    @Test
+    void validateTransitionDelegatesToPostScheduleValidator() {
+        WorkItem item = workItemAt("DRAFT");
+
+        service.validateTransition(PROJECT_ID, item, "IN_REVIEW");
+
+        verify(postScheduleValidator).validateForTransition(eq(item), any(), eq("IN_REVIEW"));
+        verify(mediaTargetValidator).validateForTransition(eq(item), any(), eq("IN_REVIEW"));
+        verify(publishOptionsValidator).validateForTransition(eq(item), any(), eq("IN_REVIEW"));
+    }
+
+    /** An illegal transition must fail before the publish-bundle validator is ever consulted. */
+    @Test
+    void validateTransitionSkipsPostScheduleValidatorOnAnIllegalMove() {
+        WorkItem item = workItemAt("DRAFT");
+
+        assertThatThrownBy(() -> service.validateTransition(PROJECT_ID, item, "DONE"))
+                .isInstanceOf(BusinessException.class);
+
+        verify(postScheduleValidator, never()).validateForTransition(any(), any(), any());
+        verify(mediaTargetValidator, never()).validateForTransition(any(), any(), any());
+        verify(publishOptionsValidator, never()).validateForTransition(any(), any(), any());
     }
 
     private WorkflowDefinitionVersion engineeringSnapshot() {

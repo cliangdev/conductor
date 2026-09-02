@@ -1,6 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.Connection;
+import com.conductor.entity.EnvelopeEncrypted;
 import com.conductor.exception.CredentialEncryptionException;
 import com.conductor.integration.DecryptedCredentials;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -28,9 +29,10 @@ import java.time.OffsetDateTime;
 import java.util.*;
 
 /**
- * Envelope encryption with GCP KMS: a per-connection AES-256 DEK is generated, wrapped by the KMS
- * KEK, and stored Base64 in {@code kms_key_reference}; that same DEK encrypts every secret on the
- * connection (access token, refresh token, webhook secret) with AES/GCM.
+ * Envelope encryption with GCP KMS: a per-row AES-256 DEK is generated, wrapped by the KMS KEK, and
+ * stored Base64 in {@code kms_key_reference}; that same DEK encrypts every secret on the row with
+ * AES/GCM — a connection's access token, refresh token and webhook secret, or any other
+ * {@link EnvelopeEncrypted} row's secrets via {@link #encryptSecret} / {@link #decryptSecret}.
  */
 @Service
 @Profile("!local")
@@ -104,8 +106,27 @@ public class GcpKmsCredentialService implements CredentialService {
         }
     }
 
-    // Reuse the connection's existing DEK, or generate + KMS-wrap a new one and stamp the reference.
-    private byte[] ensureDek(Connection c) throws Exception {
+    @Override
+    public String encryptSecret(EnvelopeEncrypted owner, String plaintext) {
+        try {
+            return encryptWithDek(ensureDek(owner), plaintext);
+        } catch (Exception e) {
+            throw new CredentialEncryptionException("Failed to encrypt secret", e);
+        }
+    }
+
+    @Override
+    public String decryptSecret(EnvelopeEncrypted owner, String ciphertext) {
+        try {
+            byte[] dek = unwrapDek(owner);
+            return dek != null ? decryptWithDek(dek, ciphertext) : null;
+        } catch (Exception e) {
+            throw new CredentialEncryptionException("Failed to decrypt secret", e);
+        }
+    }
+
+    // Reuse the row's existing DEK, or generate + KMS-wrap a new one and stamp the reference.
+    private byte[] ensureDek(EnvelopeEncrypted c) throws Exception {
         byte[] existing = unwrapDek(c);
         if (existing != null) {
             return existing;
@@ -118,7 +139,7 @@ public class GcpKmsCredentialService implements CredentialService {
         return dek;
     }
 
-    private byte[] unwrapDek(Connection c) {
+    private byte[] unwrapDek(EnvelopeEncrypted c) {
         if (c.getKmsKeyReference() == null || c.getKmsKeyReference().isBlank()) {
             return null;
         }

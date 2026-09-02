@@ -15,6 +15,7 @@ export type Capability =
   | 'workflow.manage' // create/edit/delete/enable workflows
   | 'workflow.run' // dispatch a workflow run
   | 'integration.manage' // connect/disconnect integrations
+  | 'integration.appCredential.manage' // set/clear the platform OAuth app a connector runs as
   | 'agent.manage' // create/edit/delete agents, manage provider keys
   | 'doc.edit' // create/rename/delete/edit docs
   | 'issue.edit' // change issue status / edit issues
@@ -35,6 +36,9 @@ const ADMIN_ONLY_CAPABILITIES: Capability[] = [
   'workspace.manage',
   'members.manage',
   'notifications.manage',
+  // Deciding which platform application every member's consent flow runs as is an admin call —
+  // the backend endpoints gate on ADMIN too.
+  'integration.appCredential.manage',
 ]
 
 const ROLE_CAPABILITIES: Record<MemberRole, Capability[]> = {

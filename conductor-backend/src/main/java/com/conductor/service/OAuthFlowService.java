@@ -12,7 +12,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -29,6 +28,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -36,6 +36,13 @@ import java.util.Map;
 public class OAuthFlowService {
 
     private static final Logger log = LoggerFactory.getLogger(OAuthFlowService.class);
+
+    /**
+     * The code a stub-authorizing connector's consent URL hands straight back to the callback. It is
+     * never presented to a provider — {@link #exchangeCodeForTokens} short-circuits before any POST —
+     * and is spelled unmistakably so it can never be mistaken for a real grant in a log line.
+     */
+    private static final String STUB_AUTHORIZATION_CODE = "stub-authorization-code";
 
     /** Fallback scopes when a connector predates the {@link OAuth2Connector} scope declaration. */
     private static final List<String> DEFAULT_GOOGLE_SCOPES = List.of(
@@ -45,9 +52,10 @@ public class OAuthFlowService {
     private final IntegrationOAuthStateRepository oAuthStateRepository;
     private final ConnectionService connectionService;
     private final ConnectorRegistry connectorRegistry;
-    private final Environment environment;
+    private final ConnectorAppCredentialService appCredentialService;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final ConnectionHealthService connectionHealthService;
 
     @Value("${FRONTEND_URL:http://localhost:3000}")
     private String frontendUrl;
@@ -58,13 +66,15 @@ public class OAuthFlowService {
     public OAuthFlowService(IntegrationOAuthStateRepository oAuthStateRepository,
                             ConnectionService connectionService,
                             ConnectorRegistry connectorRegistry,
-                            Environment environment,
-                            ObjectMapper objectMapper) {
+                            ConnectorAppCredentialService appCredentialService,
+                            ObjectMapper objectMapper,
+                            ConnectionHealthService connectionHealthService) {
         this.oAuthStateRepository = oAuthStateRepository;
         this.connectionService = connectionService;
         this.connectorRegistry = connectorRegistry;
-        this.environment = environment;
+        this.appCredentialService = appCredentialService;
         this.objectMapper = objectMapper;
+        this.connectionHealthService = connectionHealthService;
         this.restTemplate = new RestTemplate();
     }
 
@@ -84,18 +94,21 @@ public class OAuthFlowService {
 
     private record OAuthCredentials(String clientId, String clientSecret) {}
 
-    private OAuthCredentials requireOAuthConfig(OAuth2Connector connector) {
-        String clientId = environment.getProperty(connector.clientIdProperty(), "");
-        if (clientId.isBlank()) {
-            throw new IllegalStateException(
-                    "OAuth client credentials not configured: " + connector.clientIdProperty());
+    /**
+     * The app credentials this project's flow runs as: its own stored pair if it has one, else the
+     * deployment env vars. A project that has set nothing therefore resolves exactly what this method
+     * resolved when it read {@code Environment} directly, down to the exception message — which names
+     * the first missing property, as it always has.
+     */
+    private OAuthCredentials requireOAuthConfig(String projectId, OAuth2Connector connector) {
+        var resolved = appCredentialService.resolve(projectId, connector);
+        if (!resolved.configured()) {
+            String missing = resolved.missingProperties().isEmpty()
+                    ? connector.clientIdProperty()
+                    : resolved.missingProperties().get(0);
+            throw new IllegalStateException("OAuth client credentials not configured: " + missing);
         }
-        String clientSecret = environment.getProperty(connector.clientSecretProperty(), "");
-        if (clientSecret.isBlank()) {
-            throw new IllegalStateException(
-                    "OAuth client credentials not configured: " + connector.clientSecretProperty());
-        }
-        return new OAuthCredentials(clientId, clientSecret);
+        return new OAuthCredentials(resolved.clientId(), resolved.clientSecret());
     }
 
     public String oauthCallbackUri() {
@@ -105,7 +118,11 @@ public class OAuthFlowService {
     @Transactional
     public String buildAuthorizationUrl(String projectId, String connectorId, String redirectUri) {
         OAuth2Connector connector = requireOAuth2Connector(connectorId);
-        OAuthCredentials creds = requireOAuthConfig(connector);
+        // A stub-authorizing connector has no provider to present credentials to, so it must not be
+        // held to having any. Every real connector still resolves its app credentials first, and
+        // still fails here — before a state row is written — when they are missing.
+        boolean stubAuthorization = connector.usesStubAuthorization();
+        OAuthCredentials creds = stubAuthorization ? null : requireOAuthConfig(projectId, connector);
         oAuthStateRepository.deleteByExpiresAtBefore(OffsetDateTime.now());
 
         byte[] bytes = new byte[16];
@@ -120,9 +137,19 @@ public class OAuthFlowService {
         oauthState.setConfigJson(Map.of());
         oAuthStateRepository.save(oauthState);
 
-        String scopes = String.join(" ", scopesFor(connectorId));
+        if (stubAuthorization) {
+            // Straight back to our own callback, so the browser round trip completes without leaving
+            // the machine — carrying the same state parameter a provider would echo, which is what
+            // keeps the CSRF check and the project/connector round trip genuinely exercised.
+            return UriComponentsBuilder.fromUriString(redirectUri)
+                    .queryParam("code", STUB_AUTHORIZATION_CODE)
+                    .queryParam("state", state)
+                    .build().toUriString();
+        }
+
+        String scopes = String.join(connector.scopeDelimiter(), scopesFor(connectorId));
         UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(connector.authorizationUrl())
-                .queryParam("client_id", creds.clientId())
+                .queryParam(connector.clientIdParamName(), creds.clientId())
                 .queryParam("redirect_uri", redirectUri)
                 .queryParam("response_type", "code")
                 .queryParam("scope", scopes);
@@ -143,8 +170,9 @@ public class OAuthFlowService {
 
         String projectId = oauthState.getProjectId();
         String connectorId = oauthState.getConnectorId();
+        OAuth2Connector connector = requireOAuth2Connector(connectorId);
 
-        Map<String, Object> tokenResponse = exchangeCodeForTokens(connectorId, code, redirectUri);
+        Map<String, Object> tokenResponse = exchangeCodeForTokens(projectId, connectorId, code, redirectUri);
 
         String accessToken = (String) tokenResponse.get("access_token");
         String refreshToken = (String) tokenResponse.get("refresh_token");
@@ -153,13 +181,93 @@ public class OAuthFlowService {
                 ? OffsetDateTime.now().plusSeconds(((Number) expiresIn).longValue())
                 : null;
 
-        Connection conn = connectionService.getOrCreateSingle(projectId, connectorId, AuthType.OAUTH2);
-        connectionService.storeTokens(conn, accessToken, refreshToken, expiresAt);
+        Connection conn = resolveConnection(projectId, connectorId, connector);
+
+        if (connector.requiresAccountSelection()) {
+            // The grant covers several accounts and a human still has to pick one. Persist the grant
+            // so the picker can enumerate against it, and hand the browser back to the connector page
+            // with the connection to finish — the completion hook runs on that selection instead.
+            connectionService.storeTokens(conn, accessToken, refreshToken, expiresAt);
+            oAuthStateRepository.delete(oauthState);
+            log.info("OAuth callback awaiting account selection for connector={} project={} connection={}",
+                    connectorId, projectId, conn.getId());
+            return frontendUrl + "/app/projects/" + projectId + "/integrations/" + connectorId
+                    + "?selectAccount=" + conn.getId();
+        }
+
+        OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
+                new OAuth2Connector.OAuthCompletionRequest(accessToken, refreshToken, null));
+        applyCompletion(conn, completion, accessToken, refreshToken, expiresAt);
 
         oAuthStateRepository.delete(oauthState);
 
         log.info("OAuth callback completed for connector={} project={}", connectorId, projectId);
         return frontendUrl + "/app/projects/" + projectId + "/integrations/" + connectorId;
+    }
+
+    /**
+     * The connection this authorization belongs to. A single-instance connector reuses its one row —
+     * exactly as before this seam existed. A connector that permits several connections gets a fresh
+     * row per authorization, which is what keeps two accounts on the same platform distinct instead of
+     * the second silently overwriting the first's tokens and config.
+     */
+    private Connection resolveConnection(String projectId, String connectorId, OAuth2Connector connector) {
+        if (connector.getSpec().singleInstance()) {
+            return connectionService.getOrCreateSingle(projectId, connectorId, AuthType.OAUTH2);
+        }
+        return connectionService.create(projectId, connectorId, AuthType.OAUTH2, connectorId, null);
+    }
+
+    /**
+     * Persists what the completion hook produced. Credentials go through {@code storeTokens} (the
+     * per-connection DEK envelope); the hook's config is plaintext JSON on the row and so carries
+     * only non-secret identifiers. A hook that reports no token keeps the exchanged one, which is the
+     * no-op default and therefore today's exact behaviour for every Google connector.
+     */
+    private void applyCompletion(Connection conn, OAuth2Connector.OAuthCompletion completion,
+                                 String exchangedAccessToken, String exchangedRefreshToken,
+                                 OffsetDateTime expiresAt) {
+        String accessToken = completion.accessToken() != null ? completion.accessToken() : exchangedAccessToken;
+        String refreshToken = completion.refreshToken() != null ? completion.refreshToken() : exchangedRefreshToken;
+        connectionService.storeTokens(conn, accessToken, refreshToken, expiresAt);
+        if (!completion.config().isEmpty()) {
+            connectionService.updateConfig(conn, completion.config());
+        }
+        if (completion.label() != null && !completion.label().isBlank()) {
+            connectionService.updateLabel(conn, completion.label());
+        }
+    }
+
+    /**
+     * Accounts the connection's stored grant covers, for the post-consent picker. Returns an empty
+     * list for a connector that needs no selection, so a caller never has to know which is which.
+     */
+    public List<OAuth2Connector.OAuthAccount> listAuthorizableAccounts(Connection conn) {
+        OAuth2Connector connector = requireOAuth2Connector(conn.getConnectorId());
+        String accessToken = connectionService.decrypt(conn).accessToken();
+        if (accessToken == null || accessToken.isBlank()) {
+            throw new BusinessException("Connection " + conn.getId() + " has no stored OAuth token");
+        }
+        return connector.listAuthorizableAccounts(accessToken);
+    }
+
+    /**
+     * Finalizes a connection that was parked awaiting an account choice: runs the completion hook
+     * with the admin's selection, so the connector can mint the per-account credential and hand back
+     * the non-secret identifiers that make the connection publishable.
+     */
+    @Transactional
+    public Connection completeAccountSelection(Connection conn, String accountId) {
+        OAuth2Connector connector = requireOAuth2Connector(conn.getConnectorId());
+        var creds = connectionService.decrypt(conn);
+        if (creds.accessToken() == null || creds.accessToken().isBlank()) {
+            throw new BusinessException("Connection " + conn.getId() + " has no stored OAuth token");
+        }
+        OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
+                new OAuth2Connector.OAuthCompletionRequest(creds.accessToken(), creds.refreshToken(), accountId));
+        applyCompletion(conn, completion, creds.accessToken(), creds.refreshToken(), conn.getTokenExpiresAt());
+        log.info("OAuth account selection completed for connection={} account={}", conn.getId(), accountId);
+        return conn;
     }
 
     /**
@@ -171,7 +279,8 @@ public class OAuthFlowService {
         OAuth2Connector connector = connectorRegistry.findOAuth2(conn.getConnectorId())
                 .orElseThrow(() -> new IllegalStateException(
                         "Connector does not support OAuth2 refresh: " + conn.getConnectorId()));
-        OAuthCredentials creds = requireOAuthConfig(connector);
+        // The connection's own project, so a refresh uses the same app the authorization ran as.
+        OAuthCredentials creds = requireOAuthConfig(conn.getProjectId(), connector);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
@@ -179,7 +288,7 @@ public class OAuthFlowService {
         MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
         params.add("grant_type", "refresh_token");
         params.add("refresh_token", refreshToken);
-        params.add("client_id", creds.clientId());
+        params.add(connector.clientIdParamName(), creds.clientId());
         params.add("client_secret", creds.clientSecret());
 
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(params, headers);
@@ -187,6 +296,12 @@ public class OAuthFlowService {
         try {
             response = restTemplate.exchange(connector.tokenUrl(), HttpMethod.POST, request, Map.class);
         } catch (HttpClientErrorException e) {
+            // Only a permanent auth rejection costs the connection its health. A rate limit, a 5xx,
+            // or a network blip (which never reaches this catch at all) is transient: retrying the
+            // same credentials can still succeed, so the connection stays as healthy as it was.
+            if (isAuthFailure(e)) {
+                connectionHealthService.markUnhealthy(conn.getId(), providerMessage(e));
+            }
             if (isInvalidGrant(e)) {
                 throw new OAuthReauthRequiredException(
                         "Refresh token for connection " + conn.getId() + " is no longer valid ("
@@ -208,6 +323,9 @@ public class OAuthFlowService {
                 : null;
 
         connectionService.updateAccessToken(conn, newAccessToken, newExpiresAt);
+        // The provider just honoured these credentials, which is the strongest health signal there
+        // is — so a connection previously marked unhealthy clears itself without human intervention.
+        connectionHealthService.markHealthy(conn.getId());
         log.info("Access token refreshed for connection={}", conn.getId());
         return newAccessToken;
     }
@@ -220,10 +338,53 @@ public class OAuthFlowService {
         return body != null && body.contains("invalid_grant");
     }
 
+    /**
+     * Whether the provider rejected who we are rather than failing for a transient reason: a 401/403
+     * outright, or one of the OAuth error codes that mean the grant or the client is no longer
+     * usable. Anything else (429, 5xx, a network error) is transient by default — the safe direction
+     * to be wrong in, since a false UNHEALTHY tells a human to reconnect a connection that is fine.
+     */
+    private boolean isAuthFailure(HttpClientErrorException e) {
+        if (e.getStatusCode().value() == 401 || e.getStatusCode().value() == 403) {
+            return true;
+        }
+        String body = e.getResponseBodyAsString();
+        return body != null && (body.contains("invalid_grant")
+                || body.contains("invalid_client")
+                || body.contains("unauthorized_client")
+                || body.contains("invalid_token"));
+    }
+
+    /** The provider's own explanation if it gave one, so the UI can show a human what went wrong. */
+    private String providerMessage(HttpClientErrorException e) {
+        String body = e.getResponseBodyAsString();
+        if (body != null && !body.isBlank()) {
+            try {
+                Map<?, ?> parsed = objectMapper.readValue(body, Map.class);
+                Object description = parsed.get("error_description");
+                Object error = parsed.get("error");
+                if (description != null) {
+                    return String.valueOf(description);
+                }
+                if (error != null) {
+                    return String.valueOf(error);
+                }
+            } catch (Exception ignored) {
+                // Not JSON, or not the shape we expect — fall through to the raw status line.
+            }
+        }
+        return "The provider rejected this connection's credentials (" + e.getStatusCode()
+                + "). Reconnect the account.";
+    }
+
     @SuppressWarnings("unchecked")
-    private Map<String, Object> exchangeCodeForTokens(String connectorId, String code, String redirectUri) {
+    private Map<String, Object> exchangeCodeForTokens(String projectId, String connectorId, String code,
+                                                      String redirectUri) {
         OAuth2Connector connector = requireOAuth2Connector(connectorId);
-        OAuthCredentials creds = requireOAuthConfig(connector);
+        if (connector.usesStubAuthorization()) {
+            return stubTokenResponse(connectorId);
+        }
+        OAuthCredentials creds = requireOAuthConfig(projectId, connector);
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
@@ -232,7 +393,7 @@ public class OAuthFlowService {
         params.add("grant_type", "authorization_code");
         params.add("code", code);
         params.add("redirect_uri", redirectUri);
-        params.add("client_id", creds.clientId());
+        params.add(connector.clientIdParamName(), creds.clientId());
         params.add("client_secret", creds.clientSecret());
 
         HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(params, headers);
@@ -241,6 +402,21 @@ public class OAuthFlowService {
         if (body == null || !body.containsKey("access_token")) {
             throw new com.conductor.exception.BusinessException("Token exchange failed: no access_token in response");
         }
+        return body;
+    }
+
+    /**
+     * The canned grant a stub-authorizing connector's exchange yields, shaped exactly as a provider's
+     * would be so the rest of {@code handleCallback} cannot tell the difference. The tokens name
+     * themselves as stubs: if one ever escaped to a real API the failure is legible rather than
+     * mysterious.
+     */
+    private Map<String, Object> stubTokenResponse(String connectorId) {
+        log.info("Stub OAuth token exchange for connector={} — no provider call made", connectorId);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("access_token", "stub-access-token-" + connectorId);
+        body.put("refresh_token", "stub-refresh-token-" + connectorId);
+        body.put("expires_in", 3600);
         return body;
     }
 }

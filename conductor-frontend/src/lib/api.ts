@@ -194,6 +194,26 @@ export interface ConnectorConfigField {
   secret: boolean
 }
 
+/**
+ * Where the platform app behind a connector's consent flow comes from.
+ * `DEPLOYMENT` is one app shared by every workspace on the deployment; `PROJECT` is this
+ * workspace's own override of it; `NONE` means no consent flow can start at all.
+ */
+export type ConnectorCredentialSource = 'PROJECT' | 'DEPLOYMENT' | 'NONE'
+
+/** Masked view of a connector's effective OAuth app credentials — the secret is never in it. */
+export interface ConnectorAppCredentialStatus {
+  connectorId: string
+  credentialSource: ConnectorCredentialSource
+  configured: boolean
+  clientId?: string | null
+  clientSecretLast4?: string | null
+  /** Deployment environment variables that would have to be set for the fallback to resolve. */
+  missingProperties: string[]
+  updatedBy?: string | null
+  updatedAt?: string | null
+}
+
 export interface IntegrationListItem {
   connectorId: string
   name: string
@@ -206,6 +226,12 @@ export interface IntegrationListItem {
   connected: boolean
   configFields: ConnectorConfigField[]
   connections: ConnectionSummary[]
+  /**
+   * Readiness of the OAuth app this connector would authenticate as, so a missing platform app is
+   * visible before anyone attempts consent. Null/absent for connectors that don't use OAuth2 —
+   * they have no app credential to configure.
+   */
+  appCredential?: ConnectorAppCredentialStatus | null
 }
 
 export function listIntegrations(projectId: string, token: string): Promise<IntegrationListItem[]> {
@@ -375,6 +401,17 @@ function networkError(): never {
 }
 
 /**
+ * Read the body of a successful response. A 204 (or an explicitly empty body) has nothing to parse
+ * and `res.json()` would reject on it — turning a call that succeeded into a reported failure.
+ */
+function parseBody<T>(res: Response): Promise<T> {
+  if (res.status === 204 || res.headers.get('content-length') === '0') {
+    return Promise.resolve(undefined as T)
+  }
+  return res.json() as Promise<T>
+}
+
+/**
  * Pick a user-facing message: the backend's ProblemDetail `detail` when present and meaningful,
  * otherwise the caller's `fallback` (used for opaque "Server error (n)" and network failures).
  * This is the universal way to surface backend errors — components should call this instead of
@@ -399,7 +436,7 @@ export async function apiGet<T>(path: string, token: string): Promise<T> {
     if (res!.status === 401) onUnauthorized?.()
     await throwApiError(res!)
   }
-  return res!.json()
+  return parseBody<T>(res!)
 }
 
 export async function apiPost<T>(path: string, body: unknown, token?: string): Promise<T> {
@@ -418,7 +455,7 @@ export async function apiPost<T>(path: string, body: unknown, token?: string): P
     if (res!.status === 401 && token) onUnauthorized?.()
     await throwApiError(res!)
   }
-  return res!.json()
+  return parseBody<T>(res!)
 }
 
 export async function apiPatch<T>(path: string, body: unknown, token: string): Promise<T | undefined> {
@@ -437,10 +474,7 @@ export async function apiPatch<T>(path: string, body: unknown, token: string): P
     if (res!.status === 401) onUnauthorized?.()
     await throwApiError(res!)
   }
-  if (res!.status === 204 || res!.headers.get('content-length') === '0') {
-    return undefined as T
-  }
-  return res!.json() as Promise<T>
+  return parseBody<T>(res!)
 }
 
 export async function apiPut<T>(path: string, body: unknown, token: string): Promise<T> {
@@ -459,7 +493,7 @@ export async function apiPut<T>(path: string, body: unknown, token: string): Pro
     if (res!.status === 401) onUnauthorized?.()
     await throwApiError(res!)
   }
-  return res!.json()
+  return parseBody<T>(res!)
 }
 
 export async function apiDelete(path: string, token: string): Promise<void> {

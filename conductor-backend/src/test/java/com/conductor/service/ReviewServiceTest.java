@@ -52,6 +52,9 @@ class ReviewServiceTest {
     @Mock
     private SignalBus signalBus;
 
+    @Mock
+    private PublishBundleHasher publishBundleHasher;
+
     @InjectMocks
     private ReviewService reviewService;
 

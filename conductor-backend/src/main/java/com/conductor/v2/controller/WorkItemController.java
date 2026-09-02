@@ -1,9 +1,11 @@
 package com.conductor.v2.controller;
 
+import com.conductor.entity.Asset;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.generated.v2.api.WorkItemsApi;
+import com.conductor.generated.v2.model.WorkItemExternalLink;
 import com.conductor.generated.v2.model.AvailableTransition;
 import com.conductor.generated.v2.model.AvailableTransitionsResponse;
 import com.conductor.generated.v2.model.CreateWorkItemRequest;
@@ -64,20 +66,25 @@ public class WorkItemController implements WorkItemsApi {
         }
         WorkItem created = workItemService.createWorkItem(
                 projectId, request.getType(), request.getTitle(), request.getDescription(),
-                request.getWorkflow(), caller);
+                request.getWorkflow(), request.getTags(), caller);
         return ResponseEntity.status(201).body(toResponse(created, 0L));
     }
 
     @Override
     @Transactional(readOnly = true)
     public ResponseEntity<List<WorkItemResponse>> listWorkItems(String projectId, String type, String status,
-                                                                String workflow) {
+                                                                String workflow, String tag) {
         User caller = currentUser();
-        List<WorkItem> items = workItemService.listWorkItemEntities(projectId, type, status, workflow, caller);
-        Map<String, Long> counts = workItemService.unresolvedCommentCounts(
-                items.stream().map(WorkItem::getId).toList());
+        List<WorkItem> items =
+                workItemService.listWorkItemEntities(projectId, type, status, workflow, tag, caller);
+        List<String> ids = items.stream().map(WorkItem::getId).toList();
+        Map<String, Long> counts = workItemService.unresolvedCommentCounts(ids);
+        // One query for the whole page, like the comment counts beside it — the list is exactly where an
+        // N+1 would grow with the backlog.
+        Map<String, List<Asset>> links = workItemService.externalLinks(ids);
         List<WorkItemResponse> responses = items.stream()
-                .map(item -> toResponse(item, counts.getOrDefault(item.getId(), 0L)))
+                .map(item -> toResponse(item, counts.getOrDefault(item.getId(), 0L),
+                        links.getOrDefault(item.getId(), List.of())))
                 .toList();
         return ResponseEntity.ok(responses);
     }
@@ -87,7 +94,8 @@ public class WorkItemController implements WorkItemsApi {
     public ResponseEntity<WorkItemResponse> getWorkItem(String projectId, String workItemId) {
         User caller = currentUser();
         WorkItem item = workItemService.getWorkItemEntity(projectId, workItemId, caller);
-        return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId())));
+        return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
+                linksFor(item)));
     }
 
     @Override
@@ -95,7 +103,8 @@ public class WorkItemController implements WorkItemsApi {
     public ResponseEntity<WorkItemResponse> getWorkItemByDisplayId(String projectId, String displayId) {
         User caller = currentUser();
         WorkItem item = workItemService.resolveByDisplayId(projectId, displayId, caller);
-        return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId())));
+        return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
+                linksFor(item)));
     }
 
     @Override
@@ -105,8 +114,12 @@ public class WorkItemController implements WorkItemsApi {
         User caller = currentUser();
         WorkItem item = workItemService.patchWorkItem(
                 projectId, workItemId, request.getTitle(), request.getDescription(),
-                request.getStatus(), request.getAssigneeId(), caller);
-        return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId())));
+                request.getStatus(), request.getAssigneeId(), request.getScheduledFor(),
+                request.getScheduleTimezone(), request.getTags(), caller);
+        // Resolved here too: a client that refreshes its row from a patch response would otherwise see an
+        // item's links vanish on an unrelated edit.
+        return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
+                linksFor(item)));
     }
 
     @Override
@@ -124,8 +137,20 @@ public class WorkItemController implements WorkItemsApi {
         return ResponseEntity.ok(toV2Transitions(view));
     }
 
-    /** Map a {@link WorkItem} entity to the v2 response, surfacing the bound Workflow slug (absent in v1). */
+    /** This one item's external links, as the single-item reads need them. */
+    private List<Asset> linksFor(WorkItem item) {
+        return workItemService.externalLinks(List.of(item.getId()))
+                .getOrDefault(item.getId(), List.of());
+    }
+
+    /** Map a {@link WorkItem} entity to the v2 response, with no external links resolved. */
     private static WorkItemResponse toResponse(WorkItem item, long unresolvedCommentCount) {
+        return toResponse(item, unresolvedCommentCount, List.of());
+    }
+
+    /** Map a {@link WorkItem} entity to the v2 response, surfacing the bound Workflow slug (absent in v1). */
+    private static WorkItemResponse toResponse(WorkItem item, long unresolvedCommentCount,
+                                               List<Asset> externalLinks) {
         String displayId = item.getProject().getKey() + "-" + item.getSequenceNumber();
         WorkItemAssignee assignee = null;
         if (item.getAssignee() != null) {
@@ -146,7 +171,14 @@ public class WorkItemController implements WorkItemsApi {
                 .description(item.getDescription())
                 .workflow(item.getWorkflow())
                 .unresolvedCommentCount((int) unresolvedCommentCount)
-                .assignee(assignee);
+                .assignee(assignee)
+                .scheduledFor(item.getScheduledFor())
+                .scheduleTimezone(item.getScheduleTimezone())
+                .tags(List.copyOf(item.getTags()))
+                .externalLinks(externalLinks.stream()
+                        .map(asset -> new WorkItemExternalLink(asset.getRef(), asset.getType())
+                                .label(asset.getLabel()))
+                        .toList());
     }
 
     /** Map the doer-projection transitions view into its v2 response DTO (identical shape). */

@@ -15,6 +15,8 @@ servers:
 tags:
   - name: workflow-internal
     description: Workflow run worker callbacks (logs, outputs, job failures)
+  - name: work-item-assets-internal
+    description: Local-profile passthrough for work-item file-Asset bytes
 
 paths:
   /workflow-runs/{runId}/log-chunk:
@@ -197,6 +199,53 @@ paths:
           description: Step result recorded (idempotent; unknown workerJobId is a no-op)
         "401":
           description: Missing or invalid run token
+
+  /work-items/{workItemId}/assets/{assetId}/content:
+    put:
+      tags: [work-item-assets-internal]
+      summary: Upload a file Asset's raw bytes (local profile only)
+      description: >
+        Passthrough upload for a work-item file Asset, served ONLY on the `local` profile, where
+        StorageService cannot mint signed upload URLs. This is the exact URL
+        `POST /api/v2/projects/{projectId}/work-items/{workItemId}/assets/uploads` returns as its
+        `uploadUrl` in that case, so the two must stay byte-for-byte identical. On GCS the client PUTs
+        to a signed bucket URL instead and this endpoint is not registered at all.
+
+
+        There is no run token to check here (no workflow run is involved). The URL itself is the
+        capability: `assetId` is a server-minted UUID handed only to the member who minted it, and the
+        request is scoped by requiring that asset to belong to `workItemId`. Same shape as the
+        workflow-artifact passthrough `PUT /internal/v1/workflow-runs/{runId}/artifacts/{artifactId}/content`,
+        which likewise reads a raw binary body.
+      operationId: uploadWorkItemAssetContent
+      security: []
+      parameters:
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: assetId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        description: >
+          The raw file bytes. Any media type is accepted: the browser PUTs the file with its own
+          Content-Type (image/png, video/mp4, ...), exactly as it would to a signed bucket URL, and the
+          type was already validated and persisted at mint — this endpoint only stores bytes.
+        content:
+          "*/*":
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Bytes stored. Confirm the upload via the v2 confirm endpoint.
+        "404":
+          description: No such Asset, or the Asset does not belong to this Work Item
 
 components:
   parameters:

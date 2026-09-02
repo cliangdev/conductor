@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -52,42 +53,68 @@ public class NotificationDeliveryService {
      * dispatcher for their side effects only, never as a chat message.
      */
     public void deliver(NotificationMessage event) {
-        Optional<ChannelGroup> groupOpt = ChannelGroup.forEventType(event.getEventType());
-        if (groupOpt.isEmpty()) {
+        List<ChannelGroup> candidates = ChannelGroup.forEvent(event.getEventType(), event.getMetadata());
+        if (candidates.isEmpty()) {
             log.debug("No channel group defined for event type: {}", event.getEventType());
             return;
         }
 
-        ChannelGroup group = groupOpt.get();
-
-        Optional<NotificationGroupConfig> configOpt =
-                groupConfigRepository.findByProjectIdAndChannelGroup(event.getProjectId(), group);
-        if (configOpt.isEmpty()) {
+        // Most specific first, falling through to the next when a group has no usable config. A Post's
+        // status change prefers the Publishing channel and lands in the Issues one when a project has not
+        // set Publishing up — so adding the group cannot take away notifications a project already gets.
+        NotificationGroupConfig config = null;
+        for (ChannelGroup candidate : candidates) {
+            NotificationGroupConfig found = groupConfigRepository
+                    .findByProjectIdAndChannelGroup(event.getProjectId(), candidate)
+                    .filter(NotificationGroupConfig::isEnabled)
+                    .filter(c -> c.getEnabledEventTypes().contains(event.getEventType().name()))
+                    .orElse(null);
+            if (found != null) {
+                config = found;
+                break;
+            }
+        }
+        if (config == null) {
             return;
         }
+        send(config, event);
+    }
 
-        NotificationGroupConfig config = configOpt.get();
+    /**
+     * Delivers to one named group, skipping routing entirely.
+     *
+     * <p>For "test this channel", where re-deriving the destination would defeat the point: a specialised
+     * group is chosen from an event's metadata, and a synthetic test event has none, so a routed test of
+     * the Publishing channel would quietly go to the Issues one — reporting success about a channel it
+     * never touched. Testing a channel has to mean testing <em>that</em> channel.
+     *
+     * @return true when a message actually reached the provider, so a caller can tell a human what really
+     *         happened rather than that the attempt was made
+     */
+    public boolean deliverTo(ChannelGroup group, NotificationMessage event) {
+        NotificationGroupConfig config = groupConfigRepository
+                .findByProjectIdAndChannelGroup(event.getProjectId(), group)
+                .filter(NotificationGroupConfig::isEnabled)
+                .orElse(null);
+        return config != null && send(config, event);
+    }
 
-        if (!config.isEnabled()) {
-            return;
-        }
-
-        if (!config.getEnabledEventTypes().contains(event.getEventType().name())) {
-            return;
-        }
-
+    /** @return true when the provider accepted the message. */
+    private boolean send(NotificationGroupConfig config, NotificationMessage event) {
         NotificationProvider provider = resolveProvider(config.getProvider());
         if (provider == null) {
             log.warn("No provider implementation for: {}", config.getProvider());
-            return;
+            return false;
         }
 
         try {
             String formatted = provider.format(event);
             provider.send(config.getWebhookUrl(), formatted);
+            return true;
         } catch (Exception e) {
             log.warn("Failed to dispatch {} notification for project {}: {}",
                     event.getEventType(), event.getProjectId(), e.getMessage());
+            return false;
         }
     }
 

@@ -84,16 +84,17 @@ class NotificationSignalMapperTest {
     }
 
     @Test
-    void mappingIsABijectionOverAllElevenEventTypesAndSignalTypes() {
+    void mappingIsABijectionOverEveryEventTypeAndSignalType() {
         Set<String> mappedSignalTypes = Arrays.stream(EventType.values())
                 .map(type -> mapper.toSignal(NotificationMessage.of(type, PROJECT_ID, Map.of())))
                 .map(Signal::type)
                 .collect(Collectors.toSet());
 
-        assertThat(EventType.values()).hasSize(11);
         // Every EventType maps to a distinct SignalTypes constant -- no two collapse onto the same
-        // signal type, and every produced signal type maps straight back to its origin EventType.
-        assertThat(mappedSignalTypes).hasSize(11).containsExactlyInAnyOrder(
+        // signal type, and every produced signal type maps straight back to its origin EventType. The
+        // size is derived rather than written twice: the bijection is the property under test, and a
+        // literal count in two places is a thing to edit on every addition rather than a thing to prove.
+        assertThat(mappedSignalTypes).hasSize(EventType.values().length).containsExactlyInAnyOrder(
                 SignalTypes.CONDUCTOR_WORK_ITEM_STATUS_CHANGED,
                 SignalTypes.CONDUCTOR_WORK_ITEM_REVIEWER_ASSIGNED,
                 SignalTypes.CONDUCTOR_WORK_ITEM_REVIEW_SUBMITTED,
@@ -104,6 +105,7 @@ class NotificationSignalMapperTest {
                 SignalTypes.CONDUCTOR_WORK_ITEM_ASSET_ADDED,
                 SignalTypes.CONDUCTOR_WORKFLOW_AUTO_PAUSED,
                 SignalTypes.CONDUCTOR_WORKFLOW_RUN_FAILED,
+                SignalTypes.CONDUCTOR_WORK_ITEM_AWAITING_MANUAL_PUBLISH,
                 SignalTypes.GITHUB_PULL_REQUEST);
     }
 

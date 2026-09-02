@@ -1,0 +1,27 @@
+-- TIK-1: per-target publish options.
+--
+-- Before this column there was no way for a human to say how a post should go out on a platform, only
+-- where it should go. For TikTok that gap was silent and total: nothing ever supplied a privacy level, so
+-- every publish fell through to the action's SELF_ONLY default and went out visible to the creator alone.
+-- The publish succeeded, so nothing anywhere reported a problem.
+--
+-- Deliberately ONE generic options bag rather than tiktok_privacy_level / tiktok_disable_duet / ... columns.
+-- Instagram (collaborators, product tags) and YouTube (visibility, category, madeForKids) each want their own
+-- knobs, and every one of them would otherwise be another nullable column on this table that is NULL for
+-- three platforms out of four. The bag is per-platform by construction: the row already carries `platform`,
+-- so the keys inside are read against it and nothing else. Same TEXT-and-uninterpreted-by-SQL choice as
+-- caption_override's neighbour resume_checkpoint in V112 -- Postgres never looks inside it, and nothing here
+-- is queried on.
+--
+-- TikTok's keys, matching the parameters connectors/tool-specs/tiktok.json declares:
+--   privacyLevel        -> privacy_level        (one of the connection's cached privacyLevelOptions)
+--   disableComment      -> disable_comment
+--   disableDuet         -> disable_duet
+--   disableStitch       -> disable_stitch
+--   brandContentToggle  -> brand_content_toggle (paid partnership)
+--   brandOrganicToggle  -> brand_organic_toggle (own brand)
+--
+-- Nullable, and NULL is the honest reading of every row that already exists: nobody chose anything for them.
+-- It is not a synonym for "defaults are fine" -- PublishOptionsValidator blocks approval of a TikTok target
+-- whose privacy level is unset rather than letting the old silent default decide.
+ALTER TABLE post_publish_target ADD COLUMN publish_options TEXT;

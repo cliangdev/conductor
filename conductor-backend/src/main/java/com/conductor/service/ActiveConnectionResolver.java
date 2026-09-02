@@ -12,6 +12,12 @@ import java.util.Optional;
  * Resolves the ACTIVE connection for a (projectId, connectorId) pair. Extracted from the identical
  * inline stream duplicated in {@code IntegrationStepExecutor} and {@code ActionStepExecutor}; also
  * used by {@code ClaudeCodeContainerRunner}'s credential-resolution path.
+ *
+ * <p>This class is the single seam through which callers turn "which account?" into a
+ * {@link Connection}. {@code ActionInvocationService#invoke} already takes a resolved
+ * {@code Connection} rather than a connector id, so targeting a specific account needs no change
+ * there — callers pick the connection here (by id via {@link #resolveById}, or by connector via
+ * {@link #resolve}) and hand the result straight to {@code invoke}.
  */
 @Component
 public class ActiveConnectionResolver {
@@ -38,5 +44,27 @@ public class ActiveConnectionResolver {
                 .filter(c -> AuthType.PAT.name().equals(c.getAuthType()))
                 .findFirst()
                 .or(() -> active.stream().findFirst());
+    }
+
+    /**
+     * Resolves one explicitly named connection, so a project holding several connections for the
+     * same connector (e.g. two Instagram accounts) can target exactly one of them instead of
+     * whichever {@link #resolve} would pick.
+     *
+     * <p>The {@code projectId} filter is a tenancy boundary, not a convenience: a connection id
+     * owned by another project must never resolve, however it reached us (workflow YAML, API
+     * payload, agent-authored input). Callers should surface a single generic "not available"
+     * failure for every empty result — unknown id, wrong project, and non-ACTIVE must be
+     * indistinguishable to the caller so an id probe cannot confirm that a connection exists.
+     *
+     * @return the connection only when it exists, belongs to {@code projectId}, and is ACTIVE
+     */
+    public Optional<Connection> resolveById(String projectId, String connectionId) {
+        if (connectionId == null || connectionId.isBlank()) {
+            return Optional.empty();
+        }
+        return connectionRepository.findById(connectionId)
+                .filter(c -> projectId != null && projectId.equals(c.getProjectId()))
+                .filter(c -> "ACTIVE".equals(c.getStatus()));
     }
 }

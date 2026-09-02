@@ -24,7 +24,11 @@ public class LocalFileController {
 
     public LocalFileController(
             @Value("${local.storage.path:./local-uploads}") String storagePath) {
-        this.storagePath = Paths.get(storagePath).toAbsolutePath();
+        // normalize(), not just toAbsolutePath(): the default local.storage.path is the RELATIVE
+        // "./local-uploads", whose absolute form keeps a literal "." segment. The guard below compares a
+        // normalized target against this root, so without normalizing here every legitimate read is
+        // refused with 403 — including every image preview. Mirrors LocalStorageService's write-side fix.
+        this.storagePath = Paths.get(storagePath).toAbsolutePath().normalize();
     }
 
     @GetMapping("/**")

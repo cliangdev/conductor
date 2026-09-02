@@ -6,6 +6,7 @@ vi.mock('../mcp/api.js', () => ({
   apiPost: vi.fn(),
   apiPatch: vi.fn(),
   apiDelete: vi.fn(),
+  isClientError: (err: unknown) => err instanceof Error && /API error 4\d\d\b/.test(err.message),
 }))
 vi.mock('../mcp/queue.js', () => ({
   queueChange: vi.fn(() => 1),
@@ -93,11 +94,34 @@ describe('workflow-aware MCP tools', () => {
     expect(apiPatch).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/i1', { status: 'IN_REVIEW' }, config)
   })
 
-  it('transition_work_item queues on failure', async () => {
+  it('transition_work_item queues on a transient failure', async () => {
     ;(apiPatch as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'))
     const result = await transitionWorkItem({ issueId: 'i1', toStatus: 'DONE' }, config)
     expect(queueChange).toHaveBeenCalled()
     expect(result.warning).toContain('queued')
+  })
+
+  // A refused transition is permanent: an unsatisfied review gate, an invalid edge, a voided approval.
+  // Queuing it would report "queued" for something that can never apply, and the publishing validators
+  // reject exactly this way by design.
+  it('transition_work_item surfaces a 4xx refusal instead of queuing it', async () => {
+    ;(apiPatch as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('API error 422: {"detail":"Transition to APPROVED requires an approved review"}'),
+    )
+    const result = await transitionWorkItem({ issueId: 'i1', toStatus: 'APPROVED' }, config)
+    expect(queueChange).not.toHaveBeenCalled()
+    expect(result.warning).toBeUndefined()
+    expect(result.error).toContain('requires an approved review')
+  })
+
+  it('record_asset surfaces a 4xx refusal instead of queuing it', async () => {
+    ;(apiPost as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('API error 400: bad type'))
+    const result = await recordAsset(
+      { issueId: 'i1', type: 'nope', kind: 'link', ref: 'https://x' },
+      config,
+    )
+    expect(queueChange).not.toHaveBeenCalled()
+    expect(result.error).toContain('bad type')
   })
 
   it('record_asset POSTs to the v2 work-item assets resource', async () => {

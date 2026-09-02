@@ -10,6 +10,7 @@ import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.OAuth2Connector;
 import com.conductor.integration.OAuthReauthRequiredException;
 import com.conductor.integration.connector.gsc.GscConnector;
+import com.conductor.repository.ConnectorAppCredentialRepository;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -61,6 +63,15 @@ class OAuthFlowServiceTest {
     @Mock
     private Environment environment;
 
+    @Mock
+    private ConnectorAppCredentialRepository appCredentialRepository;
+
+    @Mock
+    private ProjectSecurityService projectSecurityService;
+
+    @Mock
+    private ConnectionHealthService connectionHealthService;
+
     private OAuthFlowService service;
 
     private static final String PROJECT_ID = "proj-1";
@@ -69,7 +80,12 @@ class OAuthFlowServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry, environment, new ObjectMapper());
+        // No project ever stores its own app credentials here, so every resolve falls through to the
+        // mocked Environment — i.e. exactly the deployment-env behaviour these tests have always pinned.
+        ConnectorAppCredentialService appCredentialService = new ConnectorAppCredentialService(
+                appCredentialRepository, mock(CredentialService.class), environment, projectSecurityService);
+        service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry,
+                appCredentialService, new ObjectMapper(), connectionHealthService);
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         ReflectionTestUtils.setField(service, "frontendUrl", "http://localhost:3000");
     }

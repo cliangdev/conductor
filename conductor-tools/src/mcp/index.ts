@@ -45,6 +45,14 @@ import {
   type KnowledgeSkippedSource,
 } from './tools/knowledge.js'
 import {
+  listPublishTargets,
+  setPublishTargets,
+  uploadAsset,
+  retryFailedPublishTargets,
+  type PublishTargetSelection,
+  completeManualPublish,
+} from './tools/marketing.js'
+import {
   listProjectDocs,
   readProjectDoc,
   writeProjectDoc,
@@ -72,20 +80,24 @@ const TOOLS = [
         workflow: { type: 'string', description: 'Lifecycle Workflow slug that governs this Work Item (required). Discover with list_workflows({kind:"LIFECYCLE"}).' },
         type: { type: 'string', description: 'Work Item type, validated against the chosen Workflow\'s allowed types (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
         title: { type: 'string', description: 'Work Item title' },
-        description: { type: 'string', description: 'Work Item description (optional)' },
+        description: { type: 'string', description: 'Work Item description (optional). On a publishing Workflow this is the caption — the text that goes out to the platform — not a note about the item.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
       },
       required: ['workflow', 'type', 'title'],
     },
   },
   {
     name: 'update_work_item',
-    description: 'Update an existing Work Item. Canonical tool (targets the v2 work-items API).',
+    description: 'Update an existing Work Item\'s title, description, tags, or schedule. On a publishing Workflow the description is the caption that goes out to the platform, not a note. Canonical tool (targets the v2 work-items API). A field you omit is left unchanged. Verify with get_work_item.',
     inputSchema: {
       type: 'object',
       properties: {
         issueId: { type: 'string', description: 'Work Item ID' },
         title: { type: 'string', description: 'New title (optional)' },
         description: { type: 'string', description: 'New description (optional)' },
+        scheduledFor: { type: 'string', description: 'ISO-8601 date-time this Work Item is due to fire (optional). On a Post this is when its publish targets go out.' },
+        scheduleTimezone: { type: 'string', description: 'IANA zone id the schedule is authored in, e.g. Europe/Berlin (optional). Empty string clears it; an unknown zone is rejected.' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
       },
       required: ['issueId'],
     },
@@ -111,6 +123,7 @@ const TOOLS = [
         type: { type: 'string', description: 'Filter by type (optional)' },
         status: { type: 'string', description: 'Filter by status (optional)' },
         workflow: { type: 'string', description: 'Filter by bound Workflow slug (optional, e.g. ENGINEERING)' },
+        tag: { type: 'string', description: 'Filter to Work Items carrying this tag (optional). Matched case-insensitively.' },
       },
     },
   },
@@ -784,6 +797,93 @@ const TOOLS = [
       required: ['path'],
     },
   },
+  {
+    name: 'list_publish_targets',
+    description: 'Publishing destinations for a project: each connected account with its platform, connectionId, label, lane and credential health. Pass issueId to also get the targets that Work Item publishes to, each with its state, permalink and error — the read-back for set_publish_targets and the status check after a scheduled publish or a retry. TikTok entries carry the creator\'s allowed privacy levels and nickname; they are the only source for a target\'s privacyLevel.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID — include to also return that item\'s selected targets and their publish outcomes (optional)' },
+      },
+    },
+  },
+  {
+    name: 'set_publish_targets',
+    description: 'Choose which connected accounts a Work Item publishes to, with per-target options. Idempotent set-replace: send the complete selection (empty array clears it); already-selected targets keep their state. Discover platform/connectionId pairs with list_publish_targets first and call it again after to verify. Editing the selection on an approved item sends it back for review. Publishing to TikTok also needs the creator\'s consent, which a human records in the Conductor UI — no tool can record or skip it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        targets: {
+          type: 'array',
+          description: 'The complete selection. Empty array clears every target.',
+          items: {
+            type: 'object',
+            properties: {
+              platform: { type: 'string', description: 'Platform of the account, from list_publish_targets' },
+              connectionId: { type: 'string', description: 'The connected account to publish to, from list_publish_targets. Omit it to select this platform\'s manual destination — the one a human posts by hand — which is offered whether or not the project has connected that platform.' },
+              publishOptions: {
+                type: 'object',
+                description: 'Per-platform options for this target. A TikTok target with no privacyLevel blocks approval.',
+                properties: {
+                  privacyLevel: { type: 'string', description: 'TikTok: one of that account\'s privacyLevelOptions from list_publish_targets' },
+                  disableComment: { type: 'boolean', description: 'TikTok: turn comments off' },
+                  disableDuet: { type: 'boolean', description: 'TikTok: turn duets off' },
+                  disableStitch: { type: 'boolean', description: 'TikTok: turn stitches off' },
+                  brandContentToggle: { type: 'boolean', description: 'TikTok: paid partnership; TikTok refuses it combined with SELF_ONLY' },
+                  brandOrganicToggle: { type: 'boolean', description: 'TikTok: promoting the creator\'s own brand' },
+                },
+              },
+            },
+            required: ['platform'],
+          },
+        },
+      },
+      required: ['issueId', 'targets'],
+    },
+  },
+  {
+    name: 'upload_asset',
+    description: 'Attach a local file to a Work Item as a file Asset in one call — mints the upload URL, uploads the bytes and confirms. filePath is a path on this machine (this server runs locally). The server enforces the media-type allowlist and size ceiling; a refused file leaves no Asset behind. Video: pass width, height and durationSeconds — they cannot be derived server-side and approval stays blocked without them. Returns the stored Asset as read back after confirmation. Use record_asset instead for a link.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        filePath: { type: 'string', description: 'Absolute path to the file on this machine' },
+        type: { type: 'string', description: 'Asset type, validated against the Workflow\'s asset_types' },
+        label: { type: 'string', description: 'Human label (optional — defaults to the filename)' },
+        width: { type: 'number', description: 'Pixel width of the media (optional; required in practice for video)' },
+        height: { type: 'number', description: 'Pixel height of the media (optional; required in practice for video)' },
+        durationSeconds: { type: 'number', description: 'Playback length in seconds (optional; required in practice for video)' },
+      },
+      required: ['issueId', 'filePath', 'type'],
+    },
+  },
+  {
+    name: 'complete_manual_publish',
+    description: 'Record that a manual publish target was published by hand, storing the live URL. Only for targets on the MANUAL lane (list_publish_targets shows lane and state; a manual one due to go out is AWAITING_MANUAL) — a target that publishes automatically is refused, because its poller will publish it and report the real outcome. This reports what a human already did outside Conductor; it publishes nothing. Records the same destination Asset an API publish does, so the link surfaces on the calendar and list like any other. Returns the target as read back after recording.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        targetId: { type: 'string', description: 'The publish target\'s id, from list_publish_targets' },
+        permalink: { type: 'string', description: 'Link to the post that actually went out. Required — with no platform to ask, it is the only record this destination was published.' },
+        publishedAt: { type: 'string', description: 'ISO-8601 instant it actually went out (optional; defaults to now)' },
+      },
+      required: ['issueId', 'targetId', 'permalink'],
+    },
+  },
+  {
+    name: 'retry_failed_publish_targets',
+    description: 'Re-fire only the FAILED publish targets on a Work Item, with a fresh idempotency key. Published targets are untouched and nothing failed is a harmless no-op. Returns the item\'s status and every target. Publishing is asynchronous — call list_publish_targets after to see where each target landed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+      },
+      required: ['issueId'],
+    },
+  },
 ]
 
 function authErrorResponse() {
@@ -872,6 +972,7 @@ export async function runMcpServer(): Promise<void> {
               type: params['type'] as string,
               title: params['title'] as string,
               description: params['description'] as string | undefined,
+              tags: params['tags'] as string[] | undefined,
             },
             config
           )
@@ -1154,6 +1255,9 @@ export async function runMcpServer(): Promise<void> {
               issueId: params['issueId'] as string,
               title: params['title'] as string | undefined,
               description: params['description'] as string | undefined,
+              scheduledFor: params['scheduledFor'] as string | undefined,
+              scheduleTimezone: params['scheduleTimezone'] as string | undefined,
+              tags: params['tags'] as string[] | undefined,
             },
             config
           )
@@ -1175,6 +1279,7 @@ export async function runMcpServer(): Promise<void> {
               type: params['type'] as string | undefined,
               status: params['status'] as string | undefined,
               workflow: params['workflow'] as string | undefined,
+              tag: params['tag'] as string | undefined,
             },
             config
           )
@@ -1405,6 +1510,56 @@ export async function runMcpServer(): Promise<void> {
         case 'delete_project_folder': {
           const result = await deleteProjectFolder({ path: params['path'] as string }, config)
           return successResponse(result)
+        }
+        case 'list_publish_targets': {
+          return successResponse(
+            await listPublishTargets({ issueId: params['issueId'] as string | undefined }, config)
+          )
+        }
+        case 'set_publish_targets': {
+          return successResponse(
+            await setPublishTargets(
+              {
+                issueId: params['issueId'] as string,
+                targets: params['targets'] as PublishTargetSelection[],
+              },
+              config
+            )
+          )
+        }
+        case 'upload_asset': {
+          return successResponse(
+            await uploadAsset(
+              {
+                issueId: params['issueId'] as string,
+                filePath: params['filePath'] as string,
+                type: params['type'] as string,
+                label: params['label'] as string | undefined,
+                width: params['width'] as number | undefined,
+                height: params['height'] as number | undefined,
+                durationSeconds: params['durationSeconds'] as number | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'complete_manual_publish': {
+          return successResponse(
+            await completeManualPublish(
+              {
+                issueId: params['issueId'] as string,
+                targetId: params['targetId'] as string,
+                permalink: params['permalink'] as string,
+                publishedAt: params['publishedAt'] as string | undefined,
+              },
+              config
+            )
+          )
+        }
+        case 'retry_failed_publish_targets': {
+          return successResponse(
+            await retryFailedPublishTargets({ issueId: params['issueId'] as string }, config)
+          )
         }
         case 'upload_project_doc_image': {
           const result = await uploadProjectDocImage(
