@@ -26,6 +26,7 @@ import { statusHueClasses } from '@/components/ui/status-badge'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPut } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { statusMeta } from '@/lib/workflows'
 import { isApprovedOrLater, isUnderReviewOrLater } from '@/components/workitems/MediaUploadPanel'
 import {
   EMPTY_TIKTOK_OPTIONS,
@@ -393,8 +394,9 @@ export function PostTargetPicker({
           {frozen && (
             <div className="px-4 pt-3">
               <Alert variant="info">
-                Locked while this {noun} is being reviewed — it has to be sent back for changes before its
-                accounts can change.
+                Publishing accounts are locked while this {noun} is{' '}
+                {statusMeta(workflowView, status ?? '').label}. It has to be sent back for changes before
+                they can change.
               </Alert>
             </div>
           )}

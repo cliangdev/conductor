@@ -50,8 +50,9 @@ export function WorkItemDescriptionCard({
 
   const label = isCaption ? 'Caption' : 'Description'
   const noun = workflowView?.noun?.toLowerCase() ?? 'item'
-  const statusLabel = (workflowView?.statuses.find((s) => s.id === status)?.label ?? status ?? '')
-    .toLowerCase()
+  // As the Workflow writes it. Lower-casing made the caption notice read "in review" next to the
+  // media panel's "In Review" — one lock, two spellings of the same status.
+  const statusLabel = workflowView?.statuses.find((s) => s.id === status)?.label ?? status ?? ''
   // Editing the caption is a publish-bundle change, so an approved item goes back for review and
   // anything already handed to a platform is taken back down. Said before the edit, not after it.
   // Exactly the review status. Past the gate an edit is still allowed and simply takes the approval
@@ -99,10 +100,11 @@ export function WorkItemDescriptionCard({
       </CardHeader>
 
       {frozen && !editing && (
-        <div className="px-4 pb-1 pt-0">
-          <p className="text-xs text-muted-foreground">
-            Locked while this {noun} is {statusLabel}. It has to be sent back for changes first.
-          </p>
+        <div className="px-4 pt-3">
+          <Alert variant="info">
+            The {label.toLowerCase()} is locked while this {noun} is {statusLabel}. It has to be sent back
+            for changes before it can be edited.
+          </Alert>
         </div>
       )}
 

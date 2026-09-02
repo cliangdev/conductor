@@ -170,10 +170,6 @@ function statusDisplayLabel(view: WorkflowView | undefined, statusId: string | u
   return view?.statuses.find((s) => s.id === statusId)?.label ?? statusId
 }
 
-function reviewStatusLabel(view: WorkflowView | undefined): string {
-  const gate = view?.transitions.find((t) => t.requiresReview)
-  return statusDisplayLabel(view, gate?.from)
-}
 
 function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null) return ''
@@ -369,8 +365,8 @@ export function MediaUploadPanel({
         {locked ? (
           <Alert variant="info">
             Media is locked while this {workflowView?.noun?.toLowerCase() ?? 'item'} is{' '}
-            {statusDisplayLabel(workflowView, status)}. Revert it to{' '}
-            {reviewStatusLabel(workflowView)} to add or replace a file.
+            {statusDisplayLabel(workflowView, status)}. It has to be sent back for changes before a file
+            can be added or replaced.
           </Alert>
         ) : (
           <>

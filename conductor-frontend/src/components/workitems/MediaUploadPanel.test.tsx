@@ -355,7 +355,9 @@ describe('MediaUploadPanel', () => {
     expect(screen.queryByRole('button', { name: 'Choose file' })).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Media file')).not.toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent(
-      /Media is locked while this post is Approved\. Revert it to In Review/i,
+      // It used to say "Revert it to In Review" — which, since the freeze moved to the review
+      // status, is where the item already is on the way here. The advice read as a contradiction.
+      /Media is locked while this post is Approved\. It has to be sent back for changes/i,
     )
   })
 
