@@ -375,10 +375,26 @@ describe('MediaUploadPanel', () => {
     expect(screen.queryByLabelText('Media file')).not.toBeInTheDocument()
   })
 
-  it('offers the upload control before the review gate', () => {
-    renderPanel({ status: 'IN_REVIEW' })
+  it('offers the upload control before the item goes for review', () => {
+    renderPanel({ status: 'DRAFT' })
 
     expect(screen.getByRole('button', { name: 'Choose file' })).toBeInTheDocument()
+  })
+
+  it('offers it again once a reviewer sends it back', () => {
+    // Changes Requested is where an author is meant to work, so the pen comes back there.
+    renderPanel({ status: 'CHANGES_REQUESTED' })
+
+    expect(screen.getByRole('button', { name: 'Choose file' })).toBeInTheDocument()
+  })
+
+  it('locks media the moment it goes for review, not when it is approved', () => {
+    // It used to unlock here, so an author could swap the creative out from under whoever was reading
+    // it — and the approval that reviewer then gave attached to media they had never seen.
+    renderPanel({ status: 'IN_REVIEW' })
+
+    expect(screen.queryByRole('button', { name: 'Choose file' })).not.toBeInTheDocument()
+    expect(screen.getByText(/locked/i)).toBeInTheDocument()
   })
 
   // [auto] API errors surface verbatim

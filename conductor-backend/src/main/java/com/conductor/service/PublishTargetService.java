@@ -325,6 +325,10 @@ public class PublishTargetService {
             return sorted(existing);
         }
 
+        // Frozen while somebody is reading it, for the same reason the caption and media are: changing
+        // where a post goes is changing what is being approved.
+        publishBundleGuard.refuseTargetEditWhileFrozen(projectId, workItem);
+
         // Revoke and revert FIRST, in this transaction. A failed revocation throws and nothing below runs.
         publishBundleGuard.revertForBundleEdit(projectId, workItem);
 

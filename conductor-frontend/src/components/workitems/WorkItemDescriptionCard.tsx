@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader } from '@/components/ui/card'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiPatch } from '@/lib/api'
-import { isApprovedOrLater } from '@/components/workitems/MediaUploadPanel'
+import { isApprovedOrLater, isUnderReviewOrLater } from '@/components/workitems/MediaUploadPanel'
 import type { WorkflowView } from '@/types/workItem'
 
 export interface WorkItemDescriptionCardProps {
@@ -50,8 +50,15 @@ export function WorkItemDescriptionCard({
 
   const label = isCaption ? 'Caption' : 'Description'
   const noun = workflowView?.noun?.toLowerCase() ?? 'item'
+  const statusLabel = (workflowView?.statuses.find((s) => s.id === status)?.label ?? status ?? '')
+    .toLowerCase()
   // Editing the caption is a publish-bundle change, so an approved item goes back for review and
   // anything already handed to a platform is taken back down. Said before the edit, not after it.
+  // Exactly the review status. Past the gate an edit is still allowed and simply takes the approval
+  // back (revertsOnEdit below) — that is COND-23's specified behaviour, and refusing there instead would
+  // leave no way to fix an approved post at all.
+  const frozen =
+    isUnderReviewOrLater(workflowView, status) && !isApprovedOrLater(workflowView, status)
   const revertsOnEdit = isCaption && isApprovedOrLater(workflowView, status)
 
   async function save() {
@@ -76,7 +83,7 @@ export function WorkItemDescriptionCard({
     <Card>
       <CardHeader>
         <h2 className="text-sm font-medium text-foreground">{label}</h2>
-        {canEdit && !editing && (
+        {canEdit && !frozen && !editing && (
           <Button
             variant="ghost"
             size="sm"
@@ -90,6 +97,14 @@ export function WorkItemDescriptionCard({
           </Button>
         )}
       </CardHeader>
+
+      {frozen && !editing && (
+        <div className="px-4 pb-1 pt-0">
+          <p className="text-xs text-muted-foreground">
+            Locked while this {noun} is {statusLabel}. It has to be sent back for changes first.
+          </p>
+        </div>
+      )}
 
       {editing ? (
         <div className="space-y-3 px-4 py-3">

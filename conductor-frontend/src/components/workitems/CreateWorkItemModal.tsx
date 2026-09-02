@@ -17,6 +17,7 @@ import { Modal } from '@/components/ui/modal'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiPost } from '@/lib/api'
 import { humanizeId, workItemDetailPath } from '@/lib/workflows'
+import { workflowDeclaresPublishTargets } from '@/components/marketing/PostTargetPicker'
 import type { WorkflowView } from '@/types/workItem'
 
 interface CreatedWorkItem {
@@ -51,6 +52,9 @@ export function CreateWorkItemModal({
 }: CreateWorkItemModalProps) {
   const router = useRouter()
   const types = useMemo(() => workflowView?.types ?? [], [workflowView])
+  // Same rule the detail card uses: on a publishing Workflow this field is the text that goes out, so
+  // calling it a description here and a caption there would be two names for one thing.
+  const bodyLabel = workflowDeclaresPublishTargets(workflowView) ? 'Caption' : 'Description'
   const [type, setType] = useState('')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -145,12 +149,15 @@ export function CreateWorkItemModal({
 
         <div className="space-y-1">
           <label htmlFor="new-wi-description" className="block text-sm font-medium text-foreground">
-            Description <span className="text-muted-foreground">(optional)</span>
+            {bodyLabel} <span className="text-muted-foreground">(optional)</span>
           </label>
           <textarea
             id="new-wi-description"
             rows={3}
             value={description}
+            placeholder={
+              bodyLabel === 'Caption' ? `What should this ${noun.toLowerCase()} say?` : undefined
+            }
             onChange={(e) => setDescription(e.target.value)}
             className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />

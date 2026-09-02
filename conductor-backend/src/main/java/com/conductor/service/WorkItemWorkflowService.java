@@ -267,6 +267,14 @@ public class WorkItemWorkflowService {
                 if (!review.getBundleHash().equals(currentBundleHash)) {
                     continue;
                 }
+            } else if (review.getReviewRound() != null) {
+                // A null hash on a review that predates V115 is the legacy case, and is honoured — that is
+                // what the round being null identifies. A null hash on a *modern* review means something
+                // else entirely: it was given while the item carried no publish targets, so there was no
+                // bundle to bind to. Treating that as "skip the check" let an approval of an empty Post
+                // survive being given targets, media and a completely rewritten caption, and still open
+                // the gate. An approval given for no bundle cannot vouch for one.
+                continue;
             }
             if (satisfiesReviewerRole(projectId, review.getReviewerId(), transition)) {
                 return true;

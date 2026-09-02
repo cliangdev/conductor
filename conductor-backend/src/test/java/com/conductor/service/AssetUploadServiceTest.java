@@ -253,7 +253,7 @@ class AssetUploadServiceTest {
 
         assertThatThrownBy(() -> service.createFileAsset(PROJECT_ID, ITEM_ID, video("teaser.mp4"), caller()))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("In Review");
+                .hasMessageContaining("sent back for changes");
 
         verifyNoInteractions(storageService);
         verify(assetRepository, never()).save(any());
@@ -268,7 +268,7 @@ class AssetUploadServiceTest {
         assertThatThrownBy(() -> service.patchAsset(PROJECT_ID, ITEM_ID, "asset-1",
                 new AssetPatch("New label", null, null), caller()))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("In Review");
+                .hasMessageContaining("sent back for changes");
         verify(assetRepository, never()).save(any());
     }
 
@@ -280,7 +280,7 @@ class AssetUploadServiceTest {
 
         assertThatThrownBy(() -> service.deleteAsset(PROJECT_ID, ITEM_ID, "asset-1", caller()))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("In Review");
+                .hasMessageContaining("sent back for changes");
         verify(assetRepository, never()).delete(any());
     }
 
@@ -292,7 +292,7 @@ class AssetUploadServiceTest {
 
         assertThatThrownBy(() -> service.confirmUpload(PROJECT_ID, ITEM_ID, "asset-1", 10L, caller()))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("In Review");
+                .hasMessageContaining("sent back for changes");
     }
 
     @Test
@@ -304,8 +304,8 @@ class AssetUploadServiceTest {
     }
 
     @Test
-    void mutationSucceedsAgainAfterThePostIsRevertedToInReview() {
-        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("IN_REVIEW")));
+    void mutationSucceedsAgainOnceTheReviewerSendsItBack() {
+        when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(post("CHANGES_REQUESTED")));
         when(storageService.generateSignedUploadUrl(anyString(), anyString(), anyInt()))
                 .thenReturn("https://storage.example/signed-put");
 
@@ -317,8 +317,8 @@ class AssetUploadServiceTest {
     }
 
     @Test
-    void deleteSucceedsAgainAfterThePostIsRevertedToInReview() {
-        WorkItem inReview = post("IN_REVIEW");
+    void deleteSucceedsAgainOnceTheReviewerSendsItBack() {
+        WorkItem inReview = post("CHANGES_REQUESTED");
         when(workItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(inReview));
         Asset asset = pendingAsset("video/mp4");
         when(assetRepository.findByIdAndWorkItemId("asset-1", ITEM_ID)).thenReturn(Optional.of(asset));

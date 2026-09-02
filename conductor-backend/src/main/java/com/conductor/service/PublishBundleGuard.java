@@ -226,4 +226,96 @@ public class PublishBundleGuard {
         String slug = post.getWorkflow() != null ? post.getWorkflow() : WorkItemWorkflowService.DEFAULT_WORKFLOW;
         return resolver.resolveRequired(projectId, slug, post.getWorkflowVersion());
     }
+
+    /**
+     * The item's statechart, or null when it cannot be resolved.
+     *
+     * <p>The freeze guards run on every patch, including for projects whose Workflow was never seeded, so
+     * they must not be the thing that turns a missing Workflow into a failed edit. A workflow that cannot
+     * be resolved declares no review gate, and a workflow with no gate freezes nothing.
+     */
+    private Statechart statechartOrNull(String projectId, WorkItem post) {
+        try {
+            return resolveStatechart(projectId, post);
+        } catch (RuntimeException e) {
+            log.debug("No statechart for work item {}; nothing to freeze: {}", post.getId(), e.getMessage());
+            return null;
+        }
+    }
+    /**
+     * Refuses an edit to a Work Item that is under review.
+     *
+     * <p>The content freeze the review gate implies but did not enforce. Until now the review status was
+     * editable: an author could rewrite the caption, move the schedule or change the tags while a reviewer
+     * was reading, and the approval that reviewer gave — for what they had read — attached to whatever the
+     * item had become. The bundle hash caught that <em>after</em> approval, but nothing stopped the edit
+     * landing mid-read, and nothing at all covered an item whose review predated its publish targets.
+     *
+     * <p>Only fires for a genuine change. Re-sending the same caption is not an edit, and refusing it
+     * would break every client that PATCHes a whole object back.
+     *
+     * <p>Applies to every Workflow with a review gate, not just publishing ones: an Issue under review is
+     * being read by somebody too.
+     *
+     * @throws BusinessException naming the move that reopens it, since the author cannot revert it
+     */
+    public void refuseEditWhileFrozen(String projectId, WorkItem workItem, String description,
+                                           OffsetDateTime scheduledFor, String scheduleTimezone,
+                                           java.util.Collection<String> tags) {
+        Statechart statechart = statechartOrNull(projectId, workItem);
+        if (statechart == null
+                || !AssetUploadPolicy.isUnderReviewOrLater(statechart, workItem.getCurrentStatus())) {
+            return;
+        }
+        // Past the gate the existing revert path owns this: an edit there takes the approval back rather
+        // than being refused, which is the behaviour COND-23 specified and clients rely on.
+        if (!changesAnything(workItem, description, scheduledFor, scheduleTimezone, tags)) {
+            return;
+        }
+        String noun = statechart.noun();
+        String statusLabel = statechart.status(workItem.getCurrentStatus())
+                .map(StatechartStatus::displayLabel)
+                .orElse(workItem.getCurrentStatus());
+        throw new BusinessException("This " + noun + " is " + statusLabel + ", so its content is locked."
+                + " It has to be " + AssetUploadPolicy.reopenHint(statechart, workItem.getCurrentStatus()) + " before it can change.");
+    }
+
+    /**
+     * Refuses a change to where a Post publishes while it is under review.
+     *
+     * <p>Separate from {@link #refuseEditWhileUnderReview} only because the caller has already decided the
+     * selection differs — {@code PublishTargetService} diffs before it calls, and an unchanged re-save
+     * must stay a no-op rather than a refusal.
+     */
+    public void refuseTargetEditWhileFrozen(String projectId, WorkItem workItem) {
+        Statechart statechart = statechartOrNull(projectId, workItem);
+        if (statechart == null
+                || !AssetUploadPolicy.isUnderReviewOrLater(statechart, workItem.getCurrentStatus())) {
+            return;
+        }
+        String statusLabel = statechart.status(workItem.getCurrentStatus())
+                .map(StatechartStatus::displayLabel)
+                .orElse(workItem.getCurrentStatus());
+        throw new BusinessException("This " + statechart.noun() + " is " + statusLabel + ", so where it"
+                + " publishes is locked. It has to be " + AssetUploadPolicy.reopenHint(statechart, workItem.getCurrentStatus())
+                + " before its accounts can change.");
+    }
+
+    /** Whether the patch actually differs from what is stored — re-sending the same values is not an edit. */
+    private static boolean changesAnything(WorkItem workItem, String description,
+                                           OffsetDateTime scheduledFor, String scheduleTimezone,
+                                           java.util.Collection<String> tags) {
+        if (description != null && !description.equals(workItem.getDescription())) {
+            return true;
+        }
+        if (scheduledFor != null && !scheduledFor.isEqual(
+                workItem.getScheduledFor() == null ? scheduledFor.minusYears(1) : workItem.getScheduledFor())) {
+            return true;
+        }
+        if (scheduleTimezone != null && !scheduleTimezone.equals(workItem.getScheduleTimezone())) {
+            return true;
+        }
+        return tags != null && !new java.util.LinkedHashSet<>(tags).equals(workItem.getTags());
+    }
+
 }

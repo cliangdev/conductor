@@ -143,19 +143,65 @@ public final class AssetUploadPolicy {
     }
 
     /**
-     * Whether {@code statusId} sits at or beyond the workflow's review gate — the generic, definition-driven
-     * form of "Approved or later". No status list is hardcoded; the rule is derived from the published
-     * {@link Statechart} so any workflow (marketing, engineering, a custom one) gets the same semantics.
+     * How a frozen item is reopened, phrased for the person who just had an edit refused.
      *
-     * <p>The rule: take the review gate (the first {@code requiresReview} transition). Its {@code to} status
-     * is the approved status. A status is "approved or later" iff it is reachable from the approved status by
-     * following transitions <em>without ever entering the review status</em>. Excluding the review status
-     * from the walk is what makes the predicate meaningful in workflows that declare a "send back" edge
-     * (MARKETING's {@code APPROVED -> IN_REVIEW}); traversing it would otherwise drag every pre-gate status
-     * (DRAFT, CHANGES_REQUESTED) into the locked set.
+     * <p>Deliberately vague about the exact edge. An earlier version named the first non-gate transition
+     * out of the review status, which on ENGINEERING is a "Close" edge — so the refusal told people to
+     * close their issue in order to edit it. And from Approved the way back is two hops (send back, then
+     * request changes), which is more than a one-line refusal should try to narrate.
+     *
+     * <p>A terminal status has no way back at all, and says so rather than offering advice nobody can
+     * follow.
+     */
+    public static String reopenHint(Statechart chart, String statusId) {
+        if (chart == null || statusId == null) {
+            return "sent back for changes";
+        }
+        boolean terminal = chart.transitionsFrom(statusId).isEmpty()
+                || chart.status(statusId).map(StatechartStatus::terminal).orElse(false);
+        return terminal ? "reopened, which this status does not allow" : "sent back for changes";
+    }
+
+    /**
+     * Whether {@code statusId} sits strictly beyond the workflow's review gate — the generic,
+     * definition-driven form of "Approved or later".
+     * No status list is hardcoded; the rule is derived from the published {@link Statechart} so any
+     * workflow (marketing, engineering, a custom one) gets the same semantics.
+     *
+     * <p>The rule: a status is "approved or later" iff it is reachable from the gate's {@code to} status
+     * without ever entering the review status. Excluding the review status from the walk keeps a "send
+     * back" edge (MARKETING's {@code APPROVED -> IN_REVIEW}) from dragging the pre-review statuses into
+     * the set.
+     *
+     * <p>This is the <em>revert</em> boundary — where editing the publish bundle takes an approval back
+     * (see {@code PublishBundleGuard}). For the <em>content freeze</em>, which starts one status earlier,
+     * use {@link #isUnderReviewOrLater}.
      *
      * <p>A workflow with no {@code requiresReview} transition has no gate, so nothing is ever locked.
      */
+    /**
+     * Whether content is frozen at {@code statusId}: the review status itself, or anything past it.
+     *
+     * <p>One status earlier than {@link #isApprovedOrLater}, and the difference is the whole point. The
+     * review status used to be editable, so an author could rewrite the caption, swap the media or move
+     * the schedule out from under somebody who was reading it — and the approval that reviewer then gave,
+     * for what they had read, attached to something else entirely. Freezing at submit makes "request
+     * changes" the only way to reopen it, which is what a review is for: the reviewer decides when the
+     * author gets the pen back.
+     *
+     * <p>DRAFT and CHANGES_REQUESTED stay editable — they are where an author is meant to work.
+     */
+    public static boolean isUnderReviewOrLater(Statechart chart, String statusId) {
+        if (statusId == null) {
+            return false;
+        }
+        Optional<StatechartTransition> gate = reviewGate(chart);
+        if (gate.isPresent() && statusId.equals(gate.get().from())) {
+            return true;
+        }
+        return isApprovedOrLater(chart, statusId);
+    }
+
     public static boolean isApprovedOrLater(Statechart chart, String statusId) {
         if (statusId == null) {
             return false;

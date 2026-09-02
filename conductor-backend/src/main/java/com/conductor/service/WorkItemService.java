@@ -171,6 +171,12 @@ public class WorkItemService {
         // edit is applied, in this transaction. A failed revocation throws here, so the patch never commits.
         // Placement matters: `previousStatus` is read below, AFTER this, so on a revert it already reads
         // IN_REVIEW and the exit-from-scheduled unschedule further down does not fire a second time.
+        // Frozen while somebody is reading it. An author who could still rewrite the caption, move the
+        // schedule or swap the media out from under a reviewer would be handing them an approval for
+        // something else — so the reviewer decides when the pen comes back, by sending it back.
+        publishBundleGuard.refuseEditWhileFrozen(projectId, workItem, description, scheduledFor,
+                validatedTimezone, tags);
+
         Optional<PublishBundleGuard.Revert> bundleRevert = publishBundleGuard.revertForCaptionOrScheduleEdit(
                 projectId, workItem, description, scheduledFor, validatedTimezone);
 

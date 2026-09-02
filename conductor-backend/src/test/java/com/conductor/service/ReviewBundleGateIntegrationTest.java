@@ -112,7 +112,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
                 .isEqualTo(publishBundleHasher.hash(reload(post)));
         assertThat(targetStatuses(post)).contains("APPROVED");
 
-        editCaption("Rewritten caption");
+        reopenEditAndResubmit(() -> editCaption("Rewritten caption"));
 
         assertThat(targetStatuses(post)).doesNotContain("APPROVED");
         assertThatThrownBy(() -> moveTo(post, "APPROVED"))
@@ -142,7 +142,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
         reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewerA);
         assertThat(targetStatuses(post)).contains("APPROVED");
 
-        schedule(OffsetDateTime.of(2026, 9, 2, 14, 0, 0, 0, ZoneOffset.UTC));
+        reopenEditAndResubmit(() -> schedule(OffsetDateTime.of(2026, 9, 2, 14, 0, 0, 0, ZoneOffset.UTC)));
 
         assertThat(targetStatuses(post)).doesNotContain("APPROVED");
     }
@@ -153,7 +153,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
         moveTo(post, "IN_REVIEW");
         assignReviewer(reviewerA);
         reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewerA);
-        editCaption("Rewritten caption");
+        reopenEditAndResubmit(() -> editCaption("Rewritten caption"));
         assertThat(targetStatuses(post)).doesNotContain("APPROVED");
 
         reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "still good", reviewerA);
@@ -208,7 +208,8 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
         moveTo(post, "IN_REVIEW");
         recordLegacyReview(post, reviewerA);
 
-        editCaption("Rewritten caption");
+        // The edit itself is now refused under review, so the bundle changes the only way it can.
+        reopenEditAndResubmit(() -> editCaption("Rewritten caption"));
 
         assertThat(targetStatuses(post)).contains("APPROVED");
     }
@@ -234,10 +235,14 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
         assertThat(reload(issue).getCurrentReviewRound()).isZero();
         assertThat(targetStatuses(issue)).contains("DONE");
 
-        // Editing the body would revoke a bundle-bound approval; an ENGINEERING approval is unmoved.
-        workItemService.patchWorkItem(project.getId(), issue.getId(), null, "Reworded spec body", null, null,
-                null, null, admin);
+        // The freeze applies to every Workflow with a review gate, not just publishing ones — an Issue
+        // under review is being read by somebody too.
+        assertThatThrownBy(() -> workItemService.patchWorkItem(project.getId(), issue.getId(), null,
+                "Reworded spec body", null, null, null, null, admin))
+                .isInstanceOf(com.conductor.exception.BusinessException.class)
+                .hasMessageContaining("locked");
 
+        // ...and the approval, which was never bundle-bound, still opens the gate.
         assertThat(targetStatuses(issue)).contains("DONE");
         assertThatCode(() -> moveTo(issue, "DONE")).doesNotThrowAnyException();
     }
@@ -361,6 +366,20 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
         addUploadedAsset("teaser.png");
     }
 
+    /**
+     * The only way a bundle can change once an item is under review: a reviewer sends it back, the author
+     * edits, it goes in again. Content is frozen from the review status onward, so a direct edit is
+     * refused — every test below that used to edit in place now takes this path instead.
+     *
+     * <p>A plain status move does not bump the review round (only submitting CHANGES_REQUESTED does), so
+     * this still exercises the bundle-hash mechanism rather than short-circuiting it.
+     */
+    private void reopenEditAndResubmit(Runnable edit) {
+        moveTo(post, "CHANGES_REQUESTED");
+        edit.run();
+        moveTo(post, "IN_REVIEW");
+    }
+
     private void editCaption(String caption) {
         workItemService.patchWorkItem(project.getId(), post.getId(), null, caption, null, null, null, null, admin);
     }
@@ -413,7 +432,7 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
         reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewerA);
         assertThat(listedReviewOf(reviewerA).current()).isTrue();
 
-        editCaption("A different caption entirely");
+        reopenEditAndResubmit(() -> editCaption("A different caption entirely"));
 
         assertThat(listedReviewOf(reviewerA).current()).isFalse();
         // ...and the gate agrees, which is the whole point of computing it the same way.
@@ -439,6 +458,91 @@ class ReviewBundleGateIntegrationTest extends AbstractNoneWebIntegrationTest {
     void aReviewPredatingTheBundleHashIsStillReportedAsStanding() {
         // Null round and null hash skip both tests at the gate, so they must skip both here too — an
         // ENGINEERING review, or any written before V115, must not start reading as withdrawn.
+        moveTo(post, "IN_REVIEW");
+        assignReviewer(reviewerA);
+        recordLegacyReview(post, reviewerA);
+
+        assertThat(listedReviewOf(reviewerA).current()).isTrue();
+    }
+
+
+    // [auto] Content is frozen while somebody is reading it (the review freeze)
+
+    @Test
+    void anItemUnderReviewRefusesAnEditRatherThanQuietlyChangingUnderTheReviewer() {
+        // It used to allow it. An author could rewrite the caption while a reviewer was reading, and the
+        // approval that reviewer then gave — for what they had read — attached to something else.
+        addTarget("meta", "facebook", null);
+        moveTo(post, "IN_REVIEW");
+
+        assertThatThrownBy(() -> editCaption("Rewritten mid-review"))
+                .isInstanceOf(com.conductor.exception.BusinessException.class)
+                .hasMessageContaining("locked")
+                // Names the way back, since the author cannot reopen it themselves.
+                .hasMessageContaining("sent back for changes");
+
+        assertThat(reload(post).getDescription()).isEqualTo("Original caption");
+    }
+
+    @Test
+    void reSendingTheSameValuesUnderReviewIsNotAnEdit() {
+        // A client that PATCHes a whole object back must not be refused for changing nothing.
+        addTarget("meta", "facebook", null);
+        moveTo(post, "IN_REVIEW");
+
+        assertThatCode(() -> editCaption("Original caption")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void theAuthorGetsThePenBackOnceTheReviewerSendsItBack() {
+        addTarget("meta", "facebook", null);
+        moveTo(post, "IN_REVIEW");
+        moveTo(post, "CHANGES_REQUESTED");
+
+        assertThatCode(() -> editCaption("Now I can fix it")).doesNotThrowAnyException();
+        assertThat(reload(post).getDescription()).isEqualTo("Now I can fix it");
+    }
+
+    @Test
+    void anApprovedItemRefusesAnEditToo() {
+        // The freeze is uniform from the review status onward. It briefly was not — approved items still
+        // allowed an edit that reverted the approval — and that was incoherent: the revert lands the item
+        // back in review, which is itself frozen, so an author got exactly one edit and was then stuck.
+        completePublishBundle();
+        moveTo(post, "IN_REVIEW");
+        assignReviewer(reviewerA);
+        reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "ship it", reviewerA);
+        moveTo(post, "APPROVED");
+
+        assertThatThrownBy(() -> editCaption("Fixed a typo"))
+                .isInstanceOf(com.conductor.exception.BusinessException.class)
+                .hasMessageContaining("locked");
+        assertThat(reload(post).getCurrentStatus()).isEqualTo("APPROVED");
+    }
+
+    // [auto] An approval given for no bundle cannot vouch for one added afterwards
+
+    @Test
+    void anApprovalGivenBeforeThereWereAnyTargetsDoesNotOpenTheGateLater() {
+        // The hole this closes was reachable and total: approve an empty Post, then give it targets,
+        // media, a schedule and an entirely rewritten caption, and the stale approval still opened the
+        // gate — the item reached Approved carrying text nobody had ever reviewed.
+        moveTo(post, "IN_REVIEW");
+        assignReviewer(reviewerA);
+        reviewService.submitReview(project.getId(), post.getId(), "APPROVED", "looks fine", reviewerA);
+
+        // Everything the gate wants, all of it arriving after the approval — via the only route the
+        // freeze leaves open, which is exactly how a real author would get there.
+        reopenEditAndResubmit(this::completePublishBundle);
+
+        assertThat(targetStatuses(reload(post))).doesNotContain("APPROVED");
+        assertThat(listedReviewOf(reviewerA).current()).isFalse();
+    }
+
+    @Test
+    void aReviewPredatingTheBundleHashIsStillHonoured() {
+        // Null round AND null hash is the legacy shape, and it must keep working — an ENGINEERING review,
+        // or any written before V115, is not the same thing as one given for an empty bundle.
         moveTo(post, "IN_REVIEW");
         assignReviewer(reviewerA);
         recordLegacyReview(post, reviewerA);

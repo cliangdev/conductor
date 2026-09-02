@@ -353,16 +353,18 @@ public class AssetService {
      */
     private void guardFileAssetMutable(String projectId, WorkItem workItem) {
         Statechart statechart = resolveStatechart(projectId, workItem);
-        if (!AssetUploadPolicy.isApprovedOrLater(statechart, workItem.getCurrentStatus())) {
+        if (!AssetUploadPolicy.isUnderReviewOrLater(statechart, workItem.getCurrentStatus())) {
             return;
         }
         String noun = statechart.noun();
         String statusLabel = statechart.status(workItem.getCurrentStatus())
                 .map(s -> s.displayLabel())
                 .orElse(workItem.getCurrentStatus());
+        // Names the move, not a status: the author cannot revert it themselves once it is under review,
+        // so "revert it to In Review" was advice they could not act on — and In Review is now locked too.
         throw new BusinessException("Assets are locked once this " + noun + " is " + statusLabel
-                + ". Revert the " + noun + " to " + AssetUploadPolicy.reviewStatusLabel(statechart)
-                + " first, then change its assets.");
+                + ". It has to be " + AssetUploadPolicy.reopenHint(statechart, workItem.getCurrentStatus())
+                + " before its assets can change.");
     }
 
     private void requireFileAsset(Asset asset) {

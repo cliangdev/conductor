@@ -120,6 +120,36 @@ export function isApprovedOrLater(view: WorkflowView | undefined, statusId: stri
   if (!view || !statusId) return false
   const gate = view.transitions.find((t) => t.requiresReview)
   if (!gate || statusId === gate.from) return false
+  return reachableFromApproved(view, gate, statusId)
+}
+
+/**
+ * Client-side mirror of AssetUploadPolicy.isUnderReviewOrLater: the content freeze, which starts one
+ * status earlier than the revert boundary above — at the review status itself.
+ *
+ * A Work Item under review is being read by somebody. Letting its author rewrite the caption, swap the
+ * media or move the schedule mid-read hands that reviewer an approval for something they never saw, so
+ * the reviewer decides when the pen comes back, by sending it back. DRAFT and CHANGES_REQUESTED stay
+ * editable — that is where an author is meant to work.
+ *
+ * The backend refuses the mutation regardless; this only decides what the UI offers.
+ */
+export function isUnderReviewOrLater(
+  view: WorkflowView | undefined,
+  statusId: string | undefined
+): boolean {
+  if (!view || !statusId) return false
+  const gate = view.transitions.find((t) => t.requiresReview)
+  if (!gate) return false
+  if (statusId === gate.from) return true
+  return reachableFromApproved(view, gate, statusId)
+}
+
+function reachableFromApproved(
+  view: WorkflowView,
+  gate: { from: string; to: string },
+  statusId: string
+): boolean {
 
   const seen = new Set([gate.to])
   const frontier = [gate.to]
@@ -233,7 +263,7 @@ export function MediaUploadPanel({
   const [dragging, setDragging] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const locked = isApprovedOrLater(workflowView, status)
+  const locked = isUnderReviewOrLater(workflowView, status)
   const selectedType = assetType
   const mediaAssets = assets.filter((a) => a.kind === 'file')
 

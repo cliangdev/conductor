@@ -28,6 +28,22 @@ enforced. Passing it requires:
 - media that each selected platform will actually accept (`MediaTargetValidator`),
 - for an API TikTok target: a privacy level, and the creator's recorded consent.
 
+## Content freezes when it goes for review
+
+Everything a review is about — the caption, the media, the schedule, the destinations — is frozen from
+the moment the item enters its review status, and stays frozen through Approved, Scheduled and
+Published. The only way to change any of it is for a reviewer to send it back; from Changes Requested
+the author has the pen again.
+
+This is not merely tidiness. It was briefly the other way, and the gap was real: an author could rewrite
+the caption while a reviewer was reading, and the approval that reviewer then gave — for what they had
+read — attached to something else. Freezing at submit means an approval always describes the thing that
+was approved, and "send it back" is the reviewer's decision rather than the author's.
+
+The rule is derived from the Workflow, not hardcoded: the freeze covers the review status and everything
+reachable past the gate, so Draft and Changes Requested stay editable and a Workflow with no review gate
+freezes nothing.
+
 Everything after approval is bound to what was approved. `reviews.bundle_hash` is a SHA-256 over the
 caption, fire time, targets and uploaded assets; changing any of them reverts the Post to review and
 revokes anything already handed to a platform. That is why editing a schedule after approval sends the

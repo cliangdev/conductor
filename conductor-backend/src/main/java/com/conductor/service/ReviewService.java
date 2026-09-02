@@ -201,9 +201,12 @@ public class ReviewService {
         WorkItem workItem = workItemRepository.findById(workItemId)
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
         List<Review> reviews = reviewRepository.findAllByWorkItemId(workItemId);
-        // Hashed at most once for the whole listing, and only when some review is actually hash-bound —
-        // the same economy the gate itself applies.
-        String currentBundleHash = reviews.stream().anyMatch(r -> r.getBundleHash() != null)
+        // Hashed at most once for the whole listing, and keyed on whether the ITEM has a bundle — not on
+        // whether some review already carries a hash. Keying on the reviews left a hole: an item approved
+        // while it had no publish targets has only null-hash reviews, so the hash was never computed, so
+        // "does this review still stand?" answered yes forever, even after targets, media and a rewritten
+        // caption arrived. That is precisely the case the gate refuses, and the two must not disagree.
+        String currentBundleHash = publishBundleHasher.appliesTo(workItem)
                 ? publishBundleHasher.hash(workItem)
                 : null;
         return reviews.stream()
@@ -226,7 +229,12 @@ public class ReviewService {
         if (review.getReviewRound() != null && review.getReviewRound() != currentRound) {
             return false;
         }
-        return review.getBundleHash() == null || review.getBundleHash().equals(currentBundleHash);
+        if (review.getBundleHash() != null) {
+            return review.getBundleHash().equals(currentBundleHash);
+        }
+        // No hash. Legacy (pre-V115, null round) is honoured; a modern review with no hash was given
+        // when the item had no bundle to bind to, and cannot vouch for the one it has now.
+        return review.getReviewRound() == null || currentBundleHash == null;
     }
 
     private ReviewWithUser toReviewWithUser(Review review, int currentRound, String currentBundleHash) {

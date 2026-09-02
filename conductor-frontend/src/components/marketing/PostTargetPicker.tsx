@@ -26,7 +26,7 @@ import { statusHueClasses } from '@/components/ui/status-badge'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPut } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { isApprovedOrLater } from '@/components/workitems/MediaUploadPanel'
+import { isApprovedOrLater, isUnderReviewOrLater } from '@/components/workitems/MediaUploadPanel'
 import {
   EMPTY_TIKTOK_OPTIONS,
   TikTokPublishOptions,
@@ -342,6 +342,8 @@ export function PostTargetPicker({
   }, [tiktokTargets, onTikTokChange])
 
   const revertsOnEdit = isApprovedOrLater(workflowView, status)
+  // Frozen while somebody is reading it: changing where a post goes is changing what is being approved.
+  const frozen = isUnderReviewOrLater(workflowView, status) && !revertsOnEdit
   const noun = workflowView?.noun ?? 'Post'
 
   if (loading) {
@@ -388,6 +390,14 @@ export function PostTargetPicker({
 
       {!loadError && groups.length > 0 && (
         <>
+          {frozen && (
+            <div className="px-4 pt-3">
+              <Alert variant="info">
+                Locked while this {noun} is being reviewed — it has to be sent back for changes before its
+                accounts can change.
+              </Alert>
+            </div>
+          )}
           {revertsOnEdit && (
             <div className="px-4 pt-3">
               <Alert variant="warning">
@@ -396,7 +406,7 @@ export function PostTargetPicker({
               </Alert>
             </div>
           )}
-          <fieldset disabled={saving} className="divide-y divide-border">
+          <fieldset disabled={saving || frozen} className="divide-y divide-border">
             <legend className="sr-only">Publishing accounts</legend>
             {groups.map((group) => (
               <div key={group.platform} className="py-1.5">

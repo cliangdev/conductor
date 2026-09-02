@@ -80,7 +80,7 @@ const TOOLS = [
         workflow: { type: 'string', description: 'Lifecycle Workflow slug that governs this Work Item (required). Discover with list_workflows({kind:"LIFECYCLE"}).' },
         type: { type: 'string', description: 'Work Item type, validated against the chosen Workflow\'s allowed types (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
         title: { type: 'string', description: 'Work Item title' },
-        description: { type: 'string', description: 'Work Item description (optional)' },
+        description: { type: 'string', description: 'Work Item description (optional). On a publishing Workflow this is the caption — the text that goes out to the platform — not a note about the item.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
       },
       required: ['workflow', 'type', 'title'],
