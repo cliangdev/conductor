@@ -42,6 +42,10 @@ tags:
     description: User-managed named AI Agents and per-provider BYO credentials
   - name: runtime-targets
     description: Project-owned runtime targets for claude-code workflow steps (BYO Cloud Run)
+  - name: conversations
+    description: >-
+      Conversations with an addressable Agent (e.g. the project's CEO coordinator) -- create a
+      conversation, post messages, and poll for the agent's reply.
   - name: knowledge
     description: >-
       Knowledge Center: the ingestion inbox (knowledge sources) and the OKF wiki bundle (knowledge pages)
@@ -51,6 +55,10 @@ tags:
       Read-only observability over the source-to-wiki-page pipeline (webhooks, connector feeds/digests,
       the ingestion inbox, librarian runs, and the pages they produce) — a query-side view across those
       bounded contexts, not a new mutation surface. See issue #342.
+  - name: memory
+    description: >-
+      Workspace-scoped agent memory: durable facts, decisions, preferences and events extracted from
+      agent conversations.
 
 paths:
   /health:
@@ -4885,6 +4893,44 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
+  /projects/{projectId}/agents/providers/{provider}/models:
+    get:
+      tags: [agents]
+      summary: List the models a provider currently supports
+      description: >-
+        Live model discovery for the Agents form's model picker. Returns every general-purpose chat
+        model the account can currently use — including cheaper/specialized tiers (e.g. `-mini`,
+        `-codex`) and dated snapshots that are real, pinnable choices but never the blank-model default.
+        `latest: true` marks the newest general-purpose flagship — the id a blank-model agent resolves
+        to for providers whose default tracks discovery (see `AgentProviderInfo.defaultModelIsLive`); at
+        most one returned model has `latest: true`, and none does if no candidate qualifies as a
+        flagship. Returns an empty list — never an error — when the provider is unknown, has no stored
+        BYO credential for this project, or its discovery call fails or reports nothing; callers should
+        fall back to free text, not treat an empty list as failure.
+      operationId: listProviderModels
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: provider
+          in: path
+          required: true
+          schema: {type: string}
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderModelsResponse'
+        '401':
+          description: Unauthenticated
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /projects/{projectId}/agents/providers/credentials:
     get:
       tags: [agents]
@@ -5103,6 +5149,208 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           description: runtimeTargetId doesn't name a runtime target in this project
+
+  /projects/{projectId}/conversations:
+    post:
+      tags: [conversations]
+      summary: Create a conversation with an addressable agent
+      description: >-
+        Creates a new conversation on the api channel. agentName is optional -- when omitted, resolves
+        to the project's default CEO coordinator agent. Resolution matches by slug (case-insensitive)
+        first, then display name, among ACTIVE agents opted into direct addressing
+        (configJson.addressable=true).
+      operationId: createConversation
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConversationRequest'
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: >-
+            agentName doesn't resolve to exactly one addressable agent, or (when omitted) the project
+            has no CEO agent yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: agentName matches multiple addressable agents by display name, with no exact-slug tiebreak
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    get:
+      tags: [conversations]
+      summary: List conversations in the project
+      operationId: listConversations
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, default: 20, minimum: 1, maximum: 100}
+        - name: cursor
+          in: query
+          required: false
+          description: >-
+            Opaque keyset-pagination cursor from a previous response's nextCursor. Omit for the first
+            page. Pass the value back verbatim -- never construct or parse one; its shape may change.
+          schema: {type: string}
+      responses:
+        '200':
+          description: Conversations, most recently active first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/conversations/{conversationId}:
+    get:
+      tags: [conversations]
+      summary: Get one conversation
+      operationId: getConversation
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: conversationId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /projects/{projectId}/conversations/{conversationId}/messages:
+    get:
+      tags: [conversations]
+      summary: List messages in a conversation, chronological
+      operationId: listConversationMessages
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: conversationId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, default: 50, minimum: 1, maximum: 200}
+        - name: cursor
+          in: query
+          required: false
+          description: >-
+            Opaque keyset-pagination cursor from a previous response's nextCursor. Omit for the first
+            page. Pass the value back verbatim -- never construct or parse one; its shape may change.
+          schema: {type: string}
+      responses:
+        '200':
+          description: Messages, oldest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationMessageListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [conversations]
+      summary: Post a message and run the agent's reply
+      description: >-
+        Appends a USER message, then runs the conversation's agent synchronously up to a 90s budget. If
+        the agent hasn't finished by then, assistantMessage is returned with status PENDING -- the run
+        keeps completing it in the background; poll GET .../messages to see the final result.
+        Server-sent events are a future upgrade for this. Only one turn may be in flight per
+        conversation at a time.
+      operationId: postConversationMessage
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: conversationId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostMessageRequest'
+      responses:
+        '200':
+          description: The posted user message and the agent's reply (possibly still PENDING)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostMessageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: A turn is already in progress for this conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /projects/{projectId}/knowledge/sources:
     post:
@@ -5746,6 +5994,214 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/memories:
+    get:
+      tags: [memory]
+      summary: List a project's agent memories
+      description: >-
+        Filtered, paginated listing of durable agent memory -- facts, decisions, preferences and events
+        extracted from agent conversations, plus human-authored entries. `status` is the derived
+        tri-state (`raw`/`active`/`superseded`), not the stored entity status -- a closed row (`validTo`
+        set) always reports `superseded` regardless of which of raw/active it was before closing.
+      operationId: listMemories
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: q
+          in: query
+          required: false
+          description: Optional full-text search over memory content.
+          schema: {type: string}
+        - name: status
+          in: query
+          required: false
+          description: One of raw, active, superseded.
+          schema: {type: string}
+        - name: type
+          in: query
+          required: false
+          description: One of fact, decision, preference, event.
+          schema: {type: string}
+        - name: agentId
+          in: query
+          required: false
+          schema: {type: string}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, default: 50, minimum: 1, maximum: 200}
+        - name: offset
+          in: query
+          required: false
+          schema: {type: integer, default: 0, minimum: 0}
+      responses:
+        '200':
+          description: Matching memories, most recent first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryListResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [memory]
+      summary: Manually create an agent memory
+      description: >-
+        Human-authored memory -- lands ACTIVE immediately (no consolidation pass) and carries no agent
+        attribution (`agentId`/`sourceConversationId` are null), distinct from the RAW extractions an
+        agent's post-turn pipeline writes.
+      operationId: createMemory
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryCreateRequest'
+      responses:
+        '201':
+          description: The created memory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/memories/counts:
+    get:
+      tags: [memory]
+      summary: Memory counts by lifecycle bucket
+      description: Cheap summary for a UI badge -- live total plus the raw/consolidated/superseded breakdown.
+      operationId: getMemoryCounts
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Memory counts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryCounts'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /projects/{projectId}/memories/{memoryId}:
+    get:
+      tags: [memory]
+      summary: Get one memory, with its supersession history
+      operationId: getMemory
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: memoryId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: The memory, with its supersession ancestors
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryDetailView'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [memory]
+      summary: Partially update a memory
+      description: >-
+        All-optional partial update -- omit a field to leave it unchanged. Rejected once the memory's
+        validity window is closed (`superseded`); a closed row is history, not a live document.
+      operationId: updateMemory
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: memoryId
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryUpdateRequest'
+      responses:
+        '200':
+          description: The updated memory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The memory's validity window is already closed (superseded) -- it can no longer be edited.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [memory]
+      summary: Hard-delete a memory
+      operationId: deleteMemory
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema: {type: string}
+        - name: memoryId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '204':
+          description: Deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
 components:
   responses:
@@ -8119,6 +8575,12 @@ components:
             Pins the runtime that executes this agent's workflow steps ("api": in-process ReAct
             loop; "claude-code": headless Claude Code container). Omit to auto-detect from the
             project's configured credentials -- see docs/workflows.md#agent--run-an-ai-agent.
+        addressable:
+          type: boolean
+          description: >-
+            True when a human can talk to this agent directly in a conversation (Discord's /ask,
+            the conversation REST API) by name or slug -- opt-in per agent. An agent with this
+            false is still runnable from a workflow step; it just isn't a conversation target.
 
     AgentResponse:
       type: object
@@ -8134,6 +8596,7 @@ components:
         - createdAt
         - updatedAt
         - isDefault
+        - addressable
       properties:
         id:
           type: string
@@ -8188,6 +8651,13 @@ components:
             created by a project member. Deleting a default agent is allowed -- it is recreated the
             next time the owning feature self-heals (e.g. a knowledge settings save, or the next
             librarian dispatch).
+        addressable:
+          type: boolean
+          description: >-
+            True when a human can talk to this agent directly in a conversation (Discord's /ask,
+            the conversation REST API) by name or slug -- set via config.addressable, opt-in per
+            agent. An agent with this false is still runnable from a workflow step; it just isn't a
+            conversation target.
         createdAt:
           type: string
           format: date-time
@@ -8415,6 +8885,7 @@ components:
       type: object
       required:
         - id
+        - defaultModelIsLive
       properties:
         id:
           type: string
@@ -8423,6 +8894,36 @@ components:
           type: string
           nullable: true
           description: The model used when an agent does not pin one.
+        defaultModelIsLive:
+          type: boolean
+          description: >-
+            Whether `defaultModel` tracks live model discovery (true — a blank model always resolves to
+            whatever the provider currently reports as newest) or is a fixed constant (false). Lets the
+            Agents form phrase the blank-model hint correctly per provider instead of implying every
+            provider's blank-model behavior tracks new releases.
+
+    ProviderModelsResponse:
+      type: object
+      required:
+        - models
+      properties:
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderModelInfo'
+
+    ProviderModelInfo:
+      type: object
+      required:
+        - id
+        - latest
+      properties:
+        id:
+          type: string
+          description: Model id, as accepted by the provider's model field.
+        latest:
+          type: boolean
+          description: True for the provider's own pick of "the newest model I currently support" (at most one per response).
 
     KnowledgeSourceStatus:
       type: string
@@ -9013,3 +9514,280 @@ components:
           type: array
           items:
             type: string
+
+    CreateConversationRequest:
+      type: object
+      properties:
+        agentName:
+          type: string
+          description: >-
+            Target agent's slug or display name. Omit for the project's default CEO coordinator agent.
+        title:
+          type: string
+
+    ConversationResponse:
+      type: object
+      required:
+        - id
+        - agentId
+        - agentName
+        - agentSlug
+        - channel
+        - createdAt
+        - lastMessageAt
+      properties:
+        id:
+          type: string
+        agentId:
+          type: string
+        agentName:
+          type: string
+        agentSlug:
+          type: string
+        channel:
+          type: string
+          description: Always "api" for a REST-created conversation.
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastMessageAt:
+          type: string
+          format: date-time
+
+    ConversationListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationResponse'
+        nextCursor:
+          type: string
+          nullable: true
+          description: >-
+            Opaque cursor for the next page, via the cursor query parameter. Absent/null when this is
+            the last page.
+
+    ConversationMessageResponse:
+      type: object
+      required:
+        - id
+        - role
+        - content
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [USER, ASSISTANT]
+        content:
+          type: string
+        status:
+          type: string
+          enum: [PENDING, COMPLETED, FAILED]
+        agentRunId:
+          type: string
+        authorLabel:
+          type: string
+        errorReason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ConversationMessageListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationMessageResponse'
+        nextCursor:
+          type: string
+          nullable: true
+          description: >-
+            Opaque cursor for the next page, via the cursor query parameter. Absent/null when this is
+            the last page.
+
+    PostMessageRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          maxLength: 8000
+
+    PostMessageResponse:
+      type: object
+      required: [userMessage, assistantMessage]
+      properties:
+        userMessage:
+          $ref: '#/components/schemas/ConversationMessageResponse'
+        assistantMessage:
+          description: >-
+            The agent's reply, reserved atomically alongside userMessage so it always exists in the
+            response -- status PENDING when the 90s response budget expires before the run finishes.
+            Poll GET .../messages to see it reach its final status.
+          allOf:
+            - $ref: '#/components/schemas/ConversationMessageResponse'
+
+    MemoryType:
+      type: string
+      description: What kind of thing a memory records.
+      enum: [fact, decision, preference, event]
+
+    MemoryStatus:
+      type: string
+      description: >-
+        The view's derived tri-state, not the stored entity status -- `superseded` means the memory's
+        validity window is closed (`validTo` set), regardless of whether it was `raw` or `active` before
+        closing.
+      enum: [raw, active, superseded]
+
+    MemoryView:
+      type: object
+      required:
+        - id
+        - content
+        - type
+        - status
+        - importance
+        - validFrom
+        - accessCount
+        - createdAt
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        type:
+          $ref: '#/components/schemas/MemoryType'
+        status:
+          $ref: '#/components/schemas/MemoryStatus'
+        importance:
+          type: integer
+          minimum: 1
+          maximum: 10
+        agentId:
+          type: string
+          nullable: true
+          description: Null for human-authored (manually created) memories.
+        sourceConversationId:
+          type: string
+          nullable: true
+        validFrom:
+          type: string
+          format: date-time
+        validTo:
+          type: string
+          format: date-time
+          nullable: true
+        supersededBy:
+          type: string
+          nullable: true
+          description: Id of the memory that replaced this one, when superseded.
+        promotedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When a RAW extraction was promoted to ACTIVE by consolidation. Null for rows that were never RAW.
+        accessCount:
+          type: integer
+        lastAccessedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    MemoryDetailView:
+      description: A single memory plus its supersession chain.
+      allOf:
+        - $ref: '#/components/schemas/MemoryView'
+        - type: object
+          required:
+            - history
+          properties:
+            history:
+              type: array
+              description: Supersession ancestors of this memory, newest first. Empty when never superseded.
+              items:
+                $ref: '#/components/schemas/MemoryView'
+
+    MemoryListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryView'
+        total:
+          type: integer
+          format: int64
+
+    MemoryCounts:
+      type: object
+      description: Memory counts by lifecycle bucket -- for a UI badge without a full list call.
+      required:
+        - liveTotal
+        - raw
+        - consolidated
+        - superseded
+      properties:
+        liveTotal:
+          type: integer
+          format: int64
+          description: raw + consolidated (active) -- the count of rows with an open validity window.
+        raw:
+          type: integer
+          format: int64
+        consolidated:
+          type: integer
+          format: int64
+        superseded:
+          type: integer
+          format: int64
+
+    MemoryCreateRequest:
+      type: object
+      required:
+        - content
+        - type
+      properties:
+        content:
+          type: string
+          maxLength: 2000
+        type:
+          $ref: '#/components/schemas/MemoryType'
+        importance:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+
+    MemoryUpdateRequest:
+      type: object
+      description: All-optional partial update -- omit a field to leave it unchanged.
+      properties:
+        content:
+          type: string
+          maxLength: 2000
+          nullable: true
+        type:
+          allOf:
+            - $ref: '#/components/schemas/MemoryType'
+          nullable: true
+        importance:
+          type: integer
+          minimum: 1
+          maximum: 10
+          nullable: true

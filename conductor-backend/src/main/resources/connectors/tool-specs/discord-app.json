@@ -1,0 +1,5 @@
+{
+  "description": "Inbound Discord slash command (/ask) that lets guild members ask a project agent questions, threading each conversation's replies.",
+  "actions": [],
+  "operations": []
+}

@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -73,20 +74,20 @@ public class WebhookReceiverController {
 
     /** App-level form: no connectionId in the URL — the connector routes by payload. */
     @PostMapping("/webhooks/{connectorId}")
-    public ResponseEntity<Void> receiveAppLevel(@PathVariable String connectorId,
-                                                HttpServletRequest request) {
+    public ResponseEntity<String> receiveAppLevel(@PathVariable String connectorId,
+                                                  HttpServletRequest request) {
         return receive(connectorId, null, request);
     }
 
     /** Per-connection form: the URL selects the instance. */
     @PostMapping("/webhooks/{connectorId}/{connectionId}")
-    public ResponseEntity<Void> receiveWebhook(@PathVariable String connectorId,
-                                               @PathVariable String connectionId,
-                                               HttpServletRequest request) {
+    public ResponseEntity<String> receiveWebhook(@PathVariable String connectorId,
+                                                 @PathVariable String connectionId,
+                                                 HttpServletRequest request) {
         return receive(connectorId, connectionId, request);
     }
 
-    private ResponseEntity<Void> receive(String connectorId, String urlConnectionId, HttpServletRequest request) {
+    private ResponseEntity<String> receive(String connectorId, String urlConnectionId, HttpServletRequest request) {
         // Raw bytes are mandatory for correct HMAC verification — never parse the body first.
         byte[] rawBody;
         try {
@@ -129,11 +130,22 @@ public class WebhookReceiverController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
+        // Provider-specific synchronous ack (Discord PONG/deferred-ack, Slack url_verification, ...). See
+        // WebhookConnector#synchronousResponse's javadoc for the full consumed=true/false contract.
+        // consumed=true short-circuits here, before dedup/persist/dispatch ever run. consumed=false (or
+        // absent) falls through to the normal pipeline below, which decides its own 200 at every return
+        // point via okWithBody so the sync body (if any) still reaches the provider.
+        Optional<WebhookConnector.WebhookSyncResponse> syncResponse =
+                connector.synchronousResponse(rawBody, headers, verifyCtx);
+        if (syncResponse.isPresent() && syncResponse.get().consumed()) {
+            return jsonResponse(syncResponse.get().jsonBody());
+        }
+
         String eventType = connector.extractEventType(headers, rawBody);
 
         // App-level lifecycle hook (install/uninstall, etc.). If fully consumed, skip routing + dispatch.
         if (urlConnectionId == null && connector.handleLifecycle(rawBody, headers, eventType)) {
-            return ResponseEntity.ok().build();
+            return okWithBody(syncResponse);
         }
 
         if (routing != null) {
@@ -144,10 +156,10 @@ public class WebhookReceiverController {
             targets = connectionService.getById(urlConnectionId, connectorId).map(List::of).orElse(List.of());
         } else {
             // App-level, no routing, not consumed by lifecycle → nothing to do (accept-and-ignore).
-            return ResponseEntity.ok().build();
+            return okWithBody(syncResponse);
         }
         if (targets.isEmpty()) {
-            return ResponseEntity.ok().build(); // no connection matched this delivery
+            return okWithBody(syncResponse); // no connection matched this delivery
         }
 
         String deliveryId = connector.extractDeliveryId(headers, rawBody);
@@ -172,7 +184,20 @@ public class WebhookReceiverController {
             dispatchService.dispatch(saved);
         }
 
-        return ResponseEntity.ok().build();
+        return okWithBody(syncResponse);
+    }
+
+    /** Every 200-return point in {@link #receive} funnels through here: an empty body, unless a {@code
+     *  consumed=false} {@link WebhookConnector.WebhookSyncResponse} is in play, in which case its {@code
+     *  jsonBody} is attached regardless of which branch the pipeline took underneath -- the provider
+     *  still needs its synchronous acknowledgment body no matter how routing/dedup resolved. (A {@code
+     *  consumed=true} response never reaches here -- it returns immediately where it's detected, above.) */
+    private ResponseEntity<String> okWithBody(Optional<WebhookConnector.WebhookSyncResponse> syncResponse) {
+        return syncResponse.map(r -> jsonResponse(r.jsonBody())).orElseGet(() -> ResponseEntity.ok().build());
+    }
+
+    private ResponseEntity<String> jsonResponse(String jsonBody) {
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(jsonBody);
     }
 
     private HttpHeaders extractHeaders(HttpServletRequest request) {

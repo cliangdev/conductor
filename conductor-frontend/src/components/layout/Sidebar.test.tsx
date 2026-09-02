@@ -132,6 +132,8 @@ describe('Sidebar', () => {
     render(<Sidebar />)
     // The "Issues" fallback no longer exists — dynamic nav only. Check always-visible links.
     expect(screen.getByRole('link', { name: /docs/i })).toHaveAttribute('href', '/app/projects/proj-1/docs')
+    expect(screen.getByRole('link', { name: /^knowledge$/i })).toHaveAttribute('href', '/app/projects/proj-1/knowledge')
+    expect(screen.getByRole('link', { name: /^memory$/i })).toHaveAttribute('href', '/app/projects/proj-1/memory')
     expect(screen.getByRole('link', { name: /workflows/i })).toHaveAttribute('href', '/app/projects/proj-1/workflows')
     expect(screen.getByRole('link', { name: /agents/i })).toHaveAttribute('href', '/app/projects/proj-1/agents')
     expect(screen.getByRole('link', { name: /integrations/i })).toHaveAttribute('href', '/app/projects/proj-1/integrations')
@@ -285,7 +287,7 @@ describe('Sidebar', () => {
 
   it('shows 8 or fewer top-level sidebar rows with no sidebar-enabled Work nav', () => {
     render(<Sidebar />)
-    // Docs, Knowledge (Workspace) + Workflows, Agents, Integrations (Automation) + Settings door.
+    // Docs, Knowledge, Memory (Workspace) + Workflows, Agents, Integrations (Automation) + Settings door.
     expect(screen.getAllByRole('link').length).toBeLessThanOrEqual(8)
   })
 

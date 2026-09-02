@@ -58,6 +58,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -350,6 +351,40 @@ class IntegrationControllerTest {
                 .andExpect(status().isBadRequest());
 
         verify(connectionService, never()).storeTokens(any(), any(), any(), any());
+    }
+
+    // ---- createConnection (onConnectionCreated hook) ----
+
+    @Test
+    void createConnection_onConnectionCreatedThrows_deletesConnectionAndReturns400() throws Exception {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "member-user-id"))
+                .thenReturn(Optional.of(memberWithRole(MemberRole.CREATOR)));
+
+        Connector connector = mock(Connector.class);
+        when(connector.getSpec()).thenReturn(ConnectorSpec.apiKey(false, List.of()));
+        when(connectorRegistry.getById(GCP_SA_CONNECTOR_ID)).thenReturn(Optional.of(connector));
+
+        Connection created = new Connection();
+        created.setId("conn-hook-1");
+        created.setConnectorId(GCP_SA_CONNECTOR_ID);
+        when(connectionService.create(eq(PROJECT_ID), eq(GCP_SA_CONNECTOR_ID), eq(AuthType.API_KEY),
+                isNull(), eq("member-user-id"))).thenReturn(created);
+
+        com.conductor.integration.ConnectionContext ctx = com.conductor.integration.ConnectionContext.of(
+                PROJECT_ID, GCP_SA_CONNECTOR_ID, "conn-hook-1", null, null);
+        when(connectionService.toContext(created)).thenReturn(ctx);
+        doThrow(new RuntimeException("vendor-side setup failed"))
+                .when(connector).onConnectionCreated(eq(created), eq(ctx));
+
+        mockMvc.perform(post("/api/v1/projects/" + PROJECT_ID + "/integrations/"
+                        + GCP_SA_CONNECTOR_ID + "/connections")
+                        .header("Authorization", "Bearer member-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Connection setup failed: vendor-side setup failed"));
+
+        verify(connectionService).delete("conn-hook-1");
     }
 
     // ---- deleteConnection ----

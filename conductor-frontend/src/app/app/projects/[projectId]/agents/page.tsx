@@ -9,6 +9,7 @@ import { ArrowRightIcon, BotIcon } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 import { listAgents, type Agent } from '@/lib/api'
 import { DefaultAgentBadge } from '@/components/agents/DefaultAgentBadge'
+import { AddressableBadge } from '@/components/agents/AddressableBadge'
 import { AgentAvatar } from '@/components/agents/AgentAvatar'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -87,6 +88,7 @@ export default function AgentsPage() {
                 <AgentAvatar emoji={agent.avatarEmoji} color={agent.avatarColor} size="sm" />
                 <span className="font-medium text-foreground truncate">{agent.name}</span>
                 {agent.isDefault && <DefaultAgentBadge />}
+                {agent.addressable && <AddressableBadge />}
                 {agent.tag && <TagBadge tag={agent.tag} />}
               </div>
               {agent.description && (
