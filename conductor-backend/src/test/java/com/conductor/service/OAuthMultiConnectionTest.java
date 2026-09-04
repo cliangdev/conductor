@@ -13,6 +13,7 @@ import com.conductor.integration.FieldType;
 import com.conductor.integration.OAuth2Connector;
 import com.conductor.integration.connector.gsc.GscConnector;
 import com.conductor.integration.connector.tiktok.TikTokConnector;
+import com.conductor.entity.ConnectorAppCredential;
 import com.conductor.repository.ConnectorAppCredentialRepository;
 import com.conductor.repository.IntegrationOAuthStateRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -74,12 +75,16 @@ class OAuthMultiConnectionTest {
 
     private OAuthFlowService service;
 
+    private CredentialService credentialService;
+
     @BeforeEach
     void setUp() {
-        // No project row is ever stored here, so credential resolution falls through to the mocked
-        // Environment — the deployment-env behaviour these tests pin.
+        // Google-family connectors store no project row here, so their credentials fall through to the
+        // mocked Environment — the deployment-env behaviour these tests pin. A workspace-only connector
+        // never reads that Environment at all, so its tests store a row via registerWorkspaceConnector.
+        credentialService = mock(CredentialService.class);
         ConnectorAppCredentialService appCredentialService = new ConnectorAppCredentialService(
-                appCredentialRepository, mock(CredentialService.class), environment, projectSecurityService);
+                appCredentialRepository, credentialService, environment, projectSecurityService);
         service = new OAuthFlowService(oAuthStateRepository, connectionService, connectorRegistry,
                 appCredentialService, new ObjectMapper(), connectionHealthService);
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
@@ -177,6 +182,10 @@ class OAuthMultiConnectionTest {
 
         assertThat(connector.completionRequests).hasSize(1);
         assertThat(connector.completionRequests.get(0).accessToken()).isEqualTo("user-token-a");
+        // The hook is handed the very app the exchange authenticated as, so a completion step that
+        // calls the provider as the application (Meta's long-lived swap) cannot use a different one.
+        assertThat(connector.completionRequests.get(0).clientId()).isEqualTo("social-client-id");
+        assertThat(connector.completionRequests.get(0).clientSecret()).isEqualTo("social-client-secret");
 
         ArgumentCaptor<Map<String, Object>> configCaptor = configCaptor();
         verify(connectionService).updateConfig(eq(created.get(0)), configCaptor.capture());
@@ -268,6 +277,10 @@ class OAuthMultiConnectionTest {
 
         assertThat(connector.completionRequests).hasSize(1);
         assertThat(connector.completionRequests.get(0).selectedAccountId()).isEqualTo("page-2");
+        // Resolved against the connection's own project, so a deferred selection still finishes as the
+        // app the consent ran as rather than whatever the deployment holds.
+        assertThat(connector.completionRequests.get(0).clientId()).isEqualTo("picker-client-id");
+        assertThat(connector.completionRequests.get(0).clientSecret()).isEqualTo("picker-client-secret");
 
         verify(connectionService).storeTokens(eq(conn), eq("page-token-for-page-2"), eq("refresh-a"), any());
         ArgumentCaptor<Map<String, Object>> configCaptor = configCaptor();
@@ -286,7 +299,7 @@ class OAuthMultiConnectionTest {
     @Test
     void tikTokConsentUrlCarriesClientKeyAndACommaSeparatedScopeList() {
         TikTokConnector tiktok = new StubCompletionTikTokConnector();
-        registerConnector(tiktok, "tiktok-key-123", "tiktok-secret-456");
+        registerWorkspaceConnector(tiktok, "tiktok-key-123", "tiktok-secret-456");
 
         String url = service.buildAuthorizationUrl(PROJECT_ID, "tiktok", REDIRECT_URI);
 
@@ -300,7 +313,7 @@ class OAuthMultiConnectionTest {
     @Test
     void tikTokTokenExchangeBodyCarriesClientKey() {
         TikTokConnector tiktok = new StubCompletionTikTokConnector();
-        registerConnector(tiktok, "tiktok-key-123", "tiktok-secret-456");
+        registerWorkspaceConnector(tiktok, "tiktok-key-123", "tiktok-secret-456");
         stubTokenExchange("tiktok-access", "tiktok-refresh");
         List<Connection> created = stubCreate("tiktok");
 
@@ -315,7 +328,7 @@ class OAuthMultiConnectionTest {
     @Test
     void tikTokRefreshBodyCarriesClientKey() {
         TikTokConnector tiktok = new StubCompletionTikTokConnector();
-        registerConnector(tiktok, "tiktok-key-123", "tiktok-secret-456");
+        registerWorkspaceConnector(tiktok, "tiktok-key-123", "tiktok-secret-456");
         Connection conn = connection("conn-tiktok", "tiktok");
         stubTokenExchange("refreshed-access", null);
 
@@ -490,6 +503,25 @@ class OAuthMultiConnectionTest {
         when(connectorRegistry.findOAuth2(connector.getId())).thenReturn(Optional.of(connector));
         when(environment.getProperty(connector.clientIdProperty(), "")).thenReturn(clientId);
         when(environment.getProperty(connector.clientSecretProperty(), "")).thenReturn(clientSecret);
+    }
+
+    /**
+     * Registers a connector whose app belongs to the workspace, by storing the project row its
+     * credentials can only come from. Deliberately does <b>not</b> stub the Environment: a connector
+     * that declines deployment credentials must resolve without one, and stubbing it would hide a
+     * regression where the fallback crept back in.
+     */
+    private void registerWorkspaceConnector(OAuth2Connector connector, String clientId, String clientSecret) {
+        when(connectorRegistry.findOAuth2(connector.getId())).thenReturn(Optional.of(connector));
+        ConnectorAppCredential row = new ConnectorAppCredential();
+        row.setProjectId(PROJECT_ID);
+        row.setConnectorId(connector.getId());
+        row.setClientId(clientId);
+        row.setClientSecretEncrypted("ciphertext");
+        row.setKmsKeyReference("kms-key");
+        when(appCredentialRepository.findByProjectIdAndConnectorId(PROJECT_ID, connector.getId()))
+                .thenReturn(Optional.of(row));
+        when(credentialService.decryptSecret(row, "ciphertext")).thenReturn(clientSecret);
     }
 
     private String stubState(String connectorId, String state) {

@@ -5924,6 +5924,7 @@ components:
         - credentialSource
         - configured
         - missingProperties
+        - allowsDeploymentCredentials
       properties:
         connectorId:
           type: string
@@ -5934,6 +5935,14 @@ components:
             PROJECT — the workspace brought its own platform app; DEPLOYMENT — no project row, the
             operator's environment variables supplied them; NONE — neither, so no consent flow can
             start.
+        allowsDeploymentCredentials:
+          type: boolean
+          description: >-
+            Whether this connector can fall back to the deployment's app when the workspace has stored
+            none. False for the publishing platforms (Meta, TikTok, YouTube), whose apps carry their own
+            platform review and so belong to the workspace — for those, NONE means an admin must enter
+            a client id and secret here, and `missingProperties` is empty because no environment
+            variable would resolve it.
         configured:
           type: boolean
           description: True unless credentialSource is NONE.
@@ -5949,7 +5958,8 @@ components:
           type: array
           description: >-
             Environment variable names that would have to be set for the deployment fallback to
-            resolve. Non-empty only when credentialSource is NONE.
+            resolve. Non-empty only when credentialSource is NONE and allowsDeploymentCredentials is
+            true; empty otherwise, including for a workspace-only connector that has nothing stored.
           items:
             type: string
         updatedBy:

@@ -208,8 +208,17 @@ export interface ConnectorAppCredentialStatus {
   configured: boolean
   clientId?: string | null
   clientSecretLast4?: string | null
-  /** Deployment environment variables that would have to be set for the fallback to resolve. */
+  /**
+   * Deployment environment variables that would have to be set for the fallback to resolve. Always
+   * empty when `allowsDeploymentCredentials` is false — no env var would resolve that case.
+   */
   missingProperties: string[]
+  /**
+   * Whether this connector can inherit the deployment's app. False for the publishing platforms,
+   * whose apps carry their own platform review and so belong to the workspace: for those, `NONE`
+   * means an admin has to enter a client id and secret here.
+   */
+  allowsDeploymentCredentials: boolean
   updatedBy?: string | null
   updatedAt?: string | null
 }

@@ -157,7 +157,9 @@ const oauthConnector = (credentialSource: 'PROJECT' | 'DEPLOYMENT' | 'NONE' | nu
           configured: credentialSource !== 'NONE',
           clientId: credentialSource === 'NONE' ? null : 'app-123',
           clientSecretLast4: credentialSource === 'NONE' ? null : 'cdef',
-          missingProperties: credentialSource === 'NONE' ? ['META_APP_ID', 'META_APP_SECRET'] : [],
+          // Meta's app belongs to the workspace, so an unconfigured one names no env var.
+          missingProperties: [],
+          allowsDeploymentCredentials: false,
           updatedBy: null,
           updatedAt: null,
         },
@@ -180,7 +182,7 @@ describe('IntegrationsPage — browse grid credential readiness', () => {
     const link = (await screen.findByText('Meta')).closest('a') as HTMLAnchorElement
     expect(link).not.toBeNull()
     expect(link).toHaveAttribute('href', '/app/projects/proj-1/integrations/meta')
-    expect(within(link).getByText(/no platform app is configured/i)).toBeInTheDocument()
+    expect(within(link).getByText(/enter this workspace's app credentials/i)).toBeInTheDocument()
     // The label points at the fix, not at a connect action that would fail.
     expect(within(link).getByText('Set up')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /authorize/i })).not.toBeInTheDocument()

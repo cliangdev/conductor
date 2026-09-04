@@ -72,6 +72,7 @@ class ConnectorAppCredentialServiceTest {
     private static final String PROJECT_A = "proj-a";
     private static final String PROJECT_B = "proj-b";
     private static final String CONNECTOR_ID = "acme";
+    private static final String WORKSPACE_ONLY_CONNECTOR_ID = "platform";
     private static final String REDIRECT_URI = "http://localhost:8080/api/v1/oauth/callback";
     private static final String LOCAL_ENCRYPTION_KEY = "test-encryption-key-for-unit-tests";
     /** Stand-in KEK for the fake KMS: reversible, and obviously not the DEK it wraps. */
@@ -89,6 +90,7 @@ class ConnectorAppCredentialServiceTest {
     private CredentialService credentialService;
     private ConnectorAppCredentialService service;
     private final AcmeConnector connector = new AcmeConnector();
+    private final WorkspaceOnlyConnector workspaceOnlyConnector = new WorkspaceOnlyConnector();
 
     @BeforeEach
     void setUp() {
@@ -109,6 +111,26 @@ class ConnectorAppCredentialServiceTest {
             return new ConnectorMetadata(CONNECTOR_ID, "Acme", ConnectorCategory.ANALYTICS, "Acme", "AC");
         }
         @Override public ConnectorSpec getSpec() { return ConnectorSpec.oauth2(true, List.of()); }
+    }
+
+    /**
+     * A connector whose app must belong to the workspace — the publishing platforms' shape. Identical
+     * to {@link AcmeConnector} but for {@link OAuth2Connector#allowsDeploymentCredentials()}, so any
+     * difference in resolution is attributable to that one flag.
+     */
+    private static final class WorkspaceOnlyConnector implements OAuth2Connector {
+        @Override public String getId() { return WORKSPACE_ONLY_CONNECTOR_ID; }
+        @Override public List<String> oauthScopes() { return List.of("platform.publish"); }
+        @Override public String authorizationUrl() { return "https://platform.example.com/oauth/authorize"; }
+        @Override public String tokenUrl() { return "https://platform.example.com/oauth/token"; }
+        @Override public String clientIdProperty() { return "PLATFORM_APP_ID"; }
+        @Override public String clientSecretProperty() { return "PLATFORM_APP_SECRET"; }
+        @Override public boolean allowsDeploymentCredentials() { return false; }
+        @Override public ConnectorMetadata getMetadata() {
+            return new ConnectorMetadata(WORKSPACE_ONLY_CONNECTOR_ID, "Platform", ConnectorCategory.MARKETING,
+                    "Platform", "PL");
+        }
+        @Override public ConnectorSpec getSpec() { return ConnectorSpec.oauth2(false, List.of()); }
     }
 
     private void stubDeploymentEnv(String clientId, String clientSecret) {
@@ -587,6 +609,85 @@ class ConnectorAppCredentialServiceTest {
         assertThatThrownBy(() -> flow.buildAuthorizationUrl(PROJECT_A, CONNECTOR_ID, REDIRECT_URI))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("OAuth client credentials not configured: ACME_OAUTH_CLIENT_ID");
+
+        verify(oAuthStateRepository, never()).save(any());
+    }
+
+    // --- A connector whose app belongs to the workspace never consults the deployment environment ---
+
+    @Test
+    void workspaceOnlyConnectorWithNoRow_resolvesNone_evenWhenTheDeploymentEnvIsSet() {
+        when(environment.getProperty("PLATFORM_APP_ID", "")).thenReturn("deployment-app-id");
+        when(environment.getProperty("PLATFORM_APP_SECRET", "")).thenReturn("deployment-app-secret");
+        when(repository.findByProjectIdAndConnectorId(PROJECT_A, WORKSPACE_ONLY_CONNECTOR_ID))
+                .thenReturn(Optional.empty());
+
+        var resolved = service.resolve(PROJECT_A, workspaceOnlyConnector);
+
+        assertThat(resolved.source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.NONE);
+        assertThat(resolved.clientId()).isNull();
+        assertThat(resolved.clientSecret()).isNull();
+        // No env var would fix this, so naming one would send an admin to change something nothing reads.
+        assertThat(resolved.missingProperties()).isEmpty();
+    }
+
+    @Test
+    void workspaceOnlyConnectorStatus_reportsNoneAndFlagsThatNoDeploymentFallbackExists() {
+        when(environment.getProperty("PLATFORM_APP_ID", "")).thenReturn("deployment-app-id");
+        when(environment.getProperty("PLATFORM_APP_SECRET", "")).thenReturn("deployment-app-secret");
+        when(repository.findByProjectIdAndConnectorId(PROJECT_A, WORKSPACE_ONLY_CONNECTOR_ID))
+                .thenReturn(Optional.empty());
+
+        var status = service.status(PROJECT_A, workspaceOnlyConnector);
+
+        assertThat(status.source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.NONE);
+        assertThat(status.configured()).isFalse();
+        assertThat(status.missingProperties()).isEmpty();
+        assertThat(status.allowsDeploymentCredentials()).isFalse();
+    }
+
+    @Test
+    void workspaceOnlyConnectorWithARow_resolvesThatRow() {
+        ConnectorAppCredential row = envelopeRow(PROJECT_A, "workspace-app-id", "workspace-app-secret");
+        row.setConnectorId(WORKSPACE_ONLY_CONNECTOR_ID);
+        when(repository.findByProjectIdAndConnectorId(PROJECT_A, WORKSPACE_ONLY_CONNECTOR_ID))
+                .thenReturn(Optional.of(row));
+
+        var resolved = service.resolve(PROJECT_A, workspaceOnlyConnector);
+
+        assertThat(resolved.source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.PROJECT);
+        assertThat(resolved.clientId()).isEqualTo("workspace-app-id");
+        assertThat(resolved.clientSecret()).isEqualTo("workspace-app-secret");
+    }
+
+    @Test
+    void statusesMixesBothKindsOfConnectorInOneRead() {
+        stubDeploymentEnv("acme-id", "acme-secret");
+        when(repository.findByProjectId(PROJECT_A)).thenReturn(List.of());
+
+        var statuses = service.statuses(PROJECT_A, List.of(connector, workspaceOnlyConnector));
+
+        assertThat(statuses).hasSize(2);
+        assertThat(statuses.get(0).source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.DEPLOYMENT);
+        assertThat(statuses.get(0).allowsDeploymentCredentials()).isTrue();
+        assertThat(statuses.get(1).source()).isEqualTo(ConnectorAppCredentialService.CredentialSource.NONE);
+        assertThat(statuses.get(1).allowsDeploymentCredentials()).isFalse();
+        assertThat(statuses.get(1).missingProperties()).isEmpty();
+    }
+
+    @Test
+    void workspaceOnlyConnectorWithNoRow_failsTheFlowWithAdviceToEnterCredentials_notAnEnvVarName() {
+        when(repository.findByProjectIdAndConnectorId(PROJECT_A, WORKSPACE_ONLY_CONNECTOR_ID))
+                .thenReturn(Optional.empty());
+        when(connectorRegistry.findOAuth2(WORKSPACE_ONLY_CONNECTOR_ID))
+                .thenReturn(Optional.of(workspaceOnlyConnector));
+        OAuthFlowService flow = oauthFlowService();
+
+        assertThatThrownBy(() ->
+                flow.buildAuthorizationUrl(PROJECT_A, WORKSPACE_ONLY_CONNECTOR_ID, REDIRECT_URI))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Settings -> Integrations")
+                .hasMessageNotContaining("PLATFORM_APP_ID");
 
         verify(oAuthStateRepository, never()).save(any());
     }

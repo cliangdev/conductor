@@ -31,6 +31,21 @@ capability interfaces it implements: `FetchConnector` (pull), `WebhookConnector`
      `access_type=offline&prompt=consent` for a refresh token; override if your provider's equivalent
      differs or isn't needed).
 
+   **Who owns the app.** By default a connector may inherit the deployment's app from those two
+   properties when a workspace has stored nothing — right for the Google family, which shares one
+   OAuth client across GSC, GCP Billing and the rest. Override `allowsDeploymentCredentials()` to
+   `false` for a provider whose app must belong to the workspace: one carrying its own App Review,
+   rate limits or creator relationship, as Meta, TikTok and YouTube all do. Then nothing reads the
+   environment for it, the property names survive only as identifiers, and a project with no stored
+   row simply cannot connect until an admin enters one under Settings → Integrations. Because a
+   stored credential is keyed on the connector id, opting one Google-backed connector out (YouTube)
+   leaves the others inheriting as before.
+
+   **Completion hooks that call the provider as the app.** `OAuthCompletionRequest` carries the
+   `clientId`/`clientSecret` the code exchange ran as. Use those rather than re-resolving: Meta's
+   long-lived token swap is app-authenticated, and resolving again inside the connector is how a
+   consent granted to the workspace's app gets completed against the deployment's.
+
    (Custom, non-OAuth2 auth — like Apple's signed-JWT exchange — skips `OAuth2Connector` entirely and
    stays fully inside your connector package; see `integrations-apple-search-ads.md`.)
 4. **Outbound actions (only if applicable)** — implement `ActionConnector` instead of/in addition to

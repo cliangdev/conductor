@@ -31,6 +31,8 @@ import java.util.Map;
  *   <li><b>Account selection</b> — {@link #requiresAccountSelection()} and
  *       {@link #listAuthorizableAccounts(String)}, for providers whose grant covers several
  *       publishable accounts and where a human must pick one before the connection is usable.</li>
+ *   <li><b>Credential ownership</b> — {@link #allowsDeploymentCredentials()}, for a provider whose
+ *       app must be registered by each workspace rather than once by the deployment.</li>
  * </ul>
  */
 public interface OAuth2Connector extends Connector {
@@ -55,6 +57,24 @@ public interface OAuth2Connector extends Connector {
     /** Name of the environment/config property holding this provider's OAuth client secret. */
     default String clientSecretProperty() {
         return "GOOGLE_OAUTH_CLIENT_SECRET";
+    }
+
+    /**
+     * Whether this connector may fall back to the deployment-wide app named by
+     * {@link #clientIdProperty()}/{@link #clientSecretProperty()} when a workspace has stored no app
+     * credentials of its own.
+     *
+     * <p>True for the Google family, which shares one deployment OAuth client across GSC, GCP Billing
+     * and the rest: those apps are registered once by whoever runs the deployment, and a workspace that
+     * sets nothing is meant to inherit them.
+     *
+     * <p>False for a provider whose app must belong to the workspace — the publishing platforms, whose
+     * apps carry their own App Review, their own rate limits and their own creator relationship. For
+     * those, {@link com.conductor.service.ConnectorAppCredentialService} never reads the environment at
+     * all: no row means not configured, and the property names survive only as identifiers.
+     */
+    default boolean allowsDeploymentCredentials() {
+        return true;
     }
 
     /**
@@ -98,9 +118,23 @@ public interface OAuth2Connector extends Connector {
     /**
      * What the flow service hands the completion hook: the credentials the code exchange just
      * produced, plus the account the admin picked (null when the connector needs no selection, or
-     * when the callback runs before the picker).
+     * when the callback runs before the picker), plus the <em>app</em> credentials the exchange ran as.
+     *
+     * <p>{@link #clientId()}/{@link #clientSecret()} are here because a completion hook sometimes has to
+     * call the provider <b>as the application</b> rather than as the user — Meta's long-lived token
+     * exchange is the case in hand. Resolving them again inside the connector would read the deployment
+     * environment and so could authenticate as a different app than the one the user just consented to;
+     * carrying them forward means completion and consent are always the same app. Null only for a
+     * connector using {@link #usesStubAuthorization()}, which has no provider to present them to.
      */
-    record OAuthCompletionRequest(String accessToken, String refreshToken, String selectedAccountId) {}
+    record OAuthCompletionRequest(String accessToken, String refreshToken, String selectedAccountId,
+                                  String clientId, String clientSecret) {
+
+        /** A completion with no app credentials, for a stub flow or a hook that never needs them. */
+        public OAuthCompletionRequest(String accessToken, String refreshToken, String selectedAccountId) {
+            this(accessToken, refreshToken, selectedAccountId, null, null);
+        }
+    }
 
     /**
      * What the completion hook contributes back. The split is the whole point: {@link #accessToken()}

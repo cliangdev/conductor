@@ -22,7 +22,6 @@ import com.conductor.service.CredentialService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.mock.env.MockEnvironment;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.lang.reflect.Method;
@@ -42,17 +41,21 @@ class MetaConnectorTest {
     private static final String SHORT_LIVED = "short-lived-user-token";
     private static final String LONG_LIVED = "long-lived-user-token";
 
-    private MockEnvironment environment;
+    private static final String APP_ID = "app-id";
+    private static final String APP_SECRET = "app-secret";
+
     private MetaGraphClient graphClient;
     private MetaConnector connector;
 
     @BeforeEach
     void setUp() {
-        environment = new MockEnvironment()
-                .withProperty("META_APP_ID", "app-id")
-                .withProperty("META_APP_SECRET", "app-secret");
         graphClient = mock(MetaGraphClient.class);
-        connector = new MetaConnector(environment, graphClient);
+        connector = new MetaConnector(graphClient);
+    }
+
+    /** The connector-specific completion, run as the app the consent ran as. */
+    private MetaAuthorization complete(String userToken, String selectedPageId) {
+        return connector.completeAuthorization(userToken, selectedPageId, APP_ID, APP_SECRET);
     }
 
     // --- [auto] MetaConnector overrides all five OAuth2Connector endpoint methods for Meta ---
@@ -98,7 +101,7 @@ class MetaConnectorTest {
                 new PageAccount("page-1", "Acme Marketing", "page-1-token", "ig-17841400000", "acme"),
                 new PageAccount("page-2", "Acme Support", "page-2-token", null, null)));
 
-        MetaAuthorization auth = connector.completeAuthorization(SHORT_LIVED, "page-1");
+        MetaAuthorization auth = complete(SHORT_LIVED, "page-1");
 
         assertThat(auth.pageAccessToken()).isEqualTo("page-1-token");
         assertThat(auth.config())
@@ -119,7 +122,7 @@ class MetaConnectorTest {
         when(graphClient.listPages(LONG_LIVED)).thenReturn(List.of(
                 new PageAccount("page-2", "Acme Support", "page-2-token", null, null)));
 
-        MetaAuthorization auth = connector.completeAuthorization(SHORT_LIVED, "page-2");
+        MetaAuthorization auth = complete(SHORT_LIVED, "page-2");
 
         assertThat(auth.config()).doesNotContainKey("instagramBusinessAccountId");
         assertThat(auth.targets()).hasSize(1);
@@ -134,7 +137,7 @@ class MetaConnectorTest {
         when(graphClient.listPages(LONG_LIVED)).thenReturn(List.of(
                 new PageAccount("only-page", "Only Page", "only-token", null, null)));
 
-        MetaAuthorization auth = connector.completeAuthorization(SHORT_LIVED, null);
+        MetaAuthorization auth = complete(SHORT_LIVED, null);
 
         assertThat(auth.config()).containsEntry("pageId", "only-page");
     }
@@ -146,7 +149,7 @@ class MetaConnectorTest {
         when(graphClient.listPages(LONG_LIVED)).thenReturn(List.of(
                 new PageAccount("page-1", "Acme Marketing", "page-1-token", null, null)));
 
-        assertThatThrownBy(() -> connector.completeAuthorization(SHORT_LIVED, "nope"))
+        assertThatThrownBy(() -> complete(SHORT_LIVED, "nope"))
                 .hasMessageContaining("nope");
     }
 
@@ -156,17 +159,37 @@ class MetaConnectorTest {
                 .thenReturn(new LongLivedToken(LONG_LIVED, null));
         when(graphClient.listPages(LONG_LIVED)).thenReturn(List.of());
 
-        assertThatThrownBy(() -> connector.completeAuthorization(SHORT_LIVED, null))
+        assertThatThrownBy(() -> complete(SHORT_LIVED, null))
                 .hasMessageContaining("Page");
     }
 
     @Test
     void completeAuthorization_withoutAppCredentials_failsBeforeCallingGraph() {
-        MetaConnector unconfigured = new MetaConnector(new MockEnvironment(), graphClient);
-
-        assertThatThrownBy(() -> unconfigured.completeAuthorization(SHORT_LIVED, "page-1"))
-                .hasMessageContaining("META_APP_ID");
+        assertThatThrownBy(() -> connector.completeAuthorization(SHORT_LIVED, "page-1", null, null))
+                .hasMessageContaining("Settings -> Integrations -> Meta");
         org.mockito.Mockito.verifyNoInteractions(graphClient);
+    }
+
+    @Test
+    void completeAuthorization_takesAppCredentialsFromTheRequest_notTheEnvironment() {
+        when(graphClient.exchangeForLongLivedUserToken("workspace-app", "workspace-secret", SHORT_LIVED))
+                .thenReturn(new LongLivedToken(LONG_LIVED, null));
+        when(graphClient.listPages(LONG_LIVED)).thenReturn(List.of(
+                new PageAccount("only-page", "Only Page", "only-token", null, null)));
+
+        OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
+                new OAuth2Connector.OAuthCompletionRequest(SHORT_LIVED, null, "only-page",
+                        "workspace-app", "workspace-secret"));
+
+        // The long-lived swap ran as the workspace's app: a stub for any other pair returns null and
+        // this would have NPE'd instead.
+        assertThat(completion.accessToken()).isEqualTo("only-token");
+        assertThat(completion.config()).containsEntry("pageId", "only-page");
+    }
+
+    @Test
+    void allowsDeploymentCredentials_isFalse_soAWorkspaceMustBringItsOwnApp() {
+        assertThat(connector.allowsDeploymentCredentials()).isFalse();
     }
 
     @Test
@@ -210,7 +233,7 @@ class MetaConnectorTest {
                 new PageAccount("page-2", "Acme Support", "page-2-token", null, null)));
 
         OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
-                new OAuth2Connector.OAuthCompletionRequest(SHORT_LIVED, null, "page-1"));
+                new OAuth2Connector.OAuthCompletionRequest(SHORT_LIVED, null, "page-1", APP_ID, APP_SECRET));
 
         assertThat(completion.accessToken()).isEqualTo("page-1-token");
         assertThat(completion.label()).isEqualTo("Acme Marketing");
@@ -229,7 +252,7 @@ class MetaConnectorTest {
                 new PageAccount("page-1", "Acme Marketing", "page-1-token", "ig-1", "acme")));
 
         OAuth2Connector.OAuthCompletion completion = connector.completeAuthorization(
-                new OAuth2Connector.OAuthCompletionRequest(SHORT_LIVED, "refresh-1", "page-1"));
+                new OAuth2Connector.OAuthCompletionRequest(SHORT_LIVED, "refresh-1", "page-1", APP_ID, APP_SECRET));
 
         assertThat(completion.config().values()).doesNotContain(SHORT_LIVED, LONG_LIVED, "page-1-token", "refresh-1");
         assertThat(completion.config().keySet()).noneSatisfy(key ->
